@@ -28,9 +28,13 @@ function updateTooltipRect() {
   }
 }
 
-watch(() => props.step, () => {
-  setTimeout(updateTooltipRect, 50);
-}, { immediate: true });
+watch(
+  () => props.step,
+  () => {
+    setTimeout(updateTooltipRect, 50);
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   setTimeout(updateTooltipRect, 50);
@@ -142,7 +146,9 @@ const tooltipStyle = computed(() => {
 
 const isLastStep = computed(() => props.currentStepIndex === props.totalSteps - 1);
 const showNextButton = computed(() => props.step.showNextButton !== false);
-const showPrevButton = computed(() => props.step.showPrevButton !== false && props.currentStepIndex > 0);
+const showPrevButton = computed(
+  () => props.step.showPrevButton !== false && props.currentStepIndex > 0,
+);
 const canSkip = computed(() => props.step.canSkip !== false);
 
 // Action hint text based on step action
@@ -194,9 +200,7 @@ function handleNext() {
 
     <!-- Navigation -->
     <div class="tooltip-navigation">
-      <button v-if="canSkip" class="nav-btn skip-btn" @click="emit('skip')">
-        Skip Tutorial
-      </button>
+      <button v-if="canSkip" class="nav-btn skip-btn" @click="emit('skip')">Skip Tutorial</button>
 
       <div class="nav-main">
         <button v-if="showPrevButton" class="nav-btn prev-btn" @click="emit('prev')">

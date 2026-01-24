@@ -15,7 +15,10 @@ export type { FlowSettings, OperationResponse } from "../../types/flow.types";
 
 // Legacy function wrappers that delegate to the new API
 // These now return OperationResponse which includes history state
-export const connectNode = async (flowId: number, nodeConnection: NodeConnection): Promise<OperationResponse> => {
+export const connectNode = async (
+  flowId: number,
+  nodeConnection: NodeConnection,
+): Promise<OperationResponse> => {
   console.log("Connecting node where it should happen", nodeConnection);
   return FlowApi.connectNode(flowId, nodeConnection);
 };

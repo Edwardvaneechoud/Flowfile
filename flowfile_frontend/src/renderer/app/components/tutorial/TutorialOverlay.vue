@@ -126,7 +126,7 @@ watch(
     await nextTick();
     updateTargetPosition();
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // Auto-advance when flow is created
@@ -138,13 +138,18 @@ watch(
     const currentStepId = tutorialStore.currentStep?.id;
 
     // If we're on the "confirm-create-flow" step and a flow was just created, advance
-    if (currentStepId === "confirm-create-flow" && newFlowId && newFlowId > 0 && (!oldFlowId || oldFlowId <= 0)) {
+    if (
+      currentStepId === "confirm-create-flow" &&
+      newFlowId &&
+      newFlowId > 0 &&
+      (!oldFlowId || oldFlowId <= 0)
+    ) {
       // Small delay to let the UI update
       setTimeout(() => {
         tutorialStore.nextStep();
       }, 500);
     }
-  }
+  },
 );
 
 // Track if node settings was previously visible
@@ -159,7 +164,11 @@ function checkForNodeSettings() {
   const nodeSettingsIsVisible = nodeSettings !== null;
 
   // If we're on "configure-manual-input" step and nodeSettings just appeared, advance
-  if (currentStepId === "configure-manual-input" && nodeSettingsIsVisible && !nodeSettingsWasVisible.value) {
+  if (
+    currentStepId === "configure-manual-input" &&
+    nodeSettingsIsVisible &&
+    !nodeSettingsWasVisible.value
+  ) {
     setTimeout(() => {
       tutorialStore.nextStep();
     }, 300);
@@ -267,17 +276,27 @@ onUnmounted(() => {
                   :y="parseInt(spotlightStyle.top)"
                   :width="parseInt(spotlightStyle.width)"
                   :height="parseInt(spotlightStyle.height)"
-                  :rx="spotlightStyle.borderRadius === '50%' ? parseInt(spotlightStyle.width) / 2 : 8"
+                  :rx="
+                    spotlightStyle.borderRadius === '50%' ? parseInt(spotlightStyle.width) / 2 : 8
+                  "
                   fill="black"
                 />
               </mask>
             </defs>
-            <rect width="100%" height="100%" fill="rgba(0, 0, 0, 0.7)" mask="url(#spotlight-mask)" />
+            <rect
+              width="100%"
+              height="100%"
+              fill="rgba(0, 0, 0, 0.7)"
+              mask="url(#spotlight-mask)"
+            />
           </svg>
         </div>
 
         <!-- Full backdrop without spotlight - show for centerInScreen steps -->
-        <div v-else-if="tutorialStore.currentStep?.centerInScreen" class="tutorial-backdrop tutorial-backdrop-full"></div>
+        <div
+          v-else-if="tutorialStore.currentStep?.centerInScreen"
+          class="tutorial-backdrop tutorial-backdrop-full"
+        ></div>
 
         <!-- Spotlight border/highlight - visual only, no pointer events -->
         <div v-if="spotlightStyle" class="tutorial-spotlight" :style="spotlightStyle">

@@ -75,11 +75,7 @@
         left: contextMenuPosition.x + 'px',
       }"
     >
-      <button
-        v-for="action in schema.actions"
-        :key="action.value"
-        @click="addRow(action.value)"
-      >
+      <button v-for="action in schema.actions" :key="action.value" @click="addRow(action.value)">
         {{ action.label }}
       </button>
     </div>
@@ -100,11 +96,7 @@
           <tr v-for="(row, index) in localValue.rows" :key="index">
             <td>{{ row.column }}</td>
             <td>
-              <el-select
-                v-model="row.action"
-                size="small"
-                @change="updateOutputName(index)"
-              >
+              <el-select v-model="row.action" size="small" @change="updateOutputName(index)">
                 <el-option
                   v-for="action in schema.actions"
                   :key="action.value"
@@ -114,18 +106,10 @@
               </el-select>
             </td>
             <td>
-              <el-input
-                v-model="row.output_name"
-                size="small"
-                @change="emitUpdate"
-              />
+              <el-input v-model="row.output_name" size="small" @change="emitUpdate" />
             </td>
             <td class="action-cell">
-              <el-button
-                type="danger"
-                circle
-                @click="removeRow(index)"
-              >
+              <el-button type="danger" circle @click="removeRow(index)">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </td>
@@ -196,7 +180,7 @@ const filteredColumns = computed(() => {
   }
   if (Array.isArray(props.schema.data_types)) {
     return props.incomingColumns.filter((column) =>
-      props.schema.data_types.includes(column.data_type)
+      props.schema.data_types.includes(column.data_type),
     );
   }
   return props.incomingColumns;
@@ -214,7 +198,7 @@ watch(
       };
     }
   },
-  { immediate: true, deep: true }
+  { immediate: true, deep: true },
 );
 
 // Emit updates
@@ -224,9 +208,7 @@ const emitUpdate = () => {
 
 // Generate output name from template
 const generateOutputName = (column: string, action: string): string => {
-  return props.schema.output_name_template
-    .replace("{column}", column)
-    .replace("{action}", action);
+  return props.schema.output_name_template.replace("{column}", column).replace("{action}", action);
 };
 
 // Column selection handlers
@@ -234,9 +216,7 @@ const handleColumnClick = (clickedIndex: number, columnName: string, event: Mous
   if (event.shiftKey && firstSelectedIndex.value !== null) {
     const start = Math.min(firstSelectedIndex.value, clickedIndex);
     const end = Math.max(firstSelectedIndex.value, clickedIndex);
-    selectedColumns.value = filteredColumns.value
-      .slice(start, end + 1)
-      .map((col) => col.name);
+    selectedColumns.value = filteredColumns.value.slice(start, end + 1).map((col) => col.name);
   } else {
     if (selectedColumns.value.length === 1 && selectedColumns.value[0] === columnName) {
       selectedColumns.value = [];
