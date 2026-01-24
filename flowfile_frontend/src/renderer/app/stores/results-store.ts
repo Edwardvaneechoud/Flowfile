@@ -39,7 +39,6 @@ export const useResultsStore = defineStore("results", {
     },
 
     resetNodeResult(): void {
-      console.log("Clearing node results");
       this.runNodeResults = {};
     },
 

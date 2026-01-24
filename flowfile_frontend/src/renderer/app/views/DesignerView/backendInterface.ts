@@ -19,7 +19,6 @@ export const connectNode = async (
   flowId: number,
   nodeConnection: NodeConnection,
 ): Promise<OperationResponse> => {
-  console.log("Connecting node where it should happen", nodeConnection);
   return FlowApi.connectNode(flowId, nodeConnection);
 };
 
@@ -45,7 +44,6 @@ export const insertNode = async (
   pos_x = 0,
   pos_y = 0,
 ): Promise<OperationResponse> => {
-  console.log("inserting a note");
   return FlowApi.insertNode(flow_id, node_id, node_type, pos_x, pos_y);
 };
 
@@ -54,7 +52,6 @@ export const copyNode = async (
   flowIdToCopyFrom: number,
   nodePromise: NodePromise,
 ): Promise<OperationResponse> => {
-  console.log("copying a note");
   return FlowApi.copyNode(nodeIdToCopyFrom, flowIdToCopyFrom, nodePromise);
 };
 
@@ -67,7 +64,6 @@ export const getFlowData = async (flowId: number) => {
 };
 
 export const importSavedFlow = async (flowPath: string) => {
-  console.log("Importing flow from path:", flowPath);
   try {
     return await FlowApi.importFlow(flowPath);
   } catch (error) {

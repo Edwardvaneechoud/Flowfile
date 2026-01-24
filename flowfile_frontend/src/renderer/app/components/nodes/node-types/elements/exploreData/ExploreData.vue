@@ -82,7 +82,6 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
     }
 
     if (exportedCharts.length === 0) {
-      console.log("No charts were exported from Graphic Walker.");
       return [];
     }
 
@@ -112,7 +111,6 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
     };
 
     await nodeStore.updateSettingsDirectly(saveData);
-    console.log("Node settings updated successfully.");
     return true;
   } catch (error: any) {
     console.error("Error saving spec to node store:", error);
@@ -127,21 +125,14 @@ const pushNodeData = async () => {
   const currentSpec = await getCurrentSpec();
 
   if (currentSpec === null) {
-    console.log("Spec retrieval failed, skipping save.");
     return;
   }
 
   // Decide whether to save empty specs or not
   if (currentSpec.length === 0) {
-    console.log("No chart configurations exported, skipping save.");
     return;
   }
-  const saveSuccess = await saveSpecToNodeStore(currentSpec);
-  if (saveSuccess) {
-    console.log("Save process completed successfully.");
-  } else {
-    console.log("Save process failed.");
-  }
+  await saveSpecToNodeStore(currentSpec);
 };
 
 // --- Expose Methods ---

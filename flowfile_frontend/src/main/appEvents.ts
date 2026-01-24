@@ -17,15 +17,12 @@ export function setupAppEventListeners() {
   // Handle application quitting
   app.on("before-quit", (event) => {
     if (shutdownState.isShuttingDown) {
-      console.log("Shutdown already in progress...");
       return;
     }
 
     shutdownState.isShuttingDown = true;
     event.preventDefault();
-    console.log("Initiating application shutdown...");
     if (process.env.NODE_ENV === "development") {
-      console.log("Exiting app...");
       app.exit(0); // Exit the app without triggering 'before-quit' again
       return;
     }
@@ -43,7 +40,6 @@ export function setupAppEventListeners() {
       } catch (error) {
         console.error("Shutdown timed out or failed:", error);
       } finally {
-        console.log("Exiting app...");
         app.exit(0); // Exit the app without triggering 'before-quit' again
       }
     })();
@@ -52,7 +48,6 @@ export function setupAppEventListeners() {
   // Prevent app from quitting when all windows are closed on macOS
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
-      console.log("All windows closed, quitting app...");
       app.quit();
     }
   });

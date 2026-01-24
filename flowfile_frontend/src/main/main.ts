@@ -158,9 +158,7 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
 }
 
 app.whenReady().then(async () => {
-  const logFile = setupLogging();
-  console.log("Logging to:", logFile);
-  console.log("Running the app in:", process.env.NODE_ENV);
+  setupLogging();
 
   setupIpcHandlers();
   setupAppIpcHandlers(() => app.quit());
@@ -170,7 +168,6 @@ app.whenReady().then(async () => {
     const loadingWin = createLoadingWindow();
 
     const dockerStatusResult = await checkDocker();
-    console.log("Docker status:", dockerStatusResult);
 
     updateDockerStatus(dockerStatusResult);
     loadingWin?.webContents.send("update-docker-status", dockerStatusResult);
@@ -187,8 +184,6 @@ app.whenReady().then(async () => {
       updateServicesStatus(readyStatus);
 
       loadingWin?.webContents.send("update-services-status", readyStatus);
-
-      console.log("All services started successfully");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to start services";
       const errorStatus = {
@@ -210,7 +205,6 @@ app.whenReady().then(async () => {
     if (mainWindow) {
       setupWindowIpcHandlers(mainWindow);
       mainWindow.webContents.once("did-finish-load", () => {
-        console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
       });
       setupCustomMenu(mainWindow);

@@ -51,8 +51,6 @@ export function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
 
-  console.log("Creating main window");
-
   mainWindow = new BrowserWindow({
     width,
     height,
@@ -67,7 +65,6 @@ export function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
-    console.log("Window ready to show");
     mainWindow?.show();
     if (loadingWindow) {
       loadingWindow.close();
@@ -75,7 +72,6 @@ export function createWindow() {
   });
 
   mainWindow.on("closed", () => {
-    console.log("Main window closed");
     mainWindow = null;
   });
 
@@ -83,8 +79,6 @@ export function createWindow() {
 }
 
 export function openAuthWindow(authUrl: string): Promise<string | null> {
-  console.log("Opening authentication window");
-
   return new Promise((resolve) => {
     authWindow = new BrowserWindow({
       width: 600,
@@ -120,12 +114,10 @@ export function openAuthWindow(authUrl: string): Promise<string | null> {
     authWindow.loadURL(authUrl);
 
     authWindow.once("ready-to-show", () => {
-      console.log("Auth window ready to show");
       authWindow?.show();
     });
 
     authWindow.on("closed", () => {
-      console.log("Auth window closed");
       authWindow = null;
       resolve(null); // User closed window without completing auth
     });

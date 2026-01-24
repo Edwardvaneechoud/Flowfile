@@ -85,7 +85,6 @@ export const useEditorStore = defineStore("editor", {
     },
 
     openAnalysisDrawer(closeFunction?: () => void) {
-      console.log("openAnalysisDrawer in editor-store.ts");
       if (this.isAnalysisOpen) {
         this.pushNodeData();
       }
@@ -98,7 +97,6 @@ export const useEditorStore = defineStore("editor", {
     closeAnalysisDrawer() {
       this.isAnalysisOpen = false;
       if (this.drawCloseFunction) {
-        console.log("closeDrawer in editor-store.ts");
         this.pushNodeData();
       }
     },
@@ -114,7 +112,6 @@ export const useEditorStore = defineStore("editor", {
 
     // ========== Log Viewer ==========
     showLogViewer() {
-      console.log("triggered show log viewer");
       this.isShowingLogViewer = this.displayLogViewer;
     },
 
@@ -123,7 +120,6 @@ export const useEditorStore = defineStore("editor", {
     },
 
     toggleLogViewer() {
-      console.log("triggered toggle log viewer");
       this.isShowingLogViewer = !this.isShowingLogViewer;
     },
 

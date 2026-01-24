@@ -71,10 +71,6 @@ const loadDrawerComponent = () => {
 
     if (!componentLoader) {
       console.error(`Component not found at path: ${componentPath}`);
-      console.log(
-        "Available paths:",
-        Object.keys(drawerModules).filter((path) => path.includes(`/${folderName}/`)),
-      );
       return;
     }
 

@@ -53,22 +53,14 @@ const globalStoreInstance = reactive<IGlobalStore>({
       exportAsRaw: () => {
         return "";
       },
-      importRaw: () => {
-        console.log("importing raw");
-      },
-      setVisName: () => {
-        console.log("setting visual name");
-      },
-      importStoInfo: () => {
-        console.log("importing sto info");
-      },
+      importRaw: () => {},
+      setVisName: () => {},
+      importStoInfo: () => {},
     },
   },
   updateNodeId: function (newNodeId: number) {
     this.previousNodeId = this.currentNodeId;
     this.currentNodeId = newNodeId;
-    console.log("Updated node id to:", newNodeId);
-    console.log("Previous node id:", this.previousNodeId);
   },
   nodeIdChanged: function () {
     return this.currentNodeId !== this.previousNodeId;

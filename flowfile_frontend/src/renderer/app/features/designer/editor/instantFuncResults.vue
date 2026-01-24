@@ -49,7 +49,6 @@ const getInstantFuncResults = async (funcString: string, flowId: number) => {
       },
     });
     instantFuncResult.value = response.data;
-    console.log(instantFuncResult.value.result);
   } else {
     hasInput.value = false;
   }

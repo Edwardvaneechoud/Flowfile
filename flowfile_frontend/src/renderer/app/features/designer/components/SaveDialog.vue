@@ -101,7 +101,6 @@ const updateInitialPath = async () => {
 };
 
 const handleSaveFlow = async (flowPath: string) => {
-  console.log("Saving flow to path:", flowPath);
   try {
     await saveFlow(props.flowId, flowPath);
     isVisible.value = false;

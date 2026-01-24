@@ -105,8 +105,8 @@ const handleReady = (payload: { view: EditorView }) => {
   view.value = payload.view;
 };
 
-const log = (type: any, event: any) => {
-  console.log(type, event);
+const log = (_type: any, _event: any) => {
+  // Removed debug logging
 };
 
 const handleBlur = async () => {

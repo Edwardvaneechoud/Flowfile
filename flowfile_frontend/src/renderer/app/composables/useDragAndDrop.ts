@@ -112,8 +112,6 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
     ? "../components/nodes/node-types/elements/customNode/CustomNode.vue"
     : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`;
 
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
-
   // Validate module names to prevent path traversal (only needed for non-custom nodes)
   if (
     !nodeTemplate.custom_node &&
@@ -126,7 +124,6 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
   if (!Object.hasOwn(nodeModules, modulePath)) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`);
     console.error("Failed to load component:", formattedItemName, error);
-    console.log("Available modules:", Object.keys(nodeModules));
     throw error;
   }
 
@@ -170,8 +167,6 @@ async function getComponentRaw(item: string): Promise<any> {
     ? "../components/nodes/node-types/elements/customNode/CustomNode.vue"
     : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`;
 
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
-
   // Validate module names to prevent path traversal (only needed for non-custom nodes)
   if (
     !nodeTemplate.custom_node &&
@@ -184,7 +179,6 @@ async function getComponentRaw(item: string): Promise<any> {
   if (!Object.hasOwn(nodeModules, modulePath)) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`);
     console.error("Failed to load component:", formattedItemName, error);
-    console.log("Available modules:", Object.keys(nodeModules));
     throw error;
   }
 

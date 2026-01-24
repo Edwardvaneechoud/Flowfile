@@ -365,7 +365,6 @@ const handleOpenFile = () => {
 };
 
 const handleSingleClick = (file: FileInfo) => {
-  console.log("handleSingleClick", file);
   emit("update:modelValue", file);
   selectedFile.value = file;
 };

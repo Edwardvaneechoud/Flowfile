@@ -108,8 +108,6 @@ const formatRunTime = (runTime: number, startTimestamp: number, isRunning: boole
 };
 
 const navigateToNode = (nodeId: string) => {
-  // Assuming you've assigned IDs to each node's root element in a way that incorporates the nodeId
-  console.log(nodeId, "nodeId");
   if (selectedNode.value) {
     if (selectedNode.value?.classList.contains("selected")) {
       selectedNode.value.classList.remove("selected");
@@ -118,7 +116,6 @@ const navigateToNode = (nodeId: string) => {
 
   const elementId = `#${nodeId}`;
   const nodeComponent = document.querySelector(elementId);
-  console.log(nodeComponent, "nodeComponent");
   if (props.onClick) {
     props.onClick(nodeId.slice(5));
     //props.tableViewer.downloadData(nodeId.slice(5))

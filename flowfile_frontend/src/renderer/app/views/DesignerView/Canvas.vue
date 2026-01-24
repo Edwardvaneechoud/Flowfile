@@ -246,7 +246,6 @@ const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnecti
 const handleEdgeChange = async (edgeChangesEvent: any) => {
   const edgeChanges = edgeChangesEvent as EdgeChange[];
   if (edgeChanges.length >= 2) {
-    console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
   let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;

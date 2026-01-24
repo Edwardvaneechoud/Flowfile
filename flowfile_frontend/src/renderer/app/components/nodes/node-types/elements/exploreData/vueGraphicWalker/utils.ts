@@ -5,7 +5,6 @@ export const fetchGraphicWalkerData = async (
   flowId: number,
   nodeId: number,
 ): Promise<NodeGraphicWalker> => {
-  console.log(`[GraphicWalker] Fetching data for flow ${flowId}, node ${nodeId}`);
   try {
     const response = await axios.get<NodeGraphicWalker>("/analysis_data/graphic_walker_input", {
       params: { flow_id: flowId, node_id: nodeId },
@@ -16,12 +15,6 @@ export const fetchGraphicWalkerData = async (
     if (!response.data || !response.data.graphic_walker_input) {
       throw new Error("Invalid response data structure");
     }
-
-    console.log(
-      `[GraphicWalker] Data fetched successfully with ${
-        response.data.graphic_walker_input.dataModel?.data?.length || 0
-      } rows`,
-    );
 
     return response.data;
   } catch (error: any) {

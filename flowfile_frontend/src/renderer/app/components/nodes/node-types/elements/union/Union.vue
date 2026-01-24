@@ -31,7 +31,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 });
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("loadNodeData from union ");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnion.value = nodeData.value?.setting_input as NodeUnion;
   if (nodeData.value) {
@@ -44,7 +43,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  console.log("loadNodeData from groupby");
 };
 
 const handleClickOutside = (event: MouseEvent) => {

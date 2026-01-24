@@ -146,8 +146,6 @@ export async function getComponent(node: NodeTemplate | string): Promise<DefineC
     ? "../features/designer/nodes/elements/customNode/CustomNode.vue"
     : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`;
 
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
-
   // Validate module names to prevent path traversal (only needed for non-custom nodes)
   if (
     !nodeTemplate.custom_node &&
@@ -161,7 +159,6 @@ export async function getComponent(node: NodeTemplate | string): Promise<DefineC
   if (!moduleLoader || typeof moduleLoader !== "function") {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`);
     console.error("Failed to load component:", formattedItemName, error);
-    console.log("Available modules:", Object.keys(nodeModules));
     throw error;
   }
 

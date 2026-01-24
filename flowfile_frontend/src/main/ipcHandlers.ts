@@ -42,7 +42,6 @@ export function setupWindowIpcHandlers(mainWindow: BrowserWindow): void {
 
 export function setupAppIpcHandlers(quitCallback: () => void): void {
   ipcMain.on("quit-app", () => {
-    console.log("Received quit-app command, quitting...");
     quitCallback();
   });
 }

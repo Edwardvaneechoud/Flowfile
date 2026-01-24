@@ -60,9 +60,7 @@ const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean
 const loadNodeData = async (nodeId: number) => {
   result.value = await nodeStore.getNodeData(nodeId, false);
   nodeCrossJoin.value = result.value?.setting_input;
-  console.log(result.value);
   if (result.value) {
-    console.log("Data loaded");
     dataLoaded.value = true;
   }
 };

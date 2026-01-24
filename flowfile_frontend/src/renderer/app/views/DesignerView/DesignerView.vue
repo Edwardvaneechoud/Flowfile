@@ -103,7 +103,6 @@ const openFlow = (eventData: { message: string; flowPath: string }) => {
 const reloadCanvas = async (flowPath: string) => {
   isLoading.value = true;
   try {
-    console.log("reloadCanvas", flowPath);
     const flowId = await importSavedFlow(flowPath);
     if (flowId === undefined) {
       console.error("Failed to import flow from path:", flowPath);
@@ -124,8 +123,6 @@ const reloadCanvas = async (flowPath: string) => {
 
 const handleCloseFlow = async (flowId: number) => {
   try {
-    console.log("Closing flow:", flowId);
-
     // Check if we're closing the currently active flow
     const isCurrentFlow = nodeStore.flow_id === flowId;
 
@@ -144,7 +141,6 @@ const handleCloseFlow = async (flowId: number) => {
       if (flowsActive.value.length > 0) {
         // Switch to the first available flow
         const newFlowId = flowsActive.value[0].flow_id;
-        console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
       } else {
         // No flows left, reset the nodeStore
@@ -160,13 +156,11 @@ const handleCloseFlow = async (flowId: number) => {
 
 const handleFlowChange = async (flowId: number) => {
   if (isLoading.value && flowId === nodeStore.flow_id) {
-    console.log("Already loading flow ID:", flowId);
     return;
   }
 
   isLoading.value = true;
   try {
-    console.log("Handling flow change to:", flowId);
     nodeStore.setFlowId(flowId);
     if (canvasFlow.value) {
       await canvasFlow.value.loadFlow();
@@ -182,12 +176,10 @@ const handleFlowChange = async (flowId: number) => {
 const refreshFlow = async () => {
   isLoading.value = true;
   try {
-    console.log("refreshFlow");
     await fetchActiveFlows(); // Refresh flows list
     if (canvasFlow.value && flowsActive.value.length > 0) {
       await canvasFlow.value.loadFlow();
     }
-    console.log("refreshFlow end");
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
@@ -210,26 +202,22 @@ const openFlowDialog = () => {
 
 const openQuickCreateDialog = () => {
   if (headerButtons.value) {
-    console.log("Opening quick create dialog");
     headerButtons.value.handleQuickCreateAction();
   }
 };
 
 const initialSetup = async () => {
   if (initialLoadComplete.value) {
-    console.log("Initial setup already completed");
     return;
   }
 
   isLoading.value = true;
-  console.log("Starting initial setup");
 
   try {
     const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
 
     nodeOptions.value = nodes;
     if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
-      console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
 
       // Load the flow data
@@ -240,7 +228,6 @@ const initialSetup = async () => {
         await headerButtons.value.loadFlowSettings();
       }
     } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
-      console.log("Using existing flow ID:", nodeStore.flow_id);
       if (canvasFlow.value) {
         await canvasFlow.value.loadFlow();
       }
@@ -250,7 +237,6 @@ const initialSetup = async () => {
     }
 
     initialLoadComplete.value = true;
-    console.log("Initial setup completed");
   } catch (error) {
     console.error("Error during initial setup:", error);
   } finally {
@@ -259,7 +245,6 @@ const initialSetup = async () => {
 };
 
 onMounted(async () => {
-  console.log("Component mounted, starting initialization");
   await initialSetup();
 });
 </script>

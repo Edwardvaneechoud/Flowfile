@@ -60,7 +60,6 @@ const startStreamingLogs = async () => {
 
     eventSource.onopen = () => {
       connectionStatus.value = "connected";
-      console.log("Log connection established");
     };
 
     eventSource.onmessage = (event) => {
@@ -137,7 +136,6 @@ const setupTokenRefresh = () => {
   tokenRefreshInterval = window.setInterval(
     async () => {
       if (eventSourceRef.value && !authService.hasValidToken()) {
-        console.log("Token expired, reconnecting log stream");
         stopStreamingLogs();
         await authService.getToken();
         startStreamingLogs();

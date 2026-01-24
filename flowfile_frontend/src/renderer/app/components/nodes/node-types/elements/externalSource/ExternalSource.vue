@@ -87,7 +87,6 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const loadTemplateValue = () => {
-  console.log(selectedExternalSource.value);
   if (selectedExternalSource.value === "sample_users") {
     sampleUsers.value = get_template_source_type("SAMPLE_USERS") as SampleUsers;
     if (nodeExternalSource.value) {

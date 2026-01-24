@@ -196,7 +196,6 @@ const handleItemClick = (columnName: string) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("loadNodeData from groupby");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeGraphSolver.value = nodeData.value?.setting_input as NodeGraphSolver;
   if (nodeData.value) {

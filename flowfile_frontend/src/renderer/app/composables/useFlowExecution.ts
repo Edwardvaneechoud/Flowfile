@@ -222,7 +222,6 @@ export function useFlowExecution(
         editorStore.setShowFlowResult(true);
         editorStore.updateLogViewerVisibility(true);
 
-        console.log("response data", response.data);
         const notificationConfig = createNotificationConfig(response.data);
         if (customSuccessMessage && response.data.success) {
           notificationConfig.message = customSuccessMessage;
@@ -308,7 +307,6 @@ export function useFlowExecution(
 
     // Check if already fetching this node
     if (isPollingActive(pollingKeySuffix)) {
-      console.log(`Node ${nodeId} fetch already in progress`);
       return;
     }
 

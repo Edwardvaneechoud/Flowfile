@@ -29,14 +29,9 @@ export async function shutdownService(port: number): Promise<void> {
     });
 
     clearTimeout(timeout);
-    console.log(`Successfully sent shutdown signal to port ${port}`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   } catch (error) {
-    if (axios.isAxiosError(error) && error.code === "ECONNREFUSED") {
-      console.log(`Service on port ${port} is already stopped`);
-    } else {
-      console.log(`Service on port ${port} shutdown timed out or failed`);
-    }
+    // Service already stopped or shutdown timed out - continue with cleanup
   }
 }
 
@@ -66,7 +61,6 @@ export function getResourceServicePath(resourceName: string): string {
 
   if (process.env.NODE_ENV === "development") {
     const projectRoot = findProjectRoot(app.getAppPath());
-    console.log(projectRoot);
     if (!projectRoot) {
       console.warn("Could not find project root directory");
       return "";
@@ -74,7 +68,6 @@ export function getResourceServicePath(resourceName: string): string {
 
     const devPath = join(projectRoot, "..", "services_dist", executableName);
     if (existsSync(devPath)) {
-      console.log(`Using development executable at: ${devPath}`);
       return devPath;
     }
     console.warn(`Development executable not found at: ${devPath}`);
@@ -86,7 +79,6 @@ export function getResourceServicePath(resourceName: string): string {
   const executablePath = join(basePath, executableName);
 
   if (existsSync(basePath) && existsSync(executablePath)) {
-    console.log(`Using production executable at: ${basePath}`);
     return executablePath;
   }
 
@@ -163,12 +155,9 @@ export function startProcess(
 ): Promise<ChildProcess | null> {
   return new Promise((resolve) => {
     if (!path) {
-      console.log(`No path provided for ${name}, skipping process start`);
       resolve(null);
       return;
     }
-
-    console.log(`Starting ${name} from ${path}`);
 
     try {
       const workingDirectory = path.endsWith(name) ? join(path, "..") : join(path, "../..");
@@ -181,13 +170,11 @@ export function startProcess(
       });
 
       if (!childProcess.pid) {
-        console.log(`Failed to start ${name}, continuing without it`);
         resolve(null);
         return;
       }
 
       childProcess.stdout?.on("data", (data) => {
-        console.log(`[${name} stdout]: ${data}`);
         onData?.(data.toString());
       });
 
@@ -221,7 +208,6 @@ export function startProcess(
 
         try {
           await axios.get(`http://127.0.0.1:${port}/docs`, { timeout: HEALTH_CHECK_TIMEOUT });
-          console.log(`${name} is responsive on port ${port} after ${elapsed}ms`);
           resolve(childProcess);
         } catch (error) {
           setTimeout(() => checkService(attempt + 1), HEALTH_CHECK_TIMEOUT);
@@ -229,7 +215,7 @@ export function startProcess(
       };
       setTimeout(() => checkService(1), HEALTH_CHECK_TIMEOUT);
     } catch (error) {
-      console.log(`Error starting ${name}:`, error);
+      console.error(`Error starting ${name}:`, error);
       resolve(null);
     }
   });
@@ -242,31 +228,16 @@ export async function startServices(retry = true): Promise<void> {
     const corePath = getResourceServicePath("flowfile_core");
     const workerPath = getResourceServicePath("flowfile_worker");
 
-    console.log(
-      `Starting services with paths - Core: ${corePath || "Not found"}, Worker: ${workerPath || "Not found"}`,
-    );
-
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
-      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
-        if (data.includes("Core server started")) {
-          console.log("Core process is ready");
-        }
-      }),
-      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
-        if (data.includes("Server started")) {
-          console.log("Worker process is ready");
-        }
-      }),
+      startProcessWithError("flowfile_core", corePath, CORE_PORT),
+      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT),
     ]);
 
     coreProcess = newCoreProcess;
     workerProcess = newWorkerProcess;
-
-    console.log("Service start attempts completed");
   } catch (error) {
     console.error("Error starting services:", error);
     if (retry) {
-      console.log("Retrying service startup...");
       await cleanupProcesses();
       return startServices(false);
     }
@@ -275,12 +246,10 @@ export async function startServices(retry = true): Promise<void> {
 
 export async function cleanupProcesses(): Promise<void> {
   if (cleanupInProgress) {
-    console.log("Cleanup already in progress...");
     return;
   }
 
   cleanupInProgress = true;
-  console.log("Starting cleanup process...");
 
   try {
     await Promise.race([
@@ -304,7 +273,6 @@ export async function cleanupProcesses(): Promise<void> {
 
         process.once("exit", () => {
           clearTimeout(forceKill);
-          console.log(`${name} process exited successfully`);
           resolve();
         });
 
@@ -331,17 +299,12 @@ export async function cleanupProcesses(): Promise<void> {
     workerProcess = null;
     coreProcess = null;
     cleanupInProgress = false;
-    console.log("Cleanup process completed");
   }
 }
 
 export function setupProcessMonitoring() {
   const monitorProcess = (process: ChildProcess | null, name: string) => {
     if (!process) return;
-
-    process.on("exit", (code) => {
-      console.log(`${name} exited with code ${code}`);
-    });
 
     process.on("error", (error) => {
       console.error(`${name} encountered an error:`, error);

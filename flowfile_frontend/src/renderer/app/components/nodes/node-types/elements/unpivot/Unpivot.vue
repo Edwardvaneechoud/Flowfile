@@ -162,7 +162,6 @@ const onDropInSection = (section: "index" | "value") => {
   if (draggedColumnName.value) {
     // Remove column from any existing assignments
     removeColumnIfExists(draggedColumnName.value);
-    console.log("section", unpivotInput.value.index_columns);
     // Assign the dragged column to the appropriate section
     if (
       section === "index" &&
@@ -245,7 +244,6 @@ const handleItemClick = (columnName: string) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("loadNodeData from unpivot ");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnpivot.value = nodeData.value?.setting_input as NodeUnpivot;
   if (nodeData.value) {
@@ -258,7 +256,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  console.log("loadNodeData from groupby");
 };
 
 const handleClickOutside = (event: MouseEvent) => {

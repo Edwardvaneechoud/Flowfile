@@ -1,5 +1,4 @@
 export const getNodeDataFromDf = (df: any, nodeId: number) => {
-  console.log(nodeId);
   const nodeData = df.drawflow.drawflow["Home"]["data"][nodeId];
   return nodeData || null;
 };

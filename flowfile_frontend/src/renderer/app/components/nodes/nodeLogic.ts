@@ -52,7 +52,6 @@ export async function getFlowSettings(flow_id: number): Promise<FlowSettings | n
 }
 
 export async function updateFlowSettings(flowSettings: FlowSettings): Promise<null> {
-  console.log(flowSettings);
   return FlowApi.updateFlowSettings(flowSettings);
 }
 
@@ -88,10 +87,9 @@ export const getNodeData = async (flow_id: number, node_id: number): Promise<Ref
 };
 
 export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
-  const response = await axios.post("update_settings", nodeSettings, {
+  await axios.post("update_settings", nodeSettings, {
     params: { node_type: node_type },
   });
-  console.log(response);
 };
 
 export async function deleteNode(flow_id: number, node_id: number): Promise<any> {

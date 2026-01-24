@@ -210,7 +210,6 @@ async function handleFetchData() {
     try {
       // Check if already fetching this node
       if (isPollingActive(`node_${currentNodeId.value}`)) {
-        console.log("Fetch already in progress for this node");
         return;
       }
 

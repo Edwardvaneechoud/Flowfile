@@ -379,8 +379,6 @@ const handleCreateAction = async (flowPath: string) => {
 
 const handleQuickCreateAction = async () => {
   const fileName = getPreviewFileName();
-  // Use temp storage path - you'll need to replace 'temp://' with your actual temp storage path
-  console.log("Creating flow with name:", fileName);
   try {
     const createdFlowId = await createFlow(null, fileName);
     modalVisibleForQuickCreate.value = false;
@@ -390,7 +388,6 @@ const handleQuickCreateAction = async () => {
     emit("refreshFlow");
   } catch (error) {
     console.error("Failed to create quick flow:", error);
-    // You might want to show an error message to the user here
   }
 };
 

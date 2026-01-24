@@ -110,7 +110,6 @@ export const useNodeStore = defineStore("node", {
       }
 
       try {
-        console.log("Getting node data");
         const data = await NodeApi.getNodeData(flowStore.flowId, nodeId);
         this.nodeData = data;
         this.isLoaded = true;
@@ -150,7 +149,6 @@ export const useNodeStore = defineStore("node", {
         return;
       }
 
-      console.log("Automatically pushing the node data");
       if (flowStore.flowId !== flowId) {
         flowStore.setFlowId(flowId);
       }
@@ -223,7 +221,6 @@ export const useNodeStore = defineStore("node", {
         this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
         return description;
       } catch (error) {
-        console.info("Error fetching node description:", error);
         if (this.nodeDescriptions[flowStore.flowId]?.[nodeId]) {
           console.warn("Using cached description due to API error");
           return this.nodeDescriptions[flowStore.flowId][nodeId];
@@ -239,9 +236,7 @@ export const useNodeStore = defineStore("node", {
         this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
         const result = await NodeApi.setNodeDescription(flowStore.flowId, nodeId, description);
 
-        if (result === true) {
-          console.log("Description updated successfully");
-        } else {
+        if (result !== true) {
           console.warn("Unexpected response:", result);
         }
       } catch (error: any) {
