@@ -554,15 +554,11 @@ export const useFlowStore = defineStore('flow', () => {
 
   /**
    * Update the node_reference for a node
-   * This updates the node-level node_reference (primary storage)
-   * and syncs to settings.node_reference for backward compatibility
    */
   function updateNodeReference(id: number, reference: string | undefined) {
     const node = nodes.value.get(id)
     if (node) {
-      // Update node-level node_reference (primary)
       node.node_reference = reference || undefined
-      // Also sync to settings for backward compatibility with flowfile_core
       if (node.settings) {
         (node.settings as NodeBase).node_reference = reference || undefined
       }
@@ -572,30 +568,24 @@ export const useFlowStore = defineStore('flow', () => {
 
   /**
    * Validate a node_reference (lowercase, no spaces, unique)
-   * Returns { valid: boolean, error: string | null }
    */
   function validateNodeReference(nodeId: number, reference: string): { valid: boolean; error: string | null } {
-    // Empty is always valid (uses default df_{node_id})
     if (!reference || reference === '') {
       return { valid: true, error: null }
     }
 
-    // Must be lowercase
     if (reference !== reference.toLowerCase()) {
       return { valid: false, error: 'Reference must be lowercase' }
     }
 
-    // No spaces
     if (/\s/.test(reference)) {
       return { valid: false, error: 'Reference cannot contain spaces' }
     }
 
-    // Must start with letter and contain only letters, numbers, underscores
     if (!/^[a-z][a-z0-9_]*$/.test(reference)) {
       return { valid: false, error: 'Reference must start with a letter and contain only lowercase letters, numbers, and underscores' }
     }
 
-    // Must be unique across all nodes
     for (const [id, node] of nodes.value) {
       if (id !== nodeId) {
         const existingRef = node.node_reference || (node.settings as NodeBase)?.node_reference

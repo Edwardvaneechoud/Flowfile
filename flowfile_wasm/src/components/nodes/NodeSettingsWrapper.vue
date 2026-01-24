@@ -1,9 +1,7 @@
 <template>
   <div class="node-settings-wrapper">
-    <!-- Node-specific settings slot -->
     <slot></slot>
 
-    <!-- General Settings Section -->
     <div class="general-settings-section">
       <div class="section-header" @click="isExpanded = !isExpanded">
         <span class="section-title">General Settings</span>
@@ -11,7 +9,6 @@
       </div>
 
       <div v-show="isExpanded" class="section-content">
-        <!-- Node Reference -->
         <div class="setting-group">
           <label class="setting-label">
             Node Reference
