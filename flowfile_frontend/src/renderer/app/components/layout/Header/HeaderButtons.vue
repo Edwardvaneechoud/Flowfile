@@ -1,29 +1,30 @@
 <template>
   <div class="action-buttons">
-    <button class="action-btn" @click="openSaveModal">
+    <button class="action-btn" data-tutorial="save-btn" @click="openSaveModal">
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForOpen = true">
+    <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
       <span class="material-icons btn-icon">folder_open</span>
       <span class="btn-text">Open</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForCreate = true">
+    <button class="action-btn" data-tutorial="create-btn" @click="modalVisibleForCreate = true">
       <span class="material-icons btn-icon">add_circle_outline</span>
       <span class="btn-text">Create</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForQuickCreate = true">
+    <button class="action-btn" data-tutorial="quick-create-btn" @click="handleQuickCreateClick">
       <span class="material-icons btn-icon">flash_on</span>
       <span class="btn-text">Quick Create</span>
     </button>
-    <button class="action-btn" @click="openSettingsModal">
+    <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
     </button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
+    <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
     <button
       class="action-btn"
       :class="{ active: nodeStore.showCodeGenerator }"
+      data-tutorial="generate-code-btn"
       title="Generate Python Code (Ctrl+G)"
       @click="toggleCodeGenerator"
     >
@@ -32,7 +33,12 @@
     </button>
   </div>
 
-  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%" custom-class="high-z-index-dialog">
+  <el-dialog
+    v-model="modalVisibleForOpen"
+    title="Select or Enter a Flow File"
+    width="70%"
+    custom-class="high-z-index-dialog"
+  >
     <file-browser
       :allowed-file-types="FLOWFILE_EXTENSIONS"
       mode="open"
@@ -41,7 +47,12 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%" custom-class="high-z-index-dialog">
+  <el-dialog
+    v-model="modalVisibleForSave"
+    title="Select save location"
+    width="70%"
+    custom-class="high-z-index-dialog"
+  >
     <file-browser
       ref="fileBrowserRef"
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
@@ -53,7 +64,12 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%" custom-class="high-z-index-dialog">
+  <el-dialog
+    v-model="modalVisibleForCreate"
+    title="Select save location"
+    width="70%"
+    custom-class="high-z-index-dialog"
+  >
     <file-browser
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
@@ -63,7 +79,12 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px" custom-class="high-z-index-dialog">
+  <el-dialog
+    v-model="modalVisibleForQuickCreate"
+    title="Create New Flow"
+    width="400px"
+    custom-class="high-z-index-dialog"
+  >
     <div class="quick-create-modal">
       <div class="form-group">
         <label for="flow-name">Flow Name (optional):</label>
@@ -82,12 +103,22 @@
     <template #footer>
       <span class="dialog-footer">
         <el-button @click="modalVisibleForQuickCreate = false">Cancel</el-button>
-        <el-button type="primary" @click="handleQuickCreateAction">Create Flow</el-button>
+        <el-button
+          type="primary"
+          data-tutorial="create-flow-confirm-btn"
+          @click="handleQuickCreateAction"
+          >Create Flow</el-button
+        >
       </span>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%" custom-class="high-z-index-dialog">
+  <el-dialog
+    v-model="modalVisibleForSettings"
+    title="Execution Settings"
+    width="30%"
+    custom-class="high-z-index-dialog"
+  >
     <div v-if="flowSettings">
       <div class="settings-modal-content">
         <div class="form-group">
@@ -143,6 +174,7 @@ import { FileInfo } from "../../common/FileBrowser/types";
 import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
+import { useTutorialStore } from "../../../stores/tutorial-store";
 import {
   createFlow,
   getFlowSettings,
@@ -155,6 +187,7 @@ import {
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const tutorialStore = useTutorialStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -166,6 +199,17 @@ const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 const quickCreateName = ref<string>("");
+
+// Handle Quick Create button click - opens modal and advances tutorial if active
+function handleQuickCreateClick() {
+  modalVisibleForQuickCreate.value = true;
+  // Advance tutorial if we're on the "click-quick-create" step
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "click-quick-create") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 200);
+  }
+}
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
@@ -266,6 +310,12 @@ const saveFlowAction = async (flowPath: string) => {
     await saveFlow(nodeStore.flow_id, flowPath);
     ElMessage.success("Flow saved successfully");
     modalVisibleForSave.value = false;
+    // Advance tutorial if we're on the "save-flow" step
+    if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
+      setTimeout(() => {
+        tutorialStore.nextStep();
+      }, 300);
+    }
   } catch (error: any) {
     ElMessage.error({
       message: error.message || "Failed to save flow",
@@ -302,6 +352,12 @@ const runFlow = () => {
 
 const toggleCodeGenerator = () => {
   nodeStore.toggleCodeGenerator();
+  // Advance tutorial if we're on the "generate-code" step
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "generate-code") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
 };
 
 const handleCreateAction = async (flowPath: string) => {

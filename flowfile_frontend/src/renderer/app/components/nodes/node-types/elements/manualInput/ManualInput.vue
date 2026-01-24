@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeManualInput">
-    <generic-node-settings v-model="nodeManualInput">
+    <generic-node-settings
+      v-model="nodeManualInput"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="settings-section">
         <!-- Table Controls - Moved to top for better visibility -->
         <div class="controls-section controls-top">
@@ -120,7 +124,8 @@
 
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,
@@ -154,6 +159,50 @@ let nextColumnId = 1;
 let nextRowId = 1;
 
 const dataTypes = nodeStore.getDataTypes();
+
+/**
+ * Infer the best data type for a column based on its values
+ * Checks all values and returns the most appropriate type
+ */
+const inferDataType = (values: unknown[]): string => {
+  // Filter out null, undefined, and empty strings
+  const validValues = values.filter((v) => v !== null && v !== undefined && v !== "");
+
+  if (validValues.length === 0) {
+    return "String";
+  }
+
+  // Check if all values are booleans
+  const allBooleans = validValues.every(
+    (v) => typeof v === "boolean" || v === "true" || v === "false",
+  );
+  if (allBooleans) {
+    return "Boolean";
+  }
+
+  // Check if all values are numeric
+  const allNumeric = validValues.every((v) => {
+    if (typeof v === "number") return true;
+    if (typeof v === "string") {
+      const parsed = Number(v);
+      return !isNaN(parsed) && v.trim() !== "";
+    }
+    return false;
+  });
+
+  if (allNumeric) {
+    // Check if all numeric values are integers
+    const allIntegers = validValues.every((v) => {
+      const num = typeof v === "number" ? v : Number(v);
+      return Number.isInteger(num);
+    });
+
+    return allIntegers ? "Int64" : "Float64";
+  }
+
+  return "String";
+};
+
 const rawData = computed(() => {
   return rows.value.map((row) => {
     const obj: Record<string, string> = {};
@@ -180,6 +229,17 @@ const rawDataFormat = computed((): RawDataFormat => {
   };
 });
 
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeManualInput,
+  onBeforeSave: () => {
+    if (nodeManualInput.value) {
+      nodeManualInput.value.raw_data_format = rawDataFormat.value;
+    }
+    return true;
+  },
+});
+
 const initializeEmptyTable = () => {
   rows.value = [{ id: 1, values: { 1: "" } }];
   columns.value = [{ id: 1, name: "Column 1", dataType: "String" }];
@@ -187,17 +247,38 @@ const initializeEmptyTable = () => {
   nextRowId = 2;
 };
 
-const populateTableFromData = (data: Record<string, string>[]) => {
+const populateTableFromData = (data: Record<string, unknown>[]) => {
   rows.value = [];
   columns.value = [];
 
+  if (data.length === 0) {
+    return;
+  }
+
+  // Get column names from the first row
+  const columnNames = Object.keys(data[0]);
+
+  // Collect all values for each column to infer types
+  const columnValues: Record<string, unknown[]> = {};
+  columnNames.forEach((name) => {
+    columnValues[name] = data.map((item) => item[name]);
+  });
+
+  // Create columns with inferred types
+  columnNames.forEach((name, colIndex) => {
+    const inferredType = inferDataType(columnValues[name]);
+    columns.value.push({
+      id: colIndex + 1,
+      name: name,
+      dataType: inferredType,
+    });
+  });
+
+  // Populate rows
   data.forEach((item, rowIndex) => {
     const row: Row = { id: rowIndex + 1, values: {} };
-    Object.keys(item).forEach((key, colIndex) => {
-      if (rowIndex === 0) {
-        columns.value.push({ id: colIndex + 1, name: key, dataType: "String" });
-      }
-      row.values[colIndex + 1] = item[key];
+    columnNames.forEach((key, colIndex) => {
+      row.values[colIndex + 1] = String(item[key] ?? "");
     });
     rows.value.push(row);
   });
@@ -360,15 +441,6 @@ const updateTableFromRawData = () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeManualInput.value) {
-    // Always save in the new format
-    nodeManualInput.value.raw_data_format = rawDataFormat.value;
-    await nodeStore.updateSettings(nodeManualInput);
-  }
-  dataLoaded.value = false;
-};
-
 // Watchers
 watch(rawData, (newVal) => {
   rawDataString.value = JSON.stringify(newVal, null, 2);
@@ -377,6 +449,7 @@ watch(rawData, (newVal) => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

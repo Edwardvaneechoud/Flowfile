@@ -1,7 +1,7 @@
 import io
 import logging
 import os
-from base64 import encodebytes
+from base64 import b64encode
 from collections.abc import Callable
 from logging import Logger
 from multiprocessing import Array, Queue, Value
@@ -56,7 +56,8 @@ def fuzzy_join_task(
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records after fuzzy match: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Encode to base64 string for JSON serialization in status response
+    queue.put(b64encode(lf.serialize()).decode('ascii'))
 
 
 def process_and_cache(
@@ -126,7 +127,8 @@ def store(
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Encode to base64 string for JSON serialization in status response
+    queue.put(b64encode(lf.serialize()).decode('ascii'))
 
 
 def calculate_schema_logic(
@@ -432,4 +434,5 @@ def generic_task(
     lf = pl.scan_ipc(file_path)
     number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
-    queue.put(encodebytes(lf.serialize()))
+    # Encode to base64 string for JSON serialization in status response
+    queue.put(b64encode(lf.serialize()).decode('ascii'))

@@ -1,11 +1,27 @@
-from base64 import decodebytes
-from typing import Any, Literal
+from base64 import b64decode, b64encode
+from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match import FuzzyMapping
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+
+
+# Custom type for bytes that serializes to/from base64 string in JSON
+def _decode_bytes(v: Any) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    if isinstance(v, str):
+        return b64decode(v)
+    raise ValueError(f"Expected bytes or base64 string, got {type(v)}")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_bytes),
+    PlainSerializer(lambda x: b64encode(x).decode('ascii'), return_type=str),
+]
 
 OperationType = Literal[
     "store",
@@ -21,12 +37,13 @@ ResultType = Literal["polars", "other"]
 
 
 class PolarsOperation(BaseModel):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     flowfile_flow_id: int | None = 1
     flowfile_node_id: int | str | None = -1
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
 
 class PolarsScript(PolarsOperation):
@@ -40,7 +57,7 @@ class PolarsScriptSample(PolarsScript):
 
 
 class PolarsScriptWrite(BaseModel):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     data_type: str
     path: str
     write_mode: str
@@ -50,14 +67,16 @@ class PolarsScriptWrite(BaseModel):
     flowfile_node_id: int | str | None = -1
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
 
 class DatabaseScriptWrite(DatabaseWriteSettings):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
     def get_database_write_settings(self) -> DatabaseWriteSettings:
         """
@@ -75,10 +94,11 @@ class DatabaseScriptWrite(DatabaseWriteSettings):
 
 
 class CloudStorageScriptWrite(CloudStorageWriteSettings):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
 
     def polars_serializable_object(self):
-        return decodebytes(self.operation)
+        # Operation is raw bytes (auto-decoded from base64 if received as JSON)
+        return self.operation
 
     def get_cloud_storage_write_settings(self) -> CloudStorageWriteSettings:
         """

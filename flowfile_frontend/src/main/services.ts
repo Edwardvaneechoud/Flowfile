@@ -3,7 +3,14 @@ import { join, dirname } from "path";
 import { ChildProcess, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
-import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT, SERVICE_START_TIMEOUT, HEALTH_CHECK_TIMEOUT } from "./constants";
+import {
+  SHUTDOWN_TIMEOUT,
+  FORCE_KILL_TIMEOUT,
+  WORKER_PORT,
+  CORE_PORT,
+  SERVICE_START_TIMEOUT,
+  HEALTH_CHECK_TIMEOUT,
+} from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
 export const shutdownState = { isShuttingDown: false };
@@ -196,11 +203,13 @@ export function startProcess(
       const startTime = Date.now();
       const maxAttempts = Math.floor(SERVICE_START_TIMEOUT / HEALTH_CHECK_TIMEOUT);
 
-      const checkService = async (attempt: number = 1) => {
+      const checkService = async (attempt = 1) => {
         const elapsed = Date.now() - startTime;
 
         if (attempt > maxAttempts || elapsed > SERVICE_START_TIMEOUT) {
-          console.error(`${name} failed to become responsive after ${elapsed}ms (${attempt} attempts)`);
+          console.error(
+            `${name} failed to become responsive after ${elapsed}ms (${attempt} attempts)`,
+          );
           try {
             childProcess.kill("SIGTERM");
           } catch {

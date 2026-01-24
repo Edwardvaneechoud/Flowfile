@@ -12,8 +12,10 @@
 <script setup lang="ts">
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowExecution } from "../../../composables/useFlowExecution";
+import { useTutorialStore } from "../../../stores/tutorial-store";
 
 const nodeStore = useNodeStore();
+const tutorialStore = useTutorialStore();
 
 const props = defineProps({
   flowId: { type: Number, required: true },
@@ -32,11 +34,28 @@ const props = defineProps({
 });
 
 // Use the composable
-const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
-  useFlowExecution(props.flowId, props.pollingConfig, {
-    persistPolling: props.persistPolling,
-    pollingKey: `run_button_${props.flowId}`,
-  });
+const {
+  runFlow: executeFlow,
+  cancelFlow,
+  showNotification,
+  startPolling,
+  stopPolling,
+  checkRunStatus,
+} = useFlowExecution(props.flowId, props.pollingConfig, {
+  persistPolling: props.persistPolling,
+  pollingKey: `run_button_${props.flowId}`,
+});
+
+// Wrapper to also advance tutorial when run is clicked
+const runFlow = () => {
+  executeFlow();
+  // Advance tutorial if we're on the "run-flow" step
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "run-flow") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 500);
+  }
+};
 
 defineEmits(["logs-start", "logs-stop"]);
 
@@ -77,7 +96,7 @@ defineExpose({
 .button-group .el-button:first-child:not([disabled]) {
   background-color: var(--primary-blue) !important;
   border: 1px solid var(--primary-blue-light) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
 }
 
 /* Run button - hover state */
@@ -90,7 +109,7 @@ defineExpose({
 .button-group .el-button:first-child[disabled] {
   background-color: var(--color-gray-400) !important;
   border: 1px solid var(--color-gray-400) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
   cursor: not-allowed;
   opacity: 0.7;
 }
@@ -99,7 +118,7 @@ defineExpose({
 .button-group .el-button:nth-child(2) {
   background-color: var(--color-danger) !important;
   border: 1px solid var(--color-danger) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
 }
 
 /* Cancel button - hover state */

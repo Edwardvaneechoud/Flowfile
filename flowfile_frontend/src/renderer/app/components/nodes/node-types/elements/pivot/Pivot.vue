@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodePivot" class="listbox-wrapper">
-    <generic-node-settings v-model="nodePivot">
+    <generic-node-settings
+      v-model="nodePivot"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul class="listbox">
           <li
@@ -82,13 +86,20 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { PivotInput, NodePivot, AggOption } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import PivotValidation from "./PivotValidation.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodePivot = ref<NodePivot | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodePivot,
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -116,8 +127,6 @@ const pivotInput = ref<PivotInput>({
   value_col: null,
   aggregations: [],
 });
-
-const nodePivot = ref<NodePivot | null>(null);
 
 const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
 
@@ -255,15 +264,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (pivotInput.value) {
-    nodeStore.updateSettings(nodePivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

@@ -7,7 +7,7 @@ from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Literal, TypeVar, Union
+from typing import Any, Literal, TypeVar
 
 import polars as pl
 
@@ -172,7 +172,7 @@ class FlowDataEngine:
     name: str = None
     number_of_records: int = None
     errors: list = None
-    _schema: list["FlowfileColumn"] | None = None
+    _schema: list[FlowfileColumn] | None = None
 
     # Configuration attributes
     _optimize_memory: bool = False
@@ -205,13 +205,11 @@ class FlowDataEngine:
 
     def __init__(
         self,
-        raw_data: Union[
-            list[dict], list[Any], dict[str, Any], "ParquetFile", pl.DataFrame, pl.LazyFrame, input_schema.RawData
-        ] = None,
+        raw_data: list[dict] | list[Any] | dict[str, Any] | ParquetFile | pl.DataFrame | pl.LazyFrame | input_schema.RawData = None,
         path_ref: str = None,
         name: str = None,
         optimize_memory: bool = True,
-        schema: list["FlowfileColumn"] | list[str] | pl.Schema = None,
+        schema: list[FlowfileColumn] | list[str] | pl.Schema = None,
         number_of_records: int = None,
         calculate_schema_stats: bool = False,
         streamable: bool = True,
@@ -524,7 +522,7 @@ class FlowDataEngine:
     @classmethod
     def from_cloud_storage_obj(
         cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
 
         This method supports reading from various cloud storage providers like AWS S3,
@@ -615,7 +613,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Reads Iceberg table(s) from cloud storage."""
         raise NotImplementedError("Failed to read Iceberg table from cloud storage: Not yet implemented")
 
@@ -626,7 +624,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         is_directory: bool,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Reads Parquet file(s) from cloud storage."""
         try:
             # Use scan_parquet for lazy evaluation
@@ -664,7 +662,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Reads a Delta Lake table from cloud storage."""
         try:
             logger.info("Reading Delta file from cloud storage...")
@@ -695,7 +693,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Reads CSV file(s) from cloud storage."""
         try:
             scan_kwargs = {
@@ -738,7 +736,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         is_directory: bool,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Reads JSON file(s) from cloud storage."""
         try:
             if is_directory:
@@ -829,6 +827,7 @@ class FlowDataEngine:
         if self.lazy and isinstance(df, pl.DataFrame):
             raise Exception("Cannot set a non-lazy dataframe to a lazy flowfile")
         self._data_frame = df
+        self._schema = None
 
     @staticmethod
     def _create_schema_stats_from_pl_schema(pl_schema: pl.Schema) -> list[dict]:
@@ -976,7 +975,7 @@ class FlowDataEngine:
 
     def do_group_by(
         self, group_by_input: transform_schemas.GroupByInput, calculate_schema_stats: bool = True
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Performs a group-by operation on the DataFrame.
 
         Args:
@@ -1016,7 +1015,7 @@ class FlowDataEngine:
             calculate_schema_stats=calculate_schema_stats,
         )
 
-    def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> "FlowDataEngine":
+    def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.
 
         Args:
@@ -1035,7 +1034,7 @@ class FlowDataEngine:
 
     def change_column_types(
         self, transforms: list[transform_schemas.SelectInput], calculate_schema: bool = False
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Changes the data type of one or more columns.
 
         Args:
@@ -1130,7 +1129,7 @@ class FlowDataEngine:
             return self.data_frame.to_dict(as_series=False)
 
     @classmethod
-    def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":
+    def create_from_external_source(cls, external_source: ExternalDataSource) -> FlowDataEngine:
         """Creates a FlowDataEngine from an external data source.
 
         Args:
@@ -1150,7 +1149,7 @@ class FlowDataEngine:
         return ff
 
     @classmethod
-    def create_from_sql(cls, sql: str, conn: Any) -> "FlowDataEngine":
+    def create_from_sql(cls, sql: str, conn: Any) -> FlowDataEngine:
         """Creates a FlowDataEngine by executing a SQL query.
 
         Args:
@@ -1163,7 +1162,7 @@ class FlowDataEngine:
         return cls(pl.read_sql(sql, conn))
 
     @classmethod
-    def create_from_schema(cls, schema: list[FlowfileColumn]) -> "FlowDataEngine":
+    def create_from_schema(cls, schema: list[FlowfileColumn]) -> FlowDataEngine:
         """Creates an empty FlowDataEngine from a schema definition.
 
         Args:
@@ -1180,7 +1179,7 @@ class FlowDataEngine:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTable) -> "FlowDataEngine":
+    def create_from_path(cls, received_table: input_schema.ReceivedTable) -> FlowDataEngine:
         """Creates a FlowDataEngine from a local file path.
 
         Supports various file types like CSV, Parquet, and Excel.
@@ -1208,7 +1207,7 @@ class FlowDataEngine:
         return flow_file
 
     @classmethod
-    def create_random(cls, number_of_records: int = 1000) -> "FlowDataEngine":
+    def create_random(cls, number_of_records: int = 1000) -> FlowDataEngine:
         """Creates a FlowDataEngine with randomly generated data.
 
         Useful for testing and examples.
@@ -1222,7 +1221,7 @@ class FlowDataEngine:
         return cls(create_fake_data(number_of_records))
 
     @classmethod
-    def generate_enumerator(cls, length: int = 1000, output_name: str = "output_column") -> "FlowDataEngine":
+    def generate_enumerator(cls, length: int = 1000, output_name: str = "output_column") -> FlowDataEngine:
         """Generates a FlowDataEngine with a single column containing a sequence of integers.
 
         Args:
@@ -1285,7 +1284,7 @@ class FlowDataEngine:
 
         return flow_file_columns
 
-    def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowDataEngine":
+    def split(self, split_input: transform_schemas.TextToRowsInput) -> FlowDataEngine:
         """Splits a column's text values into multiple rows based on a delimiter.
 
         This operation is often referred to as "exploding" the DataFrame, as it
@@ -1312,7 +1311,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(df)
 
-    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowDataEngine":
+    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> FlowDataEngine:
         """Converts the DataFrame from a wide to a long format.
 
         This is the inverse of a pivot operation, taking columns and transforming
@@ -1336,7 +1335,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowDataEngine":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.
 
         Args:
@@ -1407,7 +1406,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(df, calculate_schema_stats=False)
 
-    def do_filter(self, predicate: str) -> "FlowDataEngine":
+    def do_filter(self, predicate: str) -> FlowDataEngine:
         """Filters rows based on a predicate expression.
 
         Args:
@@ -1426,7 +1425,7 @@ class FlowDataEngine:
         df = self.data_frame.filter(f)
         return FlowDataEngine(df, schema=self.schema, streamable=self._streamable)
 
-    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
+    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a record ID (row number) column to the DataFrame.
 
         Can generate a simple sequential ID or a grouped ID that resets for
@@ -1443,7 +1442,7 @@ class FlowDataEngine:
             return self._add_grouped_record_id(record_id_settings)
         return self._add_simple_record_id(record_id_settings)
 
-    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
+    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a record ID column with grouping."""
         select_cols = [pl.col(record_id_settings.output_column_name)] + [pl.col(c) for c in self.columns]
 
@@ -1464,7 +1463,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(df, schema=output_schema)
 
-    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
+    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a simple sequential record ID column."""
         df = self.data_frame.with_row_index(record_id_settings.output_column_name, record_id_settings.offset)
 
@@ -1502,7 +1501,7 @@ class FlowDataEngine:
         """Returns a string representation of the FlowDataEngine."""
         return f"flow data engine\n{self.data_frame.__repr__()}"
 
-    def __call__(self) -> "FlowDataEngine":
+    def __call__(self) -> FlowDataEngine:
         """Makes the class instance callable, returning itself."""
         return self
 
@@ -1510,7 +1509,7 @@ class FlowDataEngine:
         """Returns the number of records in the table."""
         return self.number_of_records if self.number_of_records >= 0 else self.get_number_of_records()
 
-    def cache(self) -> "FlowDataEngine":
+    def cache(self) -> FlowDataEngine:
         """Caches the current DataFrame to disk and updates the internal reference.
 
         This triggers a background process to write the current LazyFrame's result
@@ -1565,7 +1564,7 @@ class FlowDataEngine:
             df = self.collect()
         return df.to_dicts()
 
-    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> "FlowDataEngine":
+    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> FlowDataEngine:
         """Internal method to get a sample of the data."""
         if not self.lazy:
             df = self.data_frame.lazy()
@@ -1589,7 +1588,7 @@ class FlowDataEngine:
         shuffle: bool = False,
         seed: int = None,
         execution_location: ExecutionLocationsLiteral | None = None,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Gets a sample of rows from the DataFrame.
 
         Args:
@@ -1628,7 +1627,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(sample_df, schema=self.schema)
 
-    def get_subset(self, n_rows: int = 100) -> "FlowDataEngine":
+    def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
         """Gets the first `n_rows` from the DataFrame.
 
         Args:
@@ -1644,7 +1643,7 @@ class FlowDataEngine:
 
     def iter_batches(
         self, batch_size: int = 1000, columns: list | tuple | str = None
-    ) -> Generator["FlowDataEngine", None, None]:
+    ) -> Generator[FlowDataEngine, None, None]:
         """Iterates over the DataFrame in batches.
 
         Args:
@@ -1665,7 +1664,7 @@ class FlowDataEngine:
     def start_fuzzy_join(
         self,
         fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-        other: "FlowDataEngine",
+        other: FlowDataEngine,
         file_ref: str,
         flow_id: int = -1,
         node_id: int | str = -1,
@@ -1704,7 +1703,7 @@ class FlowDataEngine:
     def fuzzy_join_external(
         self,
         fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-        other: "FlowDataEngine",
+        other: FlowDataEngine,
         file_ref: str = None,
         flow_id: int = -1,
         node_id: int = -1,
@@ -1730,9 +1729,9 @@ class FlowDataEngine:
     def fuzzy_join(
         self,
         fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-        other: "FlowDataEngine",
+        other: FlowDataEngine,
         node_logger: NodeLogger = None,
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
         left_df, right_df = prepare_for_fuzzy_match(
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
@@ -1749,8 +1748,8 @@ class FlowDataEngine:
         cross_join_input: transform_schemas.CrossJoinInput,
         auto_generate_selection: bool,
         verify_integrity: bool,
-        other: "FlowDataEngine",
-    ) -> "FlowDataEngine":
+        other: FlowDataEngine,
+    ) -> FlowDataEngine:
         """Performs a cross join with another DataFrame.
 
         A cross join produces the Cartesian product of the two DataFrames.
@@ -1804,8 +1803,8 @@ class FlowDataEngine:
         join_input: transform_schemas.JoinInput,
         auto_generate_selection: bool,
         verify_integrity: bool,
-        other: "FlowDataEngine",
-    ) -> "FlowDataEngine":
+        other: FlowDataEngine,
+    ) -> FlowDataEngine:
         """Performs a standard SQL-style join with another DataFrame."""
         # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
@@ -1872,7 +1871,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=0, streamable=False)
 
-    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowDataEngine":
+    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> FlowDataEngine:
         """Solves a graph problem represented by 'from' and 'to' columns.
 
         This is used for operations like finding connected components in a graph.
@@ -1891,7 +1890,7 @@ class FlowDataEngine:
         )
         return FlowDataEngine(lf)
 
-    def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowDataEngine":
+    def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
         """Adds a new column with the provided values.
 
         Args:
@@ -1905,7 +1904,7 @@ class FlowDataEngine:
             col_name = "new_values"
         return FlowDataEngine(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
 
-    def get_record_count(self) -> "FlowDataEngine":
+    def get_record_count(self) -> FlowDataEngine:
         """Returns a new FlowDataEngine with a single column 'number_of_records'
         containing the total number of records.
 
@@ -1914,7 +1913,7 @@ class FlowDataEngine:
         """
         return FlowDataEngine(self.data_frame.select(pl.len().alias("number_of_records")))
 
-    def assert_equal(self, other: "FlowDataEngine", ordered: bool = True, strict_schema: bool = False):
+    def assert_equal(self, other: FlowDataEngine, ordered: bool = True, strict_schema: bool = False):
         """Asserts that this DataFrame is equal to another.
 
         Useful for testing.
@@ -2083,7 +2082,7 @@ class FlowDataEngine:
             [transform_schemas.SelectInput(old_name=c.name, data_type=c.data_type) for c in self.schema]
         )
 
-    def select_columns(self, list_select: list[str] | tuple[str] | str) -> "FlowDataEngine":
+    def select_columns(self, list_select: list[str] | tuple[str] | str) -> FlowDataEngine:
         """Selects a subset of columns from the DataFrame.
 
         Args:
@@ -2106,7 +2105,7 @@ class FlowDataEngine:
             streamable=self._streamable,
         )
 
-    def drop_columns(self, columns: list[str]) -> "FlowDataEngine":
+    def drop_columns(self, columns: list[str]) -> FlowDataEngine:
         """Drops specified columns from the DataFrame.
 
         Args:
@@ -2123,7 +2122,7 @@ class FlowDataEngine:
             self.data_frame.select(cols_for_select), number_of_records=self.number_of_records, schema=new_schema
         )
 
-    def reorganize_order(self, column_order: list[str]) -> "FlowDataEngine":
+    def reorganize_order(self, column_order: list[str]) -> FlowDataEngine:
         """Reorganizes columns into a specified order.
 
         Args:
@@ -2138,7 +2137,7 @@ class FlowDataEngine:
 
     def apply_flowfile_formula(
         self, func: str, col_name: str, output_data_type: pl.DataType = None
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Applies a formula to create a new column or transform an existing one.
 
         Args:
@@ -2157,7 +2156,7 @@ class FlowDataEngine:
 
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
-    def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> "FlowDataEngine":
+    def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies an SQL-style formula using `pl.sql_expr`.
 
         Args:
@@ -2178,7 +2177,7 @@ class FlowDataEngine:
 
     def output(
         self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = True
-    ) -> "FlowDataEngine":
+    ) -> FlowDataEngine:
         """Writes the DataFrame to an output file.
 
         Can execute the write operation locally or in a remote worker process.
@@ -2222,7 +2221,7 @@ class FlowDataEngine:
             logger.info("Finished writing output")
         return self
 
-    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowDataEngine":
+    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> FlowDataEngine:
         """Gets the unique rows from the DataFrame.
 
         Args:
@@ -2236,7 +2235,7 @@ class FlowDataEngine:
             return FlowDataEngine(self.data_frame.unique())
         return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
 
-    def concat(self, other: Iterable["FlowDataEngine"] | "FlowDataEngine") -> "FlowDataEngine":
+    def concat(self, other: Iterable[FlowDataEngine] | FlowDataEngine) -> FlowDataEngine:
         """Concatenates this DataFrame with one or more other DataFrames.
 
         Args:
@@ -2251,7 +2250,7 @@ class FlowDataEngine:
         dfs: list[pl.LazyFrame] | list[pl.DataFrame] = [self.data_frame] + [flt.data_frame for flt in other]
         return FlowDataEngine(pl.concat(dfs, how="diagonal_relaxed"))
 
-    def do_select(self, select_inputs: transform_schemas.SelectInputs, keep_missing: bool = True) -> "FlowDataEngine":
+    def do_select(self, select_inputs: transform_schemas.SelectInputs, keep_missing: bool = True) -> FlowDataEngine:
         """Performs a complex column selection, renaming, and reordering operation.
 
         Args:
@@ -2330,7 +2329,7 @@ class FlowDataEngine:
         return cls(external_fetcher.get_result())
 
 
-def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowDataEngine":
+def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowDataEngine:
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 
     This function takes a string of Python code that uses Polars and executes it.

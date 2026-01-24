@@ -246,6 +246,7 @@ const isErrorLine = (line: string): boolean => {
   padding: 8px;
   background-color: var(--color-gray-800);
   border-bottom: 1px solid var(--color-border-primary);
+  opacity: 0.95;
   position: sticky;
   top: 0;
   z-index: 10; /* Ensures it stays above the logs */

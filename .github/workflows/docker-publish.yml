@@ -105,7 +105,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=sha-
 
       - name: Build and push by digest
         id: build
@@ -165,7 +165,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=sha-
 
       - name: Create manifest list and push
         working-directory: /tmp/digests/${{ matrix.image }}
