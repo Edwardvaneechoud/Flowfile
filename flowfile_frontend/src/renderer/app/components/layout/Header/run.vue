@@ -34,11 +34,17 @@ const props = defineProps({
 });
 
 // Use the composable
-const { runFlow: executeFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
-  useFlowExecution(props.flowId, props.pollingConfig, {
-    persistPolling: props.persistPolling,
-    pollingKey: `run_button_${props.flowId}`,
-  });
+const {
+  runFlow: executeFlow,
+  cancelFlow,
+  showNotification,
+  startPolling,
+  stopPolling,
+  checkRunStatus,
+} = useFlowExecution(props.flowId, props.pollingConfig, {
+  persistPolling: props.persistPolling,
+  pollingKey: `run_button_${props.flowId}`,
+});
 
 // Wrapper to also advance tutorial when run is clicked
 const runFlow = () => {

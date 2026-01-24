@@ -1,7 +1,9 @@
 import { createI18n } from "vue-i18n";
 
 // Explicitly cast the type of the imported modules as JSON
-const fileNameToLocaleModuleDict = import.meta.globEager("./locales/*.json") as {
+const fileNameToLocaleModuleDict = import.meta.glob("./locales/*.json", {
+  eager: true,
+}) as {
   [key: string]: { default: Record<string, string> };
 };
 

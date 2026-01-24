@@ -255,7 +255,11 @@ onBeforeUnmount(() => {
   height: 45px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, var(--color-gradient-purple-start) 0%, var(--color-gradient-purple-end) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-gradient-purple-start) 0%,
+    var(--color-gradient-purple-end) 100%
+  );
   box-shadow: var(--shadow-md);
   cursor: move;
   display: flex;
@@ -393,7 +397,12 @@ onBeforeUnmount(() => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, var(--color-focus-ring-purple-light), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-focus-ring-purple-light),
+    transparent
+  );
   transition: left 0.5s;
 }
 
@@ -409,12 +418,20 @@ onBeforeUnmount(() => {
 
 /* Accent button style for Reset Layout Graph */
 .control-btn.accent {
-  background: linear-gradient(135deg, var(--color-focus-ring-purple-light) 0%, var(--color-focus-ring-purple-light) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-focus-ring-purple-light) 0%,
+    var(--color-focus-ring-purple-light) 100%
+  );
   border-color: var(--color-gradient-purple-end);
 }
 
 .control-btn.accent:hover {
-  background: linear-gradient(135deg, var(--color-focus-ring-purple) 0%, var(--color-focus-ring-purple) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-focus-ring-purple) 0%,
+    var(--color-focus-ring-purple) 100%
+  );
   border-color: var(--color-gradient-purple-start);
 }
 
