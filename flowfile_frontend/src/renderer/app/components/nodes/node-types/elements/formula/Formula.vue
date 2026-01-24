@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeFormula" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeFormula">
+    <generic-node-settings
+      v-model="nodeFormula"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div v-if="nodeStore.is_loaded">
         <div v-if="formulaInput && nodeFormula" class="selector-container">
           <DropDownGeneric
@@ -31,7 +35,8 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
 import { createFormulaNode } from "./formula";
@@ -43,6 +48,19 @@ import { NodeFormula, FormulaInput } from "../../../baseNode/nodeInput";
 const showEditor = ref<boolean>(false);
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
+const nodeFormula = ref<NodeFormula | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeFormula,
+  onBeforeSave: () => {
+    if (!nodeFormula.value || !formulaInput.value) {
+      return false;
+    }
+    nodeFormula.value.function.function = nodeStore.inputCode;
+    return true;
+  },
+});
 
 interface OutputColumnSelectorType {
   selectedValue: string;
@@ -56,7 +74,6 @@ const outputColumnSelector = ref<OutputColumnSelectorType>({
   selectedValue: "",
 });
 const editorChild = ref<EditorChildType | null>(null);
-const nodeFormula = ref<NodeFormula | null>(null);
 const formulaInput = ref<FormulaInput | null>(null);
 const dataTypes = [...nodeStore.getDataTypes(), "Auto"];
 const nodeData = ref<null | NodeData>(null);
@@ -78,18 +95,7 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const pushNodeData = async () => {
-  if (!nodeFormula.value || !formulaInput.value) {
-    return;
-  }
-  nodeFormula.value.is_setup = true;
-  nodeFormula.value.function.function = nodeStore.inputCode;
-  nodeStore.updateSettings(nodeFormula);
-  showEditor.value = false;
-  dataLoaded.value = false;
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
 
 <style lang="scss" scoped>

@@ -3,7 +3,7 @@
     <generic-node-settings
       :model-value="nodePolarsCode"
       @update:model-value="handleGenericSettingsUpdate"
-      @request-save="saveNodeData"
+      @request-save="saveSettings"
     >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"
@@ -21,18 +21,16 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
-import { useEditorStore } from "../../../../../stores/editor-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
 
 import { NodePolarsCode } from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-import { useGenericNodeSettings } from "../../../../../composables/useGenericNodeSettings";
 
 const showEditor = ref<boolean>(false);
 const nodeStore = useNodeStore();
-const editorStore = useEditorStore();
 const dataLoaded = ref(false);
 
 interface EditorChildType {
@@ -44,14 +42,22 @@ const editorChild = ref<EditorChildType | null>(null);
 const nodePolarsCode = ref<NodePolarsCode | null>(null);
 const nodeData = ref<null | NodeData>(null);
 
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodePolarsCode,
+  onBeforeSave: () => {
+    if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
+      return false;
+    }
+    return true;
+  },
+});
+
 const handleEditorUpdate = (newCode: string) => {
   if (nodePolarsCode.value && nodePolarsCode.value.polars_code_input) {
     nodePolarsCode.value.polars_code_input.polars_code = newCode;
   }
 };
-
-// Use composable for automatic NodeBase property syncing
-const { handleGenericSettingsUpdate } = useGenericNodeSettings(nodePolarsCode);
 
 const loadNodeData = async (nodeId: number) => {
   try {
@@ -75,19 +81,5 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const saveNodeData = async () => {
-  if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
-    return;
-  }
-  nodePolarsCode.value.is_setup = true;
-  await nodeStore.updateSettings(nodePolarsCode);
-};
-
-const pushNodeData = async () => {
-  await saveNodeData();
-  // Trigger drawer close via editor store
-  editorStore.pushNodeData();
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>

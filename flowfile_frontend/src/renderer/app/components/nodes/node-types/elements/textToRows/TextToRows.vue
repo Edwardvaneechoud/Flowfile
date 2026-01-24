@@ -1,6 +1,10 @@
 <template>
   <div v-if="isLoaded && nodeTextToRows" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeTextToRows">
+    <generic-node-settings
+      v-model="nodeTextToRows"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="table">
         <div v-if="nodeTextToRows?.text_to_rows_input" class="selectors">
           <div
@@ -89,7 +93,8 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, nextTick, computed } from "vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeTextToRows, TextToRowsInput } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
@@ -105,6 +110,11 @@ const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
 const isLoaded = ref(false);
 const nodeTextToRows = ref<NodeTextToRows | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeTextToRows,
+});
 
 const hasInvalidFields = computed(() => {
   return false;
@@ -140,17 +150,10 @@ const handleChange = (newValue: string, type: "columnToSplit" | "splitValueColum
     }
 };
 
-const pushNodeData = async () => {
-  isLoaded.value = false;
-  if (nodeTextToRows.value) {
-    nodeTextToRows.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeTextToRows);
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
   hasInvalidFields,
 });
 
