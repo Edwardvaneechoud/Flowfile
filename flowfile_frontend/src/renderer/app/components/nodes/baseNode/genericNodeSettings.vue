@@ -30,6 +30,39 @@
 
           <div class="setting-group">
             <div class="setting-header">
+              <span class="setting-title">Node Reference</span>
+              <div class="setting-description-wrapper">
+                <span class="setting-description">
+                  A unique identifier used as the variable name in code generation.
+                  <el-tooltip
+                    effect="dark"
+                    content="Must be lowercase with no spaces. Leave empty to use the default (df_node_id)"
+                    placement="top"
+                  >
+                    <el-icon class="info-icon">
+                      <InfoFilled />
+                    </el-icon>
+                  </el-tooltip>
+                </span>
+              </div>
+            </div>
+            <el-input
+              v-model="localSettings.node_reference"
+              :placeholder="defaultReference"
+              :class="{ 'is-error': referenceError }"
+              @input="handleReferenceInput"
+              @blur="handleReferenceBlur"
+            />
+            <div v-if="referenceError" class="validation-error">
+              {{ referenceError }}
+            </div>
+            <div v-else-if="isValidatingReference" class="validation-loading">
+              Checking...
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <div class="setting-header">
               <span class="setting-title">Node Description</span>
               <span class="setting-description">
                 Add a description to document this node's purpose
@@ -206,7 +239,7 @@
 
 <script lang="ts" setup generic="T extends NodeBase">
 /* eslint-disable no-undef */
-import { ref, watch, reactive } from "vue";
+import { ref, watch, reactive, computed } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
@@ -224,6 +257,11 @@ const emit = defineEmits<{
 /* eslint-enable no-undef */
 
 const activeTab = ref("main");
+const referenceError = ref<string | null>(null);
+const isValidatingReference = ref(false);
+let validationTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const defaultReference = computed(() => `df_${props.modelValue?.node_id ?? ""}`);
 
 // Watch for tab changes to trigger save when switching to Output Schema
 watch(activeTab, (newTab, oldTab) => {
@@ -233,9 +271,10 @@ watch(activeTab, (newTab, oldTab) => {
   }
 });
 
-const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
+const localSettings = ref<Pick<NodeBase, "cache_results" | "description" | "node_reference">>({
   cache_results: props.modelValue?.cache_results ?? false,
   description: props.modelValue?.description ?? "",
+  node_reference: props.modelValue?.node_reference ?? "",
 });
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
@@ -254,6 +293,7 @@ watch(
       localSettings.value = {
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
+        node_reference: newValue.node_reference ?? "",
       };
 
       // Update output field config if it exists
@@ -270,6 +310,7 @@ const handleSettingChange = () => {
     ...props.modelValue,
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
+    node_reference: localSettings.value.node_reference,
     output_field_config: outputFieldConfig.enabled ? outputFieldConfig : null,
   });
 };
@@ -277,6 +318,99 @@ const handleSettingChange = () => {
 const handleDescriptionChange = (value: string) => {
   nodeStore.updateNodeDescription(props.modelValue.node_id, value);
   handleSettingChange();
+};
+
+const validateReferenceLocally = (value: string): string | null => {
+  if (!value || value === "") {
+    return null; // Empty is valid (uses default)
+  }
+  if (value !== value.toLowerCase()) {
+    return "Reference must be lowercase";
+  }
+  if (/\s/.test(value)) {
+    return "Reference cannot contain spaces";
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(value)) {
+    return "Reference must start with a letter and contain only lowercase letters, numbers, and underscores";
+  }
+  return null;
+};
+
+const handleReferenceInput = (value: string) => {
+  // Clear any pending validation
+  if (validationTimeout) {
+    clearTimeout(validationTimeout);
+  }
+
+  // Run local validation immediately
+  const localError = validateReferenceLocally(value);
+  if (localError) {
+    referenceError.value = localError;
+    return;
+  }
+
+  // If local validation passes, debounce server-side uniqueness check
+  referenceError.value = null;
+  if (value && value !== "") {
+    isValidatingReference.value = true;
+    validationTimeout = setTimeout(async () => {
+      try {
+        const result = await nodeStore.validateNodeReference(props.modelValue.node_id, value);
+        if (!result.valid) {
+          referenceError.value = result.error;
+        } else {
+          referenceError.value = null;
+        }
+      } catch (error) {
+        console.error("Error validating reference:", error);
+      } finally {
+        isValidatingReference.value = false;
+      }
+    }, 300);
+  }
+};
+
+const handleReferenceBlur = async () => {
+  // Clear any pending validation
+  if (validationTimeout) {
+    clearTimeout(validationTimeout);
+  }
+
+  const value = localSettings.value.node_reference || "";
+
+  // Run local validation
+  const localError = validateReferenceLocally(value);
+  if (localError) {
+    referenceError.value = localError;
+    return;
+  }
+
+  // If non-empty and passes local validation, do final server validation and save
+  if (value !== "") {
+    isValidatingReference.value = true;
+    try {
+      const result = await nodeStore.validateNodeReference(props.modelValue.node_id, value);
+      if (!result.valid) {
+        referenceError.value = result.error;
+        return;
+      }
+    } catch (error) {
+      console.error("Error validating reference:", error);
+      return;
+    } finally {
+      isValidatingReference.value = false;
+    }
+  }
+
+  // Save the reference if validation passed
+  if (!referenceError.value) {
+    try {
+      await nodeStore.setNodeReference(props.modelValue.node_id, value);
+      handleSettingChange();
+    } catch (error: any) {
+      referenceError.value = error.message || "Failed to save reference";
+    }
+  }
 };
 
 const handleOutputConfigChange = () => {
@@ -368,6 +502,7 @@ const loadFieldsFromSchema = async () => {
   font-size: 0.875rem;
   color: var(--el-text-color-secondary);
 }
+
 .setting-description-wrapper {
   display: flex;
   align-items: center;
@@ -382,5 +517,30 @@ const loadFieldsFromSchema = async () => {
 
 .setting-description {
   flex-grow: 1;
+}
+
+.validation-error {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-color-danger);
+}
+
+.validation-loading {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary);
+}
+
+:deep(.el-input.is-error .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.no-fields {
+  padding: 1rem;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  margin-top: 1rem;
 }
 </style>

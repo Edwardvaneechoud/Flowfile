@@ -2536,6 +2536,7 @@ class FlowGraph:
                 type=node_info.type,
                 is_start_node=node.node_id in start_node_ids,
                 description=node_info.description,
+                node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
                 y_position=int(node_info.y_position),
                 left_input_id=node_info.left_input_id,
@@ -2802,6 +2803,10 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     for field in fields_to_update:
         if hasattr(new_settings, field) and getattr(new_settings, field) is not None:
             setattr(copied_setting_input, field, getattr(new_settings, field))
+
+    # Reset node_reference to None when copying (so it defaults to df_{node_id})
+    if hasattr(copied_setting_input, "node_reference"):
+        copied_setting_input.node_reference = None
 
     return copied_setting_input
 
