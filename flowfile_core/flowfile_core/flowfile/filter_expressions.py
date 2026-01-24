@@ -28,9 +28,11 @@ def _is_numeric_string(value: str) -> bool:
     """
     if not value:
         return False
-    # Allow a single decimal point and a leading minus sign
-    normalized = value.replace(".", "", 1).replace("-", "", 1)
-    return normalized.isnumeric()
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _should_quote_value(value: str, field_data_type: str | None) -> bool:

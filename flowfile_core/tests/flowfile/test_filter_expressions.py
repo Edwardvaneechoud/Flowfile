@@ -61,12 +61,14 @@ class TestIsNumericString:
         """Test float string detection."""
         assert _is_numeric_string("123.45") is True
         assert _is_numeric_string("0.5") is True
-        assert _is_numeric_string(".5") is False  # No leading digit
+        assert _is_numeric_string(".5") is True  # Valid float without leading digit
+        assert _is_numeric_string("5.") is True  # Valid float without trailing digit
 
     def test_negative_float(self):
         """Test negative float string detection."""
         assert _is_numeric_string("-123.45") is True
         assert _is_numeric_string("-0.5") is True
+        assert _is_numeric_string("-.5") is True  # Negative without leading digit
 
     def test_non_numeric(self):
         """Test non-numeric string detection."""
@@ -82,9 +84,10 @@ class TestIsNumericString:
 
     def test_whitespace(self):
         """Test whitespace handling."""
-        # Note: _is_numeric_string doesn't strip whitespace
-        assert _is_numeric_string(" 123") is False
-        assert _is_numeric_string("123 ") is False
+        # float() strips whitespace, which is fine since values are pre-stripped in usage
+        assert _is_numeric_string(" 123") is True
+        assert _is_numeric_string("123 ") is True
+        assert _is_numeric_string("  -12.5  ") is True
 
     def test_special_characters(self):
         """Test special characters return False."""
