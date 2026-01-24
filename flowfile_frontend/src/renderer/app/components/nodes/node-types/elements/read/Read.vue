@@ -1,44 +1,50 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <div class="listbox-wrapper">
-      <div class="file-upload-container">
-        <div class="file-upload-wrapper" @click="modalVisibleForOpen = true">
-          <label for="file-upload" class="file-upload-label">
-            <i class="fas fa-table file-icon"></i>
-            <span class="file-label-text">
-              {{ getDisplayFileName }}
-            </span>
-          </label>
+  <div v-if="dataLoaded && nodeRead" class="listbox-wrapper">
+    <generic-node-settings
+      :model-value="nodeRead"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveNodeData"
+    >
+      <div class="listbox-wrapper">
+        <div class="file-upload-container">
+          <div class="file-upload-wrapper" @click="modalVisibleForOpen = true">
+            <label for="file-upload" class="file-upload-label">
+              <i class="fas fa-table file-icon"></i>
+              <span class="file-label-text">
+                {{ getDisplayFileName }}
+              </span>
+            </label>
+          </div>
         </div>
       </div>
-    </div>
-    <div v-if="receivedTable">
-      <div class="listbox-wrapper">
-        <div class="listbox-subtitle">File Specs</div>
-        <ExcelTableConfig
-          v-if="isInputExcelTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-          :path="receivedTable.path"
-        />
-        <CsvTableConfig
-          v-if="isInputCsvTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-        />
-        <ParquetTableConfig
-          v-if="isInputParquetTable(receivedTable.table_settings)"
-          v-model="receivedTable.table_settings"
-        />
+      <div v-if="receivedTable">
+        <div class="listbox-wrapper">
+          <div class="listbox-subtitle">File Specs</div>
+          <ExcelTableConfig
+            v-if="isInputExcelTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+            :path="receivedTable.path"
+          />
+          <CsvTableConfig
+            v-if="isInputCsvTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+          <ParquetTableConfig
+            v-if="isInputParquetTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
+        </div>
       </div>
-    </div>
 
-    <el-dialog v-model="modalVisibleForOpen" title="Select a file to Read" width="70%">
-      <file-browser
-        :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
-        mode="open"
-        :is-visible="modalVisibleForOpen"
-        @file-selected="handleFileChange"
-      />
-    </el-dialog>
+      <el-dialog v-model="modalVisibleForOpen" title="Select a file to Read" width="70%">
+        <file-browser
+          :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
+          mode="open"
+          :is-visible="modalVisibleForOpen"
+          @file-selected="handleFileChange"
+        />
+      </el-dialog>
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
@@ -59,16 +65,23 @@ import {
   InputExcelTable,
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { useGenericNodeSettings } from "../../../../../composables/useGenericNodeSettings";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const selectedFile = ref<FileInfo | null>(null);
 const nodeRead = ref<null | NodeRead>(null);
 const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
 const modalVisibleForOpen = ref(false);
+
+// Use composable for automatic NodeBase property syncing
+const { handleGenericSettingsUpdate } = useGenericNodeSettings(nodeRead);
 
 const getDisplayFileName = computed(() => {
   if (selectedFile.value?.name) {
@@ -188,24 +201,25 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
+const saveNodeData = async () => {
+  if (!nodeRead.value || !receivedTable.value) {
+    console.warn("No node read value available");
+    return;
+  }
+
+  nodeRead.value.is_setup = true;
+  nodeRead.value.received_file = receivedTable.value;
+
+  await nodeStore.updateSettings(nodeRead);
+};
+
 const pushNodeData = async () => {
   try {
-    dataLoaded.value = false;
-
-    if (!nodeRead.value || !receivedTable.value) {
-      console.warn("No node read value available");
-      dataLoaded.value = true;
-      return;
-    }
-
-    nodeRead.value.is_setup = true;
-    nodeRead.value.received_file = receivedTable.value;
-
-    await nodeStore.updateSettings(nodeRead);
+    await saveNodeData();
+    // Trigger drawer close via editor store
+    editorStore.pushNodeData();
   } catch (error) {
     console.error("Error pushing node data:", error);
-  } finally {
-    dataLoaded.value = true;
   }
 };
 

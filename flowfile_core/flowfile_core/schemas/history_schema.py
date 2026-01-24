@@ -8,12 +8,12 @@ enabling users to undo and redo changes to their flow graphs.
 import pickle
 import zlib
 from enum import Enum
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from flowfile_core.schemas.schemas import FlowfileData
+    pass
 
 
 class HistoryActionType(str, Enum):
@@ -133,7 +133,7 @@ class HistoryEntry:
         action_type: HistoryActionType,
         description: str,
         timestamp: float,
-        node_id: Optional[int] = None,
+        node_id: int | None = None,
     ):
         self._snapshot = snapshot
         self.action_type = action_type
@@ -148,7 +148,7 @@ class HistoryEntry:
         action_type: HistoryActionType,
         description: str,
         timestamp: float,
-        node_id: Optional[int] = None,
+        node_id: int | None = None,
         compression_level: int = 6,
     ) -> "HistoryEntry":
         """Create a HistoryEntry from a snapshot dictionary.
@@ -187,10 +187,10 @@ class HistoryState(BaseModel):
 
     can_undo: bool = Field(default=False, description="Whether undo is available")
     can_redo: bool = Field(default=False, description="Whether redo is available")
-    undo_description: Optional[str] = Field(
+    undo_description: str | None = Field(
         default=None, description="Description of the action that would be undone"
     )
-    redo_description: Optional[str] = Field(
+    redo_description: str | None = Field(
         default=None, description="Description of the action that would be redone"
     )
     undo_count: int = Field(default=0, description="Number of available undo steps")
@@ -201,10 +201,10 @@ class UndoRedoResult(BaseModel):
     """Result of an undo or redo operation."""
 
     success: bool = Field(..., description="Whether the operation succeeded")
-    action_description: Optional[str] = Field(
+    action_description: str | None = Field(
         default=None, description="Description of the action that was undone/redone"
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None, description="Error message if the operation failed"
     )
 
@@ -216,5 +216,5 @@ class OperationResponse(BaseModel):
     """
 
     success: bool = Field(default=True, description="Whether the operation succeeded")
-    message: Optional[str] = Field(default=None, description="Optional message")
+    message: str | None = Field(default=None, description="Optional message")
     history: HistoryState = Field(..., description="Current history state after the operation")

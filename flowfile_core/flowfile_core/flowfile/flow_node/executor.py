@@ -6,19 +6,17 @@ Enables stateless execution by accepting external state providers.
 """
 from __future__ import annotations
 
-from typing import Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from flowfile_core.configs import logger
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
+    results_exists,
+)
 from flowfile_core.flowfile.flow_node.models import (
-    ExecutionStrategy,
     ExecutionDecision,
+    ExecutionStrategy,
     InvalidationReason,
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    results_exists,
-    clear_task_from_worker,
-)
 from flowfile_core.schemas import schemas
 
 if TYPE_CHECKING:
@@ -258,7 +256,7 @@ class NodeExecutor:
         self.node._do_execute_full_local(performance_mode)
         if not performance_mode:
             state.mark_successful()
-            if self.node.results.resulting_data:
+            if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
 
     def _do_local_with_sampling(
@@ -274,7 +272,7 @@ class NodeExecutor:
         via an external process for the UI preview.
         """
         self.node._do_execute_local_with_sampling(performance_mode, flow_id)
-        if self.node.results.resulting_data:
+        if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
         if self.node.results.errors is None and not self.node.node_stats.is_canceled:
             state.mark_successful()
@@ -291,7 +289,7 @@ class NodeExecutor:
         Computation is offloaded to an external worker process.
         """
         self.node._do_execute_remote(performance_mode, node_logger)
-        if self.node.results.resulting_data:
+        if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
             state.mark_successful()
 
