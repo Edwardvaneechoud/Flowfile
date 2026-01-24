@@ -103,7 +103,7 @@
               <div class="setting-header">
                 <span class="setting-title">Output Fields</span>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
-                  <el-button size="small" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
+                  <el-button size="small" :disabled="hasSchema" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
                     Load from Schema
                   </el-button>
                   <el-button size="small" type="primary" @click="addField">
@@ -172,7 +172,7 @@
                     <el-input
                       v-model="row.default_value"
                       size="small"
-                      placeholder="null or expression"
+                      placeholder="null"
                       @change="handleOutputConfigChange"
                     />
                   </template>
@@ -198,8 +198,7 @@
                 :closable="false"
                 style="margin-top: 1rem"
               >
-                <strong>Tip:</strong> Default values can be literals (e.g., "0", "Unknown") or
-                Polars expressions (e.g., "pl.lit(0)").
+                <strong>Tip:</strong> Default values can be any static value.
               </el-alert>
             </div>
           </template>
@@ -211,7 +210,7 @@
 
 <script lang="ts" setup generic="T extends NodeBase">
 /* eslint-disable no-undef */
-import { ref, watch, reactive } from "vue";
+import { computed, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
@@ -290,6 +289,10 @@ const handleDescriptionChange = (value: string) => {
 const handleOutputConfigChange = () => {
   handleSettingChange();
 };
+
+const hasSchema = computed(() => {
+  return outputFieldConfig.fields.length > 0;
+});
 
 const addField = () => {
   outputFieldConfig.fields.push({
