@@ -1,9 +1,19 @@
 // composables/useDragAndDrop.ts
 // Drag and drop composable for flow canvas
-import { useVueFlow, Node, Position } from "@vue-flow/core"
-import { ref, watch, markRaw, nextTick } from "vue"
-import type { NodeTemplate, NodeInput, VueFlowInput, NodeCopyInput, NodePromise, MultiNodeCopyValue, EdgeCopyValue, NodeConnection, OperationResponse } from "../types"
-import { FlowApi } from "../api"
+import { useVueFlow, Node, Position } from "@vue-flow/core";
+import { ref, watch, markRaw, nextTick } from "vue";
+import type {
+  NodeTemplate,
+  NodeInput,
+  VueFlowInput,
+  NodeCopyInput,
+  NodePromise,
+  MultiNodeCopyValue,
+  EdgeCopyValue,
+  NodeConnection,
+  OperationResponse,
+} from "../types";
+import { FlowApi } from "../api";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -274,7 +284,11 @@ export default function useDragAndDrop() {
         pos_y: node.posY,
         cache_results: true,
       };
-      const response = await FlowApi.copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise);
+      const response = await FlowApi.copyNode(
+        node.nodeIdToCopyFrom,
+        node.flowIdToCopyFrom,
+        nodePromise,
+      );
 
       addNodes(newNode);
       return response;
@@ -404,7 +418,13 @@ export default function useDragAndDrop() {
         off();
       });
 
-      const response = await FlowApi.insertNode(flowId, nodeId, nodeData.item, position.x, position.y);
+      const response = await FlowApi.insertNode(
+        flowId,
+        nodeId,
+        nodeData.item,
+        position.x,
+        position.y,
+      );
       addNodes(newNode);
       return response;
     } catch (error) {
@@ -421,34 +441,34 @@ export default function useDragAndDrop() {
     multiCopyValue: MultiNodeCopyValue,
     baseX: number,
     baseY: number,
-    flowId: number
+    flowId: number,
   ): Promise<OperationResponse | undefined> {
     // Map old node IDs to new node IDs
-    const nodeIdMapping: Map<number, number> = new Map()
+    const nodeIdMapping: Map<number, number> = new Map();
 
     // Pre-assign all node IDs and calculate positions using relative positions
     const nodeInfos: Array<{
-      node: typeof multiCopyValue.nodes[0],
-      newNodeId: number,
-      offsetX: number,
-      offsetY: number
-    }> = []
+      node: (typeof multiCopyValue.nodes)[0];
+      newNodeId: number;
+      offsetX: number;
+      offsetY: number;
+    }> = [];
 
     for (let i = 0; i < multiCopyValue.nodes.length; i++) {
-      const node = multiCopyValue.nodes[i]
-      const newNodeId = getId()
-      nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId)
+      const node = multiCopyValue.nodes[i];
+      const newNodeId = getId();
+      nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId);
 
       // Use relative positions if available, otherwise fall back to staggered layout
-      const offsetX = baseX + (node.relativeX ?? (i % 3) * 200)
-      const offsetY = baseY + (node.relativeY ?? Math.floor(i / 3) * 150)
+      const offsetX = baseX + (node.relativeX ?? (i % 3) * 200);
+      const offsetY = baseY + (node.relativeY ?? Math.floor(i / 3) * 150);
 
-      nodeInfos.push({ node, newNodeId, offsetX, offsetY })
+      nodeInfos.push({ node, newNodeId, offsetX, offsetY });
     }
 
     // First pass: Create all UI nodes and wait for components to load
     const uiNodePromises = nodeInfos.map(async ({ node, newNodeId, offsetX, offsetY }) => {
-      const component = await getComponentRaw(node.type)
+      const component = await getComponentRaw(node.type);
       const newNode: Node = {
         id: String(newNodeId),
         type: "custom-node",
@@ -470,16 +490,16 @@ export default function useDragAndDrop() {
           })),
           nodeTemplate: node.nodeTemplate,
         },
-      }
-      addNodes(newNode)
-      return { node, newNodeId, offsetX, offsetY }
-    })
+      };
+      addNodes(newNode);
+      return { node, newNodeId, offsetX, offsetY };
+    });
 
     // Wait for all UI nodes to be created
-    const createdNodes = await Promise.all(uiNodePromises)
+    const createdNodes = await Promise.all(uiNodePromises);
 
     // Second pass: Copy all nodes in the backend and wait for completion
-    let lastResponse: OperationResponse | undefined
+    let lastResponse: OperationResponse | undefined;
     const backendCopyPromises = createdNodes.map(async ({ node, newNodeId, offsetX, offsetY }) => {
       const nodePromise: NodePromise = {
         node_id: newNodeId,
@@ -488,23 +508,23 @@ export default function useDragAndDrop() {
         pos_x: offsetX,
         pos_y: offsetY,
         cache_results: true,
-      }
-      return FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise)
-    })
+      };
+      return FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise);
+    });
 
     // Wait for ALL backend copy operations to complete
-    const copyResponses = await Promise.all(backendCopyPromises)
+    const copyResponses = await Promise.all(backendCopyPromises);
     if (copyResponses.length > 0) {
-      lastResponse = copyResponses[copyResponses.length - 1]
+      lastResponse = copyResponses[copyResponses.length - 1];
     }
 
     // Wait for Vue to update
-    await nextTick()
+    await nextTick();
 
     // Third pass: Create connections between the new nodes (after all nodes exist)
     const connectionPromises = multiCopyValue.edges.map(async (edge) => {
-      const newSourceId = nodeIdMapping.get(edge.sourceNodeId)
-      const newTargetId = nodeIdMapping.get(edge.targetNodeId)
+      const newSourceId = nodeIdMapping.get(edge.sourceNodeId);
+      const newTargetId = nodeIdMapping.get(edge.targetNodeId);
 
       if (newSourceId !== undefined && newTargetId !== undefined) {
         // Create the edge in the UI
@@ -514,8 +534,8 @@ export default function useDragAndDrop() {
           target: String(newTargetId),
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
-        }
-        addEdges([newEdge])
+        };
+        addEdges([newEdge]);
 
         // Create the connection in the backend
         const nodeConnection: NodeConnection = {
@@ -527,21 +547,23 @@ export default function useDragAndDrop() {
             node_id: newSourceId,
             connection_class: edge.sourceHandle as any,
           },
-        }
-        return FlowApi.connectNode(flowId, nodeConnection)
+        };
+        return FlowApi.connectNode(flowId, nodeConnection);
       }
-      return undefined
-    })
+      return undefined;
+    });
 
     // Wait for all connections to be created
-    const connectionResponses = await Promise.all(connectionPromises)
+    const connectionResponses = await Promise.all(connectionPromises);
     // Return the last successful connection response, or the last copy response
-    const validConnectionResponses = connectionResponses.filter((r): r is OperationResponse => r !== undefined)
+    const validConnectionResponses = connectionResponses.filter(
+      (r): r is OperationResponse => r !== undefined,
+    );
     if (validConnectionResponses.length > 0) {
-      lastResponse = validConnectionResponses[validConnectionResponses.length - 1]
+      lastResponse = validConnectionResponses[validConnectionResponses.length - 1];
     }
 
-    return lastResponse
+    return lastResponse;
   }
 
   return {

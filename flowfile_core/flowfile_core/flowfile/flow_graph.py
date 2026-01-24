@@ -40,6 +40,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDfFetcher,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
     add_un_drawn_nodes,
     build_flow_paths,
@@ -68,9 +69,9 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
     get_cloud_storage_write_settings_worker_interface,
 )
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
-from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
@@ -1669,6 +1670,34 @@ class FlowGraph:
         Returns:
             The created or updated FlowNode object.
         """
+        # Wrap schema_callback with output_field_config support
+        # If the node has output_field_config enabled, use it for schema prediction
+        output_field_config = getattr(setting_input, 'output_field_config', None) if setting_input else None
+
+        logger.info(
+            f"add_node_step: node_id={node_id}, node_type={node_type}, "
+            f"has_setting_input={setting_input is not None}, "
+            f"has_output_field_config={output_field_config is not None}, "
+            f"config_enabled={output_field_config.enabled if output_field_config else False}, "
+            f"has_schema_callback={schema_callback is not None}"
+        )
+
+        # IMPORTANT: Always create wrapped callback if output_field_config exists (even if enabled=False)
+        # This ensures nodes like PolarsCode get a schema callback when output_field_config is defined
+        if output_field_config:
+            if output_field_config.enabled:
+                logger.info(
+                    f"add_node_step: Creating/wrapping schema_callback for node {node_id} with output_field_config "
+                    f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields, "
+                    f"base_callback={'present' if schema_callback else 'None'})"
+                )
+            else:
+                logger.debug(f"add_node_step: output_field_config present for node {node_id} but disabled")
+
+            # Even if schema_callback is None, create a wrapped one for output_field_config
+            schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
+            logger.info(f"add_node_step: schema_callback {'created' if schema_callback else 'failed'} for node {node_id}")
+
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:

@@ -1,5 +1,6 @@
 import inspect
 import typing
+
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
@@ -128,7 +129,7 @@ class FlowGraphToPolarsConverter:
                 f"No code generator implemented for node type '{node_type}'"
             ))
             self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
-            self._add_comment(f"# This node type is not supported for code export")
+            self._add_comment("# This node type is not supported for code export")
 
     def _get_input_vars(self, node: FlowNode) -> dict[str, str]:
         """Get input variable names for a node."""
@@ -1163,7 +1164,7 @@ class FlowGraphToPolarsConverter:
             # Query mode - use triple quotes to preserve query formatting
             self._add_code(f'{var_name} = ff.read_database(')
             self._add_code(f'    "{connection_name}",')
-            self._add_code(f'    query="""')
+            self._add_code('    query="""')
             # Add each line of the query with proper indentation
             for line in db_settings.query.split("\n"):
                 self._add_code(f"        {line}")
@@ -1212,7 +1213,7 @@ class FlowGraphToPolarsConverter:
         input_df = input_vars.get("main", "df")
 
         self._add_code(f"# Write to database using connection: {connection_name}")
-        self._add_code(f"ff.write_database(")
+        self._add_code("ff.write_database(")
         self._add_code(f"    {input_df}.collect(),")
         self._add_code(f'    "{connection_name}",')
         self._add_code(f'    "{db_settings.table_name}",')
@@ -1294,7 +1295,7 @@ class FlowGraphToPolarsConverter:
         """
         try:
             source_file = inspect.getfile(custom_node_class)
-            with open(source_file, 'r') as f:
+            with open(source_file) as f:
                 return f.read()
         except (OSError, TypeError):
             return None
