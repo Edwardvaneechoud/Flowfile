@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeUnion" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeUnion">
+    <generic-node-settings
+      v-model="nodeUnion"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       'Union multiple tables into one table, this node does not have settings'
     </generic-node-settings>
   </div>
@@ -10,7 +14,8 @@
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { UnionInput, NodeUnion } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
@@ -19,6 +24,11 @@ const dataLoaded = ref(false);
 const nodeData = ref<null | NodeData>(null);
 const unionInput = ref<UnionInput>({ mode: "relaxed" });
 const nodeUnion = ref<NodeUnion | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeUnion,
+});
 
 const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from union ");
@@ -43,15 +53,10 @@ const handleClickOutside = (event: MouseEvent) => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (unionInput.value) {
-    nodeStore.updateSettings(nodeUnion);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {
