@@ -264,6 +264,9 @@
   --color-background-selected: #0f3460;
   --color-background-muted: #1f1f3a;
 
+  /* Accent color adjustments for dark mode */
+  --color-accent-subtle: rgba(8, 145, 178, 0.2);
+
   --color-text-primary: #f1f5f9;
   --color-text-secondary: #cbd5e1;
   --color-text-tertiary: #94a3b8;
