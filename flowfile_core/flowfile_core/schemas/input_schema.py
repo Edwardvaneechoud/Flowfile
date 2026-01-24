@@ -178,6 +178,11 @@ class ReceivedTable(BaseModel):
     fields: list[MinimalFieldInfo] = Field(default_factory=list)
     abs_file_path: str | None = None
 
+    # File modification tracking for cache invalidation
+    # These are included in the hash calculation, so changes trigger node reset
+    file_mtime: float | None = None  # File modification time
+    file_size: int | None = None  # File size in bytes
+
     file_type: Literal["csv", "json", "parquet", "excel"]
 
     table_settings: InputTableSettings
@@ -208,13 +213,40 @@ class ReceivedTable(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        """Resolves the path to an absolute file path."""
+        """Resolves the path to an absolute file path and updates file modification info."""
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
         if self.name and self.name not in base_path.name:
             base_path = base_path / self.name
         self.abs_file_path = str(base_path.resolve())
+
+        # Update file modification info for cache invalidation
+        self._update_file_info()
+
+    def _update_file_info(self):
+        """Updates file modification time and size from the filesystem.
+
+        This information is used in hash calculation to detect file changes.
+        When a file is modified, the hash changes, triggering node reset.
+        """
+        path_to_check = self.abs_file_path or self.file_path
+        try:
+            stat = os.stat(path_to_check)
+            self.file_mtime = stat.st_mtime
+            self.file_size = stat.st_size
+        except OSError:
+            # File doesn't exist or can't be accessed
+            self.file_mtime = None
+            self.file_size = None
+
+    def refresh_file_info(self):
+        """Explicitly refresh file modification info.
+
+        Call this to check if the source file has changed since the table was created.
+        If file_mtime or file_size changed, the node hash will change on next calculation.
+        """
+        self._update_file_info()
 
     @model_validator(mode="before")
     @classmethod

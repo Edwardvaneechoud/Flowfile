@@ -8,6 +8,7 @@ Tests cover:
 - Integration with xlsx, csv, parquet schema loading
 - Performance comparison (cached vs uncached)
 - Cache statistics
+- Hash-based invalidation via ReceivedTable.file_mtime/file_size
 """
 
 import os
@@ -30,6 +31,8 @@ from flowfile_core.utils.file_cache import (
     invalidate_file_cache,
     set_file_cache_debug_mode,
 )
+from flowfile_core.schemas.input_schema import ReceivedTable, InputCsvTable, InputExcelTable
+from flowfile_core.flowfile.utils import get_hash
 
 
 # =============================================================================
@@ -591,3 +594,157 @@ class TestFileCachePerformance:
 
         stats = get_file_cache_stats()
         assert stats["total_hits"] >= 1
+
+
+# =============================================================================
+# Hash-Based Invalidation Tests (ReceivedTable.file_mtime/file_size)
+# =============================================================================
+
+
+class TestReceivedTableFileInfo:
+    """Tests for file modification tracking in ReceivedTable."""
+
+    def test_file_info_populated_on_create(self, tmp_path):
+        """Test that file_mtime and file_size are populated when ReceivedTable is created."""
+        test_file = tmp_path / "test.csv"
+        test_file.write_text("a,b,c\n1,2,3\n")
+
+        received_table = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(),
+        )
+
+        # file_mtime and file_size should be populated via model_validator
+        assert received_table.file_mtime is not None
+        assert received_table.file_size is not None
+        assert received_table.file_size == len("a,b,c\n1,2,3\n")
+
+    def test_file_info_none_for_nonexistent_file(self):
+        """Test that file_mtime and file_size are None for non-existent files."""
+        received_table = ReceivedTable(
+            path="/nonexistent/path/file.csv",
+            name="file.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(),
+        )
+
+        assert received_table.file_mtime is None
+        assert received_table.file_size is None
+
+    def test_refresh_file_info_detects_changes(self, tmp_path):
+        """Test that refresh_file_info updates mtime/size after file modification."""
+        test_file = tmp_path / "test.csv"
+        test_file.write_text("a,b,c\n1,2,3\n")
+
+        received_table = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(),
+        )
+
+        original_mtime = received_table.file_mtime
+        original_size = received_table.file_size
+
+        # Modify the file
+        time.sleep(0.1)  # Ensure mtime changes
+        test_file.write_text("a,b,c,d\n1,2,3,4\n5,6,7,8\n")
+
+        # Refresh file info
+        received_table.refresh_file_info()
+
+        # mtime and size should have changed
+        assert received_table.file_mtime != original_mtime
+        assert received_table.file_size != original_size
+
+    def test_hash_changes_when_file_changes(self, tmp_path):
+        """Test that ReceivedTable hash changes when the underlying file changes."""
+        test_file = tmp_path / "test.csv"
+        test_file.write_text("a,b,c\n1,2,3\n")
+
+        received_table = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(),
+        )
+
+        hash1 = get_hash(received_table)
+
+        # Modify the file
+        time.sleep(0.1)
+        test_file.write_text("a,b,c,d\n1,2,3,4\n")
+
+        # Refresh file info to update mtime/size
+        received_table.refresh_file_info()
+
+        hash2 = get_hash(received_table)
+
+        # Hash should be different because file_mtime and file_size changed
+        assert hash1 != hash2
+
+    def test_hash_same_when_file_unchanged(self, tmp_path):
+        """Test that ReceivedTable hash stays the same when file is unchanged."""
+        test_file = tmp_path / "test.csv"
+        test_file.write_text("a,b,c\n1,2,3\n")
+
+        received_table = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(),
+        )
+
+        hash1 = get_hash(received_table)
+
+        # Refresh without changing file
+        received_table.refresh_file_info()
+
+        hash2 = get_hash(received_table)
+
+        # Hash should be the same
+        assert hash1 == hash2
+
+    def test_hash_different_for_different_settings(self, tmp_path):
+        """Test that different settings produce different hashes."""
+        test_file = tmp_path / "test.csv"
+        test_file.write_text("a,b,c\n1,2,3\n")
+
+        table1 = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(delimiter=","),
+        )
+
+        table2 = ReceivedTable(
+            path=str(test_file),
+            name="test.csv",
+            file_type="csv",
+            table_settings=InputCsvTable(delimiter=";"),
+        )
+
+        hash1 = get_hash(table1)
+        hash2 = get_hash(table2)
+
+        # Hash should be different due to different delimiter
+        assert hash1 != hash2
+
+    def test_excel_file_info(self, tmp_path):
+        """Test file info tracking for Excel files."""
+        # Create a minimal xlsx-like file for testing (just for file info tracking)
+        test_file = tmp_path / "test.xlsx"
+        test_file.write_bytes(b"PK\x03\x04" + b"\x00" * 100)  # Minimal zip header
+
+        received_table = ReceivedTable(
+            path=str(test_file),
+            name="test.xlsx",
+            file_type="excel",
+            table_settings=InputExcelTable(sheet_name="Sheet1"),
+        )
+
+        assert received_table.file_mtime is not None
+        assert received_table.file_size is not None
+        assert received_table.file_size == 104  # 4 + 100 bytes
