@@ -1,16 +1,15 @@
 # app_routes/auth.py
 
 import os
-from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user, create_access_token
-from flowfile_core.auth.models import Token, User, UserCreate, UserUpdate, ChangePassword
-from flowfile_core.auth.password import verify_password, get_password_hash, validate_password, PASSWORD_REQUIREMENTS
-from flowfile_core.database.connection import get_db
+from flowfile_core.auth.jwt import create_access_token, get_current_active_user, get_current_admin_user
+from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
+from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db
 
 router = APIRouter()
 
@@ -19,8 +18,8 @@ router = APIRouter()
 async def login_for_access_token(
     request: Request,
     db: Session = Depends(get_db),
-    username: Optional[str] = Form(None),
-    password: Optional[str] = Form(None)
+    username: str | None = Form(None),
+    password: str | None = Form(None)
 ):
     # In Electron mode, auto-authenticate without requiring form data
     if os.environ.get("FLOWFILE_MODE") == "electron":
@@ -58,7 +57,7 @@ async def read_users_me(current_user=Depends(get_current_active_user)):
 
 # ============= Admin User Management Endpoints =============
 
-@router.get("/users", response_model=List[User])
+@router.get("/users", response_model=list[User])
 async def list_users(
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)

@@ -186,7 +186,6 @@ def del_database_connection(connection_name: str) -> bool:
     Returns:
         True if the connection was deleted, False if it didn't exist.
     """
-    from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
     from flowfile_core.database.models import Secret
 
     user_id = get_current_user_id()
