@@ -29,6 +29,7 @@ from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
+    get_first_file_from_adls_dir,
     get_first_file_from_s3_dir,
 )
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
@@ -589,7 +590,14 @@ class FlowDataEngine:
         """Infers the schema by scanning the first file in a cloud directory."""
         try:
             scan_func = getattr(pl, "scan_" + file_format)
-            first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
+            # Determine storage type and use appropriate function
+            if source.startswith("s3://"):
+                first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
+            elif source.startswith("az://") or source.startswith("abfs://"):
+                first_file_ref = get_first_file_from_adls_dir(source, storage_options=storage_options)
+            else:
+                raise ValueError(f"Unsupported cloud storage URI format: {source}")
+
             return convert_stats_to_column_info(
                 FlowDataEngine._create_schema_stats_from_pl_schema(
                     scan_func(first_file_ref, storage_options=storage_options).collect_schema()

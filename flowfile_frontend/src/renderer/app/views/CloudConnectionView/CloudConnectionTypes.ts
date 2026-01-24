@@ -39,6 +39,7 @@ export interface PythonFullCloudStorageConnection extends PythonAuthSettingsInpu
   azure_tenant_id?: string;
   azure_client_id?: string;
   azure_client_secret?: string;
+  azure_sas_token?: string;
 
   // Common
   endpoint_url?: string;
@@ -59,6 +60,7 @@ export interface FullCloudStorageConnection extends AuthSettingsInput {
   azureTenantId?: string;
   azureClientId?: string;
   azureClientSecret?: string;
+  azureSasToken?: string;
 
   // Common
   endpointUrl?: string;
