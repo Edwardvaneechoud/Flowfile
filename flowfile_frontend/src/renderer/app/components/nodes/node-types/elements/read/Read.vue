@@ -3,7 +3,7 @@
     <generic-node-settings
       :model-value="nodeRead"
       @update:model-value="handleGenericSettingsUpdate"
-      @request-save="saveNodeData"
+      @request-save="saveSettings"
     >
       <div class="listbox-wrapper">
         <div class="file-upload-container">
@@ -66,22 +66,30 @@ import {
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/node-store";
-import { useEditorStore } from "../../../../../stores/editor-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-import { useGenericNodeSettings } from "../../../../../composables/useGenericNodeSettings";
 
 const nodeStore = useNodeStore();
-const editorStore = useEditorStore();
 const selectedFile = ref<FileInfo | null>(null);
 const nodeRead = ref<null | NodeRead>(null);
 const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
 const modalVisibleForOpen = ref(false);
 
-// Use composable for automatic NodeBase property syncing
-const { handleGenericSettingsUpdate } = useGenericNodeSettings(nodeRead);
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeRead,
+  onBeforeSave: () => {
+    if (!nodeRead.value || !receivedTable.value) {
+      console.warn("No node read value available");
+      return false;
+    }
+    nodeRead.value.received_file = receivedTable.value;
+    return true;
+  },
+});
 
 const getDisplayFileName = computed(() => {
   if (selectedFile.value?.name) {
@@ -201,31 +209,10 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const saveNodeData = async () => {
-  if (!nodeRead.value || !receivedTable.value) {
-    console.warn("No node read value available");
-    return;
-  }
-
-  nodeRead.value.is_setup = true;
-  nodeRead.value.received_file = receivedTable.value;
-
-  await nodeStore.updateSettings(nodeRead);
-};
-
-const pushNodeData = async () => {
-  try {
-    await saveNodeData();
-    // Trigger drawer close via editor store
-    editorStore.pushNodeData();
-  } catch (error) {
-    console.error("Error pushing node data:", error);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
