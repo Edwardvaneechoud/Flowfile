@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeExternalSource" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeExternalSource">
+    <generic-node-settings
+      v-model="nodeExternalSource"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-subtitle">Select the type of external source</div>
       <el-select
         v-model="selectedExternalSource"
@@ -28,13 +32,32 @@ import { ref, watchEffect } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { get_template_source_type } from "./createTemplateExternalSource";
 import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { WatchStopHandle } from "vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
-const sampleUsers = ref<SampleUsers | null>(null);
 const nodeExternalSource = ref<null | NodeExternalSource>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeExternalSource,
+  onBeforeSave: async () => {
+    if (nodeExternalSource.value && isDirty.value) {
+      nodeExternalSource.value.is_setup = true;
+      nodeExternalSource.value.source_settings.fields = [];
+      isDirty.value = false;
+    }
+    return true;
+  },
+  onAfterSave: async () => {
+    if (nodeExternalSource.value) {
+      await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
+    }
+  },
+});
+const sampleUsers = ref<SampleUsers | null>(null);
 const dataLoaded = ref(false);
 const typeSelected = ref(false);
 const writingOptions = ["sample_users"];
@@ -78,31 +101,10 @@ const loadTemplateValue = () => {
   }
 };
 
-const pushNodeDataAction = async () => {
-  if (nodeExternalSource.value && isDirty.value) {
-    nodeExternalSource.value.is_setup = true;
-    nodeExternalSource.value.source_settings.fields = [];
-    isDirty.value = false;
-  }
-  await nodeStore.updateSettings(nodeExternalSource);
-  if (nodeExternalSource.value) {
-    await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
-  }
-};
-
-const pushNodeData = async () => {
-  // Your existing code to handle the operation
-  // await insertSelect(nodeSelect.value)
-  dataLoaded.value = false;
-  if (nodeExternalSource.value)
-    if (isDirty.value || nodeExternalSource.value.identifier) {
-      await pushNodeDataAction();
-    }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

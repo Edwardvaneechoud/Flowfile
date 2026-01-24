@@ -103,7 +103,7 @@
               <div class="setting-header">
                 <span class="setting-title">Output Fields</span>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
-                  <el-button size="small" @click="loadFieldsFromSchema">
+                  <el-button size="small" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
                     Load from Schema
                   </el-button>
                   <el-button size="small" type="primary" @click="addField">
@@ -113,7 +113,12 @@
               </div>
 
               <div v-if="outputFieldConfig.fields.length === 0" class="no-fields">
-                No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+                <template v-if="isLoadingSchema">
+                  Loading schema...
+                </template>
+                <template v-else>
+                  No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+                </template>
               </div>
 
               <el-table
@@ -219,9 +224,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:model-value", value: T): void;
-  (e: "request-save"): void;
+  (e: "request-save"): Promise<boolean> | boolean | void;
 }>();
 /* eslint-enable no-undef */
+
+// Loading state for async operations
+const isLoadingSchema = ref(false);
 
 const activeTab = ref("main");
 
@@ -305,14 +313,22 @@ const loadFieldsFromSchema = async () => {
       return;
     }
 
-    // Request parent component to save current state
-    emit("request-save");
+    isLoadingSchema.value = true;
+
+    // Request parent component to save current state and wait for completion
+    // The parent component's saveSettings() should return a promise
+    const saveResult = emit("request-save");
+
+    // Wait for the save to complete if it returns a promise
+    if (saveResult instanceof Promise) {
+      await saveResult;
+    }
 
     // Give the backend a moment to process and update the schema
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Get the node data from the store with updated schema
-    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id);
+    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false);
 
     if (nodeData?.main_output?.table_schema) {
       // Load fields from the schema
@@ -325,6 +341,8 @@ const loadFieldsFromSchema = async () => {
     }
   } catch (error) {
     console.error("Error loading schema:", error);
+  } finally {
+    isLoadingSchema.value = false;
   }
 };
 </script>
