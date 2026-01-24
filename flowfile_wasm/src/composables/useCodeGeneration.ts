@@ -160,7 +160,10 @@ class FlowToPolarsConverter {
   }
 
   private generateNodeCode(node: FlowNode): void {
-    const varName = `df_${node.id}`
+    // Use node_reference if set, otherwise default to df_{node_id}
+    // First try node_reference from FlowNode, then from settings
+    const nodeReference = node.node_reference || (node.settings as any)?.node_reference
+    const varName = nodeReference || `df_${node.id}`
     this.nodeVarMapping.set(node.id, varName)
     this.lastNodeVar = varName
 
@@ -230,15 +233,17 @@ class FlowToPolarsConverter {
 
   private getInputVars(node: FlowNode): Record<string, string> {
     const inputVars: Record<string, string> = {}
-  
+
+    // For join nodes, leftInputId maps to 'main' (the left side of the join)
+    // and rightInputId maps to 'right' (the right side of the join)
     if (node.leftInputId !== undefined) {
-      inputVars.left = this.nodeVarMapping.get(node.leftInputId) || 'df_left'
+      inputVars.main = this.nodeVarMapping.get(node.leftInputId) || 'df_left'
     }
-  
+
     if (node.rightInputId !== undefined) {
       inputVars.right = this.nodeVarMapping.get(node.rightInputId) || 'df_right'
     }
-  
+
     if (node.inputIds && node.inputIds.length > 0) {
       if (node.inputIds.length === 1) {
         inputVars.main = this.nodeVarMapping.get(node.inputIds[0]) || 'df'
@@ -248,7 +253,7 @@ class FlowToPolarsConverter {
         }
       }
     }
-  
+
     return inputVars
   }
 

@@ -36,6 +36,7 @@ const SETTING_INPUT_EXCLUDE = new Set([
   'pos_y',
   'is_setup',
   'description',
+  'node_reference',  // Stored at node level, not in setting_input
   'user_id',
   'is_flow_output',
   'is_user_defined',
@@ -137,12 +138,16 @@ export const useFlowStore = defineStore('flow', () => {
               delete (settings as any).received_table
             }
 
-            // Get description from FlowfileNode level (this is where flowfile_core stores it)
+            // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
             const nodeDescription = flowfileNode.description || ''
+            const nodeReference = flowfileNode.node_reference || undefined
 
-            // Sync description to settings for backward compatibility
+            // Sync description and node_reference to settings for backward compatibility
             if (settings) {
               (settings as NodeBase).description = nodeDescription
+              if (nodeReference) {
+                (settings as NodeBase).node_reference = nodeReference
+              }
             }
 
             const node: FlowNode = {
@@ -154,7 +159,8 @@ export const useFlowStore = defineStore('flow', () => {
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
-              description: nodeDescription  // Set node-level description
+              description: nodeDescription,  // Set node-level description
+              node_reference: nodeReference   // Set node-level reference
             }
             nodes.value.set(flowfileNode.id, node)
           }
@@ -296,12 +302,13 @@ export const useFlowStore = defineStore('flow', () => {
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
-      // Read description from node level (primary) with fallback to settings
+      // Read description and node_reference from node level (primary) with fallback to settings
       flowfileNodes.push({
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
         description: node.description || (node.settings as NodeBase).description || '',
+        node_reference: node.node_reference || (node.settings as NodeBase).node_reference,
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -1850,12 +1857,13 @@ result
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
-      // Read description from node level (primary) with fallback to settings
+      // Read description and node_reference from node level (primary) with fallback to settings
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
         description: node.description || (node.settings as NodeBase).description || '',
+        node_reference: node.node_reference || (node.settings as NodeBase).node_reference,
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -1929,12 +1937,16 @@ result
           delete (settings as any).received_table
         }
 
-        // Get description from FlowfileNode level (this is where flowfile_core stores it)
+        // Get description and node_reference from FlowfileNode level (this is where flowfile_core stores them)
         const nodeDescription = flowfileNode.description || ''
+        const nodeReference = flowfileNode.node_reference || undefined
 
-        // Sync description to settings for backward compatibility
+        // Sync description and node_reference to settings for backward compatibility
         if (settings) {
           (settings as NodeBase).description = nodeDescription
+          if (nodeReference) {
+            (settings as NodeBase).node_reference = nodeReference
+          }
         }
 
         const node: FlowNode = {
@@ -1946,7 +1958,8 @@ result
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
-          description: nodeDescription  // Set node-level description
+          description: nodeDescription,  // Set node-level description
+          node_reference: nodeReference   // Set node-level reference
         }
 
         nodes.value.set(flowfileNode.id, node)

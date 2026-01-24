@@ -15,6 +15,7 @@ export interface NodeBase {
   pos_y: number
   is_setup: boolean
   description: string
+  node_reference?: string  // Unique reference identifier for code generation (lowercase, no spaces)
 }
 
 export interface NodeSingleInput extends NodeBase {
@@ -388,6 +389,7 @@ export interface FlowfileNode {
   type: string
   is_start_node: boolean
   description: string
+  node_reference?: string  // Unique reference identifier for code generation
   x_position: number
   y_position: number
   left_input_id?: number
@@ -427,6 +429,7 @@ export interface FlowNode {
   leftInputId?: number
   rightInputId?: number
   description?: string
+  node_reference?: string  // Unique reference identifier for code generation
 }
 
 export interface FlowEdge {
