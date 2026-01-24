@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeJoin" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeJoin" @request-save="pushNodeData">
+    <generic-node-settings
+      v-model="nodeJoin"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-subtitle">Join columns</div>
       <div class="join-content">
         <div class="join-type-selector">
@@ -93,6 +97,7 @@
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import { NodeJoin } from "./joinInterfaces";
@@ -108,13 +113,17 @@ const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ["anti", "semi"];
 
 const handleJoinTypeError = (error: string) => {
   console.error("Join type error:", error);
-  // Handle the error as needed
 };
 
 const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeJoin = ref<NodeJoin | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeJoin,
+});
 
 const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeJoin.value) {
@@ -164,15 +173,10 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
-const pushNodeData = async () => {
-  console.log("Pushing node data");
-  nodeStore.updateSettings(nodeJoin);
-  //dataLoaded.value = false
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
