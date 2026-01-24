@@ -169,8 +169,8 @@ const loadNodeData = async (nodeId: number) => {
       nodeData.value = hasValidSetup
         ? fetchedNodeData.setting_input
         : createNodeDatabaseWriter(nodeStore.flow_id, nodeId);
+      dataLoaded.value = true;
     }
-    dataLoaded.value = true;
   } catch (error) {
     console.error("Error loading node data:", error);
     dataLoaded.value = false;
