@@ -2885,5 +2885,1043 @@ def test_external_source_adds_to_unsupported():
     assert "external_source" in converter.unsupported_nodes[0][1].lower()
 
 
+# ============================================================================
+# Basic Filter Operator Tests
+# ============================================================================
+
+@pytest.fixture
+def filter_test_data() -> input_schema.NodeManualInput:
+    """Create test data for filter tests with various data types."""
+    return input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="score", data_type="Double"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3, 4, 5],
+                ["Alice", "Bob", "Charlie", "David", None],
+                [85.5, 90.0, 75.5, 60.0, 95.5],
+                ["New York", "Los Angeles", "Chicago", "New York", "Boston"],
+            ]
+        )
+    )
+
+
+def test_basic_filter_equals_numeric(filter_test_data):
+    """Test basic filter with equals operator on numeric field."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="id",
+                operator=transform_schema.FilterOperator.EQUALS,
+                value="3"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("id") == 3')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_equals_string(filter_test_data):
+    """Test basic filter with equals operator on string field."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.EQUALS,
+                value="Alice"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name") == "Alice"')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_not_equals(filter_test_data):
+    """Test basic filter with not equals operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="id",
+                operator=transform_schema.FilterOperator.NOT_EQUALS,
+                value="1"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("id") != 1')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_greater_than(filter_test_data):
+    """Test basic filter with greater than operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="score",
+                operator=transform_schema.FilterOperator.GREATER_THAN,
+                value="80"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("score") > 80')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_greater_than_or_equals(filter_test_data):
+    """Test basic filter with greater than or equals operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="score",
+                operator=transform_schema.FilterOperator.GREATER_THAN_OR_EQUALS,
+                value="90"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("score") >= 90')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_less_than(filter_test_data):
+    """Test basic filter with less than operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="score",
+                operator=transform_schema.FilterOperator.LESS_THAN,
+                value="80"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("score") < 80')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_less_than_or_equals(filter_test_data):
+    """Test basic filter with less than or equals operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="score",
+                operator=transform_schema.FilterOperator.LESS_THAN_OR_EQUALS,
+                value="75.5"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("score") <= 75.5')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_contains(filter_test_data):
+    """Test basic filter with contains operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="city",
+                operator=transform_schema.FilterOperator.CONTAINS,
+                value="New"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("city").str.contains("New")')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_not_contains(filter_test_data):
+    """Test basic filter with not contains operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="city",
+                operator=transform_schema.FilterOperator.NOT_CONTAINS,
+                value="New"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("city").str.contains("New").not_()')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_starts_with(filter_test_data):
+    """Test basic filter with starts_with operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.STARTS_WITH,
+                value="A"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name").str.starts_with("A")')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_ends_with(filter_test_data):
+    """Test basic filter with ends_with operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.ENDS_WITH,
+                value="e"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name").str.ends_with("e")')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_is_null(filter_test_data):
+    """Test basic filter with is_null operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.IS_NULL,
+                value=""
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name").is_null()')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_is_not_null(filter_test_data):
+    """Test basic filter with is_not_null operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.IS_NOT_NULL,
+                value=""
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name").is_not_null()')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_in_numeric(filter_test_data):
+    """Test basic filter with in operator for numeric values."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="id",
+                operator=transform_schema.FilterOperator.IN,
+                value="1, 3, 5"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("id").is_in([1, 3, 5])')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_in_string(filter_test_data):
+    """Test basic filter with in operator for string values."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="name",
+                operator=transform_schema.FilterOperator.IN,
+                value="Alice, Bob"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("name").is_in(["Alice", "Bob"])')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_not_in(filter_test_data):
+    """Test basic filter with not_in operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="id",
+                operator=transform_schema.FilterOperator.NOT_IN,
+                value="1, 2"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, 'pl.col("id").is_in([1, 2]).not_()')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_basic_filter_between(filter_test_data):
+    """Test basic filter with between operator."""
+    flow = create_basic_flow()
+    flow.add_manual_input(filter_test_data)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field="score",
+                operator=transform_schema.FilterOperator.BETWEEN,
+                value="75",
+                value2="90"
+            )
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, '(pl.col("score") >= 75) & (pl.col("score") <= 90)')
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
+
+
+# ============================================================================
+# Fuzzy Match Edge Case Tests
+# ============================================================================
+
+def test_fuzzy_match_with_multiple_columns():
+    """Test fuzzy match with multiple matching columns."""
+    flow = create_basic_flow()
+
+    left_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="first_name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="last_name", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3],
+                ["John", "Jane", "Bob"],
+                ["Smith", "Doe", "Johnson"]
+            ]
+        )
+    )
+
+    right_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="fname", data_type="String"),
+                input_schema.MinimalFieldInfo(name="lname", data_type="String"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String"),
+            ],
+            data=[
+                ["Jon", "Janet", "Bobby"],
+                ["Smyth", "Dough", "Johnsen"],
+                ["NYC", "LA", "Chicago"]
+            ]
+        )
+    )
+
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+
+    fuzzy_node = input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.FuzzyMatchInput(
+            join_mapping=[
+                transform_schema.FuzzyMap(
+                    left_col="first_name",
+                    right_col="fname",
+                    fuzzy_type="levenshtein",
+                    threshold_score=0.6
+                ),
+                transform_schema.FuzzyMap(
+                    left_col="last_name",
+                    right_col="lname",
+                    fuzzy_type="levenshtein",
+                    threshold_score=0.6
+                )
+            ],
+            left_select=[
+                transform_schema.SelectInput("id"),
+                transform_schema.SelectInput("first_name"),
+                transform_schema.SelectInput("last_name"),
+            ],
+            right_select=[
+                transform_schema.SelectInput("fname"),
+                transform_schema.SelectInput("lname"),
+                transform_schema.SelectInput("city"),
+            ]
+        )
+    )
+    flow.add_fuzzy_match(fuzzy_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(
+        code,
+        "from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs",
+        "fuzzy_match_dfs("
+    )
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_fuzzy_match_with_column_drops():
+    """Test fuzzy match with columns marked as not keep."""
+    flow = create_basic_flow()
+
+    left_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="extra_col", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3],
+                ["John", "Jane", "Bob"],
+                ["A", "B", "C"]
+            ]
+        )
+    )
+
+    right_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="full_name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String"),
+                input_schema.MinimalFieldInfo(name="extra_right", data_type="String"),
+            ],
+            data=[
+                ["Jon", "Janet", "Bobby"],
+                ["NYC", "LA", "Chicago"],
+                ["X", "Y", "Z"]
+            ]
+        )
+    )
+
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+
+    fuzzy_node = input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.FuzzyMatchInput(
+            join_mapping=[
+                transform_schema.FuzzyMap(
+                    left_col="name",
+                    right_col="full_name",
+                    fuzzy_type="levenshtein",
+                    threshold_score=0.6
+                )
+            ],
+            left_select=[
+                transform_schema.SelectInput("id"),
+                transform_schema.SelectInput("name"),
+                transform_schema.SelectInput("extra_col", keep=False),  # Drop this column
+            ],
+            right_select=[
+                transform_schema.SelectInput("full_name"),
+                transform_schema.SelectInput("city"),
+                transform_schema.SelectInput("extra_right", keep=False),  # Drop this column
+            ]
+        )
+    )
+    flow.add_fuzzy_match(fuzzy_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    code = export_flow_to_polars(flow)
+    # Verify that drop operations are included
+    verify_code_contains(code, ".drop(")
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_fuzzy_match_jaro_winkler():
+    """Test fuzzy match with jaro_winkler fuzzy type."""
+    flow = create_basic_flow()
+
+    left_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="company", data_type="String"),
+            ],
+            data=[["Apple Inc", "Microsoft Corp", "Google LLC"]]
+        )
+    )
+
+    right_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="firm", data_type="String"),
+            ],
+            data=[["Apple Inc.", "Microsft Corporation", "Googl LLC"]]
+        )
+    )
+
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+
+    fuzzy_node = input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.FuzzyMatchInput(
+            join_mapping=[
+                transform_schema.FuzzyMap(
+                    left_col="company",
+                    right_col="firm",
+                    fuzzy_type="jaro_winkler",
+                    threshold_score=0.8
+                )
+            ],
+            left_select=[transform_schema.SelectInput("company")],
+            right_select=[transform_schema.SelectInput("firm")]
+        )
+    )
+    flow.add_fuzzy_match(fuzzy_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "fuzzy_type='jaro_winkler'")
+    verify_code_contains(code, "threshold_score=0.8")
+    verify_if_execute(code)
+
+
+# ============================================================================
+# CSV Encoding Tests
+# ============================================================================
+
+def test_csv_read_non_utf8_encoding(tmp_path):
+    """Test CSV read with non-UTF8 encoding uses read_csv instead of scan_csv."""
+    flow = create_basic_flow()
+
+    # Create CSV with Latin-1 encoding
+    csv_path = tmp_path / "latin1_data.csv"
+    df = pl.DataFrame({
+        "name": ["José", "François", "Müller"],
+        "value": [1, 2, 3]
+    })
+    df.write_csv(csv_path)
+
+    read_node = input_schema.NodeRead(
+        flow_id=flow.flow_id,
+        node_id=1,
+        received_file=input_schema.ReceivedTable(
+            name="latin1_data.csv",
+            path=str(csv_path),
+            file_type="csv",
+            table_settings=input_schema.InputCsvTable(
+                delimiter=",",
+                has_headers=True,
+                encoding="latin-1"  # Non-UTF8 encoding
+            )
+        )
+    )
+    flow.add_read(read_node)
+
+    code = export_flow_to_polars(flow)
+    # Non-UTF8 should use read_csv instead of scan_csv
+    verify_code_contains(code, "pl.read_csv(")
+    verify_code_contains(code, 'encoding="latin-1"')
+    verify_code_contains(code, ".lazy()")
+    verify_if_execute(code)
+
+
+def test_csv_read_with_skip_rows(tmp_path):
+    """Test CSV read with skip_rows parameter."""
+    flow = create_basic_flow()
+
+    # Create CSV with header rows to skip
+    csv_path = tmp_path / "skip_rows_data.csv"
+    with open(csv_path, 'w') as f:
+        f.write("This is a comment line\n")
+        f.write("Another comment\n")
+        f.write("name,value\n")
+        f.write("Alice,1\n")
+        f.write("Bob,2\n")
+
+    read_node = input_schema.NodeRead(
+        flow_id=flow.flow_id,
+        node_id=1,
+        received_file=input_schema.ReceivedTable(
+            name="skip_rows_data.csv",
+            path=str(csv_path),
+            file_type="csv",
+            table_settings=input_schema.InputCsvTable(
+                delimiter=",",
+                has_headers=True,
+                encoding="utf-8",
+                starting_from_line=2  # Skip 2 lines
+            )
+        )
+    )
+    flow.add_read(read_node)
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "skip_rows=2")
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    assert len(result_df.collect()) == 2
+
+
+# ============================================================================
+# Custom Node DataFrame Input/Output Tests
+# ============================================================================
+
+def test_custom_node_dataframe_signature_detection():
+    """Test that custom nodes with DataFrame signature get correct collect/lazy handling."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    # Create a node that uses DataFrame (not LazyFrame)
+    class DataFrameProcessNode:
+        def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+            return inputs[0]
+
+    flow = create_basic_flow()
+    converter = FlowGraphToPolarsConverter(flow)
+
+    needs_collect, needs_lazy = converter._check_process_method_signature(DataFrameProcessNode)
+
+    assert needs_collect is True, "Should need collect for DataFrame input"
+    assert needs_lazy is True, "Should need lazy for DataFrame output"
+
+
+def test_custom_node_lazyframe_signature_detection():
+    """Test that custom nodes with LazyFrame signature skip unnecessary collect/lazy."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    class LazyFrameProcessNode:
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            return inputs[0]
+
+    flow = create_basic_flow()
+    converter = FlowGraphToPolarsConverter(flow)
+
+    needs_collect, needs_lazy = converter._check_process_method_signature(LazyFrameProcessNode)
+
+    assert needs_collect is False, "Should not need collect for LazyFrame input"
+    assert needs_lazy is False, "Should not need lazy for LazyFrame output"
+
+
+def test_custom_node_mixed_signature_detection():
+    """Test custom node with LazyFrame input and DataFrame output."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    class MixedProcessNode:
+        def process(self, *inputs: pl.LazyFrame) -> pl.DataFrame:
+            return inputs[0].collect()
+
+    flow = create_basic_flow()
+    converter = FlowGraphToPolarsConverter(flow)
+
+    needs_collect, needs_lazy = converter._check_process_method_signature(MixedProcessNode)
+
+    assert needs_collect is False, "Should not need collect for LazyFrame input"
+    assert needs_lazy is True, "Should need lazy for DataFrame output"
+
+
+# ============================================================================
+# Edge Cases and Error Handling Tests
+# ============================================================================
+
+def test_filter_with_empty_basic_filter():
+    """Test filter with None basic filter falls back gracefully."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=None  # No filter defined
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "# No filter applied")
+    verify_if_execute(code)
+
+
+def test_unique_without_columns():
+    """Test unique node without specifying columns (unique on all columns)."""
+    flow = create_basic_flow()
+
+    data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="a", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="b", data_type="String")
+            ],
+            data=[[1, 1, 2, 2], ["x", "x", "y", "z"]]
+        )
+    )
+    flow.add_manual_input(data)
+
+    unique_node = input_schema.NodeUnique(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        unique_input=transform_schema.UniqueInput(
+            columns=[],  # Empty columns = unique on all
+            strategy="first"
+        )
+    )
+    flow.add_unique(unique_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "unique(keep='first')")
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    # Should have 3 unique rows: (1, x), (2, y), (2, z)
+    assert len(result_df.collect()) == 3
+
+
+def test_select_with_no_columns_kept():
+    """Test select node where no columns are marked as keep."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    select_node = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[
+            transform_schema.SelectInput("id", "id", keep=False),
+            transform_schema.SelectInput("name", "name", keep=False),
+        ]
+    )
+    flow.add_select(select_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    # Should just pass through the dataframe without select
+    verify_code_contains(code, "df_2 = df_1")
+    verify_if_execute(code)
+
+
+def test_group_by_concat_aggregation():
+    """Test group by with concat aggregation function (special mapping)."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    groupby_node = input_schema.NodeGroupBy(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        groupby_input=transform_schema.GroupByInput(
+            agg_cols=[
+                transform_schema.AggColl("product", "groupby"),
+                transform_schema.AggColl("region", "concat", "all_regions"),
+            ]
+        )
+    )
+    flow.add_group_by(groupby_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    # concat should be mapped to str.concat
+    verify_code_contains(code, 'pl.col("region").str.concat().alias("all_regions")')
+    verify_if_execute(code)
+
+
+def test_union_relaxed_vs_strict():
+    """Test union with strict mode (diagonal) vs relaxed mode."""
+    flow = create_basic_flow()
+
+    # Add two manual inputs with different columns
+    data1 = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="a", data_type="Integer")],
+            data=[[1, 2]]
+        )
+    )
+    flow.add_manual_input(data1)
+
+    data2 = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="b", data_type="Integer")],
+            data=[[3, 4]]
+        )
+    )
+    flow.add_manual_input(data2)
+
+    # Test strict mode
+    union_node = input_schema.NodeUnion(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        union_input=transform_schema.UnionInput(mode="strict")
+    )
+    flow.add_union(union_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "how='diagonal'")
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
