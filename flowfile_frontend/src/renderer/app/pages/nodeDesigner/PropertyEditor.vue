@@ -256,7 +256,9 @@
           <div class="property-group">
             <div class="property-group-title">Column Action Options</div>
             <div class="property-row">
-              <label class="property-label">Actions (comma-separated) <span class="required">*</span></label>
+              <label class="property-label"
+                >Actions (comma-separated) <span class="required">*</span></label
+              >
               <input
                 :value="component.actions_string"
                 type="text"
@@ -264,7 +266,9 @@
                 placeholder="sum, mean, min, max"
                 @input="updateField('actions_string', ($event.target as HTMLInputElement).value)"
               />
-              <span class="field-hint">Actions available in dropdown (e.g., sum, mean, min, max)</span>
+              <span class="field-hint"
+                >Actions available in dropdown (e.g., sum, mean, min, max)</span
+              >
             </div>
             <div class="property-row">
               <label class="property-label">Output Name Template</label>
@@ -273,7 +277,9 @@
                 type="text"
                 class="property-input"
                 placeholder="{column}_{action}"
-                @input="updateField('output_name_template', ($event.target as HTMLInputElement).value)"
+                @input="
+                  updateField('output_name_template', ($event.target as HTMLInputElement).value)
+                "
               />
               <span class="field-hint">Use {column} and {action} placeholders</span>
             </div>

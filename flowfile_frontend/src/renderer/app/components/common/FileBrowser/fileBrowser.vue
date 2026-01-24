@@ -15,8 +15,13 @@
             <span class="material-icons">arrow_upward</span>
             <span>Up</span>
           </button>
-          <button class="nav-button refresh-button" :disabled="loading" @click="loadCurrentDirectory" title="Refresh">
-            <span class="material-icons" :class="{ 'spin': loading }">refresh</span>
+          <button
+            class="nav-button refresh-button"
+            :disabled="loading"
+            title="Refresh"
+            @click="loadCurrentDirectory"
+          >
+            <span class="material-icons" :class="{ spin: loading }">refresh</span>
           </button>
           <div class="current-path">
             {{ currentPath }}

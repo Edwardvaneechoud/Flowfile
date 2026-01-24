@@ -59,14 +59,17 @@
                   <i :class="copiedEnv ? 'fa-solid fa-check' : 'fa-solid fa-copy'"></i>
                 </button>
               </div>
-              <p class="hint">Then restart: <code>docker-compose down && docker-compose up</code></p>
+              <p class="hint">
+                Then restart: <code>docker-compose down && docker-compose up</code>
+              </p>
             </div>
           </div>
 
           <div class="warning-box">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <div>
-              <strong>Important:</strong> Back up this key securely. If lost, all stored secrets become unrecoverable.
+              <strong>Important:</strong> Back up this key securely. If lost, all stored secrets
+              become unrecoverable.
             </div>
           </div>
         </div>
