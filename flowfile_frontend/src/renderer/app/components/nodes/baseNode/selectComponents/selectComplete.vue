@@ -92,18 +92,21 @@ const loadNodeData = async () => {
 };
 
 const pushNodeData = async () => {
-  //await insertSelect(nodeSelect.value)
   const originalData = nodeStore.getCurrentNodeData();
   const newColumnSettings = nodeSelect.value.select_input;
   nodeSelect.value.keep_missing = keepMissing.value;
   if (originalData) {
-    newColumnSettings.forEach((newColumnSetting, index) => {
-      let original_object = originalData.main_input?.table_schema[index];
-      newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
-      newColumnSetting.data_type_change = newColumnSetting.is_altered;
+    newColumnSettings.forEach((newColumnSetting) => {
+      // Find matching column by name, not index (columns may be reordered)
+      const original_object = originalData.main_input?.table_schema.find(
+        (schema) => schema.name === newColumnSetting.old_name,
+      );
+      const dataTypeChanged = original_object?.data_type !== newColumnSetting.data_type;
+      // Preserve is_altered if already set (e.g., from YAML), or set it if data_type differs
+      newColumnSetting.is_altered = newColumnSetting.is_altered || dataTypeChanged;
+      newColumnSetting.data_type_change = dataTypeChanged;
     });
   }
-  //console.log(nodeSelect.value)
   await nodeStore.updateSettings(nodeSelect);
 };
 
