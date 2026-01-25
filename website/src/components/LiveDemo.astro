@@ -8,15 +8,44 @@
       <h2 class="section-title">Try it yourself</h2>
     </div>
 
-    <!-- Mobile: Show link only -->
-    <div class="mobile-demo-link">
-      <a href="https://demo.flowfile.org?demo=true" target="_blank" rel="noopener" class="btn btn-primary">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="5 3 19 12 5 21 5 3" />
+    <!-- Mobile: Show scaled desktop preview -->
+    <div class="mobile-demo-container">
+      <div class="mobile-demo-header">
+        <div class="demo-indicator">
+          <span class="pulse-dot"></span>
+          <span>Live Demo</span>
+          <span class="demo-badge">Preview</span>
+        </div>
+        <a href="https://demo.flowfile.org?demo=true" target="_blank" rel="noopener" class="open-fullscreen">
+          Open fullscreen
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+          </svg>
+        </a>
+      </div>
+      <div class="mobile-demo-viewport">
+        <div class="mobile-demo-scaler">
+          <iframe
+            src="https://demo.flowfile.org?demo=true"
+            title="Flowfile WASM Demo - Mobile Preview"
+            class="mobile-demo-iframe"
+            loading="lazy"
+            allow="clipboard-write"
+          ></iframe>
+        </div>
+        <div class="mobile-loading-overlay" id="mobile-demo-loading">
+          <div class="loading-spinner"></div>
+          <p>Loading preview...</p>
+        </div>
+      </div>
+      <p class="mobile-demo-hint">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4" />
+          <path d="M12 8h.01" />
         </svg>
-        Open Interactive Demo
-      </a>
-      <p class="mobile-hint">Best experienced on desktop</p>
+        Pinch to zoom • Tap to interact • Best on desktop
+      </p>
     </div>
 
     <!-- Desktop: Show iframe -->
@@ -64,17 +93,96 @@
     background: var(--color-bg);
   }
 
-  .mobile-demo-link {
+  /* Mobile scaled demo preview */
+  .mobile-demo-container {
     display: none;
     flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    text-align: center;
+    max-width: 100%;
+    margin: 0 auto;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
   }
 
-  .mobile-hint {
-    font-size: 0.85rem;
+  .mobile-demo-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .mobile-demo-viewport {
+    position: relative;
+    width: 100%;
+    /* Height calculated based on scale factor */
+    /* Desktop iframe: 1200px x 700px, scaled to fit ~350px width */
+    /* Scale factor: 350/1200 ≈ 0.29, so height: 700 * 0.29 ≈ 203px */
+    height: 220px;
+    overflow: hidden;
+    background: var(--color-bg-elevated);
+  }
+
+  .mobile-demo-scaler {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1200px;
+    height: 700px;
+    transform: scale(var(--mobile-scale, 0.3));
+    transform-origin: top left;
+  }
+
+  .mobile-demo-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--color-bg-elevated);
+  }
+
+  .mobile-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: var(--color-bg-elevated);
+    transition: opacity 0.3s ease;
+    z-index: 10;
+  }
+
+  .mobile-loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .mobile-loading-overlay p {
     color: var(--color-text-muted);
+    font-size: 0.8rem;
+    margin: 0;
+  }
+
+  .mobile-demo-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    background: var(--color-bg-card);
+    border-top: 1px solid var(--color-border);
+    margin: 0;
+  }
+
+  .mobile-demo-hint svg {
+    flex-shrink: 0;
+    opacity: 0.6;
   }
 
   .demo-frame-container {
@@ -235,8 +343,14 @@
       padding: 2.5rem 1rem;
     }
 
-    .mobile-demo-link {
+    .mobile-demo-container {
       display: flex;
+      --mobile-scale: 0.32;
+    }
+
+    .mobile-demo-viewport {
+      /* Recalculate: 700px * 0.32 = 224px */
+      height: 224px;
     }
 
     .demo-frame-container,
@@ -245,17 +359,57 @@
       display: none;
     }
   }
+
+  /* Slightly larger scale for tablets */
+  @media (min-width: 500px) and (max-width: 768px) {
+    .mobile-demo-container {
+      --mobile-scale: 0.42;
+    }
+
+    .mobile-demo-viewport {
+      /* 700px * 0.42 = 294px */
+      height: 294px;
+    }
+  }
+
+  /* Very small screens */
+  @media (max-width: 400px) {
+    .mobile-demo-container {
+      --mobile-scale: 0.26;
+    }
+
+    .mobile-demo-viewport {
+      /* 700px * 0.26 = 182px */
+      height: 182px;
+    }
+
+    .mobile-demo-hint {
+      font-size: 0.7rem;
+    }
+  }
 </style>
 
 <script>
+  // Desktop iframe loading
   const iframe = document.querySelector('.demo-iframe') as HTMLIFrameElement;
   const loadingOverlay = document.getElementById('demo-loading');
 
   if (iframe && loadingOverlay) {
     iframe.addEventListener('load', () => {
-      // Give a small delay for the iframe content to render
       setTimeout(() => {
         loadingOverlay.classList.add('hidden');
+      }, 500);
+    });
+  }
+
+  // Mobile iframe loading
+  const mobileIframe = document.querySelector('.mobile-demo-iframe') as HTMLIFrameElement;
+  const mobileLoadingOverlay = document.getElementById('mobile-demo-loading');
+
+  if (mobileIframe && mobileLoadingOverlay) {
+    mobileIframe.addEventListener('load', () => {
+      setTimeout(() => {
+        mobileLoadingOverlay.classList.add('hidden');
       }, 500);
     });
   }
