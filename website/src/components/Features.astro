@@ -243,12 +243,22 @@ result = (
   .code-number { color: #f78c6c; }
 
   @media (max-width: 768px) {
+    .features-section {
+      padding: 3rem 1rem;
+    }
+
     .features-grid {
       grid-template-columns: 1fr;
+      max-width: 450px;
+      margin: 0 auto;
     }
 
     .feature-large {
       grid-column: span 1;
+    }
+
+    .feature-card {
+      padding: 1.5rem;
     }
   }
 </style>
