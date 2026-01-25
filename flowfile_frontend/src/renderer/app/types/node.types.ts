@@ -659,6 +659,7 @@ export interface NodeBase {
   pos_y: number;
   is_setup?: boolean;
   description?: string;
+  node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
   output_field_config?: OutputFieldConfig | null;
 }
