@@ -1,0 +1,133 @@
+---
+---
+
+<section class="unique-section" id="comparison">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Why Flowfile</span>
+      <h2 class="section-title">What makes it unique</h2>
+      <p class="section-description">
+        Flowfile isn't trying to replace your existing tools. It fills a gap for those who want visual data transformation without lock-in.
+      </p>
+    </div>
+
+    <div class="unique-grid">
+      <div class="unique-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18" />
+            <path d="M9 21V9" />
+          </svg>
+        </div>
+        <h3>Visual meets code</h3>
+        <p>Build pipelines visually, then export as clean Python code. Switch between both anytime — no vendor lock-in.</p>
+      </div>
+
+      <div class="unique-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+        </div>
+        <h3>Runs locally</h3>
+        <p>No cloud setup, no accounts, no data leaving your machine. Install with pip and you're ready to go.</p>
+      </div>
+
+      <div class="unique-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 6v6l4 2" />
+          </svg>
+        </div>
+        <h3>See your data</h3>
+        <p>Preview results at every step of your pipeline. No more running the entire flow just to check one transformation.</p>
+      </div>
+
+      <div class="unique-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+        </div>
+        <h3>Built on Polars</h3>
+        <p>Under the hood, Flowfile uses Polars for fast, memory-efficient data processing. Same performance you'd get in code.</p>
+      </div>
+    </div>
+
+    <p class="honest-note">
+      Flowfile is great for ETL and data transformation. For workflow orchestration, scheduling, or SQL-based transformations,
+      tools like Airflow, Prefect, or dbt might be a better fit.
+    </p>
+  </div>
+</section>
+
+<style>
+  .unique-section {
+    padding: 4rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .unique-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  .unique-card {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .unique-card .card-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: rgba(99, 102, 241, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+
+  .unique-card .card-icon svg {
+    width: 20px;
+    height: 20px;
+    stroke: var(--color-primary);
+  }
+
+  .unique-card h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.5rem;
+  }
+
+  .unique-card p {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+
+  .honest-note {
+    max-width: 700px;
+    margin: 2rem auto 0;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 600px) {
+    .unique-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

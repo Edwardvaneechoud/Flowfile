@@ -1,0 +1,258 @@
+---
+---
+
+<section class="live-demo-section" id="try">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Interactive</span>
+      <h2 class="section-title">Try it yourself</h2>
+    </div>
+
+    <!-- Mobile: Show link only -->
+    <div class="mobile-demo-link">
+      <a href="https://demo.flowfile.org" target="_blank" rel="noopener" class="btn btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3" />
+        </svg>
+        Open Interactive Demo
+      </a>
+      <p class="mobile-hint">Best experienced on desktop</p>
+    </div>
+
+    <!-- Desktop: Show iframe -->
+    <div class="demo-frame-container">
+      <div class="demo-frame-header">
+        <div class="demo-indicator">
+          <span class="pulse-dot"></span>
+          <span>Live Demo</span>
+          <span class="demo-badge">Lite</span>
+        </div>
+        <a href="https://demo.flowfile.org" target="_blank" rel="noopener" class="open-fullscreen">
+          Open in new tab
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+      </div>
+      <div class="demo-frame-wrapper">
+        <iframe
+          src="https://demo.flowfile.org?demo=true"
+          title="Flowfile WASM Demo"
+          class="demo-iframe"
+          loading="lazy"
+          allow="clipboard-write"
+        ></iframe>
+        <div class="loading-overlay" id="demo-loading">
+          <div class="loading-spinner"></div>
+          <p>Loading Flowfile...</p>
+          <p class="loading-hint">First load may take a moment while Pyodide initializes</p>
+        </div>
+      </div>
+    </div>
+
+    <p class="demo-note">
+      This is a lightweight browser version. <a href="#install">Install the full version</a> for database connections, larger datasets, and more.
+    </p>
+  </div>
+</section>
+
+<style>
+  .live-demo-section {
+    padding: 4rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .mobile-demo-link {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .mobile-hint {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  .demo-frame-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .demo-frame-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .demo-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-weight: 500;
+  }
+
+  .demo-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    background: rgba(249, 115, 22, 0.15);
+    color: #f97316;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .demo-note {
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    margin-top: 1.5rem;
+  }
+
+  .demo-note a {
+    color: var(--color-primary);
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #22c55e;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.1); }
+  }
+
+  .open-fullscreen {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+    transition: color 0.2s ease;
+  }
+
+  .open-fullscreen:hover {
+    color: var(--color-primary);
+  }
+
+  .demo-frame-wrapper {
+    position: relative;
+    width: 100%;
+    height: 650px;
+  }
+
+  .demo-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--color-bg-elevated);
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    background: var(--color-bg-elevated);
+    transition: opacity 0.3s ease;
+  }
+
+  .loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-overlay p {
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+    margin: 0;
+  }
+
+  .loading-hint {
+    font-size: 0.8rem !important;
+    opacity: 0.7;
+  }
+
+  .demo-features {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .demo-feature {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+  }
+
+  .demo-feature svg {
+    width: 20px;
+    height: 20px;
+    stroke: var(--color-primary);
+  }
+
+  @media (max-width: 768px) {
+    .mobile-demo-link {
+      display: flex;
+    }
+
+    .demo-frame-container,
+    .demo-features,
+    .demo-note {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  const iframe = document.querySelector('.demo-iframe') as HTMLIFrameElement;
+  const loadingOverlay = document.getElementById('demo-loading');
+
+  if (iframe && loadingOverlay) {
+    iframe.addEventListener('load', () => {
+      // Give a small delay for the iframe content to render
+      setTimeout(() => {
+        loadingOverlay.classList.add('hidden');
+      }, 500);
+    });
+  }
+</script>
