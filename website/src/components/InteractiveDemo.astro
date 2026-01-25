@@ -467,32 +467,36 @@
   }
 
   @media (max-width: 900px) {
+    .demo-section {
+      padding: 2.5rem 1rem;
+    }
+
     .demo-content {
       flex-direction: column;
     }
 
     .canvas {
       flex: none;
-      min-height: 180px;
+      min-height: 150px;
     }
 
     .nodes-container {
-      padding: 20px 8px;
+      padding: 16px 8px;
     }
 
     .connector {
       width: 24px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
     }
 
     .node-icon {
-      width: 48px;
-      height: 48px;
+      width: 44px;
+      height: 44px;
     }
 
     .node-icon svg {
-      width: 22px;
-      height: 22px;
+      width: 20px;
+      height: 20px;
     }
 
     .node-label {
@@ -502,7 +506,15 @@
     .data-panel {
       border-left: none;
       border-top: 1px solid var(--color-border);
-      min-height: 350px;
+      min-height: 280px;
+    }
+
+    .table-header {
+      padding: 10px 12px;
+    }
+
+    .table-title {
+      font-size: 1rem;
     }
   }
 

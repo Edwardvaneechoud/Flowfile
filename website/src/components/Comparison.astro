@@ -112,9 +112,25 @@
     line-height: 1.6;
   }
 
+  @media (max-width: 768px) {
+    .unique-section {
+      padding: 2.5rem 1rem;
+    }
+
+    .unique-grid {
+      gap: 1rem;
+    }
+
+    .unique-card {
+      padding: 1.25rem;
+    }
+  }
+
   @media (max-width: 600px) {
     .unique-grid {
       grid-template-columns: 1fr;
+      max-width: 350px;
+      margin: 0 auto;
     }
   }
 </style>

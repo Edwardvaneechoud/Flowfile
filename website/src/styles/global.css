@@ -85,7 +85,29 @@ code {
 
 @media (max-width: 768px) {
   .section {
-    padding: 3rem 1rem;
+    padding: 2.5rem 1rem;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+
+  .section-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .section-label {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.7rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .section-title {
+    margin-bottom: 0.75rem;
+  }
+
+  .section-description {
+    font-size: 0.95rem;
   }
 }
 
