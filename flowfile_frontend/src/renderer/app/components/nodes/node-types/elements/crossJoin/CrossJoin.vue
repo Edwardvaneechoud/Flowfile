@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeCrossJoin">
-    <generic-node-settings v-model="nodeCrossJoin">
+    <generic-node-settings
+      v-model="nodeCrossJoin"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <select-dynamic
           :select-inputs="nodeCrossJoin?.cross_join_input.left_select.renames"
@@ -28,7 +32,8 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput, NodeCrossJoin } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
@@ -38,6 +43,11 @@ const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeCrossJoin = ref<NodeCrossJoin | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeCrossJoin,
+});
 
 const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeCrossJoin.value) {
@@ -57,14 +67,10 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  console.log("Pushing node data");
-  nodeStore.updateSettings(nodeCrossJoin);
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

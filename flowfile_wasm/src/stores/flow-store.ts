@@ -24,6 +24,10 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+// Preview cache limits to prevent memory bloat
+const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
+const PREVIEW_CACHE_MAX_AGE_MS = 5 * 60 * 1000  // 5 minutes max age
+
 // Fields to exclude from setting_input when exporting (matches flowfile_core)
 const SETTING_INPUT_EXCLUDE = new Set([
   'flow_id',
@@ -133,6 +137,14 @@ export const useFlowStore = defineStore('flow', () => {
               delete (settings as any).received_table
             }
 
+            // Get description from FlowfileNode level (this is where flowfile_core stores it)
+            const nodeDescription = flowfileNode.description || ''
+
+            // Sync description to settings for backward compatibility
+            if (settings) {
+              (settings as NodeBase).description = nodeDescription
+            }
+
             const node: FlowNode = {
               id: flowfileNode.id,
               type: nodeType,
@@ -142,7 +154,7 @@ export const useFlowStore = defineStore('flow', () => {
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
-              description: flowfileNode.description
+              description: nodeDescription  // Set node-level description
             }
             nodes.value.set(flowfileNode.id, node)
           }
@@ -284,11 +296,12 @@ export const useFlowStore = defineStore('flow', () => {
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
+      // Read description from node level (primary) with fallback to settings
       flowfileNodes.push({
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
-        description: (node.settings as NodeBase).description || '',
+        description: node.description || (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -455,8 +468,11 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getLeftInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    if (!node?.leftInputId) return []
-    const result = nodeResults.value.get(node.leftInputId)
+    // Use leftInputId if set, otherwise fall back to inputIds[0] (main input)
+    // In flowfile_core, join nodes use main input as the left table
+    const leftId = node?.leftInputId ?? node?.inputIds[0]
+    if (!leftId) return []
+    const result = nodeResults.value.get(leftId)
     return result?.schema || []
   }
 
@@ -485,7 +501,8 @@ export const useFlowStore = defineStore('flow', () => {
       settings: defaultSettings,
       inputIds: [],
       leftInputId: undefined,
-      rightInputId: undefined
+      rightInputId: undefined,
+      description: ''  // Initialize node-level description
     }
 
     nodes.value.set(id, node)
@@ -507,6 +524,24 @@ export const useFlowStore = defineStore('flow', () => {
 
       // Invalidate preview cache for this node and downstream
       invalidatePreviewCache(id)
+    }
+  }
+
+  /**
+   * Update the description for a node
+   * This updates the node-level description (primary storage)
+   * and syncs to settings.description for backward compatibility
+   */
+  function updateNodeDescription(id: number, description: string) {
+    const node = nodes.value.get(id)
+    if (node) {
+      // Update node-level description (primary)
+      node.description = description
+      // Also sync to settings for backward compatibility with flowfile_core
+      if (node.settings) {
+        (node.settings as NodeBase).description = description
+      }
+      nodes.value.set(id, node)
     }
   }
 
@@ -660,13 +695,33 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function selectNode(id: number | null) {
+    const previousId = selectedNodeId.value
+
+    // Clear preview data from previously selected node to free memory
+    // (keeps schema and success status, just removes the large data array)
+    if (previousId !== null && previousId !== id) {
+      const prevResult = nodeResults.value.get(previousId)
+      if (prevResult?.data) {
+        nodeResults.value.set(previousId, {
+          ...prevResult,
+          data: undefined  // Clear the large preview data
+        })
+      }
+      // Also clear from preview cache
+      previewCache.value.delete(previousId)
+    }
+
     selectedNodeId.value = id
 
     // Auto-fetch preview when selecting a node that has data
     if (id !== null) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
-        fetchNodePreview(id)
+        // Use more rows for explore_data nodes (Preview Settings)
+        // Limited to 1000 to prevent UI lag with large datasets
+        const node = nodes.value.get(id)
+        const maxRows = node?.type === 'explore_data' ? 1000 : 100
+        fetchNodePreview(id, { maxRows })
       }
     }
   }
@@ -716,6 +771,8 @@ current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
 orphaned_ids = [nid for nid in list(_lazyframes.keys()) if nid not in current_node_ids]
 for nid in orphaned_ids:
     clear_node(nid)
+# Force garbage collection after cleanup
+gc.collect()
 `)
     }
   }
@@ -1054,6 +1111,33 @@ for nid in orphaned_ids:
   // =============================================================================
 
   /**
+   * Evict old entries from previewCache to prevent memory bloat.
+   * Uses LRU-style eviction: removes oldest entries first.
+   */
+  function evictPreviewCacheIfNeeded() {
+    const now = Date.now()
+    const entries = Array.from(previewCache.value.entries())
+
+    // First, evict expired entries
+    for (const [nodeId, entry] of entries) {
+      if (now - entry.timestamp > PREVIEW_CACHE_MAX_AGE_MS) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+
+    // Then, if still over limit, evict oldest entries
+    if (previewCache.value.size > PREVIEW_CACHE_MAX_SIZE) {
+      const sortedEntries = Array.from(previewCache.value.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+
+      const toEvict = sortedEntries.slice(0, previewCache.value.size - PREVIEW_CACHE_MAX_SIZE)
+      for (const [nodeId] of toEvict) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+  }
+
+  /**
    * Build downstream dependency graph
    */
   function buildDownstreamGraph(): Record<number, number[]> {
@@ -1199,6 +1283,9 @@ result
           timestamp: Date.now(),
           loading: false
         })
+
+        // Evict old entries to prevent memory bloat
+        evictPreviewCacheIfNeeded()
 
         // Also update nodeResults with the preview data for display
         const existingResult = nodeResults.value.get(nodeId)
@@ -1547,9 +1634,16 @@ result
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
-          await fetchNodePreview(selectedNodeId.value)
+          // Use more rows for explore_data nodes (Preview Settings)
+          // Limited to 1000 to prevent UI lag with large datasets
+          const node = nodes.value.get(selectedNodeId.value)
+          const maxRows = node?.type === 'explore_data' ? 1000 : 100
+          await fetchNodePreview(selectedNodeId.value, { maxRows })
         }
       }
+
+      // Force garbage collection after flow execution
+      await pyodideStore.runPython('gc.collect()')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
@@ -1756,11 +1850,12 @@ result
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
+      // Read description from node level (primary) with fallback to settings
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
-        description: (node.settings as NodeBase).description || '',
+        description: node.description || (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -1834,6 +1929,14 @@ result
           delete (settings as any).received_table
         }
 
+        // Get description from FlowfileNode level (this is where flowfile_core stores it)
+        const nodeDescription = flowfileNode.description || ''
+
+        // Sync description to settings for backward compatibility
+        if (settings) {
+          (settings as NodeBase).description = nodeDescription
+        }
+
         const node: FlowNode = {
           id: flowfileNode.id,
           type: nodeType,
@@ -1843,7 +1946,7 @@ result
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
-          description: flowfileNode.description
+          description: nodeDescription  // Set node-level description
         }
 
         nodes.value.set(flowfileNode.id, node)
@@ -2088,6 +2191,7 @@ result
     addNode,
     updateNode,
     updateNodeSettings,
+    updateNodeDescription,
     removeNode,
     addEdge,
     removeEdge,

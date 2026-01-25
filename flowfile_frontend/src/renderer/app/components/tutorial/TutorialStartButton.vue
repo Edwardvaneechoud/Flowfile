@@ -38,7 +38,7 @@ function dismissButton() {
   <Teleport to="body">
     <Transition name="float-in">
       <div v-if="showButton" class="tutorial-start-container">
-        <button class="tutorial-dismiss-btn" @click="dismissButton" title="Dismiss">
+        <button class="tutorial-dismiss-btn" title="Dismiss" @click="dismissButton">
           <span class="material-icons">close</span>
         </button>
         <button class="tutorial-start-btn" @click="startTutorial">

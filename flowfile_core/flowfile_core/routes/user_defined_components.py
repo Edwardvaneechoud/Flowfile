@@ -1,23 +1,25 @@
 
 import ast
 import re
-from typing import Dict, Any, List, Optional
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from flowfile_core import flow_file_handler
+
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import (
     CUSTOM_NODE_STORE,
     add_to_custom_node_store,
-    remove_from_custom_node_store,
     load_single_node_from_file,
+    remove_from_custom_node_store,
 )
+
 # File handling
 from flowfile_core.schemas import input_schema
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -66,7 +68,7 @@ def get_simple_custom_object(flow_id: int, node_id: int):
 
 
 @router.post("/update_user_defined_node", tags=["transform"])
-def update_user_defined_node(input_data: Dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)):
+def update_user_defined_node(input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)):
     input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
@@ -149,7 +151,7 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
     info = CustomNodeInfo(file_name=file_path.name)
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         tree = ast.parse(content)
@@ -199,14 +201,14 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
     return info
 
 
-@router.get("/list-custom-nodes", summary="List all custom nodes", response_model=List[CustomNodeInfo])
-def list_custom_nodes() -> List[CustomNodeInfo]:
+@router.get("/list-custom-nodes", summary="List all custom nodes", response_model=list[CustomNodeInfo])
+def list_custom_nodes() -> list[CustomNodeInfo]:
     """
     List all custom node Python files in the user-defined nodes directory.
     Returns basic metadata extracted from each file.
     """
     nodes_dir = storage.user_defined_nodes_directory
-    nodes: List[CustomNodeInfo] = []
+    nodes: list[CustomNodeInfo] = []
 
     if not nodes_dir.exists():
         return nodes
@@ -223,7 +225,7 @@ def list_custom_nodes() -> List[CustomNodeInfo]:
 
 
 @router.get("/get-custom-node/{file_name}", summary="Get custom node details")
-def get_custom_node(file_name: str) -> Dict[str, Any]:
+def get_custom_node(file_name: str) -> dict[str, Any]:
     """
     Get the full content and parsed metadata of a custom node file.
     This endpoint is used by the Node Designer to load an existing node for editing.
@@ -239,7 +241,7 @@ def get_custom_node(file_name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
@@ -320,7 +322,7 @@ def get_custom_node(file_name: str) -> Dict[str, Any]:
 
 
 @router.delete("/delete-custom-node/{file_name}", summary="Delete a custom node")
-def delete_custom_node(file_name: str) -> Dict[str, Any]:
+def delete_custom_node(file_name: str) -> dict[str, Any]:
     """
     Delete a custom node Python file from the user-defined nodes directory.
     This also attempts to unregister the node from the node store.
@@ -384,14 +386,14 @@ ALLOWED_ICON_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'}
 MAX_ICON_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-@router.get("/list-icons", summary="List all available icons", response_model=List[IconInfo])
-def list_icons() -> List[IconInfo]:
+@router.get("/list-icons", summary="List all available icons", response_model=list[IconInfo])
+def list_icons() -> list[IconInfo]:
     """
     List all icon files available for custom nodes.
     Returns icons from the user_defined_nodes/icons directory.
     """
     icons_dir = storage.user_defined_nodes_icons
-    icons: List[IconInfo] = []
+    icons: list[IconInfo] = []
 
     if not icons_dir.exists():
         return icons
@@ -406,7 +408,7 @@ def list_icons() -> List[IconInfo]:
 
 
 @router.post("/upload-icon", summary="Upload a custom icon")
-async def upload_icon(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def upload_icon(file: UploadFile = File(...)) -> dict[str, Any]:
     """
     Upload a new icon file to the user_defined_nodes/icons directory.
 
@@ -507,7 +509,7 @@ def get_icon(file_name: str) -> FileResponse:
 
 
 @router.delete("/delete-icon/{file_name}", summary="Delete a custom icon")
-def delete_icon(file_name: str) -> Dict[str, Any]:
+def delete_icon(file_name: str) -> dict[str, Any]:
     """
     Delete a custom icon file from the icons directory.
     """
