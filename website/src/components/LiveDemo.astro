@@ -6,11 +6,20 @@
     <div class="section-header">
       <span class="section-label">Interactive</span>
       <h2 class="section-title">Try it yourself</h2>
-      <p class="section-description">
-        No installation required. The full Flowfile editor runs entirely in your browser.
-      </p>
     </div>
 
+    <!-- Mobile: Show link only -->
+    <div class="mobile-demo-link">
+      <a href="https://demo.flowfile.org" target="_blank" rel="noopener" class="btn btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3" />
+        </svg>
+        Open Interactive Demo
+      </a>
+      <p class="mobile-hint">Best experienced on desktop</p>
+    </div>
+
+    <!-- Desktop: Show iframe -->
     <div class="demo-frame-container">
       <div class="demo-frame-header">
         <div class="demo-indicator">
@@ -72,6 +81,19 @@
   .live-demo-section {
     padding: 4rem 2rem;
     background: var(--color-bg);
+  }
+
+  .mobile-demo-link {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .mobile-hint {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
   }
 
   .demo-frame-container {
@@ -206,24 +228,13 @@
   }
 
   @media (max-width: 768px) {
-    .demo-frame-wrapper {
-      height: 500px;
+    .mobile-demo-link {
+      display: flex;
     }
 
+    .demo-frame-container,
     .demo-features {
-      gap: 1.5rem;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .demo-frame-wrapper {
-      height: 400px;
-    }
-
-    .demo-features {
-      flex-direction: column;
-      align-items: center;
-      gap: 0.75rem;
+      display: none;
     }
   }
 </style>
