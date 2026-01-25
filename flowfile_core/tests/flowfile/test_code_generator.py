@@ -2969,7 +2969,6 @@ def test_node_reference_in_formula():
 def test_node_reference_mixed():
     """Test that nodes with and without node_reference work together."""
     flow = create_basic_flow()
-
     # First node: custom reference
     manual_input1 = input_schema.NodeManualInput(
         flow_id=flow.flow_id,
@@ -2995,11 +2994,12 @@ def test_node_reference_mixed():
         # No node_reference set
         depending_on_id=1,
         filter_input=transform_schema.FilterInput(
-            filters=[transform_schema.BasicFilter(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
                 field="value",
                 filter_type=">=",
                 filter_value="100"
-            )]
+            )
         )
     )
     flow.add_filter(filter_node)
@@ -4203,7 +4203,7 @@ def test_union_relaxed_vs_strict():
         flow_id=1,
         node_id=3,
         depending_on_ids=[1, 2],
-        union_input=transform_schema.UnionInput(mode="strict")
+        union_input=transform_schema.UnionInput(mode="selective")
     )
     flow.add_union(union_node)
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
