@@ -131,12 +131,12 @@ const getEmptySetup = (): TextToRowsInput => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  result.value = await nodeStore.getNodeData(nodeId, true);
+  result.value = await nodeStore.getNodeData(nodeId, false);
   nodeTextToRows.value = result.value?.setting_input as NodeTextToRows;
-  if (!nodeTextToRows.value?.is_setup && result.value?.main_input) {
-    nodeTextToRows.value.text_to_rows_input = getEmptySetup();
-  } else {
-    isLoaded.value = true;
+  if (nodeTextToRows.value) {
+    if (!nodeTextToRows.value.is_setup && result.value?.main_input) {
+      nodeTextToRows.value.text_to_rows_input = getEmptySetup();
+    }
   }
   isLoaded.value = true;
 };

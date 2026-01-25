@@ -180,10 +180,12 @@ const getRange = (start: number, end: number) => {
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSort.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeSort.value) {
-    nodeSort.value.sort_input = [];
+  if (nodeSort.value) {
+    if (!nodeSort.value.is_setup) {
+      nodeSort.value.sort_input = [];
+    }
+    dataLoaded.value = true;
   }
-  dataLoaded.value = true;
 };
 
 defineExpose({

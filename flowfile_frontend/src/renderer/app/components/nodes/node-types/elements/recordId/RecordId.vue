@@ -121,17 +121,16 @@ const handleItemClick = (columnName: string) => {
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeRecordId.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeRecordId.value) {
-    nodeRecordId.value.record_id_input = {
-      offset: 1,
-      output_column_name: "record_id",
-      group_by: false,
-      group_by_columns: [],
-    };
-  }
-  dataLoaded.value = true;
-  if (nodeRecordId.value?.is_setup) {
-    nodeRecordId.value.is_setup = true;
+  if (nodeRecordId.value) {
+    if (!nodeRecordId.value.is_setup) {
+      nodeRecordId.value.record_id_input = {
+        offset: 1,
+        output_column_name: "record_id",
+        group_by: false,
+        group_by_columns: [],
+      };
+    }
+    dataLoaded.value = true;
   }
 };
 

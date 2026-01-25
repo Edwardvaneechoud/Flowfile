@@ -76,14 +76,17 @@ watchEffect(() => {
 const loadNodeData = async (nodeId: number) => {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
   nodeExternalSource.value = nodeResult?.setting_input;
-  if (nodeExternalSource.value?.is_setup)
-    if (nodeExternalSource.value?.identifier == "sample_users") {
-      sampleUsers.value = nodeExternalSource.value?.source_settings as SampleUsers;
-      selectedExternalSource.value = "sample_users";
+  if (nodeExternalSource.value) {
+    if (nodeExternalSource.value.is_setup) {
+      if (nodeExternalSource.value.identifier == "sample_users") {
+        sampleUsers.value = nodeExternalSource.value.source_settings as SampleUsers;
+        selectedExternalSource.value = "sample_users";
+      }
     }
-  typeSelected.value = true;
-  dataLoaded.value = true;
-  isDirty.value = false;
+    typeSelected.value = true;
+    dataLoaded.value = true;
+    isDirty.value = false;
+  }
 };
 
 const loadTemplateValue = () => {

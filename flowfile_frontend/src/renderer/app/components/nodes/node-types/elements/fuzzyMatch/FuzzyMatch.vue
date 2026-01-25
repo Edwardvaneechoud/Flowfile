@@ -280,20 +280,17 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 const loadNodeData = async (nodeId: number) => {
   result.value = await nodeStore.getNodeData(nodeId, false);
   nodeFuzzyJoin.value = result.value?.setting_input;
-  if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
-    if (nodeFuzzyJoin.value) {
-      if (result.value?.main_input.columns && result.value?.right_input?.columns) {
+  if (nodeFuzzyJoin.value) {
+    if (!nodeFuzzyJoin.value.is_setup && result.value?.main_input) {
+      if (result.value.main_input.columns && result.value.right_input?.columns) {
         nodeFuzzyJoin.value.join_input = getEmptySetup(
           result.value.main_input.columns,
           result.value.right_input.columns,
         );
-        isLoaded.value = true;
       }
     }
-  } else {
     isLoaded.value = true;
   }
-  isLoaded.value = true;
 };
 
 const addJoinCondition = () => {
