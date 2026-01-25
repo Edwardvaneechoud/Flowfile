@@ -972,5 +972,67 @@ class TestJsonRoundTrip:
         assert node.setting_input.raw_data_format.columns[0].name == 'name'
 
 
+class TestNodeReferenceYaml:
+    """Test node_reference field YAML serialization."""
+
+    def test_node_reference_yaml_roundtrip(self, temp_dir: Path):
+        """Test that node_reference is preserved through YAML save/load."""
+        flow = create_graph(flow_id=210, execution_mode="Performance")
+
+        add_node_promise(flow, 'manual_input', node_id=1)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            node_reference="my_custom_data",
+            raw_data_format=input_schema.RawData.from_pylist([
+                {'name': 'Test', 'value': 42},
+            ])
+        )
+        flow.add_manual_input(manual_input)
+
+        # Save as YAML
+        path = temp_dir / 'test_reference.yaml'
+        flow.save_flow(str(path))
+
+        # Verify node_reference is in the YAML file
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        node_data = data['nodes'][0]
+        assert node_data.get('node_reference') == 'my_custom_data', \
+            "node_reference should be saved in YAML"
+
+        # Reload and verify
+        loaded_flow = open_flow(path)
+        node = loaded_flow.get_node(1)
+        assert node.setting_input.node_reference == 'my_custom_data', \
+            "node_reference should be restored after loading"
+
+    def test_node_reference_none_yaml_roundtrip(self, temp_dir: Path):
+        """Test that None node_reference is handled correctly."""
+        flow = create_graph(flow_id=211, execution_mode="Performance")
+
+        add_node_promise(flow, 'manual_input', node_id=1)
+        manual_input = input_schema.NodeManualInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            node_reference=None,  # Explicitly None
+            raw_data_format=input_schema.RawData.from_pylist([
+                {'name': 'Test', 'value': 42},
+            ])
+        )
+        flow.add_manual_input(manual_input)
+
+        # Save and reload
+        path = temp_dir / 'test_reference_none.yaml'
+        flow.save_flow(str(path))
+        loaded_flow = open_flow(path)
+
+        # Verify node_reference is None or empty
+        node = loaded_flow.get_node(1)
+        assert node.setting_input.node_reference is None or node.setting_input.node_reference == "", \
+            "None node_reference should be handled correctly"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
