@@ -62,6 +62,48 @@ export class NodeApi {
   }
 
   /**
+   * Get node reference
+   */
+  static async getNodeReference(flowId: number, nodeId: number): Promise<string> {
+    const response = await axios.get<string>("/node/reference", {
+      params: { node_id: nodeId, flow_id: flowId },
+    });
+    return response.data;
+  }
+
+  /**
+   * Set/update node reference
+   */
+  static async setNodeReference(
+    flowId: number,
+    nodeId: number,
+    reference: string,
+  ): Promise<boolean> {
+    const response = await axios.post("/node/reference/", JSON.stringify(reference), {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { "Content-Type": "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Validate node reference (check lowercase, no spaces, uniqueness)
+   */
+  static async validateNodeReference(
+    flowId: number,
+    nodeId: number,
+    reference: string,
+  ): Promise<{ valid: boolean; error: string | null }> {
+    const response = await axios.get<{ valid: boolean; error: string | null }>(
+      "/node/validate_reference",
+      {
+        params: { flow_id: flowId, node_id: nodeId, reference },
+      },
+    );
+    return response.data;
+  }
+
+  /**
    * Update node settings directly
    */
   static async updateSettingsDirectly(nodeType: string, inputData: any): Promise<any> {

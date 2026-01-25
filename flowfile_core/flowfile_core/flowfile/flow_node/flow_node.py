@@ -427,6 +427,9 @@ class FlowNode:
         node_information.description = (
             self.setting_input.description if hasattr(self.setting_input, "description") else ""
         )
+        node_information.node_reference = (
+            self.setting_input.node_reference if hasattr(self.setting_input, "node_reference") else None
+        )
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
         node_information.y_position = self.setting_input.pos_y

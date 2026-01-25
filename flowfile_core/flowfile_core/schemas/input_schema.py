@@ -352,10 +352,25 @@ class NodeBase(BaseModel):
     pos_y: float | None = 0
     is_setup: bool | None = True
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation (lowercase, no spaces)
     user_id: int | None = None
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
     output_field_config: OutputFieldConfig | None = None
+
+    @field_validator("node_reference", mode="before")
+    @classmethod
+    def validate_node_reference(cls, v):
+        """Validates that node_reference is lowercase and contains no spaces."""
+        if v is None or v == "":
+            return None
+        if not isinstance(v, str):
+            raise ValueError("node_reference must be a string")
+        if " " in v:
+            raise ValueError("node_reference cannot contain spaces")
+        if v != v.lower():
+            raise ValueError("node_reference must be lowercase")
+        return v
 
 
 class NodeSingleInput(NodeBase):
