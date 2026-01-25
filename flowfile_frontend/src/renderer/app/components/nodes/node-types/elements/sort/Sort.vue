@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeSort" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSort">
+    <generic-node-settings
+      v-model="nodeSort"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Columns</div>
         <ul v-if="dataLoaded" class="listbox">
@@ -89,11 +93,18 @@
 import { ref, computed } from "vue";
 import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CodeLoader } from "vue-content-loader";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeSort = ref<null | NodeSort>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeSort,
+});
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
 const dataLoaded = ref(false);
@@ -101,7 +112,6 @@ const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
-const nodeSort = ref<null | NodeSort>(null);
 const nodeData = ref<null | NodeData>(null);
 const sortOptions = ["Ascending", "Descending"];
 const firstSelectedIndex = ref<number | null>(null);
@@ -170,22 +180,18 @@ const getRange = (start: number, end: number) => {
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSort.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeSort.value) {
-    nodeSort.value.sort_input = [];
+  if (nodeSort.value) {
+    if (!nodeSort.value.is_setup) {
+      nodeSort.value.sort_input = [];
+    }
+    dataLoaded.value = true;
   }
-  dataLoaded.value = true;
-  if (nodeSort.value?.is_setup) {
-    nodeSort.value.is_setup = true;
-  }
-};
-
-const pushNodeData = async () => {
-  nodeStore.updateSettings(nodeSort);
 };
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

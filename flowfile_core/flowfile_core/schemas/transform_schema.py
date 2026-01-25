@@ -208,12 +208,28 @@ class SelectInput(BaseModel):
             is_altered=is_altered,
         )
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_data_type_change(cls, data):
+        """Infer data_type_change when loading from YAML.
+
+        When data_type is present but data_type_change is not explicitly set,
+        infer that the user explicitly set the data_type (e.g., when loading from YAML).
+        This ensures is_altered will be set correctly in the after validator.
+        """
+        if isinstance(data, dict):
+            if data.get("data_type") is not None and "data_type_change" not in data:
+                data["data_type_change"] = True
+        return data
+
     @model_validator(mode="after")
     def set_default_new_name(self):
-        """If new_name is None, default it to old_name."""
+        """If new_name is None, default it to old_name. Also set is_altered if needed."""
         if self.new_name is None:
             self.new_name = self.old_name
         if self.old_name != self.new_name:
+            self.is_altered = True
+        if self.data_type_change:
             self.is_altered = True
         return self
 

@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeRecordId" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeRecordId">
+    <generic-node-settings
+      v-model="nodeRecordId"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Settings</div>
         <el-row>
@@ -65,20 +69,26 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, nextTick, defineExpose } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeRecordId } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "../pivot/ContextMenu.vue";
 import SettingsSection from "../pivot/SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeRecordId = ref<null | NodeRecordId>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeRecordId,
+});
 const showContextMenu = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const dataLoaded = ref(false);
 const contextMenuRef = ref<HTMLElement | null>(null);
-const nodeRecordId = ref<null | NodeRecordId>(null);
 const nodeData = ref<null | NodeData>(null);
 const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const draggedColumnName = ref<string | null>(null);
@@ -111,17 +121,16 @@ const handleItemClick = (columnName: string) => {
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeRecordId.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeRecordId.value) {
-    nodeRecordId.value.record_id_input = {
-      offset: 1,
-      output_column_name: "record_id",
-      group_by: false,
-      group_by_columns: [],
-    };
-  }
-  dataLoaded.value = true;
-  if (nodeRecordId.value?.is_setup) {
-    nodeRecordId.value.is_setup = true;
+  if (nodeRecordId.value) {
+    if (!nodeRecordId.value.is_setup) {
+      nodeRecordId.value.record_id_input = {
+        offset: 1,
+        output_column_name: "record_id",
+        group_by: false,
+        group_by_columns: [],
+      };
+    }
+    dataLoaded.value = true;
   }
 };
 
@@ -191,13 +200,10 @@ const removeColumn = (type: "add", column: string) => {
     }
 };
 
-const pushNodeData = async () => {
-  nodeStore.updateSettings(nodeRecordId);
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

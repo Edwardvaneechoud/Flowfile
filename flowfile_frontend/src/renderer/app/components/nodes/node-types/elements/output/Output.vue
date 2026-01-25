@@ -110,7 +110,8 @@ import {
   createParquetTableSettings,
   createExcelTableSettings,
 } from "./defaultValues";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
@@ -128,6 +129,11 @@ interface LocalFileInfo {
 const nodeStore = useNodeStore();
 const nodeOutput = ref<NodeOutput | null>(null);
 const dataLoaded = ref(false);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeOutput,
+});
 const showFileSelectionModal = ref(false);
 const selectedDirectoryExists = ref<boolean | null>(null);
 const localFileInfos = ref<LocalFileInfo[]>([]);
@@ -274,16 +280,10 @@ async function loadNodeData(nodeId: number) {
   dataLoaded.value = true;
 }
 
-async function pushNodeData() {
-  if (nodeOutput.value?.output_settings) {
-    await nodeStore.updateSettings(nodeOutput);
-    dataLoaded.value = false;
-  }
-}
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

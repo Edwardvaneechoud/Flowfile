@@ -302,19 +302,14 @@ jobs:
             exit 1
           fi
 
-  # Electron tests macOS - runs when frontend or backend changes or test workflow changes
+  # Electron tests macOS - runs in parallel with backend tests for faster CI
   electron-tests-macos:
-    needs: [detect-changes, backend-tests, test-web]
+    needs: [detect-changes]
     if: |
-      always() &&
-      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
-      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
-      (
-        needs.detect-changes.outputs.frontend == 'true' ||
-        needs.detect-changes.outputs.any_backend == 'true' ||
-        needs.detect-changes.outputs.test_workflow == 'true' ||
-        github.event.inputs.run_all_tests == 'true'
-      )
+      needs.detect-changes.outputs.frontend == 'true' ||
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -358,19 +353,14 @@ jobs:
         run: |
           npm run test
 
-  # Electron tests Windows - runs when frontend or backend changes or test workflow changes
+  # Electron tests Windows - runs in parallel with backend tests for faster CI
   electron-tests-windows:
-    needs: [detect-changes, backend-tests-windows, test-web]
+    needs: [detect-changes]
     if: |
-      always() &&
-      (needs.backend-tests-windows.result == 'success' || needs.backend-tests-windows.result == 'skipped') &&
-      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
-      (
-        needs.detect-changes.outputs.frontend == 'true' ||
-        needs.detect-changes.outputs.any_backend == 'true' ||
-        needs.detect-changes.outputs.test_workflow == 'true' ||
-        github.event.inputs.run_all_tests == 'true'
-      )
+      needs.detect-changes.outputs.frontend == 'true' ||
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout repository

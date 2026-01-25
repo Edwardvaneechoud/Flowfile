@@ -58,6 +58,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -1033,118 +1034,6 @@ class FlowGraph:
         Args:
             filter_settings: The settings for the filter operation.
         """
-        from flowfile_core.schemas.transform_schema import FilterOperator
-
-        def _build_basic_filter_expression(
-            basic_filter: transform_schema.BasicFilter, field_data_type: str | None = None
-        ) -> str:
-            """Build a filter expression string from a BasicFilter object.
-
-            Uses the Flowfile expression language that is compatible with polars_expr_transformer.
-
-            Args:
-                basic_filter: The basic filter configuration.
-                field_data_type: The data type of the field (optional, for smart quoting).
-
-            Returns:
-                A filter expression string compatible with polars_expr_transformer.
-            """
-            field = f"[{basic_filter.field}]"
-            value = basic_filter.value
-            value2 = basic_filter.value2
-
-            is_numeric_value = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
-            should_quote = field_data_type == "str" or not is_numeric_value
-
-            try:
-                operator = basic_filter.get_operator()
-            except (ValueError, AttributeError):
-                operator = FilterOperator.from_symbol(str(basic_filter.operator))
-
-            if operator == FilterOperator.EQUALS:
-                if should_quote:
-                    return f'{field}="{value}"'
-                return f"{field}={value}"
-
-            elif operator == FilterOperator.NOT_EQUALS:
-                if should_quote:
-                    return f'{field}!="{value}"'
-                return f"{field}!={value}"
-
-            elif operator == FilterOperator.GREATER_THAN:
-                if should_quote:
-                    return f'{field}>"{value}"'
-                return f"{field}>{value}"
-
-            elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
-                if should_quote:
-                    return f'{field}>="{value}"'
-                return f"{field}>={value}"
-
-            elif operator == FilterOperator.LESS_THAN:
-                if should_quote:
-                    return f'{field}<"{value}"'
-                return f"{field}<{value}"
-
-            elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
-                if should_quote:
-                    return f'{field}<="{value}"'
-                return f"{field}<={value}"
-
-            elif operator == FilterOperator.CONTAINS:
-                return f'contains({field}, "{value}")'
-
-            elif operator == FilterOperator.NOT_CONTAINS:
-                return f'contains({field}, "{value}") = false'
-
-            elif operator == FilterOperator.STARTS_WITH:
-                return f'left({field}, {len(value)}) = "{value}"'
-
-            elif operator == FilterOperator.ENDS_WITH:
-                return f'right({field}, {len(value)}) = "{value}"'
-
-            elif operator == FilterOperator.IS_NULL:
-                return f"is_empty({field})"
-
-            elif operator == FilterOperator.IS_NOT_NULL:
-                return f"is_not_empty({field})"
-
-            elif operator == FilterOperator.IN:
-                values = [v.strip() for v in value.split(",")]
-                if len(values) == 1:
-                    if should_quote:
-                        return f'{field}="{values[0]}"'
-                    return f"{field}={values[0]}"
-                if should_quote:
-                    conditions = [f'({field}="{v}")' for v in values]
-                else:
-                    conditions = [f"({field}={v})" for v in values]
-                return " | ".join(conditions)
-
-            elif operator == FilterOperator.NOT_IN:
-                values = [v.strip() for v in value.split(",")]
-                if len(values) == 1:
-                    if should_quote:
-                        return f'{field}!="{values[0]}"'
-                    return f"{field}!={values[0]}"
-                if should_quote:
-                    conditions = [f'({field}!="{v}")' for v in values]
-                else:
-                    conditions = [f"({field}!={v})" for v in values]
-                return " & ".join(conditions)
-
-            elif operator == FilterOperator.BETWEEN:
-                if value2 is None:
-                    raise ValueError("BETWEEN operator requires value2")
-                if should_quote:
-                    return f'({field}>="{value}") & ({field}<="{value2}")'
-                return f"({field}>={value}) & ({field}<={value2})"
-
-            else:
-                # Fallback for unknown operators - use legacy format
-                if should_quote:
-                    return f'{field}{operator.to_symbol()}"{value}"'
-                return f"{field}{operator.to_symbol()}{value}"
 
         def _func(fl: FlowDataEngine):
             is_advanced = filter_settings.filter_input.is_advanced()
@@ -1163,7 +1052,7 @@ class FlowGraph:
                 except Exception:
                     field_data_type = None
 
-                expression = _build_basic_filter_expression(basic_filter, field_data_type)
+                expression = build_filter_expression(basic_filter, field_data_type)
                 filter_settings.filter_input.advanced_filter = expression
                 return fl.do_filter(expression)
 

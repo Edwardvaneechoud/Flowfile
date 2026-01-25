@@ -1,7 +1,11 @@
 // DatabaseReaderNode.vue
 <template>
   <div v-if="dataLoaded && nodeDatabaseReader" class="db-container">
-    <generic-node-settings v-model="nodeDatabaseReader">
+    <generic-node-settings
+      v-model="nodeDatabaseReader"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="form-group">
           <label>Connection Mode</label>
@@ -137,7 +141,8 @@ import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted } from "vue";
 import { NodeDatabaseReader, ConnectionModeOption } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { ElMessage, ElRadio } from "element-plus";
@@ -156,6 +161,23 @@ defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
 const dataLoaded = ref(false);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeDatabaseReader,
+  onBeforeSave: () => {
+    if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
+      return false;
+    }
+    // Clean up settings based on connection_mode before saving
+    if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
+      nodeDatabaseReader.value.database_settings.database_connection = undefined;
+    } else {
+      nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
+    }
+    return true;
+  },
+});
 const validationError = ref<string | null>(null);
 const validationSuccess = ref<string | null>(null);
 const isValidating = ref(false);
@@ -188,8 +210,8 @@ const loadNodeData = async (nodeId: number) => {
       nodeDatabaseReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeDatabaseReader(nodeStore.flow_id, nodeId);
+      dataLoaded.value = true;
     }
-    dataLoaded.value = true;
   } catch (error) {
     console.error("Error loading node data:", error);
     dataLoaded.value = false;
@@ -251,21 +273,6 @@ const validateDatabaseSettings = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
-    return;
-  }
-  // Clean up settings based on connection_mode before saving
-  if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
-    nodeDatabaseReader.value.database_settings.database_connection = undefined;
-  } else {
-    nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
-  }
-  nodeDatabaseReader.value.is_setup = true;
-  nodeStore.updateSettings(nodeDatabaseReader);
-  dataLoaded.value = false;
-};
-
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {
@@ -285,6 +292,7 @@ onMounted(async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
