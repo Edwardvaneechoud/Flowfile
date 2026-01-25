@@ -25,6 +25,7 @@
         <div class="demo-indicator">
           <span class="pulse-dot"></span>
           <span>Live Demo</span>
+          <span class="demo-badge">Lite</span>
         </div>
         <a href="https://demo.flowfile.org" target="_blank" rel="noopener" class="open-fullscreen">
           Open in new tab
@@ -51,29 +52,9 @@
       </div>
     </div>
 
-    <div class="demo-features">
-      <div class="demo-feature">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="2" y="3" width="20" height="14" rx="2" />
-          <line x1="8" y1="21" x2="16" y2="21" />
-          <line x1="12" y1="17" x2="12" y2="21" />
-        </svg>
-        <span>Runs in browser</span>
-      </div>
-      <div class="demo-feature">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-        </svg>
-        <span>Data stays local</span>
-      </div>
-      <div class="demo-feature">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-        <span>No signup needed</span>
-      </div>
-    </div>
+    <p class="demo-note">
+      This is a lightweight browser version. <a href="#install">Install the full version</a> for database connections, larger datasets, and more.
+    </p>
   </div>
 </section>
 
@@ -122,6 +103,28 @@
     font-size: 0.85rem;
     color: var(--color-text-muted);
     font-weight: 500;
+  }
+
+  .demo-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    background: rgba(249, 115, 22, 0.15);
+    color: #f97316;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .demo-note {
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    margin-top: 1.5rem;
+  }
+
+  .demo-note a {
+    color: var(--color-primary);
   }
 
   .pulse-dot {
