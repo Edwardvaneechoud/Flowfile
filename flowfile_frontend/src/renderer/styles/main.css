@@ -217,6 +217,16 @@ button {
   color: var(--color-accent);
 }
 
+.el-select-dropdown__item:hover,
+.el-select-dropdown__item.hover {
+  background-color: var(--color-background-hover) !important;
+}
+
+.el-select-dropdown__item.is-selected:hover,
+.el-select-dropdown__item.is-selected.hover {
+  background-color: var(--color-accent-subtle) !important;
+}
+
 /* ========== Element Plus Notification ========== */
 .el-notification {
   font-family: var(--font-family-base);
