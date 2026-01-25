@@ -143,6 +143,7 @@ class FlowSettings(FlowGraphConfig):
         show_detailed_progress (bool): Flag to show detailed progress during execution.
         is_running (bool): Indicates if the flow is currently running.
         is_canceled (bool): Indicates if the flow execution has been canceled.
+        track_history (bool): Flag to enable or disable undo/redo history tracking.
     """
 
     auto_save: bool = False
@@ -150,6 +151,7 @@ class FlowSettings(FlowGraphConfig):
     show_detailed_progress: bool = True
     is_running: bool = False
     is_canceled: bool = False
+    track_history: bool = True
 
     @classmethod
     def from_flow_settings_input(cls, flow_graph_config: FlowGraphConfig):
@@ -199,6 +201,7 @@ class FlowfileNode(BaseModel):
     type: str
     is_start_node: bool = False
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
     left_input_id: int | None = None
@@ -214,6 +217,7 @@ class FlowfileNode(BaseModel):
         "pos_y",
         "is_setup",
         "description",
+        "node_reference",
         "user_id",
         "is_flow_output",
         "is_user_defined",
@@ -286,6 +290,7 @@ class NodeInformation(BaseModel):
     is_setup: bool | None = None
     is_start_node: bool = False
     description: str | None = ""
+    node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
     left_input_id: int | None = None

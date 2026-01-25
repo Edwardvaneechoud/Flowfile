@@ -207,11 +207,11 @@ onMounted(() => {
 }
 
 .icon-label {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--spacing-1);
 }
 
 .icon-selector-content {
@@ -221,17 +221,17 @@ onMounted(() => {
 .current-icon {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 4px;
-  background: var(--input-bg, #ffffff);
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: border-color var(--transition-normal);
 }
 
 .current-icon:hover {
-  border-color: var(--primary-color, #4a6cf7);
+  border-color: var(--color-accent);
 }
 
 .icon-preview {
@@ -242,16 +242,16 @@ onMounted(() => {
 
 .icon-name {
   flex: 1;
-  font-size: 0.875rem;
-  color: var(--text-primary, #374151);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dropdown-arrow {
-  font-size: 0.75rem;
-  color: var(--text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .icon-dropdown {
@@ -259,61 +259,61 @@ onMounted(() => {
   top: 100%;
   left: 0;
   right: 0;
-  margin-top: 0.25rem;
-  background: var(--bg-primary, #ffffff);
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 8px;
+  margin-top: var(--spacing-1);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
   box-shadow: var(--shadow-lg);
-  z-index: 1000;
+  z-index: var(--z-index-dropdown);
   max-height: 300px;
   overflow-y: auto;
 }
 
 .upload-section {
-  padding: 0.75rem;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  padding: var(--spacing-3);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .upload-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--spacing-2);
   width: 100%;
-  padding: 0.5rem;
-  background: var(--bg-secondary, #f3f4f6);
-  border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: 4px;
-  font-size: 0.875rem;
-  color: var(--text-secondary, #6b7280);
+  padding: var(--spacing-2);
+  background: var(--color-background-secondary);
+  border: 1px dashed var(--color-border-primary);
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-normal);
 }
 
 .upload-btn:hover {
-  background: var(--bg-tertiary, #e5e7eb);
-  border-color: var(--primary-color, #4a6cf7);
-  color: var(--primary-color, #4a6cf7);
+  background: var(--color-background-tertiary);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .icons-section {
-  padding: 0.5rem;
+  padding: var(--spacing-2);
 }
 
 .section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary, #6b7280);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
-  padding: 0 0.25rem;
+  margin-bottom: var(--spacing-2);
+  padding: 0 var(--spacing-1);
 }
 
 .icons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-  gap: 0.5rem;
+  gap: var(--spacing-2);
 }
 
 .icon-option {
@@ -321,21 +321,21 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2);
   border: 2px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--border-radius-md);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-normal);
 }
 
 .icon-option:hover {
-  background: var(--bg-secondary, #f3f4f6);
+  background: var(--color-background-secondary);
 }
 
 .icon-option.selected {
-  border-color: var(--primary-color, #4a6cf7);
-  background: var(--color-focus-ring-button);
+  border-color: var(--color-accent);
+  background: var(--color-focus-ring-accent);
 }
 
 .icon-img {
@@ -345,8 +345,8 @@ onMounted(() => {
 }
 
 .icon-filename {
-  font-size: 0.625rem;
-  color: var(--text-secondary, #6b7280);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-secondary);
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -362,13 +362,13 @@ onMounted(() => {
   height: 16px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--border-radius-full);
   background: var(--color-danger);
   color: var(--color-text-inverse);
-  font-size: 0.625rem;
+  font-size: var(--font-size-2xs);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-normal);
   display: flex;
   align-items: center;
   justify-content: center;

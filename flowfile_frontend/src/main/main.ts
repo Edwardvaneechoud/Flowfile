@@ -30,7 +30,9 @@ async function checkDocker(): Promise<{
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
-          error: error ? "Docker is not available. Some features may have limited functionality." : null,
+          error: error
+            ? "Docker is not available. Some features may have limited functionality."
+            : null,
         });
       });
       return;
@@ -41,7 +43,9 @@ async function checkDocker(): Promise<{
         exec(checkCommand, (error) => {
           resolve({
             isAvailable: !error,
-            error: error ? "Docker is not available. Some features may have limited functionality." : null,
+            error: error
+              ? "Docker is not available. Some features may have limited functionality."
+              : null,
           });
         });
         return;

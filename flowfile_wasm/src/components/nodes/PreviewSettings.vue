@@ -117,7 +117,7 @@ const props = defineProps<{
 const flowStore = useFlowStore()
 const gridApi = ref<GridApi | null>(null)
 const expandedGridApi = ref<GridApi | null>(null)
-const gridHeight = ref('250px')
+const gridHeight = ref('500px')
 const isLoading = ref(false)
 const isExpanded = ref(false)
 
@@ -202,11 +202,12 @@ const autoSizeColumns = () => {
 // Calculate dynamic grid height
 const calculateGridHeight = () => {
   const rowCount = rowData.value.length
-  const headerHeight = 40
-  const rowHeight = 28
+  // These values must match the AG Grid CSS variables in main.css
+  const headerHeight = 36  // --ag-header-height
+  const rowHeight = 32     // --ag-row-height
   const paginationHeight = 48
-  const maxHeight = 300
-  const minHeight = 150
+  const maxHeight = 500
+  const minHeight = 500
 
   const calculatedHeight = headerHeight + (rowCount * rowHeight) + paginationHeight
   gridHeight.value = `${Math.min(Math.max(calculatedHeight, minHeight), maxHeight)}px`

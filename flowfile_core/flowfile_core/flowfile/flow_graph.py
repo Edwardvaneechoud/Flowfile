@@ -1,4 +1,5 @@
 import datetime
+import functools
 import json
 import os
 from collections.abc import Callable
@@ -39,6 +40,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDfFetcher,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
     add_un_drawn_nodes,
     build_flow_paths,
@@ -56,6 +58,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -67,6 +70,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
     get_cloud_storage_write_settings_worker_interface,
 )
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
@@ -86,6 +90,53 @@ def represent_list_json(dumper, data):
 
 
 yaml.add_representer(list, represent_list_json)
+
+
+def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
+    """Decorator to automatically capture history for FlowGraph methods.
+
+    Wraps a method to capture state before execution and record history
+    only if the state actually changed. Respects the flow's track_history setting.
+
+    Args:
+        action_type: The type of history action (e.g., HistoryActionType.UPDATE_SETTINGS).
+        description_template: Template string for the history description.
+            Can use {node_type} placeholder which will be replaced with the actual node type.
+
+    Example:
+        @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+        def add_filter(self, filter_settings: input_schema.NodeFilter):
+            # ... implementation
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(self: "FlowGraph", *args, **kwargs):
+            # Skip history capture if tracking is disabled
+            if not self.flow_settings.track_history:
+                return func(self, *args, **kwargs)
+
+            # Get the first argument (settings input) from args or kwargs
+            settings_input = args[0] if args else next(iter(kwargs.values()), None)
+
+            # Extract node info from the settings input
+            node_id = getattr(settings_input, 'node_id', None) if settings_input else None
+            node_type = getattr(settings_input, 'node_type', func.__name__.replace('add_', '')) if settings_input else func.__name__.replace('add_', '')
+
+            # Capture state before the operation
+            pre_snapshot = self.get_flowfile_data()
+
+            # Execute the actual method
+            result = func(self, *args, **kwargs)
+
+            # Record history if state changed
+            self._history_manager.capture_if_changed(
+                self, pre_snapshot, action_type,
+                description_template.format(node_type=node_type),
+                node_id
+            )
+            return result
+        return wrapper
+    return decorator
 
 
 def get_xlsx_schema(
@@ -299,6 +350,13 @@ class FlowGraph:
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
+
+        # Initialize history manager for undo/redo support
+        from flowfile_core.flowfile.history_manager import HistoryManager
+        from flowfile_core.schemas.history_schema import HistoryConfig
+        history_config = HistoryConfig(enabled=flow_settings.track_history)
+        self._history_manager = HistoryManager(config=history_config)
+
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
         elif input_flow is not None:
@@ -316,6 +374,215 @@ class FlowGraph:
             self.reset()
         self._flow_settings = flow_settings
 
+    # ==================== History Management Methods ====================
+
+    def capture_history_snapshot(
+        self,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> bool:
+        """Capture the current state before a change for undo support.
+
+        Args:
+            action_type: The type of action being performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if snapshot was captured, False if skipped.
+        """
+        return self._history_manager.capture_snapshot(self, action_type, description, node_id)
+
+    def capture_history_if_changed(
+        self,
+        pre_snapshot: schemas.FlowfileData,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> bool:
+        """Capture history only if the flow state actually changed.
+
+        Use this for settings updates where the change might be a no-op.
+        Call this AFTER the change is applied.
+
+        Args:
+            pre_snapshot: The FlowfileData captured BEFORE the change.
+            action_type: The type of action that was performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if a change was detected and snapshot was captured.
+        """
+        return self._history_manager.capture_if_changed(
+            self, pre_snapshot, action_type, description, node_id
+        )
+
+    def undo(self) -> UndoRedoResult:
+        """Undo the last action by restoring to the previous state.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.undo(self)
+
+    def redo(self) -> UndoRedoResult:
+        """Redo the last undone action.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.redo(self)
+
+    def get_history_state(self) -> HistoryState:
+        """Get the current state of the history system.
+
+        Returns:
+            HistoryState with information about available undo/redo operations.
+        """
+        return self._history_manager.get_state()
+
+    def _execute_with_history(
+        self,
+        operation: Callable[[], Any],
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> Any:
+        """Execute an operation with automatic history capture.
+
+        This helper captures the state before the operation, executes it,
+        and records history only if the state actually changed.
+
+        Args:
+            operation: A callable that performs the actual operation.
+            action_type: The type of action being performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            The result of the operation (if any).
+        """
+        # Skip history capture if tracking is disabled for this flow
+        if not self.flow_settings.track_history:
+            return operation()
+
+        pre_snapshot = self.get_flowfile_data()
+        result = operation()
+        self._history_manager.capture_if_changed(
+            self, pre_snapshot, action_type, description, node_id
+        )
+        return result
+
+    def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
+        """Clear current state and rebuild from a snapshot.
+
+        This method is used internally by undo/redo to restore a previous state.
+
+        Args:
+            snapshot: The FlowfileData snapshot to restore from.
+        """
+        from flowfile_core.flowfile.manage.io_flowfile import (
+            _flowfile_data_to_flow_information,
+            determine_insertion_order,
+        )
+
+        # Preserve the current flow_id
+        original_flow_id = self._flow_id
+
+        # Convert snapshot to FlowInformation
+        flow_info = _flowfile_data_to_flow_information(snapshot)
+
+        # Clear current state
+        self._node_db.clear()
+        self._node_ids.clear()
+        self._flow_starts.clear()
+        self._results = None
+
+        # Restore flow settings (preserve original flow_id)
+        self._flow_settings = flow_info.flow_settings
+        self._flow_settings.flow_id = original_flow_id
+        self._flow_id = original_flow_id
+        self.__name__ = flow_info.flow_name or self.__name__
+
+        # Determine node insertion order
+        ingestion_order = determine_insertion_order(flow_info)
+
+        # First pass: Create all nodes as promises
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            node_promise = input_schema.NodePromise(
+                flow_id=original_flow_id,
+                node_id=node_info.id,
+                pos_x=node_info.x_position or 0,
+                pos_y=node_info.y_position or 0,
+                node_type=node_info.type,
+            )
+            if hasattr(node_info.setting_input, "cache_results"):
+                node_promise.cache_results = node_info.setting_input.cache_results
+            self.add_node_promise(node_promise)
+
+        # Second pass: Apply settings using add_<node_type> methods
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            if node_info.is_setup and node_info.setting_input is not None:
+                # Update flow_id in setting_input
+                if hasattr(node_info.setting_input, "flow_id"):
+                    node_info.setting_input.flow_id = original_flow_id
+
+                if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
+                    if node_info.type in CUSTOM_NODE_STORE:
+                        user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+                        self.add_user_defined_node(
+                            custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
+                            user_defined_node_settings=node_info.setting_input,
+                        )
+                else:
+                    add_method = getattr(self, "add_" + node_info.type, None)
+                    if add_method:
+                        add_method(node_info.setting_input)
+
+        # Third pass: Restore connections
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            from_node = self.get_node(node_id)
+            if from_node is None:
+                continue
+
+            for output_node_id in node_info.outputs or []:
+                to_node = self.get_node(output_node_id)
+                if to_node is None:
+                    continue
+
+                output_node_info = flow_info.data.get(output_node_id)
+                if output_node_info is None:
+                    continue
+
+                # Determine connection type
+                is_left_input = (output_node_info.left_input_id == node_id) and (
+                    to_node.left_input is None or to_node.left_input.node_id != node_id
+                )
+                is_right_input = (output_node_info.right_input_id == node_id) and (
+                    to_node.right_input is None or to_node.right_input.node_id != node_id
+                )
+                is_main_input = node_id in (output_node_info.input_ids or [])
+
+                if is_left_input:
+                    insert_type = "left"
+                elif is_right_input:
+                    insert_type = "right"
+                elif is_main_input:
+                    insert_type = "main"
+                else:
+                    continue
+
+                to_node.add_node_connection(from_node, insert_type)
+
+        logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
+
+    # ==================== End History Management Methods ====================
+
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.
 
@@ -325,39 +592,51 @@ class FlowGraph:
         if node.node_id not in {self_node.node_id for self_node in self._flow_starts}:
             self._flow_starts.append(node)
 
-    def add_node_promise(self, node_promise: input_schema.NodePromise):
+    def add_node_promise(self, node_promise: input_schema.NodePromise, track_history: bool = True):
         """Adds a placeholder node to the graph that is not yet fully configured.
 
         Useful for building the graph structure before all settings are available.
+        Automatically captures history for undo/redo support.
 
         Args:
             node_promise: A promise object containing basic node information.
+            track_history: Whether to track this change in history (default True).
         """
+        def _do_add():
+            def placeholder(n: FlowNode = None):
+                if n is None:
+                    return FlowDataEngine()
+                return n
 
-        def placeholder(n: FlowNode = None):
-            if n is None:
-                return FlowDataEngine()
-            return n
+            self.add_node_step(
+                node_id=node_promise.node_id,
+                node_type=node_promise.node_type,
+                function=placeholder,
+                setting_input=node_promise,
+            )
+            if node_promise.is_user_defined:
+                node_needs_settings: bool
+                custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
+                if custom_node is None:
+                    raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
+                settings_schema = custom_node.model_fields["settings_schema"].default
+                node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
+                if not node_needs_settings:
+                    user_defined_node_settings = input_schema.UserDefinedNode(settings={}, **node_promise.model_dump())
+                    initialized_model = custom_node()
+                    self.add_user_defined_node(
+                        custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings
+                    )
 
-        self.add_node_step(
-            node_id=node_promise.node_id,
-            node_type=node_promise.node_type,
-            function=placeholder,
-            setting_input=node_promise,
-        )
-        if node_promise.is_user_defined:
-            node_needs_settings: bool
-            custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
-            if custom_node is None:
-                raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
-            settings_schema = custom_node.model_fields["settings_schema"].default
-            node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
-            if not node_needs_settings:
-                user_defined_node_settings = input_schema.UserDefinedNode(settings={}, **node_promise.model_dump())
-                initialized_model = custom_node()
-                self.add_user_defined_node(
-                    custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings
-                )
+        if track_history:
+            self._execute_with_history(
+                _do_add,
+                HistoryActionType.ADD_NODE,
+                f"Add {node_promise.node_type} node",
+                node_id=node_promise.node_id,
+            )
+        else:
+            _do_add()
 
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
@@ -579,6 +858,7 @@ class FlowGraph:
             node = self.get_node(user_defined_node_settings.node_id)
             self.add_node_to_starting_list(node)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
         """Adds a pivot node to the graph.
 
@@ -607,6 +887,7 @@ class FlowGraph:
 
         node.schema_callback = schema_callback
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
         """Adds an unpivot node to the graph.
 
@@ -625,6 +906,7 @@ class FlowGraph:
             input_node_ids=[unpivot_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_union(self, union_settings: input_schema.NodeUnion):
         """Adds a union node to combine multiple data streams.
 
@@ -644,15 +926,30 @@ class FlowGraph:
             input_node_ids=union_settings.depending_on_ids,
         )
 
-    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
+    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise, track_history: bool = True):
         """Adds a data exploration/analysis node based on a node promise.
+
+        Automatically captures history for undo/redo support.
 
         Args:
             node_promise: The promise representing the node to be analyzed.
+            track_history: Whether to track this change in history (default True).
         """
-        node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
-        self.add_explore_data(node_analysis)
+        def _do_add():
+            node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
+            self.add_explore_data(node_analysis)
 
+        if track_history:
+            self._execute_with_history(
+                _do_add,
+                HistoryActionType.ADD_NODE,
+                f"Add {node_promise.node_type} node",
+                node_id=node_promise.node_id,
+            )
+        else:
+            _do_add()
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         """Adds a specialized node for data exploration and visualization.
 
@@ -697,6 +994,7 @@ class FlowGraph:
         )
         node = self.get_node(node_analysis.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
         """Adds a group-by aggregation node to the graph.
 
@@ -729,124 +1027,13 @@ class FlowGraph:
 
         node.schema_callback = schema_callback
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_filter(self, filter_settings: input_schema.NodeFilter):
         """Adds a filter node to the graph.
 
         Args:
             filter_settings: The settings for the filter operation.
         """
-        from flowfile_core.schemas.transform_schema import FilterOperator
-
-        def _build_basic_filter_expression(
-            basic_filter: transform_schema.BasicFilter, field_data_type: str | None = None
-        ) -> str:
-            """Build a filter expression string from a BasicFilter object.
-
-            Uses the Flowfile expression language that is compatible with polars_expr_transformer.
-
-            Args:
-                basic_filter: The basic filter configuration.
-                field_data_type: The data type of the field (optional, for smart quoting).
-
-            Returns:
-                A filter expression string compatible with polars_expr_transformer.
-            """
-            field = f"[{basic_filter.field}]"
-            value = basic_filter.value
-            value2 = basic_filter.value2
-
-            is_numeric_value = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
-            should_quote = field_data_type == "str" or not is_numeric_value
-
-            try:
-                operator = basic_filter.get_operator()
-            except (ValueError, AttributeError):
-                operator = FilterOperator.from_symbol(str(basic_filter.operator))
-
-            if operator == FilterOperator.EQUALS:
-                if should_quote:
-                    return f'{field}="{value}"'
-                return f"{field}={value}"
-
-            elif operator == FilterOperator.NOT_EQUALS:
-                if should_quote:
-                    return f'{field}!="{value}"'
-                return f"{field}!={value}"
-
-            elif operator == FilterOperator.GREATER_THAN:
-                if should_quote:
-                    return f'{field}>"{value}"'
-                return f"{field}>{value}"
-
-            elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
-                if should_quote:
-                    return f'{field}>="{value}"'
-                return f"{field}>={value}"
-
-            elif operator == FilterOperator.LESS_THAN:
-                if should_quote:
-                    return f'{field}<"{value}"'
-                return f"{field}<{value}"
-
-            elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
-                if should_quote:
-                    return f'{field}<="{value}"'
-                return f"{field}<={value}"
-
-            elif operator == FilterOperator.CONTAINS:
-                return f'contains({field}, "{value}")'
-
-            elif operator == FilterOperator.NOT_CONTAINS:
-                return f'contains({field}, "{value}") = false'
-
-            elif operator == FilterOperator.STARTS_WITH:
-                return f'left({field}, {len(value)}) = "{value}"'
-
-            elif operator == FilterOperator.ENDS_WITH:
-                return f'right({field}, {len(value)}) = "{value}"'
-
-            elif operator == FilterOperator.IS_NULL:
-                return f"is_empty({field})"
-
-            elif operator == FilterOperator.IS_NOT_NULL:
-                return f"is_not_empty({field})"
-
-            elif operator == FilterOperator.IN:
-                values = [v.strip() for v in value.split(",")]
-                if len(values) == 1:
-                    if should_quote:
-                        return f'{field}="{values[0]}"'
-                    return f"{field}={values[0]}"
-                if should_quote:
-                    conditions = [f'({field}="{v}")' for v in values]
-                else:
-                    conditions = [f"({field}={v})" for v in values]
-                return " | ".join(conditions)
-
-            elif operator == FilterOperator.NOT_IN:
-                values = [v.strip() for v in value.split(",")]
-                if len(values) == 1:
-                    if should_quote:
-                        return f'{field}!="{values[0]}"'
-                    return f"{field}!={values[0]}"
-                if should_quote:
-                    conditions = [f'({field}!="{v}")' for v in values]
-                else:
-                    conditions = [f"({field}!={v})" for v in values]
-                return " & ".join(conditions)
-
-            elif operator == FilterOperator.BETWEEN:
-                if value2 is None:
-                    raise ValueError("BETWEEN operator requires value2")
-                if should_quote:
-                    return f'({field}>="{value}") & ({field}<="{value2}")'
-                return f"({field}>={value}) & ({field}<={value2})"
-
-            else:
-                # Fallback for unknown operators - use legacy format
-                if should_quote:
-                    return f'{field}{operator.to_symbol()}"{value}"'
-                return f"{field}{operator.to_symbol()}{value}"
 
         def _func(fl: FlowDataEngine):
             is_advanced = filter_settings.filter_input.is_advanced()
@@ -865,7 +1052,7 @@ class FlowGraph:
                 except Exception:
                     field_data_type = None
 
-                expression = _build_basic_filter_expression(basic_filter, field_data_type)
+                expression = build_filter_expression(basic_filter, field_data_type)
                 filter_settings.filter_input.advanced_filter = expression
                 return fl.do_filter(expression)
 
@@ -878,6 +1065,7 @@ class FlowGraph:
             input_node_ids=[filter_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
         """Adds a filter node to the graph.
 
@@ -896,6 +1084,7 @@ class FlowGraph:
             input_node_ids=[node_number_of_records.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         """Adds a node that executes custom Polars code.
 
@@ -940,6 +1129,7 @@ class FlowGraph:
             node_id=node_promise.node_id, node_type=node_promise.node_type, function=_func, setting_input=node_promise
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_unique(self, unique_settings: input_schema.NodeUnique):
         """Adds a node to find and remove duplicate rows.
 
@@ -959,6 +1149,7 @@ class FlowGraph:
             input_node_ids=[unique_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
         """Adds a node that solves graph-like problems within the data.
 
@@ -982,6 +1173,7 @@ class FlowGraph:
             input_node_ids=[graph_solver_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):
         """Adds a node that applies a formula to create or modify a column.
 
@@ -1024,6 +1216,7 @@ class FlowGraph:
         else:
             return True, ""
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":
         """Adds a cross join node to the graph.
 
@@ -1056,6 +1249,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
         """Adds a join node to combine two data streams based on key columns.
 
@@ -1088,6 +1282,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "FlowGraph":
         """Adds a fuzzy matching node to join data on approximate string matches.
 
@@ -1141,6 +1336,7 @@ class FlowGraph:
 
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "FlowGraph":
         """Adds a node that splits cell values into multiple rows.
 
@@ -1167,6 +1363,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
         """Adds a node to sort the data based on one or more columns.
 
@@ -1189,6 +1386,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
         """Adds a node to take a random or top-N sample of the data.
 
@@ -1211,6 +1409,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
         """Adds a node to create a new column with a unique ID for each record.
 
@@ -1234,6 +1433,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         """Adds a node to select, rename, reorder, or drop columns.
 
@@ -1359,6 +1559,34 @@ class FlowGraph:
         Returns:
             The created or updated FlowNode object.
         """
+        # Wrap schema_callback with output_field_config support
+        # If the node has output_field_config enabled, use it for schema prediction
+        output_field_config = getattr(setting_input, 'output_field_config', None) if setting_input else None
+
+        logger.info(
+            f"add_node_step: node_id={node_id}, node_type={node_type}, "
+            f"has_setting_input={setting_input is not None}, "
+            f"has_output_field_config={output_field_config is not None}, "
+            f"config_enabled={output_field_config.enabled if output_field_config else False}, "
+            f"has_schema_callback={schema_callback is not None}"
+        )
+
+        # IMPORTANT: Always create wrapped callback if output_field_config exists (even if enabled=False)
+        # This ensures nodes like PolarsCode get a schema callback when output_field_config is defined
+        if output_field_config:
+            if output_field_config.enabled:
+                logger.info(
+                    f"add_node_step: Creating/wrapping schema_callback for node {node_id} with output_field_config "
+                    f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields, "
+                    f"base_callback={'present' if schema_callback else 'None'})"
+                )
+            else:
+                logger.debug(f"add_node_step: output_field_config present for node {node_id} but disabled")
+
+            # Even if schema_callback is None, create a wrapped one for output_field_config
+            schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
+            logger.info(f"add_node_step: schema_callback {'created' if schema_callback else 'failed'} for node {node_id}")
+
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
@@ -1420,6 +1648,7 @@ class FlowGraph:
                 self._output_cols.append(column)
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_output(self, output_file: input_schema.NodeOutput):
         """Adds an output node to write the final data to a destination.
 
@@ -1453,6 +1682,7 @@ class FlowGraph:
             input_node_ids=[input_node_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
         """Adds a node to write data to a database.
 
@@ -1514,6 +1744,7 @@ class FlowGraph:
         )
         node = self.get_node(node_database_writer.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
         """Adds a node to read data from a database.
 
@@ -1616,6 +1847,7 @@ class FlowGraph:
         logger.info("Adding sql source")
         self.add_external_source(external_source_input)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
         """Adds a node to write data to a cloud storage provider.
 
@@ -1678,6 +1910,7 @@ class FlowGraph:
 
         node = self.get_node(node_cloud_storage_writer.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """Adds a cloud storage read node to the flow graph.
 
@@ -1711,6 +1944,7 @@ class FlowGraph:
         )
         self.add_node_to_starting_list(node)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_external_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node for a custom external data source.
 
@@ -1783,6 +2017,7 @@ class FlowGraph:
             setting_input=external_source_input,
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_read(self, input_file: input_schema.NodeRead):
         """Adds a node to read data from a local file (e.g., CSV, Parquet, Excel).
 
@@ -1870,6 +2105,7 @@ class FlowGraph:
             node.user_provided_schema_callback = schema_callback
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput) -> "FlowGraph":
         """Adds a data source node to the graph.
 
@@ -2189,6 +2425,7 @@ class FlowGraph:
                 type=node_info.type,
                 is_start_node=node.node_id in start_node_ids,
                 description=node_info.description,
+                node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
                 y_position=int(node_info.y_position),
                 left_input_id=node_info.left_input_id,
@@ -2455,6 +2692,10 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     for field in fields_to_update:
         if hasattr(new_settings, field) and getattr(new_settings, field) is not None:
             setattr(copied_setting_input, field, getattr(new_settings, field))
+
+    # Reset node_reference to None when copying (so it defaults to df_{node_id})
+    if hasattr(copied_setting_input, "node_reference"):
+        copied_setting_input.node_reference = None
 
     return copied_setting_input
 

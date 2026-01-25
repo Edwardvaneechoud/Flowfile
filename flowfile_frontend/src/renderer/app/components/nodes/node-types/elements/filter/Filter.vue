@@ -1,6 +1,10 @@
 <template>
   <div v-if="isLoaded && nodeFilter">
-    <generic-node-settings v-model="nodeFilter">
+    <generic-node-settings
+      v-model="nodeFilter"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div style="border-radius: 20px">
           <el-switch
@@ -79,7 +83,8 @@ import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -98,6 +103,25 @@ const isAdvancedFilter = ref<boolean>(false);
 const nodeStore = useNodeStore();
 const nodeFilter = ref<NodeFilter | null>(null);
 const nodeData = ref<NodeData | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeFilter,
+  onBeforeSave: () => {
+    // Prepare filter data before saving
+    if (nodeFilter.value) {
+      if (isAdvancedFilter.value) {
+        updateAdvancedFilter();
+        nodeFilter.value.filter_input.mode = "advanced";
+        nodeFilter.value.filter_input.filter_type = "advanced";
+      } else {
+        nodeFilter.value.filter_input.mode = "basic";
+        nodeFilter.value.filter_input.filter_type = "basic";
+      }
+    }
+    return true;
+  },
+});
 
 interface EditorChildType {
   showHideOptions: () => void;
@@ -250,21 +274,7 @@ const updateAdvancedFilter = () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeFilter.value) {
-    if (isAdvancedFilter.value) {
-      updateAdvancedFilter();
-      nodeFilter.value.filter_input.mode = "advanced";
-      nodeFilter.value.filter_input.filter_type = "advanced";
-    } else {
-      nodeFilter.value.filter_input.mode = "basic";
-      nodeFilter.value.filter_input.filter_type = "basic";
-    }
-    nodeStore.updateSettings(nodeFilter);
-  }
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
 
 <style lang="scss" scoped>

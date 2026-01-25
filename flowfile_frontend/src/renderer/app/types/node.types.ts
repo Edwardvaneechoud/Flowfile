@@ -638,6 +638,19 @@ export interface SampleUsers extends ExternalSource {
 // Node Base Types
 // ============================================================================
 
+export interface OutputFieldInfo {
+  name: string;
+  data_type: string;
+  default_value?: string | null;
+}
+
+export interface OutputFieldConfig {
+  enabled: boolean;
+  validation_mode_behavior: "add_missing" | "raise_on_missing" | "select_only";
+  fields: OutputFieldInfo[];
+  validate_data_types: boolean;
+}
+
 export interface NodeBase {
   flow_id: string | number;
   node_id: number;
@@ -646,7 +659,9 @@ export interface NodeBase {
   pos_y: number;
   is_setup?: boolean;
   description?: string;
+  node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
+  output_field_config?: OutputFieldConfig | null;
 }
 
 export interface NodeSingleInput extends NodeBase {

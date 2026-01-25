@@ -8,6 +8,9 @@ import type {
   LocalFileInfo,
   NodeConnection,
   NodePromise,
+  HistoryState,
+  UndoRedoResult,
+  OperationResponse,
 } from "../types";
 
 export class FlowApi {
@@ -193,8 +196,8 @@ export class FlowApi {
     nodeType: string,
     posX = 0,
     posY = 0,
-  ): Promise<any> {
-    const response = await axios.post(
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
       "editor/add_node/",
       {},
       {
@@ -208,7 +211,7 @@ export class FlowApi {
         headers: { accept: "application/json" },
       },
     );
-    return response;
+    return response.data;
   }
 
   /**
@@ -218,22 +221,22 @@ export class FlowApi {
     nodeIdToCopyFrom: number,
     flowIdToCopyFrom: number,
     nodePromise: NodePromise,
-  ): Promise<any> {
-    const response = await axios.post("editor/copy_node/", nodePromise, {
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>("editor/copy_node/", nodePromise, {
       params: {
         node_id_to_copy_from: nodeIdToCopyFrom,
         flow_id_to_copy_from: flowIdToCopyFrom,
       },
       headers: { accept: "application/json" },
     });
-    return response;
+    return response.data;
   }
 
   /**
    * Delete a node from the flow
    */
-  static async deleteNode(flowId: number, nodeId: number): Promise<any> {
-    const response = await axios.post(
+  static async deleteNode(flowId: number, nodeId: number): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
       "/editor/delete_node/",
       {},
       {
@@ -247,21 +250,69 @@ export class FlowApi {
   /**
    * Connect two nodes
    */
-  static async connectNode(flowId: number, nodeConnection: NodeConnection): Promise<void> {
-    await axios.post("/editor/connect_node/", nodeConnection, {
+  static async connectNode(
+    flowId: number,
+    nodeConnection: NodeConnection,
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>("/editor/connect_node/", nodeConnection, {
       headers: {
         "Content-Type": "application/json",
         accept: "application/json",
       },
       params: { flow_id: flowId },
     });
+    return response.data;
   }
 
   /**
    * Delete a connection between nodes
    */
-  static async deleteConnection(flowId: number, nodeConnection: NodeConnection): Promise<any> {
-    const response = await axios.post("/editor/delete_connection/", nodeConnection, {
+  static async deleteConnection(
+    flowId: number,
+    nodeConnection: NodeConnection,
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/delete_connection/",
+      nodeConnection,
+      {
+        params: { flow_id: flowId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return response.data;
+  }
+
+  // ============================================================================
+  // History/Undo-Redo Operations
+  // ============================================================================
+
+  /**
+   * Undo the last action on the flow graph
+   */
+  static async undo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResult>("/editor/undo/", null, {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Redo the last undone action on the flow graph
+   */
+  static async redo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResult>("/editor/redo/", null, {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get the current state of the history system for a flow
+   */
+  static async getHistoryStatus(flowId: number): Promise<HistoryState> {
+    const response = await axios.get<HistoryState>("/editor/history_status/", {
       params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });

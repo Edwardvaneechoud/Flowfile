@@ -39,9 +39,7 @@ export const useEditorStore = defineStore("editor", {
   },
 
   actions: {
-    // ========== Drawer Management ==========
     async executeDrawCloseFunction() {
-      console.log("Executing draw close function");
       if (this.drawCloseFunction) {
         this.drawCloseFunction();
       }
@@ -49,6 +47,10 @@ export const useEditorStore = defineStore("editor", {
 
     setCloseFunction(f: () => void): void {
       this.drawCloseFunction = f;
+    },
+
+    clearCloseFunction(): void {
+      this.drawCloseFunction = null;
     },
 
     openDrawer(

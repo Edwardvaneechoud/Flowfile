@@ -24,6 +24,7 @@ export const useNodeStore = defineStore("node", {
     sizeDataPreview: 300 as number,
     dataTypes: ["String", "Datetime", "Int64", "Int32", "Int16", "Float64", "Float32", "Boolean"],
     nodeDescriptions: {} as NodeDescriptionDictionary,
+    nodeReferences: {} as NodeDescriptionDictionary, // Uses same structure as descriptions
     allExpressions: null as null | ExpressionsOverview[],
   }),
 
@@ -259,6 +260,102 @@ export const useNodeStore = defineStore("node", {
     updateNodeDescription(nodeId: number, description: string) {
       const flowStore = useFlowStore();
       this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
+    },
+
+    // ========== Node References ==========
+    initializeReferenceCache(flowId: number): void {
+      if (!this.nodeReferences[flowId]) {
+        this.nodeReferences[flowId] = {};
+      }
+    },
+
+    cacheNodeReferenceDict(flowId: number, nodeId: number, reference: string): void {
+      this.initializeReferenceCache(flowId);
+      this.nodeReferences[flowId][nodeId] = reference;
+      if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+        this.nodeData.setting_input.node_reference = reference;
+      }
+    },
+
+    clearNodeReferenceCache(flowId: number, nodeId: number): void {
+      if (this.nodeReferences[flowId] && this.nodeReferences[flowId][nodeId]) {
+        delete this.nodeReferences[flowId][nodeId];
+      }
+    },
+
+    clearFlowReferenceCache(flowId: number): void {
+      if (this.nodeReferences[flowId]) {
+        delete this.nodeReferences[flowId];
+      }
+    },
+
+    clearAllReferenceCaches(): void {
+      this.nodeReferences = {};
+    },
+
+    async getNodeReference(nodeId: number, forceRefresh = false): Promise<string> {
+      const flowStore = useFlowStore();
+      this.initializeReferenceCache(flowStore.flowId);
+
+      if (!forceRefresh && this.nodeReferences[flowStore.flowId]?.[nodeId]) {
+        return this.nodeReferences[flowStore.flowId][nodeId];
+      }
+
+      try {
+        const reference = await NodeApi.getNodeReference(flowStore.flowId, nodeId);
+        this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
+        return reference;
+      } catch (error) {
+        console.info("Error fetching node reference:", error);
+        if (this.nodeReferences[flowStore.flowId]?.[nodeId]) {
+          console.warn("Using cached reference due to API error");
+          return this.nodeReferences[flowStore.flowId][nodeId];
+        }
+        return "";
+      }
+    },
+
+    async setNodeReference(nodeId: number, reference: string): Promise<void> {
+      const flowStore = useFlowStore();
+
+      try {
+        this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
+        const result = await NodeApi.setNodeReference(flowStore.flowId, nodeId, reference);
+
+        if (result === true) {
+          console.log("Reference updated successfully");
+        } else {
+          console.warn("Unexpected response:", result);
+        }
+      } catch (error: any) {
+        if (error.response) {
+          console.error("API error:", error.response.data.message || error.response.data.detail);
+          throw new Error(error.response.data.detail || "Failed to update reference");
+        } else if (error.request) {
+          console.error("The request was made but no response was received");
+        } else {
+          console.error("Error", error.message);
+        }
+        throw error;
+      }
+    },
+
+    async validateNodeReference(
+      nodeId: number,
+      reference: string,
+    ): Promise<{ valid: boolean; error: string | null }> {
+      const flowStore = useFlowStore();
+      try {
+        return await NodeApi.validateNodeReference(flowStore.flowId, nodeId, reference);
+      } catch (error) {
+        console.error("Error validating node reference:", error);
+        return { valid: false, error: "Failed to validate reference" };
+      }
+    },
+
+    updateNodeReference(nodeId: number, reference: string) {
+      const flowStore = useFlowStore();
+      this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
     },
 
     // ========== Node Settings Updates ==========
@@ -502,6 +599,12 @@ export const useNodeStore = defineStore("node", {
     executeDrawCloseFunction() {
       const editorStore = useEditorStore();
       return editorStore.executeDrawCloseFunction();
+    },
+
+    /** @deprecated Use `useEditorStore().clearCloseFunction()` directly instead. */
+    clearCloseFunction() {
+      const editorStore = useEditorStore();
+      editorStore.clearCloseFunction();
     },
 
     /** @deprecated Use `useEditorStore().toggleCodeGenerator()` directly instead. */

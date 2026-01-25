@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodePolarsCode" class="listbox-wrapper">
-    <generic-node-settings :model-value="nodePolarsCode">
+    <generic-node-settings
+      :model-value="nodePolarsCode"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"
         ref="editorChild"
@@ -16,7 +20,8 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
@@ -36,6 +41,17 @@ interface EditorChildType {
 const editorChild = ref<EditorChildType | null>(null);
 const nodePolarsCode = ref<NodePolarsCode | null>(null);
 const nodeData = ref<null | NodeData>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodePolarsCode,
+  onBeforeSave: () => {
+    if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
+      return false;
+    }
+    return true;
+  },
+});
 
 const handleEditorUpdate = (newCode: string) => {
   if (nodePolarsCode.value && nodePolarsCode.value.polars_code_input) {
@@ -65,15 +81,5 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
-    return;
-  }
-  nodePolarsCode.value.is_setup = true;
-  nodeStore.updateSettings(nodePolarsCode);
-  showEditor.value = false;
-  dataLoaded.value = false;
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>

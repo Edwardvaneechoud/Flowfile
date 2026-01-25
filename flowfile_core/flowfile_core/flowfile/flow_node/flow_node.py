@@ -17,6 +17,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     get_external_df_result,
     results_exists,
 )
+from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.models import (
     NodeResults,
     NodeSchemaInformation,
@@ -24,7 +25,9 @@ from flowfile_core.flowfile.flow_node.models import (
     NodeStepSettings,
     NodeStepStats,
 )
+from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.flow_node.state import NodeExecutionState
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
 from flowfile_core.schemas import input_schema, schemas
@@ -63,6 +66,8 @@ class FlowNode:
     _cache_progress: (
         ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | None
     ) = None
+    _execution_state: NodeExecutionState = None
+    _executor: NodeExecutor | None = None  # Lazy-initialized
 
     def __init__(
         self,
@@ -130,6 +135,9 @@ class FlowNode:
         self._schema_callback = None
         self._state_needs_reset = False
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
+        # Initialize execution state
+        self._execution_state = NodeExecutionState()
+        self._executor = None  # Will be lazily created
 
     @property
     def state_needs_reset(self) -> bool:
@@ -205,6 +213,17 @@ class FlowNode:
             return []
 
         self._schema_callback = SingleExecutionFuture(f, error_callback)
+
+    @property
+    def executor(self) -> NodeExecutor:
+        """Lazy-initialized executor instance.
+
+        Reusing the same executor avoids object creation overhead
+        when execute_node is called multiple times.
+        """
+        if self._executor is None:
+            self._executor = NodeExecutor(self)
+        return self._executor
 
     @property
     def is_start(self) -> bool:
@@ -328,6 +347,9 @@ class FlowNode:
         if is_manual_input:
             _ = self.hash
         self._setting_input = setting_input
+        # Copy cache_results from setting_input to node_settings
+        if hasattr(setting_input, "cache_results"):
+            self.node_settings.cache_results = setting_input.cache_results
         self.set_node_information()
         if is_manual_input:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run_with_current_setup:
@@ -404,6 +426,9 @@ class FlowNode:
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
         node_information.description = (
             self.setting_input.description if hasattr(self.setting_input, "description") else ""
+        )
+        node_information.node_reference = (
+            self.setting_input.node_reference if hasattr(self.setting_input, "node_reference") else None
         )
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
@@ -534,23 +559,60 @@ class FlowNode:
         Returns:
             A list of FlowfileColumn objects representing the predicted schema.
         """
+        logger.info(
+            f"get_predicted_schema: node_id={self.node_id}, node_type={self.node_type}, force={force}, "
+            f"has_predicted_schema={self.node_schema.predicted_schema is not None}, "
+            f"has_schema_callback={self.schema_callback is not None}, "
+            f"has_output_field_config={hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config is not None if self._setting_input else False}"
+        )
 
         if self.node_schema.predicted_schema and not force:
+            logger.debug(f"get_predicted_schema: node_id={self.node_id} - returning cached predicted_schema")
             return self.node_schema.predicted_schema
+
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
             self.print("Getting the data from a schema callback")
+            logger.info(f"get_predicted_schema: node_id={self.node_id} - invoking schema_callback")
             if force:
                 # Force the schema callback to reset, so that it will be executed again
+                logger.debug(f"get_predicted_schema: node_id={self.node_id} - forcing schema_callback reset")
                 self.schema_callback.reset()
-            schema = self.schema_callback()
+
+            try:
+                schema = self.schema_callback()
+                logger.info(
+                    f"get_predicted_schema: node_id={self.node_id} - schema_callback returned "
+                    f"{len(schema) if schema else 0} columns: {[c.name for c in schema] if schema else []}"
+                )
+            except Exception as e:
+                logger.error(f"get_predicted_schema: node_id={self.node_id} - schema_callback raised exception: {e}")
+                schema = None
+
             if schema is not None and len(schema) > 0:
                 self.print("Calculating the schema based on the schema callback")
                 self.node_schema.predicted_schema = schema
+                logger.info(f"get_predicted_schema: node_id={self.node_id} - set predicted_schema from schema_callback")
                 return self.node_schema.predicted_schema
+            else:
+                logger.warning(f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema")
+        else:
+            logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
+
+        logger.debug(f"get_predicted_schema: node_id={self.node_id} - falling back to _predicted_data_getter")
         predicted_data = self._predicted_data_getter()
         if predicted_data is not None and predicted_data.schema is not None:
             self.print("Calculating the schema based on the predicted resulting data")
+            logger.info(
+                f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
+                f"({len(predicted_data.schema)} columns)"
+            )
             self.node_schema.predicted_schema = self._predicted_data_getter().schema
+        else:
+            logger.warning(
+                f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
+                f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
+                f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
+            )
 
         return self.node_schema.predicted_schema
 
@@ -613,6 +675,15 @@ class FlowNode:
                             except Exception as e:
                                 raise e
                         fl.set_streamable(self.node_settings.streamable)
+
+                        # Apply output field configuration if enabled
+                        if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                            try:
+                                fl = apply_output_field_config(fl, self._setting_input.output_field_config)
+                            except Exception as e:
+                                logger.error(f"Error applying output field config for node {self.node_id}: {e}")
+                                raise
+
                         self.results.resulting_data = fl
                         self.node_schema.result_schema = fl.schema
                     except Exception as e:
@@ -768,8 +839,55 @@ class FlowNode:
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
 
-    def execute_full_local(self, performance_mode: bool = False) -> None:
+    def _can_skip_execution_fast(
+        self,
+        run_location: schemas.ExecutionLocationsLiteral,
+        performance_mode: bool,
+        reset_cache: bool,
+    ) -> bool:
+        """Fast-path check to avoid executor overhead when we can skip.
+
+        This inlines the most common skip conditions to avoid
+        creating an executor instance when not needed.
+
+        Returns True if execution can definitely be skipped.
+        Returns False if full execution logic is needed.
+        """
+        # Can't skip if forced refresh
+        if reset_cache:
+            return False
+
+        # Output nodes always run
+        if self.node_template.node_group == "output":
+            return False
+
+        # Must run if never ran before
+        if not self._execution_state.has_run_with_current_setup:
+            return False
+
+        # Check for source file changes (read nodes only)
+        if self.node_type == "read" and self._execution_state.source_file_info:
+            if self._execution_state.source_file_info.has_changed():
+                return False
+
+        # Check external cache
+        cache_exists = results_exists(self.hash)
+
+        # Cache enabled and exists -> skip
+        if self.node_settings.cache_results and cache_exists:
+            return True
+
+        # Development mode with cache -> skip
+        if not performance_mode and cache_exists:
+            return True
+
+        # Need full execution logic
+        return False
+
+    def _do_execute_full_local(self, performance_mode: bool = False) -> None:
         """Executes the node's logic locally, including example data generation.
+
+        Internal method called by NodeExecutor.
 
         Args:
             performance_mode: If True, skips generating example data.
@@ -798,12 +916,14 @@ class FlowNode:
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
 
-    def execute_local(self, flow_id: int, performance_mode: bool = False):
-        """Executes the node's logic locally.
+    def _do_execute_local_with_sampling(self, performance_mode: bool = False, flow_id: int = None):
+        """Executes the node's logic locally with external sampling.
+
+        Internal method called by NodeExecutor.
 
         Args:
-            flow_id: The ID of the parent flow.
             performance_mode: If True, skips generating example data.
+            flow_id: The ID of the parent flow.
 
         Raises:
             Exception: Propagates exceptions from the execution.
@@ -836,8 +956,10 @@ class FlowNode:
                 if not self.node_settings.streamable:
                     step.node_settings.streamable = self.node_settings.streamable
 
-    def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
+    def _do_execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
         """Executes the node's logic remotely or handles cached results.
+
+        Internal method called by NodeExecutor.
 
         Args:
             performance_mode: If True, skips generating example data.
@@ -920,6 +1042,19 @@ class FlowNode:
             finally:
                 self._fetch_cached_df = None
 
+    # Backward-compatible aliases for renamed methods
+    def execute_full_local(self, performance_mode: bool = False) -> None:
+        """Backward-compatible alias for _do_execute_full_local."""
+        return self._do_execute_full_local(performance_mode)
+
+    def execute_local(self, flow_id: int, performance_mode: bool = False):
+        """Backward-compatible alias for _do_execute_local_with_sampling."""
+        return self._do_execute_local_with_sampling(performance_mode, flow_id)
+
+    def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
+        """Backward-compatible alias for _do_execute_remote."""
+        return self._do_execute_remote(performance_mode, node_logger)
+
     def prepare_before_run(self):
         """Resets results and errors before a new execution."""
 
@@ -945,103 +1080,42 @@ class FlowNode:
         retry: bool = True,
         node_logger: NodeLogger = None,
         optimize_for_downstream: bool = True,
-    ):
-        """Orchestrates the execution, handling location, caching, and retries.
+    ) -> None:
+        """Execute the node based on its current state and settings.
+
+        This method uses a fast-path to quickly skip execution when possible,
+        avoiding executor overhead. For cases requiring full execution logic,
+        it delegates to the NodeExecutor.
 
         Args:
-            run_location: The location for execution ('local', 'remote').
-            reset_cache: If True, forces removal of any existing cache.
-            performance_mode: If True, optimizes for speed over diagnostics.
-            retry: If True, allows retrying execution on recoverable errors.
-            node_logger: The logger for this node execution.
-            optimize_for_downstream: If true, operations that shuffle the order of rows are fully cached and provided as
-            input to downstream steps
-
-        Raises:
-            Exception: If the node_logger is not defined.
+            run_location: Where to execute ('local' or 'remote')
+            reset_cache: Force cache invalidation
+            performance_mode: Skip example data generation for speed
+            retry: Allow retry on recoverable errors
+            node_logger: Logger for this node's execution
+            optimize_for_downstream: Cache wide transforms for downstream nodes
         """
         if node_logger is None:
-            raise Exception("Flow logger is not defined")
-        #  TODO: Simplify which route is being picked there are many duplicate checks
+            raise ValueError("node_logger is required")
 
-        if reset_cache:
-            self.remove_cache()
-            self.node_stats.has_run_with_current_setup = False
-            self.node_stats.has_completed_last_run = False
+        if not self.is_setup:
+            node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
+            return
 
-        if self.is_setup:
-            node_logger.info(f"Starting to run {self.__name__}")
-            if (
-                self.needs_run(performance_mode, node_logger, run_location)
-                or self.node_template.node_group == "output"
-                and not (run_location == "local")
-            ):
-                self.clear_table_example()
-                self.prepare_before_run()
-                self.reset()
-                try:
-                    if (
-                        run_location == "remote"
-                        or (self.node_default.transform_type == "wide" and optimize_for_downstream)
-                        and not run_location == "local"
-                    ) or self.node_settings.cache_results:
-                        node_logger.info("Running the node remotely")
-                        if self.node_settings.cache_results:
-                            performance_mode = False
-                        self.execute_remote(
-                            performance_mode=(performance_mode if not self.node_settings.cache_results else False),
-                            node_logger=node_logger,
-                        )
-                    else:
-                        node_logger.info("Running the node locally")
-                        self.execute_local(performance_mode=performance_mode, flow_id=node_logger.flow_id)
-                except Exception as e:
-                    if "No such file or directory (os error" in str(e) and retry:
-                        logger.warning("Error with the input node, starting to rerun the input node...")
-                        all_inputs: list[FlowNode] = self.node_inputs.get_all_inputs()
-                        for node_input in all_inputs:
-                            node_input.execute_node(
-                                run_location=run_location,
-                                performance_mode=performance_mode,
-                                retry=True,
-                                reset_cache=True,
-                                node_logger=node_logger,
-                            )
-                        self.execute_node(
-                            run_location=run_location,
-                            performance_mode=performance_mode,
-                            retry=False,
-                            node_logger=node_logger,
-                        )
-                    else:
-                        self.results.errors = str(e)
-                        if "Connection refused" in str(e) and "/submit_query/" in str(e):
-                            node_logger.warning(
-                                "There was an issue connecting to the remote worker, "
-                                "ensure the worker process is running, "
-                                "or change the settings to, so it executes locally"
-                            )
-                            node_logger.error(
-                                "Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings."
-                            )
-                        else:
-                            node_logger.error(f"Error with running the node: {e}")
-            elif (run_location == "local") and (
-                not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output"
-            ):
-                try:
-                    node_logger.info("Executing fully locally")
-                    self.execute_full_local(performance_mode)
-                except Exception as e:
-                    self.results.errors = str(e)
-                    node_logger.error(f"Error with running the node: {e}")
-                    self.node_stats.error = str(e)
-                    self.node_stats.has_completed_last_run = False
+        # Fast-path: check if we can skip without creating executor
+        if self._can_skip_execution_fast(run_location, performance_mode, reset_cache):
+            node_logger.info("Node is up-to-date, skipping execution")
+            return
 
-            else:
-                node_logger.info("Node has already run, not running the node")
-        else:
-            node_logger.warning(f"Node {self.__name__} is not setup, cannot run the node")
+        # Full execution logic via executor
+        self.executor.execute(
+            run_location=run_location,
+            reset_cache=reset_cache,
+            performance_mode=performance_mode,
+            retry=retry,
+            node_logger=node_logger,
+            optimize_for_downstream=optimize_for_downstream,
+        )
 
     def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         """Stores a generator function for fetching a sample of the result data.
@@ -1082,6 +1156,15 @@ class FlowNode:
             self._hash = None
             self.node_information.is_setup = None
             self.results.errors = None
+
+            # Reset execution state but preserve source file info for change detection
+            self._execution_state.has_run_with_current_setup = False
+            self._execution_state.has_completed_last_run = False
+            self._execution_state.result_schema = None
+            self._execution_state.predicted_schema = None
+            self._execution_state.execution_hash = None
+            # Note: source_file_info NOT reset - needed for change detection
+
             if self.is_correct:
                 self._schema_callback = None  # Ensure the schema callback is reset
                 if self.schema_callback:

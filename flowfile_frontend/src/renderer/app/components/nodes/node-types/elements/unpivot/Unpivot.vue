@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeUnpivot" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeUnpivot">
+    <generic-node-settings
+      v-model="nodeUnpivot"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul class="listbox">
           <li
@@ -89,12 +93,30 @@
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeUnpivot = ref<NodeUnpivot | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeUnpivot,
+  onBeforeSave: () => {
+    if (unpivotInput.value) {
+      if (unpivotInput.value.data_type_selector_mode === "data_type") {
+        unpivotInput.value.value_columns = [];
+      } else {
+        unpivotInput.value.data_type_selector = null;
+      }
+      nodeUnpivot.value!.unpivot_input = unpivotInput.value;
+    }
+    return true;
+  },
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -112,8 +134,6 @@ const unpivotInput = ref<UnpivotInput>({
   data_type_selector: null,
   data_type_selector_mode: "column",
 });
-
-const nodeUnpivot = ref<NodeUnpivot | null>(null);
 
 const getColumnClass = (columnName: string): string => {
   return selectedColumns.value.includes(columnName) ? "is-selected" : "";
@@ -251,21 +271,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (unpivotInput.value) {
-    if (unpivotInput.value.data_type_selector_mode === "data_type") {
-      unpivotInput.value.value_columns = [];
-    } else {
-      unpivotInput.value.data_type_selector = null;
-    }
-    nodeUnpivot.value!.unpivot_input = unpivotInput.value;
-    nodeStore.updateSettings(nodeUnpivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

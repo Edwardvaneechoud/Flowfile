@@ -184,7 +184,9 @@ class SelectInput(BaseModel):
             result["new_name"] = self.new_name
         if not self.keep:
             result["keep"] = self.keep
-        if self.data_type_change and self.data_type:
+        # Always include data_type if it's set, not just when data_type_change is True
+        # This ensures undo/redo snapshots preserve the data_type field
+        if self.data_type:
             result["data_type"] = self.data_type
         return result
 
@@ -193,21 +195,41 @@ class SelectInput(BaseModel):
         """Load from slim YAML format."""
         old_name = data["old_name"]
         new_name = data.get("new_name", old_name)
+        data_type = data.get("data_type")
+        # is_altered should be True if either name was changed OR data_type was explicitly set
+        # This ensures updateNodeSelect in the frontend won't overwrite user-specified data_type
+        is_altered = (old_name != new_name) or (data_type is not None)
         return cls(
             old_name=old_name,
             new_name=new_name,
             keep=data.get("keep", True),
-            data_type=data.get("data_type"),
-            data_type_change=data.get("data_type") is not None,
-            is_altered=old_name != new_name,
+            data_type=data_type,
+            data_type_change=data_type is not None,
+            is_altered=is_altered,
         )
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_data_type_change(cls, data):
+        """Infer data_type_change when loading from YAML.
+
+        When data_type is present but data_type_change is not explicitly set,
+        infer that the user explicitly set the data_type (e.g., when loading from YAML).
+        This ensures is_altered will be set correctly in the after validator.
+        """
+        if isinstance(data, dict):
+            if data.get("data_type") is not None and "data_type_change" not in data:
+                data["data_type_change"] = True
+        return data
 
     @model_validator(mode="after")
     def set_default_new_name(self):
-        """If new_name is None, default it to old_name."""
+        """If new_name is None, default it to old_name. Also set is_altered if needed."""
         if self.new_name is None:
             self.new_name = self.old_name
         if self.old_name != self.new_name:
+            self.is_altered = True
+        if self.data_type_change:
             self.is_altered = True
         return self
 
