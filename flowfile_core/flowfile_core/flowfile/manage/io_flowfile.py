@@ -173,6 +173,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["pos_x"] = float(node.x_position or 0)
             setting_data["pos_y"] = float(node.y_position or 0)
             setting_data["description"] = node.description or ""
+            setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
 
             if is_user_defined:
@@ -209,6 +210,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             type=node.type,
             is_setup=setting_input is not None,
             description=node.description,
+            node_reference=node.node_reference,
             x_position=node.x_position,
             y_position=node.y_position,
             left_input_id=node.left_input_id,

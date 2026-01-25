@@ -104,7 +104,9 @@ class FlowGraphToPolarsConverter:
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
             return
         # Create variable name for this node's output
-        var_name = f"df_{node.node_id}"
+        # Use node_reference if set, otherwise default to df_{node_id}
+        node_reference = getattr(settings, 'node_reference', None)
+        var_name = node_reference if node_reference else f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
         self.handle_output_node(node, var_name)
         if node.node_template.output > 0:
