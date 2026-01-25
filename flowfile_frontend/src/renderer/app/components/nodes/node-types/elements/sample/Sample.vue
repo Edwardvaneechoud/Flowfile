@@ -51,14 +51,14 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSample.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeSample.value) {
-    nodeSample.value.sample_size = sampleSize.value;
-  } else {
-    if (nodeSample.value) {
+  if (nodeSample.value) {
+    if (!nodeSample.value.is_setup) {
+      nodeSample.value.sample_size = sampleSize.value;
+    } else {
       sampleSize.value = nodeSample.value.sample_size;
     }
+    dataLoaded.value = true;
   }
-  dataLoaded.value = true;
 };
 
 const handleClickOutside = (event: MouseEvent) => {
