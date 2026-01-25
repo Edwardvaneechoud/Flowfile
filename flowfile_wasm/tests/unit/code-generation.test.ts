@@ -44,10 +44,10 @@ describe('Code Generation', () => {
   }
 
   describe('Single Node Generation', () => {
-    it('should generate code for read_csv node', () => {
+    it('should generate code for read node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', {
-        received_table: {
+      nodes.set(1, createNode(1, 'read', {
+        received_file: {
           name: 'data.csv',
           table_settings: {
             delimiter: ',',
@@ -63,7 +63,7 @@ describe('Code Generation', () => {
       expect(code).toContain('pl.scan_csv')
       expect(code).toContain('data.csv')
       expect(code).toContain('separator=","')
-      expect(code).toContain('has_header=true')
+      expect(code).toContain('has_header=True')
     })
 
     it('should generate code for manual_input node', () => {
@@ -87,7 +87,7 @@ describe('Code Generation', () => {
 
     it('should generate code for filter node with basic filter', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'filter', {
         filter_input: {
           mode: 'basic',
@@ -122,7 +122,7 @@ describe('Code Generation', () => {
 
       for (const { operator, value, expected } of testCases) {
         const nodes = new Map<number, FlowNode>()
-        nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+        nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
         nodes.set(2, createNode(2, 'filter', {
           filter_input: {
             mode: 'basic',
@@ -141,7 +141,7 @@ describe('Code Generation', () => {
 
     it('should generate code for select node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'select', {
         select_input: [
           { old_name: 'id', new_name: 'user_id', keep: true, is_available: true },
@@ -163,7 +163,7 @@ describe('Code Generation', () => {
 
     it('should generate code for group_by node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'group_by', {
         groupby_input: {
           agg_cols: [
@@ -187,7 +187,7 @@ describe('Code Generation', () => {
 
     it('should generate code for sort node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'sort', {
         sort_input: [
           { column: 'date', how: 'desc' },
@@ -202,12 +202,12 @@ describe('Code Generation', () => {
 
       expect(code).toContain('.sort(')
       expect(code).toContain('["date","name"]')
-      expect(code).toContain('descending=[true,false]')
+      expect(code).toContain('descending=[True, False]')
     })
 
     it('should generate code for unique node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'unique', {
         unique_input: {
           columns: ['id', 'name'],
@@ -227,7 +227,7 @@ describe('Code Generation', () => {
 
     it('should generate code for head/sample node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'head', {
         sample_size: 100
       }, [1]))
@@ -240,10 +240,10 @@ describe('Code Generation', () => {
       expect(code).toContain('.head(100)')
     })
 
-    it('should generate code for preview node (pass-through)', () => {
+    it('should generate code for explore_data node (pass-through)', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
-      nodes.set(2, createNode(2, 'preview', {}, [1]))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'explore_data', {}, [1]))
 
       const code = generateCode({
         nodes,
@@ -255,7 +255,7 @@ describe('Code Generation', () => {
 
     it('should generate code for output node with CSV', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'output', {
         output_settings: {
           name: 'result.csv',
@@ -277,7 +277,7 @@ describe('Code Generation', () => {
 
     it('should generate code for output node with Parquet', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'output', {
         output_settings: {
           name: 'result.parquet',
@@ -296,7 +296,7 @@ describe('Code Generation', () => {
 
     it('should generate code for polars_code node', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'polars_code', {
         polars_code_input: {
           polars_code: 'df.with_columns(pl.col("value") * 2)'
@@ -316,11 +316,11 @@ describe('Code Generation', () => {
   describe('Join Node Generation', () => {
     it('should generate code for inner join', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', {
-        received_table: { name: 'left.csv', table_settings: {} }
+      nodes.set(1, createNode(1, 'read', {
+        received_file: { name: 'left.csv', table_settings: {} }
       }))
-      nodes.set(2, createNode(2, 'read_csv', {
-        received_table: { name: 'right.csv', table_settings: {} }
+      nodes.set(2, createNode(2, 'read', {
+        received_file: { name: 'right.csv', table_settings: {} }
       }))
 
       const joinNode = createNode(3, 'join', {
@@ -351,8 +351,8 @@ describe('Code Generation', () => {
 
     it('should generate code for left join', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'left.csv', table_settings: {} } }))
-      nodes.set(2, createNode(2, 'read_csv', { received_table: { name: 'right.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'left.csv', table_settings: {} } }))
+      nodes.set(2, createNode(2, 'read', { received_file: { name: 'right.csv', table_settings: {} } }))
 
       const joinNode = createNode(3, 'join', {
         join_input: {
@@ -379,8 +379,8 @@ describe('Code Generation', () => {
   describe('Pipeline Generation', () => {
     it('should generate code for multi-step pipeline', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', {
-        received_table: { name: 'data.csv', table_settings: {} }
+      nodes.set(1, createNode(1, 'read', {
+        received_file: { name: 'data.csv', table_settings: {} }
       }))
       nodes.set(2, createNode(2, 'filter', {
         filter_input: {
@@ -417,8 +417,8 @@ describe('Code Generation', () => {
 
     it('should generate proper function structure', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', {
-        received_table: { name: 'data.csv', table_settings: {} }
+      nodes.set(1, createNode(1, 'read', {
+        received_file: { name: 'data.csv', table_settings: {} }
       }))
 
       const code = generateCode({
@@ -476,7 +476,7 @@ describe('Code Generation', () => {
     for (const { agg, expected } of aggTestCases) {
       it(`should generate correct code for ${agg} aggregation`, () => {
         const nodes = new Map<number, FlowNode>()
-        nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+        nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
         nodes.set(2, createNode(2, 'group_by', {
           groupby_input: {
             agg_cols: [
@@ -500,7 +500,7 @@ describe('Code Generation', () => {
   describe('Type Casting in Select', () => {
     it('should add cast for data type changes', () => {
       const nodes = new Map<number, FlowNode>()
-      nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'select', {
         select_input: [
           {
