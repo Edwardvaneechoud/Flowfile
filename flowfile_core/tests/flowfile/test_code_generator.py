@@ -2914,7 +2914,7 @@ def test_node_reference_basic():
     code = export_flow_to_polars(flow)
 
     # Verify the custom reference is used instead of df_1
-    verify_code_contains(code, "my_data = pl.DataFrame")
+    verify_code_contains(code, "my_data = pl.LazyFrame")
     assert "df_1" not in code, "Should use node_reference instead of df_1"
     verify_if_execute(code)
 
@@ -2959,7 +2959,7 @@ def test_node_reference_in_formula():
     code = export_flow_to_polars(flow)
 
     # Verify custom references are used
-    verify_code_contains(code, "source_data = pl.DataFrame")
+    verify_code_contains(code, "source_data = pl.LazyFrame")
     verify_code_contains(code, "calculated_data = source_data.with_columns")
     assert "df_1" not in code, "Should use source_data instead of df_1"
     assert "df_2" not in code, "Should use calculated_data instead of df_2"
@@ -2995,7 +2995,7 @@ def test_node_reference_mixed():
         # No node_reference set
         depending_on_id=1,
         filter_input=transform_schema.FilterInput(
-            filters=[transform_schema.Filter(
+            filters=[transform_schema.BasicFilter(
                 field="value",
                 filter_type=">=",
                 filter_value="100"
@@ -3009,7 +3009,7 @@ def test_node_reference_mixed():
     code = export_flow_to_polars(flow)
 
     # Verify mixed references
-    verify_code_contains(code, "custom_input = pl.DataFrame")
+    verify_code_contains(code, "custom_input = pl.LazyFrame")
     verify_code_contains(code, "df_2 = custom_input.filter")
     assert "df_1" not in code, "Should use custom_input instead of df_1"
     verify_if_execute(code)
@@ -3075,15 +3075,18 @@ def test_node_reference_in_join():
         )
     )
     flow.add_join(join_node)
-    add_connection(flow, node_connection=input_schema.NodeConnection.create_main_right_input(1, 2, 3))
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
 
     # Convert to Polars code
     code = export_flow_to_polars(flow)
 
     # Verify custom references in join
-    verify_code_contains(code, "left_table = pl.DataFrame")
-    verify_code_contains(code, "right_table = pl.DataFrame")
-    verify_code_contains(code, "joined_result = left_table")
+    verify_code_contains(code, "left_table = pl.LazyFrame")
+    verify_code_contains(code, "right_table = pl.LazyFrame")
+    verify_code_contains(code, "joined_result = (left_table")
     assert "df_1" not in code, "Should use left_table instead of df_1"
     assert "df_2" not in code, "Should use right_table instead of df_2"
     assert "df_3" not in code, "Should use joined_result instead of df_3"
@@ -3114,7 +3117,7 @@ def test_node_reference_default_when_empty():
     code = export_flow_to_polars(flow)
 
     # Should use default df_1
-    verify_code_contains(code, "df_1 = pl.DataFrame")
+    verify_code_contains(code, "df_1 = pl.LazyFrame")
     verify_if_execute(code)
 
 
@@ -3142,7 +3145,7 @@ def test_node_reference_none_uses_default():
     code = export_flow_to_polars(flow)
 
     # Should use default df_1
-    verify_code_contains(code, "df_1 = pl.DataFrame")
+    verify_code_contains(code, "df_1 = pl.LazyFrame")
     verify_if_execute(code)
 
 
