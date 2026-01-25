@@ -1,6 +1,10 @@
 <template>
   <div v-if="isLoaded && nodeFuzzyJoin" class="fuzzy-join-container">
-    <generic-node-settings v-model="nodeFuzzyJoin">
+    <generic-node-settings
+      v-model="nodeFuzzyJoin"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <!-- Tabs Navigation -->
       <div class="tabs-navigation">
         <button
@@ -172,7 +176,8 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, nextTick, computed } from "vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeJoin, FuzzyJoinSettings, SelectInput, FuzzyMap } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
@@ -191,6 +196,25 @@ const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
 const isLoaded = ref(false);
 const nodeFuzzyJoin = ref<NodeJoin | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeFuzzyJoin,
+  onAfterSave: () => {
+    // Validate after save
+    if (hasInvalidFields.value && nodeFuzzyJoin.value) {
+      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
+        isValid: false,
+        error: "Join fields are not valid",
+      });
+    } else if (nodeFuzzyJoin.value) {
+      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
+        isValid: true,
+        error: "",
+      });
+    }
+  },
+});
 
 const createSelectInput = (field: string): SelectInput => {
   return {
@@ -256,20 +280,17 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 const loadNodeData = async (nodeId: number) => {
   result.value = await nodeStore.getNodeData(nodeId, false);
   nodeFuzzyJoin.value = result.value?.setting_input;
-  if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
-    if (nodeFuzzyJoin.value) {
-      if (result.value?.main_input.columns && result.value?.right_input?.columns) {
+  if (nodeFuzzyJoin.value) {
+    if (!nodeFuzzyJoin.value.is_setup && result.value?.main_input) {
+      if (result.value.main_input.columns && result.value.right_input?.columns) {
         nodeFuzzyJoin.value.join_input = getEmptySetup(
           result.value.main_input.columns,
           result.value.right_input.columns,
         );
-        isLoaded.value = true;
       }
     }
-  } else {
     isLoaded.value = true;
   }
-  isLoaded.value = true;
 };
 
 const addJoinCondition = () => {
@@ -298,27 +319,10 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeFuzzyJoin.value) {
-    nodeFuzzyJoin.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeFuzzyJoin);
-  if (hasInvalidFields.value && nodeFuzzyJoin.value) {
-    nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-      isValid: false,
-      error: "Join fields are not valid",
-    });
-  } else if (nodeFuzzyJoin.value) {
-    nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-      isValid: true,
-      error: "",
-    });
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
   hasInvalidFields,
 });
 

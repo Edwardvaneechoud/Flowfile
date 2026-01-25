@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeGroupBy">
-    <generic-node-settings v-model="nodeGroupBy">
+    <generic-node-settings
+      v-model="nodeGroupBy"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <ul v-if="dataLoaded" class="listbox">
           <template
@@ -90,10 +94,26 @@ import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { GroupByInput, NodeGroupBy, AggOption, GroupByOption } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeGroupBy = ref<null | NodeGroupBy>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeGroupBy,
+  onAfterSave: async () => {
+    await instantValidate();
+  },
+  getValidationFunc: () => {
+    if (nodeGroupBy.value?.groupby_input) {
+      return validateNode;
+    }
+    return undefined;
+  },
+});
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
 const dataLoaded = ref(false);
@@ -101,7 +121,6 @@ const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
-const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
 const aggOptions: (AggOption | GroupByOption)[] = [
   "groupby",
@@ -299,21 +318,10 @@ const instantValidate = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  dataLoaded.value = false;
-  if (nodeGroupBy.value?.is_setup) {
-    nodeGroupBy.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeGroupBy);
-  await instantValidate();
-  if (nodeGroupBy.value?.groupby_input) {
-    nodeStore.setNodeValidateFunc(nodeGroupBy.value?.node_id, validateNode);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {
