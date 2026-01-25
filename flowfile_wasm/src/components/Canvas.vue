@@ -132,13 +132,18 @@
         :title="getNodeDescription(selectedNode.type).title"
         :intro="getNodeDescription(selectedNode.type).intro"
       />
-      <component
-        :is="getSettingsComponent(selectedNode.type)"
-        :key="selectedNode.id"
+      <NodeSettingsWrapper
         :node-id="selectedNode.id"
         :settings="selectedNode.settings"
-        @update:settings="updateSettings"
-      />
+      >
+        <component
+          :is="getSettingsComponent(selectedNode.type)"
+          :key="selectedNode.id"
+          :node-id="selectedNode.id"
+          :settings="selectedNode.settings"
+          @update:settings="updateSettings"
+        />
+      </NodeSettingsWrapper>
     </DraggablePanel>
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
@@ -254,6 +259,7 @@ import CodeGenerator from './CodeGenerator.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
+import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
 import DemoButton from './DemoButton.vue'

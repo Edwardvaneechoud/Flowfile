@@ -39,3 +39,7 @@ jobs:
       - name: Build
         working-directory: flowfile_wasm
         run: npm run build
+
+      - name: Run tests
+        working-directory: flowfile_wasm
+        run: npm run test:run

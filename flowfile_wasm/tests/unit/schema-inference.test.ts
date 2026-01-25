@@ -36,8 +36,8 @@ describe('Schema Inference', () => {
   ]
 
   describe('isSourceNode', () => {
-    it('should identify read_csv as source node', () => {
-      expect(isSourceNode('read_csv')).toBe(true)
+    it('should identify read as source node', () => {
+      expect(isSourceNode('read')).toBe(true)
     })
 
     it('should identify manual_input as source node', () => {
