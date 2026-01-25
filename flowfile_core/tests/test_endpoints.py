@@ -1240,3 +1240,211 @@ def test_get_available_flow_files_path_traversal_with_dots():
     response = client.get("/files/available_flow_files", params={'path': '../../../etc'})
     assert response.status_code == 200, 'Should return 200 with empty list'
     assert response.json() == [], 'Should return empty list for path traversal attempts'
+
+
+# ==================== Node Reference Tests ====================
+
+
+def test_get_node_reference():
+    """Test retrieving node reference from a node."""
+    flow_id = create_flow_with_manual_input()
+    response = client.get("/node/reference", params={'flow_id': flow_id, 'node_id': 1})
+    assert response.status_code == 200, 'Node reference not retrieved'
+    # Default should be empty string
+    assert response.json() == "", 'Default node reference should be empty string'
+
+
+def test_set_node_reference():
+    """Test setting a node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    # Set a valid reference
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my_custom_ref"
+    )
+    assert response.status_code == 200, 'Node reference not set'
+    assert response.json() is True, 'Should return True on success'
+
+    # Verify the reference was set
+    response = client.get("/node/reference", params={'flow_id': flow_id, 'node_id': 1})
+    assert response.status_code == 200
+    assert response.json() == "my_custom_ref", 'Node reference should be updated'
+
+
+def test_set_node_reference_rejects_uppercase():
+    """Test that uppercase characters are rejected in node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="MyRef"
+    )
+    assert response.status_code == 422, 'Uppercase should be rejected'
+    assert 'lowercase' in response.json()['detail'].lower(), 'Error should mention lowercase'
+
+
+def test_set_node_reference_rejects_spaces():
+    """Test that spaces are rejected in node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my ref"
+    )
+    assert response.status_code == 422, 'Spaces should be rejected'
+    assert 'spaces' in response.json()['detail'].lower(), 'Error should mention spaces'
+
+
+def test_set_node_reference_allows_underscores():
+    """Test that underscores are allowed in node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my_custom_ref_123"
+    )
+    assert response.status_code == 200, 'Underscores should be allowed'
+    assert response.json() is True
+
+
+def test_set_node_reference_empty_clears():
+    """Test that empty string clears the node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    # First set a reference
+    client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my_ref"
+    )
+
+    # Then clear it with empty string
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json=""
+    )
+    assert response.status_code == 200, 'Empty reference should be allowed'
+
+    # Verify it was cleared
+    response = client.get("/node/reference", params={'flow_id': flow_id, 'node_id': 1})
+    assert response.json() == "", 'Node reference should be empty after clearing'
+
+
+def test_validate_node_reference_valid():
+    """Test validation of a valid node reference."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get(
+        "/node/validate_reference",
+        params={'flow_id': flow_id, 'node_id': 1, 'reference': 'valid_ref'}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result['valid'] is True, 'Valid reference should be valid'
+    assert result['error'] is None, 'Valid reference should have no error'
+
+
+def test_validate_node_reference_empty_is_valid():
+    """Test that empty reference is always valid (uses default)."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get(
+        "/node/validate_reference",
+        params={'flow_id': flow_id, 'node_id': 1, 'reference': ''}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result['valid'] is True, 'Empty reference should be valid'
+
+
+def test_validate_node_reference_rejects_uppercase():
+    """Test that validation rejects uppercase characters."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get(
+        "/node/validate_reference",
+        params={'flow_id': flow_id, 'node_id': 1, 'reference': 'MyRef'}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result['valid'] is False, 'Uppercase reference should be invalid'
+    assert 'lowercase' in result['error'].lower(), 'Error should mention lowercase'
+
+
+def test_validate_node_reference_rejects_spaces():
+    """Test that validation rejects spaces."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get(
+        "/node/validate_reference",
+        params={'flow_id': flow_id, 'node_id': 1, 'reference': 'my ref'}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result['valid'] is False, 'Reference with spaces should be invalid'
+    assert 'spaces' in result['error'].lower(), 'Error should mention spaces'
+
+
+def test_validate_node_reference_unique():
+    """Test that validation checks uniqueness across nodes."""
+    flow_id = ensure_clean_flow()
+
+    # Add two nodes
+    add_node_placeholder('manual_input', flow_id=flow_id, node_id=1)
+    add_node_placeholder('manual_input', flow_id=flow_id, node_id=2)
+
+    # Set reference on first node
+    client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my_unique_ref"
+    )
+
+    # Try to validate same reference for second node
+    response = client.get(
+        "/node/validate_reference",
+        params={'flow_id': flow_id, 'node_id': 2, 'reference': 'my_unique_ref'}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result['valid'] is False, 'Duplicate reference should be invalid'
+    assert 'already used' in result['error'].lower(), 'Error should mention duplicate'
+
+
+def test_set_node_reference_rejects_duplicate():
+    """Test that setting a duplicate reference is rejected."""
+    flow_id = ensure_clean_flow()
+
+    # Add two nodes
+    add_node_placeholder('manual_input', flow_id=flow_id, node_id=1)
+    add_node_placeholder('manual_input', flow_id=flow_id, node_id=2)
+
+    # Set reference on first node
+    client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 1},
+        json="my_ref"
+    )
+
+    # Try to set same reference on second node
+    response = client.post(
+        "/node/reference/",
+        params={'flow_id': flow_id, 'node_id': 2},
+        json="my_ref"
+    )
+    assert response.status_code == 422, 'Duplicate reference should be rejected'
+    assert 'already used' in response.json()['detail'].lower(), 'Error should mention duplicate'
+
+
+def test_node_reference_not_found():
+    """Test getting reference for non-existent node returns 404."""
+    flow_id = ensure_clean_flow()
+
+    response = client.get("/node/reference", params={'flow_id': flow_id, 'node_id': 9999})
+    assert response.status_code == 404, 'Non-existent node should return 404'
