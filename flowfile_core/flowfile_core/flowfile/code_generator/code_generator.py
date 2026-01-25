@@ -282,7 +282,6 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'simple_function_to_expr("{settings.filter_input.advanced_filter}")')
             self._add_code(")")
         else:
-            # Handle basic filter
             basic = settings.filter_input.basic_filter
             if basic is not None:
                 filter_expr = self._create_basic_filter_expr(basic)

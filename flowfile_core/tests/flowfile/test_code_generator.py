@@ -3780,7 +3780,6 @@ def test_filter_with_empty_basic_filter():
     """Test filter with None basic filter falls back gracefully."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-
     filter_node = input_schema.NodeFilter(
         flow_id=1,
         node_id=2,
@@ -3886,7 +3885,6 @@ def test_group_by_concat_aggregation():
 def test_union_relaxed_vs_strict():
     """Test union with strict mode (diagonal) vs relaxed mode."""
     flow = create_basic_flow()
-
     # Add two manual inputs with different columns
     data1 = input_schema.NodeManualInput(
         flow_id=1,
@@ -3913,7 +3911,7 @@ def test_union_relaxed_vs_strict():
         flow_id=1,
         node_id=3,
         depending_on_ids=[1, 2],
-        union_input=transform_schema.UnionInput(mode="strict")
+        union_input=transform_schema.UnionInput(mode="selective")
     )
     flow.add_union(union_node)
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
