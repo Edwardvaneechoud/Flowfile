@@ -31,10 +31,8 @@
       <div class="code-content">
         <pre><code><span class="line"><span class="kw">import</span> flowfile_frame <span class="kw">as</span> ff</span>
 <span class="line"></span>
-<span class="line"><span class="cm"># Read data from CSV</span></span>
+<span class="line"><span class="cm"># Read and filter data</span></span>
 <span class="line">df = ff.from_csv(<span class="st">"sales_data.csv"</span>)</span>
-<span class="line"></span>
-<span class="line"><span class="cm"># Filter rows where sales > 1000</span></span>
 <span class="line">filtered = df.filter(ff.col(<span class="st">"sales"</span>) > <span class="nu">1000</span>)</span>
 <span class="line"></span>
 <span class="line"><span class="cm"># Group by category and aggregate</span></span>
@@ -48,7 +46,6 @@
 <span class="line">    )</span>
 <span class="line">)</span>
 <span class="line"></span>
-<span class="line"><span class="cm"># Export to Parquet</span></span>
 <span class="line">result.to_parquet(<span class="st">"output.parquet"</span>)</span></code></pre>
       </div>
     </div>
@@ -86,7 +83,7 @@
 
 <style>
   .code-section {
-    padding: 6rem 2rem;
+    padding: 4rem 2rem;
     background: var(--color-bg);
   }
 
@@ -155,7 +152,7 @@
     margin: 0;
     font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.7;
+    line-height: 1.5;
   }
 
   .code-content code {
@@ -220,10 +217,8 @@
     const copyBtn = document.getElementById('copy-code-btn');
     const codeContent = `import flowfile_frame as ff
 
-# Read data from CSV
+# Read and filter data
 df = ff.from_csv("sales_data.csv")
-
-# Filter rows where sales > 1000
 filtered = df.filter(ff.col("sales") > 1000)
 
 # Group by category and aggregate
@@ -237,7 +232,6 @@ result = (
     )
 )
 
-# Export to Parquet
 result.to_parquet("output.parquet")`;
 
     if (copyBtn) {
