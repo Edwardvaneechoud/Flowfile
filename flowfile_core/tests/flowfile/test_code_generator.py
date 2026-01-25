@@ -2885,6 +2885,270 @@ def test_external_source_adds_to_unsupported():
     assert "external_source" in converter.unsupported_nodes[0][1].lower()
 
 
+# ==================== Node Reference Tests ====================
+
+
+def test_node_reference_basic():
+    """Test that node_reference is used as variable name in generated code when set."""
+    flow = create_basic_flow()
+
+    # Create a node with a custom node_reference
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference="my_data",
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3],
+                ["Alice", "Bob", "Charlie"],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Verify the custom reference is used instead of df_1
+    verify_code_contains(code, "my_data = pl.LazyFrame")
+    assert "df_1" not in code, "Should use node_reference instead of df_1"
+    verify_if_execute(code)
+
+
+def test_node_reference_in_formula():
+    """Test that node_reference is used in downstream node references."""
+    flow = create_basic_flow()
+
+    # Create input node with custom reference
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference="source_data",
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="price", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="quantity", data_type="Integer"),
+            ],
+            data=[
+                [10, 20, 30],
+                [2, 3, 4],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input)
+
+    # Add formula node with custom reference
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        node_reference="calculated_data",
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Auto"),
+            function="[price] * [quantity]"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Verify custom references are used
+    verify_code_contains(code, "source_data = pl.LazyFrame")
+    verify_code_contains(code, "calculated_data = source_data.with_columns")
+    assert "df_1" not in code, "Should use source_data instead of df_1"
+    assert "df_2" not in code, "Should use calculated_data instead of df_2"
+    verify_if_execute(code)
+
+
+def test_node_reference_mixed():
+    """Test that nodes with and without node_reference work together."""
+    flow = create_basic_flow()
+
+    # First node: custom reference
+    manual_input1 = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference="custom_input",
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="value", data_type="Integer"),
+            ],
+            data=[
+                [1, 2],
+                [100, 200],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input1)
+
+    # Second node: no custom reference (should use df_2)
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        # No node_reference set
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            filters=[transform_schema.BasicFilter(
+                field="value",
+                filter_type=">=",
+                filter_value="100"
+            )]
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Verify mixed references
+    verify_code_contains(code, "custom_input = pl.LazyFrame")
+    verify_code_contains(code, "df_2 = custom_input.filter")
+    assert "df_1" not in code, "Should use custom_input instead of df_1"
+    verify_if_execute(code)
+
+
+def test_node_reference_in_join():
+    """Test that node_reference works correctly in join operations."""
+    flow = create_basic_flow()
+
+    # Left input with custom reference
+    manual_input1 = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference="left_table",
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3],
+                ["Alice", "Bob", "Charlie"],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input1)
+
+    # Right input with custom reference
+    manual_input2 = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=2,
+        node_reference="right_table",
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String"),
+            ],
+            data=[
+                [1, 2, 3],
+                ["NYC", "LA", "Chicago"],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input2)
+
+    # Join node with custom reference
+    join_node = input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        node_reference="joined_result",
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("id", "id")],
+            left_select=[
+                transform_schema.SelectInput("id", "id", keep=True),
+                transform_schema.SelectInput("name", "name")
+            ],
+            right_select=[
+                transform_schema.SelectInput("id", "id", keep=False),
+                transform_schema.SelectInput("city", "city")
+            ],
+            how="inner"
+        )
+    )
+    flow.add_join(join_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Verify custom references in join
+    verify_code_contains(code, "left_table = pl.LazyFrame")
+    verify_code_contains(code, "right_table = pl.LazyFrame")
+    verify_code_contains(code, "joined_result = (left_table")
+    assert "df_1" not in code, "Should use left_table instead of df_1"
+    assert "df_2" not in code, "Should use right_table instead of df_2"
+    assert "df_3" not in code, "Should use joined_result instead of df_3"
+    verify_if_execute(code)
+
+
+def test_node_reference_default_when_empty():
+    """Test that empty node_reference falls back to df_{node_id}."""
+    flow = create_basic_flow()
+
+    # Node with empty string reference (should use default)
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference="",  # Empty string
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+            ],
+            data=[
+                [1, 2, 3],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Should use default df_1
+    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_if_execute(code)
+
+
+def test_node_reference_none_uses_default():
+    """Test that None node_reference uses df_{node_id}."""
+    flow = create_basic_flow()
+
+    # Node with None reference (should use default)
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        node_reference=None,  # Explicitly None
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+            ],
+            data=[
+                [1, 2, 3],
+            ]
+        )
+    )
+    flow.add_datasource(manual_input)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Should use default df_1
+    verify_code_contains(code, "df_1 = pl.LazyFrame")
+    verify_if_execute(code)
+
+
 # ============================================================================
 # Basic Filter Operator Tests
 # ============================================================================
@@ -3780,6 +4044,7 @@ def test_filter_with_empty_basic_filter():
     """Test filter with empty basic filter (no field specified) passes through unchanged."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
+
     filter_node = input_schema.NodeFilter(
         flow_id=1,
         node_id=2,
@@ -3911,6 +4176,7 @@ def test_group_by_concat_aggregation():
 def test_union_relaxed_vs_strict():
     """Test union with strict mode (diagonal) vs relaxed mode."""
     flow = create_basic_flow()
+
     # Add two manual inputs with different columns
     data1 = input_schema.NodeManualInput(
         flow_id=1,
@@ -3937,7 +4203,7 @@ def test_union_relaxed_vs_strict():
         flow_id=1,
         node_id=3,
         depending_on_ids=[1, 2],
-        union_input=transform_schema.UnionInput(mode="selective")
+        union_input=transform_schema.UnionInput(mode="strict")
     )
     flow.add_union(union_node)
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
