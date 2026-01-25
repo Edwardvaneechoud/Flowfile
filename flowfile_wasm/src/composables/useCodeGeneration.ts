@@ -160,7 +160,8 @@ class FlowToPolarsConverter {
   }
 
   private generateNodeCode(node: FlowNode): void {
-    const varName = `df_${node.id}`
+    const nodeReference = node.node_reference || (node.settings as any)?.node_reference
+    const varName = nodeReference || `df_${node.id}`
     this.nodeVarMapping.set(node.id, varName)
     this.lastNodeVar = varName
 
