@@ -3777,7 +3777,7 @@ def test_custom_node_mixed_signature_detection():
 # ============================================================================
 
 def test_filter_with_empty_basic_filter():
-    """Test filter with None basic filter falls back gracefully."""
+    """Test filter with empty basic filter (no field specified) passes through unchanged."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
     filter_node = input_schema.NodeFilter(
@@ -3786,7 +3786,7 @@ def test_filter_with_empty_basic_filter():
         depending_on_id=1,
         filter_input=transform_schema.FilterInput(
             mode="basic",
-            basic_filter=None  # No filter defined
+            basic_filter=None  # Validator creates empty BasicFilter with field=''
         )
     )
     flow.add_filter(filter_node)
@@ -3795,6 +3795,32 @@ def test_filter_with_empty_basic_filter():
     code = export_flow_to_polars(flow)
     verify_code_contains(code, "# No filter applied")
     verify_if_execute(code)
+
+
+def test_filter_advanced_mode():
+    """Test filter with advanced mode expression generates correct code."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="advanced",
+            advanced_filter="[age] > 25 AND [salary] > 60000"
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "simple_function_to_expr")
+    verify_code_contains(code, "[age] > 25 AND [salary] > 60000")
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
 
 
 def test_unique_without_columns():
