@@ -419,7 +419,10 @@
   .table-container {
     flex: 1;
     overflow: auto;
-    background: #12121a;
+    background: #0d0d12;
+    margin: 0 12px 12px 12px;
+    border: 1px solid #3a3a4a;
+    border-radius: 6px;
   }
 
   .data-table {
@@ -431,32 +434,35 @@
 
   .data-table th {
     background: #1a1a24;
-    color: #9090a0;
+    color: #b0b0c0;
     font-weight: 600;
     text-align: left;
-    padding: 10px 12px;
-    border-bottom: 1px solid #2a2a3a;
+    padding: 10px 14px;
+    border: 1px solid #3a3a4a;
     position: sticky;
     top: 0;
     white-space: nowrap;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
   }
 
   .data-table td {
-    padding: 8px 12px;
+    padding: 9px 14px;
     color: #e8e8ed;
-    border-bottom: 1px solid #2a2a3a;
+    border: 1px solid #2a2a3a;
     white-space: nowrap;
   }
 
-  .data-table tr:nth-child(odd) td {
+  .data-table tbody tr:nth-child(odd) td {
+    background: #0d0d12;
+  }
+
+  .data-table tbody tr:nth-child(even) td {
     background: #12121a;
   }
 
-  .data-table tr:nth-child(even) td {
-    background: #15151f;
-  }
-
-  .data-table tr:hover td {
+  .data-table tbody tr:hover td {
     background: #1e1e2a;
   }
 
