@@ -384,7 +384,11 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .refresh-link-button {
-  background: linear-gradient(135deg, var(--color-background-primary) 0%, var(--color-warning-light) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-background-primary) 0%,
+    var(--color-warning-light) 100%
+  );
   border: 1px solid var(--color-warning);
   color: var(--color-warning-dark);
   border-radius: 6px;

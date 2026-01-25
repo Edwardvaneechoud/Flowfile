@@ -103,7 +103,6 @@
 </template>
 
 <script lang="ts" setup>
-
 import { ref, computed, onMounted, onUnmounted, watchEffect } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";

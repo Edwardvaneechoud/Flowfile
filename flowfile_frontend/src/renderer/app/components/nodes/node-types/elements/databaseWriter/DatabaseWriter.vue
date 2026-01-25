@@ -1,7 +1,11 @@
 // DatabaseWriterNode.vue
 <template>
   <div v-if="dataLoaded && nodeData" class="db-container">
-    <generic-node-settings v-model="nodeData">
+    <generic-node-settings
+      v-model="nodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <!-- Connection Mode Selection -->
       <div class="listbox-wrapper">
         <div class="form-group">
@@ -118,7 +122,8 @@ import {
   ConnectionModeOption,
 } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseWriter } from "./utils";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { ElMessage, ElRadio } from "element-plus";
@@ -137,6 +142,23 @@ const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
 const nodeData = ref<null | NodeDatabaseWriter>(null);
 const dataLoaded = ref(false);
 const connectionsAreLoading = ref(false);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeData,
+  onBeforeSave: () => {
+    if (!nodeData.value) {
+      return false;
+    }
+    // Clean up settings based on connection_mode before saving
+    if (nodeData.value.database_write_settings.connection_mode === "reference") {
+      nodeData.value.database_write_settings.database_connection = undefined;
+    } else {
+      nodeData.value.database_write_settings.database_connection_name = undefined;
+    }
+    return true;
+  },
+});
 
 // Load node data from the store
 const loadNodeData = async (nodeId: number) => {
@@ -161,28 +183,6 @@ const resetFields = () => {
   // No fields to reset in this simplified version
 };
 
-// Save node data to the store
-const pushNodeData = async () => {
-  if (!nodeData.value) {
-    return;
-  }
-
-  // Clean up settings based on connection_mode before saving
-  if (nodeData.value.database_write_settings.connection_mode === "reference") {
-    nodeData.value.database_write_settings.database_connection = undefined;
-  } else {
-    nodeData.value.database_write_settings.database_connection_name = undefined;
-  }
-
-  nodeData.value.is_setup = true;
-  try {
-    await nodeStore.updateSettings(nodeData);
-  } catch (error) {
-    console.error("Error saving node data:", error);
-    ElMessage.error("Failed to save node settings");
-  }
-};
-
 // Fetch available database connections
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
@@ -204,6 +204,7 @@ onMounted(async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
