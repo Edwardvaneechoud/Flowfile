@@ -232,6 +232,7 @@ class FlowToPolarsConverter {
   private getInputVars(node: FlowNode): Record<string, string> {
     const inputVars: Record<string, string> = {}
 
+    // For join nodes: leftInputId maps to 'main', rightInputId maps to 'right'
     if (node.leftInputId !== undefined) {
       inputVars.main = this.nodeVarMapping.get(node.leftInputId) || 'df_left'
     }
@@ -240,6 +241,7 @@ class FlowToPolarsConverter {
       inputVars.right = this.nodeVarMapping.get(node.rightInputId) || 'df_right'
     }
 
+    // For non-join nodes with inputIds
     if (node.inputIds && node.inputIds.length > 0) {
       if (node.inputIds.length === 1) {
         inputVars.main = this.nodeVarMapping.get(node.inputIds[0]) || 'df'
