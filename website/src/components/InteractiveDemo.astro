@@ -151,7 +151,22 @@
             <span class="transform-text" id="transform-text">sales &gt; 1000 → 5 of 8 rows pass</span>
           </div>
 
-          <div id="data-grid" class="ag-theme-balham"></div>
+          <div class="table-container">
+            <table class="data-table" id="data-table">
+              <thead id="table-thead">
+                <tr>
+                  <th>id</th>
+                  <th>product</th>
+                  <th>category</th>
+                  <th>region</th>
+                  <th>sales</th>
+                  <th>quantity</th>
+                </tr>
+              </thead>
+              <tbody id="table-tbody">
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -401,28 +416,48 @@
   .transform-badge.groupby { background: #f97316; }
   .transform-badge.output { background: #ec4899; }
 
-  #data-grid {
+  .table-container {
     flex: 1;
-    min-height: 300px;
+    overflow: auto;
+    background: #12121a;
   }
 
-  /* AG Grid Dark Theme Overrides */
-  :global(.ag-theme-balham) {
-    --ag-background-color: #12121a;
-    --ag-odd-row-background-color: #12121a;
-    --ag-row-background-color: #15151f;
-    --ag-header-background-color: #1a1a24;
-    --ag-header-foreground-color: #9090a0;
-    --ag-foreground-color: #e8e8ed;
-    --ag-border-color: #2a2a3a;
-    --ag-secondary-foreground-color: #9090a0;
-    --ag-row-hover-color: #1e1e2a;
-    --ag-selected-row-background-color: #2a2a40;
-    --ag-font-family: 'JetBrains Mono', monospace;
-    --ag-font-size: 12px;
-    --ag-header-height: 36px;
-    --ag-row-height: 32px;
-    --ag-cell-horizontal-padding: 12px;
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .data-table th {
+    background: #1a1a24;
+    color: #9090a0;
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid #2a2a3a;
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+  }
+
+  .data-table td {
+    padding: 8px 12px;
+    color: #e8e8ed;
+    border-bottom: 1px solid #2a2a3a;
+    white-space: nowrap;
+  }
+
+  .data-table tr:nth-child(odd) td {
+    background: #12121a;
+  }
+
+  .data-table tr:nth-child(even) td {
+    background: #15151f;
+  }
+
+  .data-table tr:hover td {
+    background: #1e1e2a;
   }
 
   @media (max-width: 900px) {
@@ -596,26 +631,34 @@
 
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
-    let gridApi;
+    const tableHead = document.getElementById('table-thead');
+    const tableBody = document.getElementById('table-tbody');
 
-    // Initialize AG Grid
-    const gridDiv = document.querySelector('#data-grid');
-    if (gridDiv && typeof agGrid !== 'undefined') {
-      const gridOptions = {
-        columnDefs: nodeConfigs.input.columns,
-        rowData: nodeConfigs.input.getData(),
-        defaultColDef: {
-          sortable: true,
-          resizable: true,
-        },
-        animateRows: true,
-        headerHeight: 36,
-        rowHeight: 32,
-        suppressCellFocus: true,
-      };
+    // Render table function
+    function renderTable(columns, data) {
+      // Render header
+      const headerRow = columns.map(col => {
+        const name = col.headerName || col.field;
+        return `<th>${name}</th>`;
+      }).join('');
+      tableHead.innerHTML = `<tr>${headerRow}</tr>`;
 
-      gridApi = agGrid.createGrid(gridDiv, gridOptions);
+      // Render body
+      const bodyRows = data.map(row => {
+        const cells = columns.map(col => {
+          let value = row[col.field];
+          if (col.valueFormatter && value !== undefined) {
+            value = value.toLocaleString();
+          }
+          return `<td>${value ?? ''}</td>`;
+        }).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+      tableBody.innerHTML = bodyRows;
     }
+
+    // Initial render
+    renderTable(nodeConfigs.input.columns, nodeConfigs.input.getData());
 
     // Update display function
     function updateDisplay(nodeKey) {
@@ -642,11 +685,8 @@
         transformInfo.style.display = 'none';
       }
 
-      // Update grid
-      if (gridApi) {
-        gridApi.setGridOption('columnDefs', config.columns);
-        gridApi.setGridOption('rowData', data);
-      }
+      // Update table
+      renderTable(config.columns, data);
     }
 
     // Node click handlers
