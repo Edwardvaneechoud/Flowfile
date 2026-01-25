@@ -3776,6 +3776,28 @@ def test_custom_node_mixed_signature_detection():
 # Edge Cases and Error Handling Tests
 # ============================================================================
 
+def test_filter_with_empty_basic_filter():
+    """Test filter with empty basic filter (no field specified) passes through unchanged."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=None  # Validator creates empty BasicFilter with field=''
+        )
+    )
+    flow.add_filter(filter_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "# No filter applied")
+    verify_if_execute(code)
+
+
 def test_filter_advanced_mode():
     """Test filter with advanced mode expression generates correct code."""
     flow = create_basic_flow()
