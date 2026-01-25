@@ -1,0 +1,244 @@
+---
+---
+
+<section class="live-demo-section" id="try">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Try It Now</span>
+      <h2 class="section-title">Build a flow in your browser</h2>
+      <p class="section-description">
+        No installation required. This is the full Flowfile WASM editor running entirely in your browser.
+        Drag nodes, connect them, and see real data transformations powered by Polars.
+      </p>
+    </div>
+
+    <div class="demo-frame-container">
+      <div class="demo-frame-header">
+        <div class="demo-indicator">
+          <span class="pulse-dot"></span>
+          <span>Live Demo</span>
+        </div>
+        <a href="https://demo.flowfile.org" target="_blank" rel="noopener" class="open-fullscreen">
+          Open in new tab
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+      </div>
+      <div class="demo-frame-wrapper">
+        <iframe
+          src="https://demo.flowfile.org?demo=true"
+          title="Flowfile WASM Demo"
+          class="demo-iframe"
+          loading="lazy"
+          allow="clipboard-write"
+        ></iframe>
+        <div class="loading-overlay" id="demo-loading">
+          <div class="loading-spinner"></div>
+          <p>Loading Flowfile...</p>
+          <p class="loading-hint">First load may take a moment while Pyodide initializes</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-features">
+      <div class="demo-feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <line x1="8" y1="21" x2="16" y2="21" />
+          <line x1="12" y1="17" x2="12" y2="21" />
+        </svg>
+        <span>Runs in browser</span>
+      </div>
+      <div class="demo-feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+        <span>Data stays local</span>
+      </div>
+      <div class="demo-feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+        <span>No signup needed</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .live-demo-section {
+    padding: 6rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .demo-frame-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .demo-frame-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .demo-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-weight: 500;
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #22c55e;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.1); }
+  }
+
+  .open-fullscreen {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+    transition: color 0.2s ease;
+  }
+
+  .open-fullscreen:hover {
+    color: var(--color-primary);
+  }
+
+  .demo-frame-wrapper {
+    position: relative;
+    width: 100%;
+    height: 650px;
+  }
+
+  .demo-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--color-bg-elevated);
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    background: var(--color-bg-elevated);
+    transition: opacity 0.3s ease;
+  }
+
+  .loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-overlay p {
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+    margin: 0;
+  }
+
+  .loading-hint {
+    font-size: 0.8rem !important;
+    opacity: 0.7;
+  }
+
+  .demo-features {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .demo-feature {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+  }
+
+  .demo-feature svg {
+    width: 20px;
+    height: 20px;
+    stroke: var(--color-primary);
+  }
+
+  @media (max-width: 768px) {
+    .demo-frame-wrapper {
+      height: 500px;
+    }
+
+    .demo-features {
+      gap: 1.5rem;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .demo-frame-wrapper {
+      height: 400px;
+    }
+
+    .demo-features {
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+  }
+</style>
+
+<script>
+  const iframe = document.querySelector('.demo-iframe') as HTMLIFrameElement;
+  const loadingOverlay = document.getElementById('demo-loading');
+
+  if (iframe && loadingOverlay) {
+    iframe.addEventListener('load', () => {
+      // Give a small delay for the iframe content to render
+      setTimeout(() => {
+        loadingOverlay.classList.add('hidden');
+      }, 500);
+    });
+  }
+</script>
