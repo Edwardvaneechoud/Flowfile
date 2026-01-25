@@ -34,6 +34,10 @@
       </a>
     </div>
 
+    <a href="https://buymeacoffee.com/evaneechoud" target="_blank" rel="noopener" class="coffee-link">
+      <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" />
+    </a>
+
     <!-- Animated Flow Visualization -->
 
 <style>
@@ -108,7 +112,23 @@
     gap: 1rem;
     justify-content: center;
     flex-wrap: wrap;
-    margin-bottom: 3rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .coffee-link {
+    display: inline-block;
+    margin-bottom: 2rem;
+  }
+
+  .coffee-link img {
+    height: 40px;
+    width: auto;
+    border-radius: 8px;
+    transition: transform 0.2s ease;
+  }
+
+  .coffee-link:hover img {
+    transform: translateY(-2px);
   }
 
   .btn-lg {
@@ -381,6 +401,44 @@
   }
 
   @media (max-width: 700px) {
+    .hero {
+      min-height: auto;
+      padding-top: 100px;
+      padding-bottom: 2rem;
+    }
+
+    .hero-content {
+      padding: 1rem;
+    }
+
+    .hero-badge {
+      margin-bottom: 1.5rem;
+      padding: 0.4rem 0.8rem;
+      font-size: 0.8rem;
+    }
+
+    .hero-title {
+      margin-bottom: 1rem;
+    }
+
+    .hero-subtitle {
+      margin-bottom: 1.5rem;
+      font-size: 1rem;
+    }
+
+    .hero-actions {
+      margin-bottom: 2rem;
+    }
+
+    .btn-lg {
+      padding: 0.75rem 1.25rem;
+      font-size: 0.95rem;
+    }
+
+    .flow-visualization {
+      margin-bottom: 2rem;
+    }
+
     .flow-window {
       margin: 0 -1rem;
       border-radius: 0;

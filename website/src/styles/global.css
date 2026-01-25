@@ -42,6 +42,11 @@ html {
   scroll-behavior: smooth;
 }
 
+html, body {
+  width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   font-family: var(--font-sans);
   background: var(--color-bg);
@@ -73,6 +78,7 @@ code {
 
 /* Container */
 .container {
+  width: 100%;
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 2rem;
@@ -85,7 +91,29 @@ code {
 
 @media (max-width: 768px) {
   .section {
-    padding: 3rem 1rem;
+    padding: 2.5rem 1rem;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+
+  .section-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .section-label {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.7rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .section-title {
+    margin-bottom: 0.75rem;
+  }
+
+  .section-description {
+    font-size: 0.95rem;
   }
 }
 

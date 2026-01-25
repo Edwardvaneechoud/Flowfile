@@ -136,6 +136,32 @@
           <p class="canvas-hint">Click a node to see its data</p>
         </div>
 
+        <!-- Mobile Table (only visible on mobile) -->
+        <div class="mobile-table-container">
+          <div class="mobile-table-header">
+            <span class="mobile-table-title" id="mobile-table-title">Raw Data</span>
+            <span class="mobile-table-meta" id="mobile-table-meta">8 rows</span>
+          </div>
+          <div class="mobile-table-wrapper">
+            <table class="mobile-table" id="mobile-table">
+              <thead>
+                <tr>
+                  <th>product</th>
+                  <th>category</th>
+                  <th>sales</th>
+                </tr>
+              </thead>
+              <tbody id="mobile-table-body">
+                <tr><td>Widget A</td><td>Electronics</td><td>1,200</td></tr>
+                <tr><td>Widget B</td><td>Electronics</td><td>890</td></tr>
+                <tr><td>Gadget X</td><td>Home</td><td>2,100</td></tr>
+                <tr><td>Gadget Y</td><td>Home</td><td>760</td></tr>
+                <tr><td>Tool Pro</td><td>Tools</td><td>3,200</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Data Panel -->
         <div class="data-panel">
           <div class="table-header">
@@ -406,6 +432,11 @@
     min-height: 300px;
   }
 
+  /* Mobile Table - hidden by default */
+  .mobile-table-container {
+    display: none;
+  }
+
   /* AG Grid Dark Theme Overrides */
   :global(.ag-theme-balham) {
     --ag-background-color: #12121a;
@@ -426,42 +457,111 @@
   }
 
   @media (max-width: 900px) {
+    .demo-section {
+      padding: 2.5rem 1rem;
+    }
+
     .demo-content {
       flex-direction: column;
+      min-height: auto;
     }
 
     .canvas {
       flex: none;
-      min-height: 180px;
+      min-height: auto;
     }
 
     .nodes-container {
-      padding: 20px 8px;
+      padding: 16px 8px;
     }
 
     .connector {
       width: 24px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
     }
 
     .node-icon {
-      width: 48px;
-      height: 48px;
+      width: 44px;
+      height: 44px;
     }
 
     .node-icon svg {
-      width: 22px;
-      height: 22px;
+      width: 20px;
+      height: 20px;
     }
 
     .node-label {
       font-size: 10px;
     }
 
+    .canvas-hint {
+      display: block;
+      margin-top: 0.5rem;
+    }
+
     .data-panel {
-      border-left: none;
+      display: none !important;
+    }
+
+    .mobile-table-container {
+      display: block;
       border-top: 1px solid var(--color-border);
-      min-height: 350px;
+      background: var(--color-bg-card);
+    }
+
+    .mobile-table-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .mobile-table-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--color-text);
+    }
+
+    .mobile-table-meta {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .mobile-table-wrapper {
+      overflow-x: auto;
+    }
+
+    .mobile-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .mobile-table th,
+    .mobile-table td {
+      padding: 8px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+      white-space: nowrap;
+    }
+
+    .mobile-table th {
+      background: var(--color-bg-elevated);
+      color: var(--color-text-muted);
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .mobile-table td {
+      color: var(--color-text);
+    }
+
+    .mobile-table tbody tr:last-child td {
+      border-bottom: none;
     }
   }
 
@@ -525,6 +625,30 @@
     }, {});
     return Object.values(grouped);
   }
+
+  // Mobile table configurations (simplified for mobile display)
+  const mobileConfigs = {
+    input: {
+      title: 'Raw Data',
+      headers: ['product', 'category', 'sales'],
+      getData: () => RAW_DATA.slice(0, 5).map(r => [r.product, r.category, r.sales.toLocaleString()])
+    },
+    filter: {
+      title: 'Filtered',
+      headers: ['product', 'category', 'sales'],
+      getData: () => filterData(RAW_DATA).slice(0, 5).map(r => [r.product, r.category, r.sales.toLocaleString()])
+    },
+    groupby: {
+      title: 'Grouped',
+      headers: ['category', 'total_sales', 'count'],
+      getData: () => groupByData(filterData(RAW_DATA)).map(r => [r.category, r.total_sales.toLocaleString(), r.count])
+    },
+    output: {
+      title: 'Output',
+      headers: ['category', 'total_sales', 'count'],
+      getData: () => groupByData(filterData(RAW_DATA)).map(r => [r.category, r.total_sales.toLocaleString(), r.count])
+    }
+  };
 
   // Node configurations
   const nodeConfigs = {
@@ -647,6 +771,35 @@
         gridApi.setGridOption('columnDefs', config.columns);
         gridApi.setGridOption('rowData', data);
       }
+
+      // Update mobile table
+      updateMobileTable(nodeKey);
+    }
+
+    // Update mobile table function
+    function updateMobileTable(nodeKey) {
+      const mobileConfig = mobileConfigs[nodeKey];
+      const mobileTitle = document.getElementById('mobile-table-title');
+      const mobileMeta = document.getElementById('mobile-table-meta');
+      const mobileTable = document.getElementById('mobile-table');
+      const mobileBody = document.getElementById('mobile-table-body');
+
+      if (!mobileTitle || !mobileTable || !mobileBody) return;
+
+      // Update header
+      mobileTitle.textContent = mobileConfig.title;
+      const rowCount = mobileConfig.getData().length;
+      mobileMeta.textContent = `${rowCount} rows`;
+
+      // Update table headers
+      const thead = mobileTable.querySelector('thead tr');
+      thead.innerHTML = mobileConfig.headers.map(h => `<th>${h}</th>`).join('');
+
+      // Update table body
+      const rows = mobileConfig.getData();
+      mobileBody.innerHTML = rows.map(row =>
+        `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`
+      ).join('');
     }
 
     // Node click handlers
@@ -662,5 +815,8 @@
         updateDisplay(nodeKey);
       });
     });
+
+    // Initialize mobile table
+    updateMobileTable('input');
   });
 </script>

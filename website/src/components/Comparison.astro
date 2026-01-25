@@ -32,8 +32,8 @@
             <path d="M2 12l10 5 10-5" />
           </svg>
         </div>
-        <h3>Runs locally</h3>
-        <p>No cloud setup, no accounts, no data leaving your machine. Install with pip and you're ready to go.</p>
+        <h3>Flexible deployment</h3>
+        <p>Run locally with pip, deploy via Docker, or use the desktop app. Your data, your infrastructure, your choice.</p>
       </div>
 
       <div class="unique-card">
@@ -58,16 +58,12 @@
       </div>
     </div>
 
-    <p class="honest-note">
-      Flowfile is great for ETL and data transformation. For workflow orchestration, scheduling, or SQL-based transformations,
-      tools like Airflow, Prefect, or dbt might be a better fit.
-    </p>
   </div>
 </section>
 
 <style>
   .unique-section {
-    padding: 4rem 2rem;
+    padding: 4rem 0;
     background: var(--color-bg);
   }
 
@@ -75,8 +71,6 @@
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 1.5rem;
-    max-width: 900px;
-    margin: 0 auto;
   }
 
   .unique-card {
@@ -116,18 +110,18 @@
     line-height: 1.6;
   }
 
-  .honest-note {
-    max-width: 700px;
-    margin: 2rem auto 0;
-    text-align: center;
-    font-size: 0.9rem;
-    color: var(--color-text-muted);
-    line-height: 1.6;
-  }
+  @media (max-width: 768px) {
+    .unique-section {
+      padding: 2rem 0;
+    }
 
-  @media (max-width: 600px) {
     .unique-grid {
       grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+
+    .unique-card {
+      padding: 1.25rem;
     }
   }
 </style>
