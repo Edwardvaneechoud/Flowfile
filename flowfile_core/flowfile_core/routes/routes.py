@@ -786,6 +786,91 @@ def get_description_node(flow_id: int, node_id: int):
     return node.setting_input.description
 
 
+@router.post('/node/reference/', tags=['editor'])
+def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)):
+    """Updates the reference identifier for a specific node.
+
+    The reference must be:
+    - Lowercase only
+    - No spaces allowed
+    - Unique across all nodes in the flow
+    """
+    try:
+        flow = flow_file_handler.get_flow(flow_id)
+        node = flow.get_node(node_id)
+    except:
+        raise HTTPException(404, 'Could not find the node')
+    if node is None:
+        raise HTTPException(404, 'Could not find the node')
+
+    # Handle empty reference (allow clearing)
+    if reference == "" or reference is None:
+        node.setting_input.node_reference = None
+        return True
+
+    # Validate: lowercase only, no spaces
+    if " " in reference:
+        raise HTTPException(422, 'Reference cannot contain spaces')
+    if reference != reference.lower():
+        raise HTTPException(422, 'Reference must be lowercase')
+
+    # Validate: unique across all nodes in the flow
+    for other_node in flow.nodes:
+        if other_node.node_id != node_id:
+            other_ref = getattr(other_node.setting_input, 'node_reference', None)
+            if other_ref and other_ref == reference:
+                raise HTTPException(422, f'Reference "{reference}" is already used by another node')
+
+    node.setting_input.node_reference = reference
+    return True
+
+
+@router.get('/node/reference', tags=['editor'])
+def get_reference_node(flow_id: int, node_id: int):
+    """Retrieves the reference identifier for a specific node."""
+    try:
+        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
+    except:
+        raise HTTPException(404, 'Could not find the node')
+    if node is None:
+        raise HTTPException(404, 'Could not find the node')
+    return node.setting_input.node_reference or ""
+
+
+@router.get('/node/validate_reference', tags=['editor'])
+def validate_node_reference(flow_id: int, node_id: int, reference: str):
+    """Validates if a reference is valid and unique for a node.
+
+    Returns:
+        Dict with 'valid' (bool) and 'error' (str or None) fields.
+    """
+    try:
+        flow = flow_file_handler.get_flow(flow_id)
+    except:
+        raise HTTPException(404, 'Could not find the flow')
+
+    # Handle empty reference (always valid - means use default)
+    if reference == "" or reference is None:
+        return {"valid": True, "error": None}
+
+    # Validate: lowercase only
+    if reference != reference.lower():
+        return {"valid": False, "error": "Reference must be lowercase"}
+
+    # Validate: no spaces
+    if " " in reference:
+        return {"valid": False, "error": "Reference cannot contain spaces"}
+
+    # Validate: unique across all nodes in the flow
+    for other_node in flow.nodes:
+        if other_node.node_id != node_id:
+            other_ref = getattr(other_node.setting_input, 'node_reference', None)
+            if other_ref and other_ref == reference:
+                return {"valid": False, "error": f'Reference "{reference}" is already used by another node'}
+
+    return {"valid": True, "error": None}
+
+
 @router.get('/node/data', response_model=output_model.TableExample, tags=['editor'])
 def get_table_example(flow_id: int, node_id: int):
     """Retrieves a data preview (schema and sample rows) for a node's output."""
