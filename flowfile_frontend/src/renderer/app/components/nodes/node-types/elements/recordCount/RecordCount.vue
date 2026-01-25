@@ -36,7 +36,9 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeRecordCount.value = nodeData.value?.setting_input as NodeBase;
-  dataLoaded.value = true;
+  if (nodeRecordCount.value) {
+    dataLoaded.value = true;
+  }
 };
 
 defineExpose({
