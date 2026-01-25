@@ -12,22 +12,6 @@
     </div>
 
     <div class="install-flow">
-      <!-- Connection Lines SVG -->
-      <svg class="flow-connections" viewBox="0 0 700 60" preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.7" />
-            <stop offset="50%" stop-color="#f97316" stop-opacity="0.7" />
-            <stop offset="100%" stop-color="#22c55e" stop-opacity="0.7" />
-          </linearGradient>
-          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" opacity="0.7" />
-          </marker>
-        </defs>
-        <path class="flow-line" d="M 95 30 L 270 30" marker-end="url(#arrowhead)" />
-        <path class="flow-line" d="M 430 30 L 605 30" marker-end="url(#arrowhead)" />
-      </svg>
-
       <div class="flow-steps">
         <!-- Step 1: Install -->
         <div class="flow-step">
@@ -57,6 +41,13 @@
           </div>
         </div>
 
+        <!-- Arrow 1 -->
+        <div class="step-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M14 5l7 7-7 7" />
+          </svg>
+        </div>
+
         <!-- Step 2: Launch -->
         <div class="flow-step">
           <div class="step-node" data-step="2">
@@ -81,6 +72,13 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Arrow 2 -->
+        <div class="step-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M14 5l7 7-7 7" />
+          </svg>
         </div>
 
         <!-- Step 3: Build -->
@@ -125,53 +123,41 @@
 
 <style>
   .install-section {
-    padding: 6rem 2rem;
+    padding: 4rem 2rem;
     background: var(--color-bg-elevated);
   }
 
   .install-flow {
-    position: relative;
-    max-width: 800px;
-    margin: 0 auto 3rem;
-  }
-
-  .flow-connections {
-    position: absolute;
-    top: 28px;
-    left: 0;
-    width: 100%;
-    height: 60px;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .flow-line {
-    stroke: url(#flowGradient);
-    stroke-width: 2;
-    fill: none;
-    stroke-dasharray: 8 4;
-    animation: flowDash 1s linear infinite;
-  }
-
-  @keyframes flowDash {
-    to {
-      stroke-dashoffset: -12;
-    }
+    max-width: 900px;
+    margin: 0 auto 2rem;
   }
 
   .flow-steps {
     display: flex;
-    justify-content: space-between;
-    position: relative;
-    z-index: 1;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 0;
   }
 
   .flow-step {
     display: flex;
     flex-direction: column;
     align-items: center;
-    flex: 1;
-    max-width: 220px;
+    flex: 0 1 200px;
+  }
+
+  .step-arrow {
+    display: flex;
+    align-items: center;
+    padding-top: 16px;
+    flex-shrink: 0;
+  }
+
+  .step-arrow svg {
+    width: 28px;
+    height: 28px;
+    stroke: #6366f1;
+    opacity: 0.6;
   }
 
   .step-node {
@@ -288,31 +274,26 @@
   }
 
   @media (max-width: 700px) {
-    .flow-connections {
-      display: none;
-    }
-
     .flow-steps {
       flex-direction: column;
       align-items: center;
-      gap: 2rem;
+      gap: 1rem;
     }
 
     .flow-step {
+      flex: none;
+      width: 100%;
       max-width: 280px;
-      position: relative;
     }
 
-    .flow-step:not(:last-child)::after {
-      content: '';
-      position: absolute;
-      bottom: -1.25rem;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 2px;
-      height: 16px;
-      background: linear-gradient(to bottom, #6366f1, #f97316);
-      opacity: 0.5;
+    .step-arrow {
+      padding-top: 0;
+      transform: rotate(90deg);
+    }
+
+    .step-arrow svg {
+      width: 24px;
+      height: 24px;
     }
   }
 </style>

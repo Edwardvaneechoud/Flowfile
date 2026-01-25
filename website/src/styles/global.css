@@ -80,12 +80,12 @@ code {
 
 /* Section */
 .section {
-  padding: 6rem 2rem;
+  padding: 4rem 2rem;
 }
 
 @media (max-width: 768px) {
   .section {
-    padding: 4rem 1rem;
+    padding: 3rem 1rem;
   }
 }
 
@@ -93,7 +93,7 @@ code {
 .section-header {
   text-align: center;
   max-width: 600px;
-  margin: 0 auto 3rem;
+  margin: 0 auto 2rem;
 }
 
 .section-label {
