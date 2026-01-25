@@ -65,8 +65,8 @@
 
     <DocsModal :is-open="isDocsOpen" @close="isDocsOpen = false" />
 
-    <!-- Prominent demo button for first-time visitors -->
-    <DemoButton v-if="!hasSeenDemo && !hasDismissedDemo && pyodideReady" prominent />
+    <!-- Prominent demo button for first-time visitors (hidden when auto-loading via URL) -->
+    <DemoButton v-if="!shouldAutoLoadDemo && !hasSeenDemo && !hasDismissedDemo && pyodideReady" prominent />
   </div>
 </template>
 
