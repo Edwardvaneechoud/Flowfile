@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import Canvas from '../components/Canvas.vue'
 import DocsModal from '../components/DocsModal.vue'
 import DemoButton from '../components/DemoButton.vue'
@@ -85,7 +85,11 @@ const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
-const { hasSeenDemo, hasDismissedDemo } = useDemo()
+const { hasSeenDemo, hasDismissedDemo, loadDemo } = useDemo()
+
+// Check for demo URL parameter
+const urlParams = new URLSearchParams(window.location.search)
+const shouldAutoLoadDemo = urlParams.get('demo') === 'true'
 
 const isDocsOpen = ref(false)
 
@@ -93,6 +97,16 @@ onMounted(async () => {
   themeStore.initialize()
   await pyodideStore.initialize()
 })
+
+// Auto-load demo when URL has ?demo=true and Pyodide is ready
+if (shouldAutoLoadDemo) {
+  watch(pyodideReady, async (ready) => {
+    if (ready) {
+      // Load demo without confirmation since user explicitly requested it via URL
+      await loadDemo(false)
+    }
+  }, { immediate: true })
+}
 </script>
 
 <style scoped>
