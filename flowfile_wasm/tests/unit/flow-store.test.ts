@@ -382,7 +382,8 @@ describe('Flow Store', () => {
       expect(store.nodes.size).toBe(2)
 
       const node10 = store.getNode(10)
-      expect(node10?.type).toBe('read_csv')
+      // Note: 'read_csv' is migrated to 'read' during import for backward compatibility
+      expect(node10?.type).toBe('read')
       expect(node10?.x).toBe(50)
 
       const node20 = store.getNode(20)
