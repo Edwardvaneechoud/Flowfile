@@ -30,6 +30,39 @@
 
           <div class="setting-group">
             <div class="setting-header">
+              <span class="setting-title">Node Reference</span>
+              <div class="setting-description-wrapper">
+                <span class="setting-description">
+                  A unique identifier used as the variable name in code generation.
+                  <el-tooltip
+                    effect="dark"
+                    content="Must be lowercase with no spaces. Leave empty to use the default (df_node_id)"
+                    placement="top"
+                  >
+                    <el-icon class="info-icon">
+                      <InfoFilled />
+                    </el-icon>
+                  </el-tooltip>
+                </span>
+              </div>
+            </div>
+            <el-input
+              v-model="localSettings.node_reference"
+              :placeholder="defaultReference"
+              :class="{ 'is-error': referenceError }"
+              @input="handleReferenceInput"
+              @blur="handleReferenceBlur"
+            />
+            <div v-if="referenceError" class="validation-error">
+              {{ referenceError }}
+            </div>
+            <div v-else-if="isValidatingReference" class="validation-loading">
+              Checking...
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <div class="setting-header">
               <span class="setting-title">Node Description</span>
               <span class="setting-description">
                 Add a description to document this node's purpose
@@ -103,7 +136,7 @@
               <div class="setting-header">
                 <span class="setting-title">Output Fields</span>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
-                  <el-button size="small" @click="loadFieldsFromSchema">
+                  <el-button size="small" :disabled="hasSchema" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
                     Load from Schema
                   </el-button>
                   <el-button size="small" type="primary" @click="addField">
@@ -113,7 +146,12 @@
               </div>
 
               <div v-if="outputFieldConfig.fields.length === 0" class="no-fields">
-                No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+                <template v-if="isLoadingSchema">
+                  Loading schema...
+                </template>
+                <template v-else>
+                  No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+                </template>
               </div>
 
               <el-table
@@ -167,7 +205,7 @@
                     <el-input
                       v-model="row.default_value"
                       size="small"
-                      placeholder="null or expression"
+                      placeholder="null"
                       @change="handleOutputConfigChange"
                     />
                   </template>
@@ -193,8 +231,7 @@
                 :closable="false"
                 style="margin-top: 1rem"
               >
-                <strong>Tip:</strong> Default values can be literals (e.g., "0", "Unknown") or
-                Polars expressions (e.g., "pl.lit(0)").
+                <strong>Tip:</strong> Default values can be any static value.
               </el-alert>
             </div>
           </template>
@@ -206,7 +243,7 @@
 
 <script lang="ts" setup generic="T extends NodeBase">
 /* eslint-disable no-undef */
-import { ref, watch, reactive } from "vue";
+import { computed, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
@@ -219,11 +256,19 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:model-value", value: T): void;
-  (e: "request-save"): void;
+  (e: "request-save"): Promise<boolean> | boolean | void;
 }>();
 /* eslint-enable no-undef */
 
+// Loading state for async operations
+const isLoadingSchema = ref(false);
+
 const activeTab = ref("main");
+const referenceError = ref<string | null>(null);
+const isValidatingReference = ref(false);
+let validationTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const defaultReference = computed(() => `df_${props.modelValue?.node_id ?? ""}`);
 
 // Watch for tab changes to trigger save when switching to Output Schema
 watch(activeTab, (newTab, oldTab) => {
@@ -233,9 +278,10 @@ watch(activeTab, (newTab, oldTab) => {
   }
 });
 
-const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
+const localSettings = ref<Pick<NodeBase, "cache_results" | "description" | "node_reference">>({
   cache_results: props.modelValue?.cache_results ?? false,
   description: props.modelValue?.description ?? "",
+  node_reference: props.modelValue?.node_reference ?? "",
 });
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
@@ -254,6 +300,7 @@ watch(
       localSettings.value = {
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
+        node_reference: newValue.node_reference ?? "",
       };
 
       // Update output field config if it exists
@@ -270,6 +317,7 @@ const handleSettingChange = () => {
     ...props.modelValue,
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
+    node_reference: localSettings.value.node_reference,
     output_field_config: outputFieldConfig.enabled ? outputFieldConfig : null,
   });
 };
@@ -279,9 +327,106 @@ const handleDescriptionChange = (value: string) => {
   handleSettingChange();
 };
 
+const validateReferenceLocally = (value: string): string | null => {
+  if (!value || value === "") {
+    return null; // Empty is valid (uses default)
+  }
+  if (value !== value.toLowerCase()) {
+    return "Reference must be lowercase";
+  }
+  if (/\s/.test(value)) {
+    return "Reference cannot contain spaces";
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(value)) {
+    return "Reference must start with a letter and contain only lowercase letters, numbers, and underscores";
+  }
+  return null;
+};
+
+const handleReferenceInput = (value: string) => {
+  // Clear any pending validation
+  if (validationTimeout) {
+    clearTimeout(validationTimeout);
+  }
+
+  // Run local validation immediately
+  const localError = validateReferenceLocally(value);
+  if (localError) {
+    referenceError.value = localError;
+    return;
+  }
+
+  // If local validation passes, debounce server-side uniqueness check
+  referenceError.value = null;
+  if (value && value !== "") {
+    isValidatingReference.value = true;
+    validationTimeout = setTimeout(async () => {
+      try {
+        const result = await nodeStore.validateNodeReference(props.modelValue.node_id, value);
+        if (!result.valid) {
+          referenceError.value = result.error;
+        } else {
+          referenceError.value = null;
+        }
+      } catch (error) {
+        console.error("Error validating reference:", error);
+      } finally {
+        isValidatingReference.value = false;
+      }
+    }, 300);
+  }
+};
+
+const handleReferenceBlur = async () => {
+  // Clear any pending validation
+  if (validationTimeout) {
+    clearTimeout(validationTimeout);
+  }
+
+  const value = localSettings.value.node_reference || "";
+
+  // Run local validation
+  const localError = validateReferenceLocally(value);
+  if (localError) {
+    referenceError.value = localError;
+    return;
+  }
+
+  // If non-empty and passes local validation, do final server validation and save
+  if (value !== "") {
+    isValidatingReference.value = true;
+    try {
+      const result = await nodeStore.validateNodeReference(props.modelValue.node_id, value);
+      if (!result.valid) {
+        referenceError.value = result.error;
+        return;
+      }
+    } catch (error) {
+      console.error("Error validating reference:", error);
+      return;
+    } finally {
+      isValidatingReference.value = false;
+    }
+  }
+
+  // Save the reference if validation passed
+  if (!referenceError.value) {
+    try {
+      await nodeStore.setNodeReference(props.modelValue.node_id, value);
+      handleSettingChange();
+    } catch (error: any) {
+      referenceError.value = error.message || "Failed to save reference";
+    }
+  }
+};
+
 const handleOutputConfigChange = () => {
   handleSettingChange();
 };
+
+const hasSchema = computed(() => {
+  return outputFieldConfig.fields.length > 0;
+});
 
 const addField = () => {
   outputFieldConfig.fields.push({
@@ -305,14 +450,22 @@ const loadFieldsFromSchema = async () => {
       return;
     }
 
-    // Request parent component to save current state
-    emit("request-save");
+    isLoadingSchema.value = true;
+
+    // Request parent component to save current state and wait for completion
+    // The parent component's saveSettings() should return a promise
+    const saveResult = emit("request-save");
+
+    // Wait for the save to complete if it returns a promise
+    if (saveResult instanceof Promise) {
+      await saveResult;
+    }
 
     // Give the backend a moment to process and update the schema
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Get the node data from the store with updated schema
-    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id);
+    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false);
 
     if (nodeData?.main_output?.table_schema) {
       // Load fields from the schema
@@ -325,6 +478,8 @@ const loadFieldsFromSchema = async () => {
     }
   } catch (error) {
     console.error("Error loading schema:", error);
+  } finally {
+    isLoadingSchema.value = false;
   }
 };
 </script>
@@ -368,6 +523,7 @@ const loadFieldsFromSchema = async () => {
   font-size: 0.875rem;
   color: var(--el-text-color-secondary);
 }
+
 .setting-description-wrapper {
   display: flex;
   align-items: center;
@@ -382,5 +538,30 @@ const loadFieldsFromSchema = async () => {
 
 .setting-description {
   flex-grow: 1;
+}
+
+.validation-error {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-color-danger);
+}
+
+.validation-loading {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary);
+}
+
+:deep(.el-input.is-error .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.no-fields {
+  padding: 1rem;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  margin-top: 1rem;
 }
 </style>

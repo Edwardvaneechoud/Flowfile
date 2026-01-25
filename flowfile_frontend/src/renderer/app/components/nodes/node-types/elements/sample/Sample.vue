@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeSample" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSample">
+    <generic-node-settings
+      v-model="nodeSample"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Settings</div>
         <el-row>
@@ -18,7 +22,8 @@
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeSample } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
@@ -31,19 +36,28 @@ const nodeSample = ref<null | NodeSample>(null);
 const nodeData = ref<null | NodeData>(null);
 const sampleSize = ref<number>(1000);
 
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeSample,
+  onBeforeSave: () => {
+    // Sync sample size before saving
+    if (nodeSample.value) {
+      nodeSample.value.sample_size = sampleSize.value;
+    }
+    return true;
+  },
+});
+
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSample.value = nodeData.value?.setting_input;
-  if (!nodeData.value?.setting_input.is_setup && nodeSample.value) {
-    nodeSample.value.sample_size = sampleSize.value;
-  } else {
-    if (nodeSample.value) {
+  if (nodeSample.value) {
+    if (!nodeSample.value.is_setup) {
+      nodeSample.value.sample_size = sampleSize.value;
+    } else {
       sampleSize.value = nodeSample.value.sample_size;
     }
-  }
-  dataLoaded.value = true;
-  if (nodeSample.value?.is_setup) {
-    nodeSample.value.is_setup = true;
+    dataLoaded.value = true;
   }
 };
 
@@ -55,17 +69,10 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeSample.value) {
-    nodeSample.value.sample_size = sampleSize.value;
-  }
-  nodeStore.updateSettings(nodeSample);
-  dataLoaded.value = false;
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

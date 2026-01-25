@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeManualInput">
-    <generic-node-settings v-model="nodeManualInput" @request-save="saveNodeData">
+    <generic-node-settings
+      v-model="nodeManualInput"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="settings-section">
         <!-- Table Controls - Moved to top for better visibility -->
         <div class="controls-section controls-top">
@@ -121,7 +125,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
-import { useEditorStore } from "../../../../../stores/editor-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,
@@ -143,7 +147,6 @@ interface Row {
 }
 
 const nodeStore = useNodeStore();
-const editorStore = useEditorStore();
 
 const dataLoaded = ref(false);
 const nodeManualInput = ref<NodeManualInput | null>(null);
@@ -163,9 +166,7 @@ const dataTypes = nodeStore.getDataTypes();
  */
 const inferDataType = (values: unknown[]): string => {
   // Filter out null, undefined, and empty strings
-  const validValues = values.filter(
-    (v) => v !== null && v !== undefined && v !== "",
-  );
+  const validValues = values.filter((v) => v !== null && v !== undefined && v !== "");
 
   if (validValues.length === 0) {
     return "String";
@@ -226,6 +227,17 @@ const rawDataFormat = computed((): RawDataFormat => {
     columns: formattedColumns,
     data: data,
   };
+});
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeManualInput,
+  onBeforeSave: () => {
+    if (nodeManualInput.value) {
+      nodeManualInput.value.raw_data_format = rawDataFormat.value;
+    }
+    return true;
+  },
 });
 
 const initializeEmptyTable = () => {
@@ -429,20 +441,6 @@ const updateTableFromRawData = () => {
   }
 };
 
-const saveNodeData = async () => {
-  if (nodeManualInput.value) {
-    // Always save in the new format
-    nodeManualInput.value.raw_data_format = rawDataFormat.value;
-    await nodeStore.updateSettings(nodeManualInput);
-  }
-};
-
-const pushNodeData = async () => {
-  await saveNodeData();
-  // Trigger drawer close via editor store
-  editorStore.pushNodeData();
-};
-
 // Watchers
 watch(rawData, (newVal) => {
   rawDataString.value = JSON.stringify(newVal, null, 2);
@@ -451,6 +449,7 @@ watch(rawData, (newVal) => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

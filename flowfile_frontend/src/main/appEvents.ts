@@ -4,12 +4,7 @@ import { cleanupProcesses, shutdownState } from "./services";
 import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT } from "./constants";
 
 export function setupAppEventListeners() {
-  // Handle GPU process crashes
-  app.on("gpu-process-crashed", (_event, killed) => {
-    console.error("GPU Process crashed. Killed:", killed);
-  });
-
-  // Handle child process exits
+  // Handle child process exits (includes GPU process crashes in newer Electron versions)
   app.on("child-process-gone", (_event, details) => {
     console.error("Child process gone:", {
       type: details.type,

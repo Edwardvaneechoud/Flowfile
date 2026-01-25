@@ -208,6 +208,10 @@ button {
 }
 
 /* Select dropdown styling */
+.el-select-dropdown__item:hover {
+  background-color: var(--color-background-hover);
+}
+
 .el-select-dropdown__item.is-selected {
   background-color: var(--color-accent-subtle);
   color: var(--color-accent);

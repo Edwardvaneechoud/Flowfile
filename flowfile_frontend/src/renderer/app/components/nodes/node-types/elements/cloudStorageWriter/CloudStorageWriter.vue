@@ -1,6 +1,10 @@
 <template>
   <div v-if="dataLoaded && nodeCloudStorageWriter" class="cloud-storage-container">
-    <generic-node-settings v-model="nodeCloudStorageWriter">
+    <generic-node-settings
+      v-model="nodeCloudStorageWriter"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
       <div class="listbox-wrapper">
         <div class="form-group">
           <label for="connection-select">Cloud Storage Connection</label>
@@ -164,7 +168,8 @@ import { CodeLoader } from "vue-content-loader";
 import { ref } from "vue";
 import { NodeCloudStorageWriter } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageWriter } from "./utils"; // Import the new utility function
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/CloudConnectionView/api";
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
@@ -177,7 +182,12 @@ interface Props {
 defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
-const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null); // Use the writer type
+const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null);
+
+// Use the standardized node settings composable
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+  nodeRef: nodeCloudStorageWriter,
+});
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
 const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
@@ -292,16 +302,6 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeCloudStorageWriter.value || !nodeCloudStorageWriter.value.cloud_storage_settings) {
-    return;
-  }
-  console.log(nodeCloudStorageWriter);
-  nodeCloudStorageWriter.value.is_setup = true;
-  nodeStore.updateSettings(nodeCloudStorageWriter);
-  dataLoaded.value = false;
-};
-
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {
@@ -317,6 +317,7 @@ const fetchConnections = async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

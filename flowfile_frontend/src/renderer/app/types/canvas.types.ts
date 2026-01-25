@@ -9,18 +9,18 @@ import type { NodeTemplate } from "./flow.types";
 // ============================================================================
 
 export interface NodeCopyValue {
-  nodeIdToCopyFrom: number
-  type: string // CamelCase
-  label: string // readable
-  description: string
-  numberOfInputs: number
-  numberOfOutputs: number
-  multi?: boolean
-  typeSnakeCase: string
-  flowIdToCopyFrom: number
-  nodeTemplate?: NodeTemplate
-  relativeX?: number
-  relativeY?: number
+  nodeIdToCopyFrom: number;
+  type: string; // CamelCase
+  label: string; // readable
+  description: string;
+  numberOfInputs: number;
+  numberOfOutputs: number;
+  multi?: boolean;
+  typeSnakeCase: string;
+  flowIdToCopyFrom: number;
+  nodeTemplate?: NodeTemplate;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface NodeCopyInput extends NodeCopyValue {
@@ -34,16 +34,16 @@ export interface NodeCopyInput extends NodeCopyValue {
 // ============================================================================
 
 export interface EdgeCopyValue {
-  sourceNodeId: number
-  targetNodeId: number
-  sourceHandle: string
-  targetHandle: string
+  sourceNodeId: number;
+  targetNodeId: number;
+  sourceHandle: string;
+  targetHandle: string;
 }
 
 export interface MultiNodeCopyValue {
-  nodes: NodeCopyValue[]
-  edges: EdgeCopyValue[]
-  flowIdToCopyFrom: number
+  nodes: NodeCopyValue[];
+  edges: EdgeCopyValue[];
+  flowIdToCopyFrom: number;
 }
 
 // ============================================================================
