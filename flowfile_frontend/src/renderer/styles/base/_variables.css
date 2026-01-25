@@ -300,6 +300,9 @@
   --card-bg: var(--color-background-secondary);
   --node-bg: var(--color-background-secondary);
 
+  /* Accent colors for dark mode */
+  --color-accent-subtle: rgba(8, 145, 178, 0.15);
+
   /* Element Plus dark mode overrides */
   --el-color-white: var(--color-background-primary);
   --el-bg-color: var(--color-background-primary);
