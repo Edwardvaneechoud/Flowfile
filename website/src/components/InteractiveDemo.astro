@@ -186,12 +186,12 @@
 
 <style>
   .demo-section {
-    padding: 4rem 2rem;
+    padding: 4rem 0;
     background: var(--color-bg);
   }
 
   .demo-window {
-    max-width: 1100px;
+    max-width: 100%;
     margin: 0 auto;
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border);
@@ -458,7 +458,7 @@
 
   @media (max-width: 900px) {
     .demo-section {
-      padding: 2.5rem 1rem;
+      padding: 2.5rem 0;
     }
 
     .demo-content {
@@ -505,8 +505,11 @@
 
     .mobile-table-container {
       display: block;
-      border-top: 1px solid var(--color-border);
+      margin: 12px;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
       background: var(--color-bg-card);
+      overflow: hidden;
     }
 
     .mobile-table-header {
@@ -542,10 +545,16 @@
 
     .mobile-table th,
     .mobile-table td {
-      padding: 8px 10px;
+      padding: 10px 14px;
       text-align: left;
       border-bottom: 1px solid var(--color-border);
+      border-right: 1px solid var(--color-border);
       white-space: nowrap;
+    }
+
+    .mobile-table th:last-child,
+    .mobile-table td:last-child {
+      border-right: none;
     }
 
     .mobile-table th {
@@ -554,14 +563,25 @@
       font-weight: 600;
       font-size: 10px;
       text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .mobile-table td {
       color: var(--color-text);
+      background: var(--color-bg-card);
+    }
+
+    .mobile-table tbody tr:nth-child(even) td {
+      background: var(--color-bg-elevated);
     }
 
     .mobile-table tbody tr:last-child td {
       border-bottom: none;
+    }
+
+    .mobile-table td:last-child {
+      text-align: right;
+      font-weight: 500;
     }
   }
 
