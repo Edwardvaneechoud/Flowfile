@@ -56,12 +56,6 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-# Initialize services
-file_explorer = SecureFileExplorer(
-    start_path=storage.user_data_directory,
-    sandbox_root=storage.user_data_directory
-)
-
 
 def get_node_model(setting_name_ref: str):
     """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
@@ -123,38 +117,21 @@ async def get_local_files(directory: str) -> list[FileInfo]:
     return files
 
 
-@router.get('/files/tree/', response_model=list[FileInfo], tags=['file manager'])
-async def get_current_files() -> list[FileInfo]:
-    """Gets the contents of the file explorer's current directory."""
-    f = file_explorer.list_contents()
-    return f
+@router.get('/files/default_path/', response_model=str, tags=['file manager'])
+async def get_default_path() -> str:
+    """Returns the default starting path for the file browser (user data directory)."""
+    return str(storage.user_data_directory)
 
 
-@router.post('/files/navigate_up/', response_model=str, tags=['file manager'])
-async def navigate_up() -> str:
-    """Navigates the file explorer one directory level up."""
-    file_explorer.navigate_up()
-    return str(file_explorer.current_path)
-
-
-@router.post('/files/navigate_into/', response_model=str, tags=['file manager'])
-async def navigate_into_directory(directory_name: str) -> str:
-    """Navigates the file explorer into a specified subdirectory."""
-    file_explorer.navigate_into(directory_name)
-    return str(file_explorer.current_path)
-
-
-@router.post('/files/navigate_to/', tags=['file manager'])
-async def navigate_to_directory(directory_name: str) -> str:
-    """Navigates the file explorer to an absolute directory path."""
-    file_explorer.navigate_to(directory_name)
-    return str(file_explorer.current_path)
-
-
+# Legacy endpoint - kept for backward compatibility, returns the default path
 @router.get('/files/current_path/', response_model=str, tags=['file manager'])
 async def get_current_path() -> str:
-    """Returns the current absolute path of the file explorer."""
-    return str(file_explorer.current_path)
+    """Returns the default path for the file browser.
+
+    Note: This endpoint is kept for backward compatibility.
+    The file browser state is now managed on the frontend.
+    """
+    return str(storage.user_data_directory)
 
 
 @router.get('/files/directory_contents/', response_model=list[FileInfo], tags=['file manager'])
@@ -180,8 +157,14 @@ async def get_directory_contents(directory: str, file_types: list[str] = None,
 
 @router.get('/files/current_directory_contents/', response_model=list[FileInfo], tags=['file manager'])
 async def get_current_directory_contents(file_types: list[str] = None, include_hidden: bool = False) -> list[FileInfo]:
-    """Gets the contents of the file explorer's current directory."""
-    return file_explorer.list_contents(file_types=file_types, show_hidden=include_hidden)
+    """Gets the contents of the default directory.
+
+    Note: This endpoint is kept for backward compatibility.
+    The file browser state is now managed on the frontend.
+    Use /files/directory_contents/ with an explicit directory parameter instead.
+    """
+    directory_explorer = SecureFileExplorer(storage.user_data_directory, storage.user_data_directory)
+    return directory_explorer.list_contents(file_types=file_types, show_hidden=include_hidden)
 
 
 @router.post('/files/create_directory', response_model=output_model.OutputDir, tags=['file manager'])
