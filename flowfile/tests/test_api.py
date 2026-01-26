@@ -60,7 +60,7 @@ def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int 
     active_flows = _get_active_flows()
     for flow in active_flows:
         flow_path: str = flow.get('path')
-        if flow_name in flow_path:
+        if Path(flow_name) == Path(flow_path) or flow_name in flow_path:
             return flow.get('flow_id')
 
 
