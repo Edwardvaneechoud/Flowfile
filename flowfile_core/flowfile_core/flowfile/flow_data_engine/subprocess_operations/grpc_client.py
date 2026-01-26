@@ -637,6 +637,11 @@ class ExternalDfFetcher(BaseFetcher):
         operation_type: OperationType = "store",
         offload_to_worker: bool = True,
     ):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalDfFetcher.")
+
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_df_operation(
@@ -661,6 +666,11 @@ class ExternalSampler(BaseFetcher):
         wait_on_completion: bool = True,
         sample_size: int = 100,
     ):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalSampler.")
+
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_sample_operation(
@@ -685,6 +695,11 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
         file_ref: str = None,
         wait_on_completion: bool = True,
     ):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalFuzzyMatchFetcher.")
+
         super().__init__(file_ref=file_ref)
 
         r = trigger_fuzzy_match_operation(
@@ -712,6 +727,11 @@ class ExternalCreateFetcher(BaseFetcher):
         file_type: str = "csv",
         wait_on_completion: bool = True,
     ):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalCreateFetcher.")
+
         r = trigger_create_operation(
             received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id
         )
@@ -725,6 +745,11 @@ class ExternalDatabaseFetcher(BaseFetcher):
     """Fetcher for database read operations."""
 
     def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalDatabaseFetcher.")
+
         r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status in ("Processing", "Starting")
@@ -738,6 +763,11 @@ class ExternalDatabaseWriter(BaseFetcher):
     def __init__(
         self, database_external_write_settings: DatabaseExternalWriteSettings, wait_on_completion: bool = True
     ):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalDatabaseWriter.")
+
         r = trigger_database_write(database_external_write_settings=database_external_write_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status in ("Processing", "Starting")
@@ -751,7 +781,12 @@ class ExternalCloudWriter(BaseFetcher):
     def __init__(
         self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface, wait_on_completion: bool = True
     ):
-        r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalCloudWriter.")
+
+        r = trigger_cloud_storage_write(cloud_storage_write_settings=cloud_storage_write_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status in ("Processing", "Starting")
         if wait_on_completion:
@@ -768,6 +803,11 @@ class ExternalExecutorTracker:
     file_ref: str = None
 
     def __init__(self, initial_response: Status, wait_on_completion: bool = True):
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if not OFFLOAD_TO_WORKER:
+            raise RuntimeError("Worker offloading is disabled. Cannot use ExternalExecutorTracker.")
+
         self.file_ref = initial_response.background_task_id
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._fetch_via_grpc)
