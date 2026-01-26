@@ -188,9 +188,9 @@ def build_server_command(module_name: str) -> list[str]:
             )
     else:
         # On Unix-like systems, the script in 'bin' is directly executable
-        script_path = python_parent_dir / "bin" / module_name
+        script_path = scripts_dir / "bin" / module_name
         if not script_path.exists():
-            script_path = python_parent_dir / module_name  # Fallback for different venv structures
+            script_path = scripts_dir / module_name  # Fallback for different venv structures
 
         logger.info(f"Using direct script execution path: {script_path}")
         command = [str(script_path), "run", "ui", "--no-browser"]

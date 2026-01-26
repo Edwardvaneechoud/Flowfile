@@ -64,6 +64,7 @@ def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int 
         if search_name in Path(flow_path).name:
             return flow.get('flow_id')
 
+
 def _trigger_flow_execution(flow_id: int) -> None:
     headers = {
         "accept": "application/json",
