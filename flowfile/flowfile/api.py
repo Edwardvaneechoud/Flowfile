@@ -365,7 +365,7 @@ def _save_flow_to_location(
             flow_file_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             temp_dir_obj = TemporaryDirectory(prefix="flowfile_graph_")
-            flow_file_path = Path(temp_dir_obj.name) / f"temp_flow_{uuid.uuid4().hex[:8]}.flowfile"
+            flow_file_path = Path(temp_dir_obj.name) / f"temp_flow_{uuid.uuid4().hex[:8]}.yaml"
 
         logger.info(f"Applying layout and saving flow to: {flow_file_path}")
         flow_graph.apply_layout()
@@ -435,11 +435,12 @@ def open_graph_in_editor(
         original_execution_settings = flow_graph.flow_settings.model_copy()
         flow_graph.flow_settings.execution_location = "local"
         flow_graph.flow_settings.execution_mode = "Development"
-        flow_file_path, temp_dir_obj = _save_flow_to_location(flow_graph, storage_location)
+        flow_file_path, _ = _save_flow_to_location(flow_graph, storage_location)
         if not flow_file_path:
             return False
         flow_graph.flow_settings = original_execution_settings
         flow_running, flow_in_single_mode = start_flowfile_server_process(module_name)
+        flow_graph.flow_settings.path = str(flow_file_path)
         if not flow_running:
             return False
 
