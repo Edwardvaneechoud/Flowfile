@@ -381,6 +381,116 @@ class TestRaiseOnMissingMode:
             apply_output_field_config(engine, config)
 
 
+class TestAddMissingKeepExtraMode:
+    """Tests for add_missing_keep_extra validation mode."""
+
+    def test_adds_missing_columns_keeps_all_existing(self):
+        """Test add_missing_keep_extra mode adds missing columns and keeps all existing."""
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="d", data_type="String", default_value="new"),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        # Should have: configured columns first [a, d], then extras [b, c]
+        assert result_engine.columns == ["a", "d", "b", "c"]
+        assert result_engine.to_dict()["d"] == ["new", "new", "new"]
+        assert result_engine.to_dict()["a"] == [1, 2, 3]
+        assert result_engine.to_dict()["b"] == [4, 5, 6]
+        assert result_engine.to_dict()["c"] == [7, 8, 9]
+
+    def test_keeps_extra_columns_in_original_order(self):
+        """Test that extra columns maintain their relative order."""
+        df = pl.DataFrame({"z": [1], "y": [2], "x": [3], "w": [4]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        # y comes first (configured), then z, x, w (extras in original order)
+        assert result_engine.columns == ["y", "z", "x", "w"]
+
+    def test_all_columns_missing_adds_all(self):
+        """Test when all configured columns are missing, they're all added."""
+        df = pl.DataFrame({"existing": [1, 2, 3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="new1", data_type="Int64", default_value="10"),
+                input_schema.OutputFieldInfo(name="new2", data_type="String", default_value="hello"),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        # Configured columns first, then existing
+        assert result_engine.columns == ["new1", "new2", "existing"]
+        assert result_engine.to_dict()["new1"] == [10, 10, 10]
+        assert result_engine.to_dict()["new2"] == ["hello", "hello", "hello"]
+        assert result_engine.to_dict()["existing"] == [1, 2, 3]
+
+    def test_no_missing_columns_just_reorders(self):
+        """Test when no columns are missing, just reorders configured first."""
+        df = pl.DataFrame({"c": [1], "b": [2], "a": [3]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        # a, b first (configured order), then c (extra)
+        assert result_engine.columns == ["a", "b", "c"]
+
+    def test_with_null_default_values(self):
+        """Test add_missing_keep_extra with null defaults."""
+        df = pl.DataFrame({"a": [1, 2]})
+
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        engine = FlowDataEngine(df)
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.columns == ["a", "b"]
+        assert result_engine.to_dict()["b"] == [None, None]
+
+
 class TestDataTypeValidation:
     """Tests for data type validation feature."""
 
@@ -540,6 +650,59 @@ class TestFlowIntegration:
         })
         assert output.columns == ["a", "b", "c"]
         output.assert_equal(expected)
+
+    def test_add_missing_keep_extra_mode_in_flow(self):
+        """Test output_field_config add_missing_keep_extra mode in flow."""
+        graph = create_graph()
+
+        # Add manual input with columns a, b, c
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add PolarsCode node promise
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        # Create connection
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Configure output to add missing columns but keep extras
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing_keep_extra",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="new_col", data_type="String", default_value="added"),
+            ],
+            validate_data_types=False,
+        )
+
+        # Add PolarsCode node
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="input_df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        # Run the flow
+        run_info = graph.run_graph()
+
+        # Check that missing column was added and existing columns preserved
+        output = graph.get_node(2).get_resulting_data()
+
+        # Configured columns first [a, new_col], then extras [b, c]
+        assert output.columns == ["a", "new_col", "b", "c"]
+        assert output.to_dict()["a"] == [1, 2, 3]
+        assert output.to_dict()["new_col"] == ["added", "added", "added"]
+        assert output.to_dict()["b"] == [4, 5, 6]
+        assert output.to_dict()["c"] == [7, 8, 9]
 
 
 # =============================================================================
