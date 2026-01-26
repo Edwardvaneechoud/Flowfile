@@ -58,11 +58,11 @@ def _get_active_flows():
 
 def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int | None:
     active_flows = _get_active_flows()
+    search_name = Path(flow_name).name if Path(flow_name).exists() else flow_name
     for flow in active_flows:
         flow_path: str = flow.get('path')
-        if Path(flow_name) == Path(flow_path) or flow_name in flow_path:
+        if search_name in Path(flow_path).name:
             return flow.get('flow_id')
-
 
 def _trigger_flow_execution(flow_id: int) -> None:
     headers = {
