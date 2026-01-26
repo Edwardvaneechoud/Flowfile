@@ -345,12 +345,12 @@
 
     .mobile-demo-container {
       display: flex;
-      --mobile-scale: 0.32;
+      --mobile-scale: 0.45;
     }
 
     .mobile-demo-viewport {
-      /* Recalculate: 700px * 0.32 = 224px */
-      height: 224px;
+      /* 700px * 0.45 = 315px */
+      height: 315px;
     }
 
     .demo-frame-container,
@@ -360,27 +360,27 @@
     }
   }
 
-  /* Slightly larger scale for tablets */
+  /* Larger scale for tablets */
   @media (min-width: 500px) and (max-width: 768px) {
     .mobile-demo-container {
-      --mobile-scale: 0.42;
+      --mobile-scale: 0.55;
     }
 
     .mobile-demo-viewport {
-      /* 700px * 0.42 = 294px */
-      height: 294px;
+      /* 700px * 0.55 = 385px */
+      height: 385px;
     }
   }
 
-  /* Very small screens */
+  /* Small screens */
   @media (max-width: 400px) {
     .mobile-demo-container {
-      --mobile-scale: 0.26;
+      --mobile-scale: 0.38;
     }
 
     .mobile-demo-viewport {
-      /* 700px * 0.26 = 182px */
-      height: 182px;
+      /* 700px * 0.38 = 266px */
+      height: 266px;
     }
 
     .mobile-demo-hint {
