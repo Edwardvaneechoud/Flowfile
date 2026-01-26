@@ -161,14 +161,11 @@ def build_server_command(module_name: str) -> list[str]:
 
     # Case 2: Fallback to direct script execution
     logger.info("Falling back to direct script execution.")
-    python_parent_dir = Path(sys.executable).parent
+    scripts_dir = Path(sys.executable).parent
     command: list[str]
 
     if platform.system() == "Windows":
         # On Windows, scripts are typically in the Scripts subdirectory
-        scripts_dir = python_parent_dir / "Scripts"
-        if not scripts_dir.exists():
-            scripts_dir = python_parent_dir  # Fallback to parent dir
 
         exe_path = scripts_dir / f"{module_name}.exe"
         script_py_path = scripts_dir / f"{module_name}-script.py"
