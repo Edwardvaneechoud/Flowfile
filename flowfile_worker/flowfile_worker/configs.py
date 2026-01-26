@@ -101,3 +101,8 @@ else:
 
 # Generate the core URI (used by both main and spawned processes)
 FLOWFILE_CORE_URI = get_core_url(CORE_HOST, CORE_PORT)
+
+# gRPC settings
+DEFAULT_GRPC_PORT = 50051
+GRPC_PORT = int(os.environ.get("FLOWFILE_WORKER_GRPC_PORT", DEFAULT_GRPC_PORT))
+GRPC_HOST = SERVICE_HOST  # Use the same host as the REST service

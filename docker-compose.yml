@@ -19,6 +19,7 @@ services:
       dockerfile: flowfile_core/Dockerfile
     ports:
       - "63578:63578"
+      - "50052:50052"  # gRPC logging port
     shm_size: '2gb'
     environment:
       - FLOWFILE_MODE=docker
@@ -28,6 +29,9 @@ services:
       # Master key for encrypting secrets - if not set, setup screen will prompt to configure
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - WORKER_HOST=flowfile-worker
+      - WORKER_GRPC_HOST=flowfile-worker
+      - FLOWFILE_WORKER_GRPC_PORT=50051
+      - FLOWFILE_USE_GRPC=1
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1
@@ -45,10 +49,14 @@ services:
       dockerfile: flowfile_worker/Dockerfile
     ports:
       - "63579:63579"
+      - "50051:50051"  # gRPC worker port
     shm_size: '2gb'
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
+      - FLOWFILE_WORKER_GRPC_PORT=50051
+      - FLOWFILE_LOGGING_GRPC_PORT=50052
+      - FLOWFILE_USE_GRPC=1
       # Master key for encrypting secrets - must match flowfile-core
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage

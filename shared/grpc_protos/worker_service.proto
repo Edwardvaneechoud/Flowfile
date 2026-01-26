@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package flowfile.worker;
+
+// Worker service for dataframe processing operations
+service WorkerService {
+    // Submit a dataframe query for processing
+    rpc SubmitQuery(SubmitQueryRequest) returns (StatusResponse);
+
+    // Store a sample of a dataframe
+    rpc StoreSample(StoreSampleRequest) returns (StatusResponse);
+
+    // Execute a fuzzy join operation
+    rpc AddFuzzyJoin(FuzzyJoinRequest) returns (StatusResponse);
+
+    // Create a table from received data
+    rpc CreateTable(CreateTableRequest) returns (StatusResponse);
+
+    // Read from database and store result
+    rpc StoreDatabaseReadResult(DatabaseReadRequest) returns (StatusResponse);
+
+    // Write dataframe to database
+    rpc StoreDatabaseWriteResult(DatabaseWriteRequest) returns (StatusResponse);
+
+    // Write dataframe to cloud storage
+    rpc WriteDataToCloud(CloudStorageWriteRequest) returns (StatusResponse);
+
+    // Write dataframe to file
+    rpc WriteResults(WriteResultsRequest) returns (StatusResponse);
+
+    // Get task status (unary call)
+    rpc GetStatus(TaskIdRequest) returns (StatusResponse);
+
+    // Stream task status updates (server streaming)
+    rpc StreamStatus(TaskIdRequest) returns (stream StatusResponse);
+
+    // Fetch completed task results
+    rpc FetchResults(TaskIdRequest) returns (FetchResultsResponse);
+
+    // Get memory usage for a task
+    rpc GetMemoryUsage(TaskIdRequest) returns (MemoryUsageResponse);
+
+    // Get all task IDs
+    rpc GetAllTaskIds(Empty) returns (TaskIdsResponse);
+
+    // Clear a task and its cached files
+    rpc ClearTask(TaskIdRequest) returns (MessageResponse);
+
+    // Cancel a running task
+    rpc CancelTask(TaskIdRequest) returns (MessageResponse);
+
+    // Shutdown the worker gracefully
+    rpc Shutdown(Empty) returns (MessageResponse);
+}
+
+// Logging service for worker -> core communication
+service LoggingService {
+    // Send a single log entry
+    rpc SendLog(LogEntry) returns (LogResponse);
+
+    // Stream log entries (client streaming)
+    rpc StreamLogs(stream LogEntry) returns (LogResponse);
+}
+
+// Empty message for requests that don't need parameters
+message Empty {}
+
+// Common task ID request
+message TaskIdRequest {
+    string task_id = 1;
+}
+
+// Submit query request - raw binary data with metadata
+message SubmitQueryRequest {
+    bytes polars_data = 1;  // Serialized polars lazyframe (IPC format)
+    string task_id = 2;
+    string operation_type = 3;  // "store", "calculate_schema", etc.
+    int32 flow_id = 4;
+    string node_id = 5;  // Can be int or string
+}
+
+// Store sample request
+message StoreSampleRequest {
+    bytes polars_data = 1;  // Serialized polars lazyframe (IPC format)
+    string task_id = 2;
+    int32 sample_size = 3;
+    int32 flow_id = 4;
+    string node_id = 5;
+}
+
+// Polars operation wrapper (for nested operations like in fuzzy join)
+message PolarsOperation {
+    bytes operation = 1;  // Serialized polars lazyframe
+    int32 flow_id = 2;
+    string node_id = 3;
+}
+
+// Fuzzy mapping configuration
+message FuzzyMapping {
+    string left_col = 1;
+    string right_col = 2;
+    float threshold = 3;
+    string algorithm = 4;
+    int32 limit = 5;
+}
+
+// Fuzzy join request
+message FuzzyJoinRequest {
+    PolarsOperation left_df_operation = 1;
+    PolarsOperation right_df_operation = 2;
+    repeated FuzzyMapping fuzzy_maps = 3;
+    string task_id = 4;
+    string cache_dir = 5;
+    int32 flow_id = 6;
+    string node_id = 7;
+}
+
+// Create table request
+message CreateTableRequest {
+    string file_type = 1;  // "csv", "parquet", "json", "excel"
+    bytes table_data = 2;  // JSON-encoded ReceivedTable
+    int32 flow_id = 3;
+    string node_id = 4;
+}
+
+// Database connection settings
+message DatabaseConnection {
+    string driver = 1;
+    string host = 2;
+    int32 port = 3;
+    string username = 4;
+    string password = 5;
+    string database = 6;
+    string schema = 7;
+}
+
+// Database read request
+message DatabaseReadRequest {
+    DatabaseConnection connection = 1;
+    string query = 2;
+    int32 flow_id = 3;
+    string node_id = 4;
+}
+
+// Database write request
+message DatabaseWriteRequest {
+    bytes polars_data = 1;  // Serialized polars lazyframe
+    DatabaseConnection connection = 2;
+    string table_name = 3;
+    string if_exists = 4;  // "append", "replace", "fail"
+    int32 flow_id = 5;
+    string node_id = 6;
+}
+
+// Cloud storage connection
+message CloudStorageConnection {
+    string provider = 1;  // "s3", "gcs", "azure"
+    string bucket = 2;
+    string access_key = 3;
+    string secret_key = 4;
+    string region = 5;
+    string endpoint_url = 6;
+}
+
+// Cloud storage write settings
+message CloudStorageWriteSettings {
+    string path = 1;
+    string file_type = 2;
+    string write_mode = 3;
+}
+
+// Cloud storage write request
+message CloudStorageWriteRequest {
+    bytes polars_data = 1;  // Serialized polars lazyframe
+    CloudStorageConnection connection = 2;
+    CloudStorageWriteSettings write_settings = 3;
+    int32 flow_id = 4;
+    string node_id = 5;
+}
+
+// Write results request
+message WriteResultsRequest {
+    bytes polars_data = 1;  // Serialized polars lazyframe
+    string data_type = 2;  // "csv", "parquet", "json", "excel"
+    string path = 3;
+    string write_mode = 4;
+    optional string sheet_name = 5;
+    optional string delimiter = 6;
+    int32 flow_id = 7;
+    string node_id = 8;
+}
+
+// Status response
+message StatusResponse {
+    string task_id = 1;
+    string status = 2;  // "Processing", "Completed", "Error", "Unknown Error", "Starting", "Cancelled"
+    string file_ref = 3;
+    int32 progress = 4;
+    optional string error_message = 5;
+    optional bytes results = 6;  // Serialized result data
+    string result_type = 7;  // "polars" or "other"
+}
+
+// Fetch results response
+message FetchResultsResponse {
+    string task_id = 1;
+    bytes result = 2;  // Serialized polars lazyframe
+    bool ready = 3;
+}
+
+// Memory usage response
+message MemoryUsageResponse {
+    string task_id = 1;
+    map<string, int64> memory_usage = 2;
+}
+
+// Task IDs response
+message TaskIdsResponse {
+    repeated string task_ids = 1;
+}
+
+// Generic message response
+message MessageResponse {
+    string message = 1;
+    bool success = 2;
+}
+
+// Log entry for worker -> core logging
+message LogEntry {
+    int32 flow_id = 1;
+    string log_message = 2;
+    string log_type = 3;  // "INFO", "ERROR"
+    map<string, string> extra = 4;
+}
+
+// Log response
+message LogResponse {
+    bool success = 1;
+    optional string message = 2;
+}
