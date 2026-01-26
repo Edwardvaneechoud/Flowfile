@@ -2100,6 +2100,12 @@ class FlowGraph:
             self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
 
+        # Wrap schema_callback with output_field_config if present
+        output_field_config = getattr(input_file, 'output_field_config', None)
+        if output_field_config and output_field_config.enabled:
+            logger.info(f"add_read: Wrapping schema_callback with output_field_config for node {input_file.node_id}")
+            schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
+
         if schema_callback is not None:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
