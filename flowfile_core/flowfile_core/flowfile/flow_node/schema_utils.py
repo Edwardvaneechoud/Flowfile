@@ -11,6 +11,10 @@ def create_schema_from_output_field_config(output_field_config: OutputFieldConfi
     This is used for schema prediction - instead of running the transformation,
     we can directly return the configured output schema.
 
+    Note: For 'add_missing_keep_extra' mode, this returns only the configured fields.
+    Extra columns from the incoming data are not predictable without running the flow,
+    so _predicted_data_getter provides more accurate results for that mode.
+
     Args:
         output_field_config: The output field configuration
 

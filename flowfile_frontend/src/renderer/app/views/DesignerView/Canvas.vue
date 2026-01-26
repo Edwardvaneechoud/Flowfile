@@ -586,7 +586,7 @@ defineExpose({
     <draggable-item
       id="dataActions"
       :show-left="true"
-      :initial-width="180"
+      :initial-width="230"
       initial-position="left"
       title="Data actions"
       :allow-free-move="true"

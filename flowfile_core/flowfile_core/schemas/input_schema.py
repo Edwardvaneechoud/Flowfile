@@ -93,7 +93,12 @@ class OutputFieldConfig(BaseModel):
     """Configuration for output field validation and transformation behavior."""
 
     enabled: bool = False
-    validation_mode_behavior: Literal["add_missing", "raise_on_missing", "select_only"] = "select_only"
+    validation_mode_behavior: Literal[
+        "add_missing",  # Add missing fields with defaults, remove extra columns
+        "add_missing_keep_extra",  # Add missing fields with defaults, keep all incoming columns
+        "raise_on_missing",  # Raise error if any fields are missing
+        "select_only"  # Select only specified fields, skip missing silently
+    ] = "select_only"
     fields: list[OutputFieldInfo] = Field(default_factory=list)
     validate_data_types: bool = False  # Enable data type validation without casting
 

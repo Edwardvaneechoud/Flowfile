@@ -72,14 +72,14 @@ def _apply_add_missing(
     """Apply add_missing validation mode.
 
     Adds missing columns with default values, then selects columns in order.
+    Extra columns not in the config are removed.
 
     Args:
-        df: Input dataframe
+        engine: Input flow data engine
         fields: List of expected output fields
-        current_columns: Set of current column names
 
     Returns:
-        DataFrame with missing columns added and all columns in specified order
+        FlowDataEngine with missing columns added and only configured columns in specified order
     """
     # Add missing columns with default values
     current_columns = set(engine.columns)
@@ -90,6 +90,42 @@ def _apply_add_missing(
     else:
         new_df = engine.data_frame
     return FlowDataEngine(_select_columns_in_order(new_df, fields))
+
+
+def _apply_add_missing_keep_extra(
+    engine: FlowDataEngine,
+    fields: list[OutputFieldInfo],
+) -> FlowDataEngine:
+    """Apply add_missing_keep_extra validation mode.
+
+    Adds missing columns with default values, but keeps all incoming columns.
+    Configured columns come first in specified order, followed by extra columns.
+
+    Args:
+        engine: Input flow data engine
+        fields: List of expected output fields
+
+    Returns:
+        FlowDataEngine with missing columns added and all columns preserved
+        (configured columns first, then extras)
+    """
+    current_columns = set(engine.columns)
+    configured_names = {field.name for field in fields}
+
+    # Add missing columns with default values
+    expressions = [_parse_default_value(field).alias(field.name)
+                   for field in fields if field.name not in current_columns]
+    if expressions:
+        new_df = engine.data_frame.with_columns(expressions)
+    else:
+        new_df = engine.data_frame
+
+    # Build column order: configured columns first (in order), then extras
+    configured_column_order = [field.name for field in fields]
+    extra_columns = [col for col in engine.columns if col not in configured_names]
+
+    final_column_order = configured_column_order + extra_columns
+    return FlowDataEngine(new_df.select(final_column_order))
 
 
 def _validate_data_types(df: FlowDataEngine, fields: list[OutputFieldInfo]) -> None:
@@ -156,6 +192,8 @@ def apply_output_field_config(
             new_flow_engine = _apply_raise_on_missing(flow_data_engine, output_field_config.fields)
         elif mode == "add_missing":
             new_flow_engine = _apply_add_missing(engine=flow_data_engine, fields=output_field_config.fields)
+        elif mode == "add_missing_keep_extra":
+            new_flow_engine = _apply_add_missing_keep_extra(engine=flow_data_engine, fields=output_field_config.fields)
         elif mode == "select_only":
             new_flow_engine = flow_data_engine.select_columns(
                 [field.name for field in output_field_config.fields]
