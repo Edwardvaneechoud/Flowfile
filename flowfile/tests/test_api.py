@@ -58,11 +58,9 @@ def _get_active_flows():
 
 def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int | None:
     active_flows = _get_active_flows()
-    file_exists = Path(flow_name).exists()
-    search_name = Path(flow_name).name if file_exists else flow_name
+    search_name = Path(flow_name).name  # Always extract filename
 
     print(f"DEBUG: flow_name = {flow_name}")
-    print(f"DEBUG: file_exists = {file_exists}")
     print(f"DEBUG: search_name = {search_name}")
     print(f"DEBUG: active_flows count = {len(active_flows)}")
     for flow in active_flows:
