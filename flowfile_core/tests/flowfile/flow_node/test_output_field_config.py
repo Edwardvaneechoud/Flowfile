@@ -541,5 +541,341 @@ class TestFlowIntegration:
         assert output.columns == ["a", "b", "c"]
         output.assert_equal(expected)
 
+
+# =============================================================================
+# Lazy Schema Prediction Tests
+# =============================================================================
+
+
+class TestLazySchemaEvaluation:
+    """Tests for lazy schema prediction with output_field_config.
+
+    These tests verify that get_predicted_schema and _predicted_data_getter
+    correctly account for output_field_config when predicting schemas.
+    """
+
+    def test_select_node_predicted_schema_uses_output_field_config(self):
+        """Test that select node's predicted schema uses output_field_config, not select output."""
+        graph = create_graph()
+
+        # Add manual input with columns a, b, c
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node promise
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+
+        # Create connection
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Configure output_field_config to define a different schema than what select produces
+        # Select will output columns [a, b], but output_field_config defines [x, y, z]
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="String", default_value="default"),
+                input_schema.OutputFieldInfo(name="z", data_type="Int64", default_value="99"),
+            ],
+            validate_data_types=False,
+        )
+
+        # Add select node that selects only columns a and b
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="b", new_name="b", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        # Get predicted schema WITHOUT running the flow
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        # The predicted schema should match output_field_config [x, y, z]
+        # NOT the select output [a, b]
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["x", "y", "z"], (
+            f"Expected predicted schema to be ['x', 'y', 'z'] from output_field_config, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_select_node_predicted_schema_select_only_mode(self):
+        """Test predicted schema with select_only mode filters columns correctly."""
+        graph = create_graph()
+
+        # Add manual input with columns a, b, c, d
+        data = {"a": [1, 2], "b": [3, 4], "c": [5, 6], "d": [7, 8]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node promise
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+
+        # Create connection
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Configure output_field_config with select_only to keep only b and d in that order
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="d", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        # Add select node that keeps all columns
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=True,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="b", new_name="b", keep=True),
+                transform_schema.SelectInput(old_name="c", new_name="c", keep=True),
+                transform_schema.SelectInput(old_name="d", new_name="d", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        # Get predicted schema WITHOUT running
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        # Should be [b, d] from output_field_config, not [a, b, c, d] from select
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["b", "d"], (
+            f"Expected predicted schema ['b', 'd'] from output_field_config select_only, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_downstream_node_receives_correct_predicted_schema(self):
+        """Test that downstream nodes receive the correct predicted schema from output_field_config."""
+        graph = create_graph()
+
+        # Add manual input
+        data = {"a": [1, 2, 3], "b": [4, 5, 6]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node with output_field_config
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection1 = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection1)
+
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value="0"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=True,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        # Add a downstream polars_code node
+        polars_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=3, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_promise)
+        connection2 = input_schema.NodeConnection.create_from_simple_input(2, 3)
+        add_connection(graph, connection2)
+
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=3,
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"),
+            cache_results=False,
+        )
+        graph.add_polars_code(polars_code)
+
+        # Get predicted schema of downstream node WITHOUT running
+        downstream_node = graph.get_node(3)
+        predicted_schema = downstream_node.get_predicted_schema()
+
+        # Downstream node should see [x, y] from select's output_field_config
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["x", "y"], (
+            f"Expected downstream node to see ['x', 'y'] from upstream output_field_config, "
+            f"but got {predicted_column_names}"
+        )
+
+    def test_predicted_data_getter_applies_output_field_config(self):
+        """Test that _predicted_data_getter applies output_field_config to the result."""
+        graph = create_graph()
+
+        # Add manual input
+        data = {"a": [1, 2], "b": [3, 4], "c": [5, 6]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node with output_field_config
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # output_field_config adds a new column 'new_col'
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="new_col", data_type="String", default_value="added"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        # Get predicted resulting data (uses _predicted_data_getter internally)
+        select_node = graph.get_node(2)
+        predicted_data = select_node.get_predicted_resulting_data()
+
+        # Should have columns [a, new_col] from output_field_config
+        assert predicted_data.columns == ["a", "new_col"], (
+            f"Expected predicted data columns ['a', 'new_col'], but got {predicted_data.columns}"
+        )
+
+    def test_predicted_schema_without_output_field_config_uses_select_output(self):
+        """Test that without output_field_config, predicted schema is the select output."""
+        graph = create_graph()
+
+        # Add manual input
+        data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node WITHOUT output_field_config
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Select only columns a and c, no output_field_config
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+                transform_schema.SelectInput(old_name="c", new_name="c", keep=True),
+            ],
+            # No output_field_config
+        )
+        graph.add_select(select_settings)
+
+        # Get predicted schema
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        # Should be [a, c] from the select operation itself
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["a", "c"], (
+            f"Expected predicted schema ['a', 'c'] from select, but got {predicted_column_names}"
+        )
+
+    def test_disabled_output_field_config_uses_select_output(self):
+        """Test that disabled output_field_config doesn't affect predicted schema."""
+        graph = create_graph()
+
+        # Add manual input
+        data = {"a": [1, 2], "b": [3, 4]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add select node with DISABLED output_field_config
+        select_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="select"
+        )
+        graph.add_node_promise(select_promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # output_field_config is present but DISABLED
+        output_config = input_schema.OutputFieldConfig(
+            enabled=False,  # DISABLED
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value="0"),
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value="0"),
+            ],
+            validate_data_types=False,
+        )
+
+        select_settings = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            is_setup=True,
+            depending_on_id=1,
+            keep_missing=False,
+            select_input=[
+                transform_schema.SelectInput(old_name="a", new_name="a", keep=True),
+            ],
+            output_field_config=output_config,
+        )
+        graph.add_select(select_settings)
+
+        # Get predicted schema
+        select_node = graph.get_node(2)
+        predicted_schema = select_node.get_predicted_schema()
+
+        # Should be [a] from select (output_field_config is disabled)
+        predicted_column_names = [col.name for col in predicted_schema]
+        assert predicted_column_names == ["a"], (
+            f"Expected predicted schema ['a'] (output_field_config disabled), but got {predicted_column_names}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

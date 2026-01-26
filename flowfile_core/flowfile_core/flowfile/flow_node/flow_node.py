@@ -704,6 +704,13 @@ class FlowNode:
         """
         try:
             fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
+
+            # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
+            # This ensures schema prediction accounts for output_field_config validation
+            if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                if self._setting_input.output_field_config.enabled:
+                    fl = apply_output_field_config(fl, self._setting_input.output_field_config)
+
             return fl
         except ValueError as e:
             if str(e) == "generator already executing":
