@@ -60,18 +60,11 @@ def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int 
     active_flows = _get_active_flows()
     search_name = Path(flow_name).name  # Always extract filename
 
-    print(f"DEBUG: flow_name = {flow_name}")
-    print(f"DEBUG: search_name = {search_name}")
-    print(f"DEBUG: active_flows count = {len(active_flows)}")
     for flow in active_flows:
         flow_path: str = flow.get('path')
         flow_filename = Path(flow_path).name
-        print(f"DEBUG: checking flow_path={flow_path}, filename={flow_filename}")
         if search_name in flow_filename:
             return flow.get('flow_id')
-    print("DEBUG: no match found")
-
-
 
 
 def _trigger_flow_execution(flow_id: int) -> None:
