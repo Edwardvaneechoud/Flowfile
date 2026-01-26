@@ -37,7 +37,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     assert_if_flowfile_schema,
     convert_stats_to_column_info,
 )
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
+    cast_str_to_polars_type,
+    get_polars_type,
+    safe_eval_pl_type,
+)
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
@@ -1039,7 +1043,7 @@ class FlowDataEngine:
         """
         dtypes = [dtype.base_type() for dtype in self.data_frame.collect_schema().dtypes()]
         idx_mapping = list(
-            (transform.old_name, self.cols_idx.get(transform.old_name), getattr(pl, transform.polars_type))
+            (transform.old_name, self.cols_idx.get(transform.old_name), get_polars_type(transform.polars_type))
             for transform in transforms
             if transform.data_type is not None
         )
@@ -2255,7 +2259,6 @@ class FlowDataEngine:
         """
         new_schema = deepcopy(self.schema)
         renames = [r for r in select_inputs.renames if r.is_available]
-
         if not keep_missing:
             drop_cols = set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames).union(
                 set(r.old_name for r in renames if not r.keep)
