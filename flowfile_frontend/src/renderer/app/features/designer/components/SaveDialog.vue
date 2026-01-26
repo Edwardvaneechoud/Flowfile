@@ -12,6 +12,7 @@
       ref="fileBrowserRef"
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
+      context="flows"
       :initial-file-path="initialPath"
       :is-visible="isVisible"
       @create-file="handleSaveFlow"

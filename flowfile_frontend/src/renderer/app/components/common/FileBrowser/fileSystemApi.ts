@@ -9,7 +9,11 @@ export {
   navigateInto,
   navigateTo,
   getCurrentPath,
+  getDefaultPath,
   createDirectory,
   getFileTree,
   getLocalFiles,
+  getParentPath,
+  joinPath,
+  isRootPath,
 } from "../../../api/file.api";
