@@ -48,7 +48,7 @@ from flowfile_core.flowfile.flow_data_engine.join import (
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalCreateFetcher,
     ExternalDfFetcher,
     ExternalExecutorTracker,

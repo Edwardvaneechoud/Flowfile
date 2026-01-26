@@ -33,7 +33,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
     get_open_xlsx_datatypes,
 )
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalCloudWriter,
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,

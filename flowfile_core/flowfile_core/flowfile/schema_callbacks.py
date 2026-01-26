@@ -5,7 +5,7 @@ from polars import datatypes
 
 from flowfile_core.configs.flow_logger import main_logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import fetch_unique_values
 from flowfile_core.schemas import input_schema, transform_schema
 
 
