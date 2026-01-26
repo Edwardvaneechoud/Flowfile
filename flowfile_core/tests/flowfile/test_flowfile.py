@@ -79,7 +79,7 @@ def create_flowfile_handler():
 
 
 def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development',
-                 execution_location: Literal['local', 'remote'] | None = None) -> FlowGraph:
+                 execution_location: Literal['local', 'remote'] | None = 'local') -> FlowGraph:
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode,
                                                execution_location=execution_location))
@@ -283,7 +283,7 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
 
 
 def test_running_performance_mode():
-    graph = create_graph()
+    graph = create_graph(execution_location='remote')  # Ensure remote execution
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     add_node_promise_on_type(graph, 'read', 1, 1)
     from flowfile_core.configs.flow_logger import main_logger
@@ -1456,7 +1456,7 @@ def test_changes_execution_mode(flow_logger):
             }
         }
     }
-    graph = create_graph()
+    graph = create_graph(execution_location='remote')
     flow_logger.warning(str(graph))
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
