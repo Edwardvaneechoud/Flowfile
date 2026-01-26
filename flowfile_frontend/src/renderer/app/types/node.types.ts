@@ -646,7 +646,7 @@ export interface OutputFieldInfo {
 
 export interface OutputFieldConfig {
   enabled: boolean;
-  validation_mode_behavior: "add_missing" | "raise_on_missing" | "select_only";
+  validation_mode_behavior: "add_missing" | "add_missing_keep_extra" | "raise_on_missing" | "select_only";
   fields: OutputFieldInfo[];
   validate_data_types: boolean;
 }

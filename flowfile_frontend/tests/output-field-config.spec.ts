@@ -21,7 +21,7 @@ test.describe('Output Field Config Feature Tests', () => {
     launchError = undefined;
   });
 
-  test('should display Output Schema tab in generic node settings', async () => {
+  test('should display Schema Validator tab in generic node settings', async () => {
     if (launchError) {
       throw new Error(`Electron app failed to launch: ${launchError.message}`);
     }
@@ -34,13 +34,13 @@ test.describe('Output Field Config Feature Tests', () => {
     // Wait for app to initialize
     await new Promise(r => setTimeout(r, 2000));
 
-    // Check if the Output Schema tab exists
-    const hasOutputSchemaTab = await mainWindow.evaluate(() => {
+    // Check if the Schema Validator tab exists
+    const hasSchemaValidatorTab = await mainWindow.evaluate(() => {
       const tabs = document.querySelectorAll('.el-tabs__nav .el-tabs__item');
-      return Array.from(tabs).some(tab => tab.textContent?.includes('Output Schema'));
+      return Array.from(tabs).some(tab => tab.textContent?.includes('Schema Validator'));
     });
 
-    expect(hasOutputSchemaTab).toBe(true);
+    expect(hasSchemaValidatorTab).toBe(true);
   });
 
   test('should enable output field config when toggle is switched', async () => {
@@ -51,15 +51,15 @@ test.describe('Output Field Config Feature Tests', () => {
     const mainWindow = await getMainWindow(electronApp);
     await new Promise(r => setTimeout(r, 2000));
 
-    // Navigate to Output Schema tab
+    // Navigate to Schema Validator tab
     const navigated = await mainWindow.evaluate(() => {
       const tabs = document.querySelectorAll('.el-tabs__nav .el-tabs__item');
-      const outputSchemaTab = Array.from(tabs).find(tab =>
-        tab.textContent?.includes('Output Schema')
+      const schemaValidatorTab = Array.from(tabs).find(tab =>
+        tab.textContent?.includes('Schema Validator')
       ) as HTMLElement;
 
-      if (outputSchemaTab) {
-        outputSchemaTab.click();
+      if (schemaValidatorTab) {
+        schemaValidatorTab.click();
         return true;
       }
       return false;
@@ -71,7 +71,7 @@ test.describe('Output Field Config Feature Tests', () => {
       // Check if enable switch exists
       const hasEnableSwitch = await mainWindow.evaluate(() => {
         const switchLabel = document.querySelector('.setting-title');
-        return switchLabel?.textContent?.includes('Enable Output Field Configuration') ?? false;
+        return switchLabel?.textContent?.includes('Enable Schema Validation') ?? false;
       });
 
       expect(hasEnableSwitch).toBe(true);
@@ -94,9 +94,10 @@ test.describe('Output Field Config Feature Tests', () => {
 
     // Validation modes should include these options
     const expectedModes = [
-      'Select Only - Keep only specified fields',
-      'Add Missing - Add missing fields with defaults',
-      'Raise on Missing - Error if fields are missing'
+      'Strict - Keep only defined fields',
+      'Flexible - Add missing fields, remove extras',
+      'Permissive - Add missing fields, keep all extras',
+      'Validate - Error if any fields are missing'
     ];
 
     // At least check that the structure exists
@@ -104,7 +105,7 @@ test.describe('Output Field Config Feature Tests', () => {
     expect(Array.isArray(validationModes)).toBe(true);
   });
 
-  test('should display Add Field and Load from Schema buttons', async () => {
+  test('should display Add Field and Auto-Detect Schema buttons', async () => {
     if (!electronApp) {
       throw new Error('Electron app failed to launch');
     }
@@ -118,17 +119,17 @@ test.describe('Output Field Config Feature Tests', () => {
 
       return {
         hasAddField: buttonTexts.some(text => text?.includes('Add Field')),
-        hasLoadFromSchema: buttonTexts.some(text => text?.includes('Load from Schema'))
+        hasAutoDetectSchema: buttonTexts.some(text => text?.includes('Auto-Detect Schema'))
       };
     });
 
     // These buttons should exist when output config is enabled
     // Note: They may not be visible until output config is actually enabled in the UI
     expect(typeof hasButtons.hasAddField).toBe('boolean');
-    expect(typeof hasButtons.hasLoadFromSchema).toBe('boolean');
+    expect(typeof hasButtons.hasAutoDetectSchema).toBe('boolean');
   });
 
-  test('should show validate data types switch', async () => {
+  test('should show type checking switch', async () => {
     if (!electronApp) {
       throw new Error('Electron app failed to launch');
     }
@@ -136,15 +137,15 @@ test.describe('Output Field Config Feature Tests', () => {
     const mainWindow = await getMainWindow(electronApp);
     await new Promise(r => setTimeout(r, 2000));
 
-    const hasValidateDataTypes = await mainWindow.evaluate(() => {
+    const hasTypeChecking = await mainWindow.evaluate(() => {
       const settingTitles = document.querySelectorAll('.setting-title');
       return Array.from(settingTitles).some(title =>
-        title.textContent?.includes('Validate Data Types')
+        title.textContent?.includes('Type Checking')
       );
     });
 
-    // This setting should exist in the Output Schema tab
-    expect(typeof hasValidateDataTypes).toBe('boolean');
+    // This setting should exist in the Schema Validator tab
+    expect(typeof hasTypeChecking).toBe('boolean');
   });
 
   test('should display output fields table with correct columns', async () => {
@@ -237,7 +238,7 @@ test.describe('Output Field Config Integration Tests', () => {
     expect(hasNodeStore).toBe(true);
   });
 
-  test('should handle Load from Schema button correctly', async () => {
+  test('should handle Auto-Detect Schema button correctly', async () => {
     if (!electronApp) {
       throw new Error('Electron app failed to launch');
     }
@@ -245,15 +246,15 @@ test.describe('Output Field Config Integration Tests', () => {
     const mainWindow = await getMainWindow(electronApp);
     await new Promise(r => setTimeout(r, 2000));
 
-    // Test that clicking Load from Schema triggers the correct API call
-    const hasLoadButton = await mainWindow.evaluate(() => {
+    // Test that clicking Auto-Detect Schema triggers the correct API call
+    const hasAutoDetectButton = await mainWindow.evaluate(() => {
       const buttons = document.querySelectorAll('.el-button');
       return Array.from(buttons).some(btn =>
-        btn.textContent?.includes('Load from Schema')
+        btn.textContent?.includes('Auto-Detect Schema')
       );
     });
 
-    expect(typeof hasLoadButton).toBe('boolean');
+    expect(typeof hasAutoDetectButton).toBe('boolean');
   });
 
   test('should show validation mode behavior correctly', async () => {
@@ -265,9 +266,10 @@ test.describe('Output Field Config Integration Tests', () => {
     await new Promise(r => setTimeout(r, 2000));
 
     // Verify that the validation modes are properly defined
-    const modes = ['select_only', 'add_missing', 'raise_on_missing'];
+    const modes = ['select_only', 'add_missing', 'add_missing_keep_extra', 'raise_on_missing'];
     expect(modes).toContain('select_only');
     expect(modes).toContain('add_missing');
+    expect(modes).toContain('add_missing_keep_extra');
     expect(modes).toContain('raise_on_missing');
   });
 });
