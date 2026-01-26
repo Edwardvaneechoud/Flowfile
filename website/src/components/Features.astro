@@ -58,7 +58,7 @@
         <div class="code-preview">
           <pre><code><span class="code-keyword">import</span> flowfile_frame <span class="code-keyword">as</span> ff
 
-df = ff.from_csv(<span class="code-string">"sales.csv"</span>)
+df = ff.read_csv(<span class="code-string">"sales.csv"</span>)
 result = (
     df.filter(ff.col(<span class="code-string">"sales"</span>) > <span class="code-number">1000</span>)
       .group_by(<span class="code-string">"category"</span>)

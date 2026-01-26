@@ -32,7 +32,7 @@
         <pre><code><span class="line"><span class="kw">import</span> flowfile_frame <span class="kw">as</span> ff</span>
 <span class="line"></span>
 <span class="line"><span class="cm"># Read and filter data</span></span>
-<span class="line">df = ff.from_csv(<span class="st">"sales_data.csv"</span>)</span>
+<span class="line">df = ff.read_csv(<span class="st">"sales_data.csv"</span>)</span>
 <span class="line">filtered = df.filter(ff.col(<span class="st">"sales"</span>) > <span class="nu">1000</span>)</span>
 <span class="line"></span>
 <span class="line"><span class="cm"># Group by category and aggregate</span></span>
@@ -46,7 +46,7 @@
 <span class="line">    )</span>
 <span class="line">)</span>
 <span class="line"></span>
-<span class="line">result.to_parquet(<span class="st">"output.parquet"</span>)</span></code></pre>
+<span class="line">result.write_parquet(<span class="st">"output.parquet"</span>)</span></code></pre>
       </div>
     </div>
 
@@ -224,7 +224,7 @@
     const codeContent = `import flowfile_frame as ff
 
 # Read and filter data
-df = ff.from_csv("sales_data.csv")
+df = ff.read_csv("sales_data.csv")
 filtered = df.filter(ff.col("sales") > 1000)
 
 # Group by category and aggregate
@@ -238,7 +238,7 @@ result = (
     )
 )
 
-result.to_parquet("output.parquet")`;
+result.write_parquet("output.parquet")`;
 
     if (copyBtn) {
       copyBtn.addEventListener('click', async () => {
