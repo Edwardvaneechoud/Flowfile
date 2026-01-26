@@ -78,9 +78,11 @@ def create_flowfile_handler():
     return handler
 
 
-def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> FlowGraph:
+def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development',
+                 execution_location: Literal['local', 'remote'] | None = 'local') -> FlowGraph:
     handler = create_flowfile_handler()
-    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode))
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode,
+                                               execution_location=execution_location))
     graph = handler.get_flow(flow_id)
     return graph
 
@@ -281,7 +283,7 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
 
 
 def test_running_performance_mode():
-    graph = create_graph()
+    graph = create_graph(execution_location='remote')  # Ensure remote execution
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     add_node_promise_on_type(graph, 'read', 1, 1)
     from flowfile_core.configs.flow_logger import main_logger
@@ -893,6 +895,40 @@ def test_read_parquet():
     assert graph.get_node(1).get_resulting_data().count() == 1000, 'There should be 1000 records'
 
 
+def test_read_handle_complex_data_types():
+    complex_flow_path = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/complex_types.parquet"
+    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 421.8727272727273,
+                'pos_y': 224.52727272727273, 'is_setup': True, 'description': '', 'node_type': 'read',
+                'received_file': {'name': 'complex_types.parquet',
+                                  'path': str(complex_flow_path),
+                                  'file_type': 'parquet'}}
+    graph = create_graph(execution_location='local')
+    add_node_promise_on_type(graph, 'read', 1)
+    input_file = input_schema.NodeRead(**settings)
+    graph.add_read(input_file)
+    select_inputs = [
+        transform_schema.SelectInput(
+            old_name=col.column_name,
+            new_name=col.column_name,
+            data_type=col.data_type,  # This is where pl.Decimal(10, 2) etc. comes in
+            keep=True
+        )
+        for col in graph.get_node(1).schema
+    ]
+
+    # Create and add the select node settings
+    select_settings = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        select_input=select_inputs,
+        keep_missing=False
+    )
+    graph.add_select(select_settings)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
 def test_write_csv():
     settings = {
         'flow_id': 1,
@@ -1420,7 +1456,7 @@ def test_changes_execution_mode(flow_logger):
             }
         }
     }
-    graph = create_graph()
+    graph = create_graph(execution_location='remote')
     flow_logger.warning(str(graph))
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
