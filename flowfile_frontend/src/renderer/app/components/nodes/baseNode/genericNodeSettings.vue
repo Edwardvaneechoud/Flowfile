@@ -229,14 +229,14 @@
                 </el-table-column>
               </el-table>
 
-              <el-alert
+              <div
                 v-if="outputFieldConfig.fields.length > 0"
-                type="info"
-                :closable="false"
                 style="margin-top: 1rem"
+                class="tip"
+
               >
                 <strong>Tip:</strong> Default values are used when fields are missing from the input data.
-              </el-alert>
+            </div>
             </div>
           </template>
         </div>
@@ -567,5 +567,15 @@ const loadFieldsFromSchema = async () => {
   background-color: var(--el-fill-color-lighter);
   border-radius: 4px;
   margin-top: 1rem;
+}
+
+.tip {
+  padding: 0.5rem 1rem;
+  text-align: left;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  margin-top: 1rem;
+
 }
 </style>
