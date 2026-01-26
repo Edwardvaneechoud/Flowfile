@@ -22,6 +22,9 @@ import pytest
 import requests
 
 os.environ['TESTING'] = 'True'
+# If worker tests are skipped, disable worker offloading to prevent gRPC connection attempts
+if os.environ.get("SKIP_WORKER_TESTS") == "1":
+    os.environ['FLOWFILE_OFFLOAD_TO_WORKER'] = '0'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket

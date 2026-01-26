@@ -1,6 +1,8 @@
 import os
 
 os.environ['TESTING'] = 'True'
+# Disable worker offloading in tests - these are unit tests that don't need the worker
+os.environ['FLOWFILE_OFFLOAD_TO_WORKER'] = '0'
 
 from pydantic import SecretStr
 
