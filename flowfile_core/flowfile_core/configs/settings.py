@@ -94,7 +94,6 @@ TEMP_DIR = storage.temp_directory
 DEFAULT_GRPC_PORT = 50051
 WORKER_GRPC_PORT = int(os.getenv("FLOWFILE_WORKER_GRPC_PORT", DEFAULT_GRPC_PORT))
 WORKER_GRPC_HOST = os.getenv("WORKER_GRPC_HOST", WORKER_HOST)
-USE_GRPC = os.getenv("FLOWFILE_USE_GRPC", "1") == "1"  # Default to gRPC enabled
 
 # FLOWFILE_MODE: Determines the runtime environment
 # Possible values: "electron" (desktop app), "package" (Python package), "docker" (container)

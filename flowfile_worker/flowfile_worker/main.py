@@ -11,7 +11,6 @@ from flowfile_worker.configs import FLOWFILE_CORE_URI, GRPC_HOST, GRPC_PORT, SER
 from flowfile_worker.routes import router
 from shared.storage_config import storage
 
-should_exit = False
 server_instance = None
 grpc_server_instance = None
 
@@ -56,14 +55,13 @@ app.include_router(router)
 async def shutdown():
     """Endpoint to handle graceful shutdown"""
     if server_instance:
-        # Schedule the shutdown
         await asyncio.create_task(trigger_shutdown())
     return {"message": "Shutting down"}
 
 
 async def trigger_shutdown():
     """Trigger the actual shutdown after responding to the client"""
-    await asyncio.sleep(1)  # Give time for the response to be sent
+    await asyncio.sleep(1)
     if server_instance:
         server_instance.should_exit = True
 
@@ -89,11 +87,10 @@ def start_grpc_server(host: str, port: int):
         raise
 
 
-def run(host: str = None, port: int = None, grpc_host: str = None, grpc_port: int = None, enable_grpc: bool = True):
-    """Run the FastAPI app with graceful shutdown and optional gRPC server"""
+def run(host: str = None, port: int = None, grpc_host: str = None, grpc_port: int = None):
+    """Run the worker with gRPC server and minimal REST API for health checks."""
     global server_instance
 
-    # Use values from settings if not explicitly provided
     if host is None:
         host = SERVICE_HOST
     if port is None:
@@ -103,37 +100,33 @@ def run(host: str = None, port: int = None, grpc_host: str = None, grpc_port: in
     if grpc_port is None:
         grpc_port = GRPC_PORT
 
-    # Log service configuration
-    logger.info(f"Starting worker service on {host}:{port}")
+    logger.info(f"Starting worker service - REST health check on {host}:{port}")
     logger.info(f"Core service configured at {FLOWFILE_CORE_URI}")
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Start gRPC server in a separate thread if enabled
-    grpc_thread = None
-    if enable_grpc:
-        logger.info(f"Starting gRPC server on {grpc_host}:{grpc_port}")
-        grpc_thread = threading.Thread(
-            target=start_grpc_server,
-            args=(grpc_host, grpc_port),
-            daemon=True,
-        )
-        grpc_thread.start()
+    # Start gRPC server in a separate thread
+    logger.info(f"Starting gRPC server on {grpc_host}:{grpc_port}")
+    grpc_thread = threading.Thread(
+        target=start_grpc_server,
+        args=(grpc_host, grpc_port),
+        daemon=True,
+    )
+    grpc_thread.start()
 
-    config = uvicorn.Config(app, host=host, port=port, loop="asyncio")
+    # Start minimal REST server for health checks
+    config = uvicorn.Config(app, host=host, port=port, loop="asyncio", log_level="warning")
     server = uvicorn.Server(config)
-    server_instance = server  # Store server instance globally
+    server_instance = server
 
-    logger.info("Starting REST server...")
-    logger.info("Server started")
+    logger.info("Worker started - gRPC for operations, REST for health checks")
 
     try:
         server.run()
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     finally:
-        # Cleanup gRPC server
         global grpc_server_instance
         if grpc_server_instance:
             logger.info("Stopping gRPC server...")

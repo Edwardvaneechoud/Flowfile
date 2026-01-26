@@ -31,7 +31,6 @@ services:
       - WORKER_HOST=flowfile-worker
       - WORKER_GRPC_HOST=flowfile-worker
       - FLOWFILE_WORKER_GRPC_PORT=50051
-      - FLOWFILE_USE_GRPC=1
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1
@@ -56,7 +55,6 @@ services:
       - CORE_HOST=flowfile-core
       - FLOWFILE_WORKER_GRPC_PORT=50051
       - FLOWFILE_LOGGING_GRPC_PORT=50052
-      - FLOWFILE_USE_GRPC=1
       # Master key for encrypting secrets - must match flowfile-core
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
