@@ -66,6 +66,8 @@ def get_grpc_channel() -> grpc.Channel:
                     ("grpc.max_receive_message_length", 512 * 1024 * 1024),  # 512MB
                     ("grpc.keepalive_time_ms", 30000),  # 30 seconds
                     ("grpc.keepalive_timeout_ms", 10000),  # 10 seconds
+                    ("grpc.initial_reconnect_backoff_ms", 1000),  # 1 second initial backoff
+                    ("grpc.max_reconnect_backoff_ms", 5000),  # 5 seconds max backoff
                 ],
             )
             logger.info(f"Created gRPC channel to {target}")
@@ -118,7 +120,7 @@ def trigger_df_operation(
         node_id=str(node_id),
     )
     try:
-        response = stub.SubmitQuery(request)
+        response = stub.SubmitQuery(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_df_operation: gRPC error - {e.code()}: {e.details()}")
@@ -137,7 +139,7 @@ def trigger_sample_operation(
         node_id=str(node_id),
     )
     try:
-        response = stub.StoreSample(request)
+        response = stub.StoreSample(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_sample_operation: gRPC error - {e.code()}: {e.details()}")
@@ -184,7 +186,7 @@ def trigger_fuzzy_match_operation(
         node_id=str(node_id),
     )
     try:
-        response = stub.AddFuzzyJoin(request)
+        response = stub.AddFuzzyJoin(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_fuzzy_match_operation: gRPC error - {e.code()}: {e.details()}")
@@ -205,7 +207,7 @@ def trigger_create_operation(
         node_id=str(node_id),
     )
     try:
-        response = stub.CreateTable(request)
+        response = stub.CreateTable(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_create_operation: gRPC error - {e.code()}: {e.details()}")
@@ -229,7 +231,7 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
         node_id=str(database_external_read_settings.flowfile_node_id),
     )
     try:
-        response = stub.StoreDatabaseReadResult(request)
+        response = stub.StoreDatabaseReadResult(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_database_read_collector: gRPC error - {e.code()}: {e.details()}")
@@ -255,7 +257,7 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
         node_id=str(database_external_write_settings.flowfile_node_id),
     )
     try:
-        response = stub.StoreDatabaseWriteResult(request)
+        response = stub.StoreDatabaseWriteResult(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_database_write: gRPC error - {e.code()}: {e.details()}")
@@ -283,7 +285,7 @@ def trigger_cloud_storage_write(cloud_storage_write_settings: CloudStorageWriteS
         node_id=str(cloud_storage_write_settings.flowfile_node_id),
     )
     try:
-        response = stub.WriteDataToCloud(request)
+        response = stub.WriteDataToCloud(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_cloud_storage_write: gRPC error - {e.code()}: {e.details()}")
@@ -315,7 +317,7 @@ def trigger_write_results(
         request.delimiter = delimiter
 
     try:
-        response = stub.WriteResults(request)
+        response = stub.WriteResults(request, timeout=30)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"trigger_write_results: gRPC error - {e.code()}: {e.details()}")
@@ -326,7 +328,7 @@ def get_results(file_ref: str) -> Status:
     stub = get_worker_stub()
     request = TaskIdRequest(task_id=file_ref)
     try:
-        response = stub.GetStatus(request)
+        response = stub.GetStatus(request, timeout=10)
         return grpc_status_to_model(response)
     except grpc.RpcError as e:
         raise Exception(f"get_results: gRPC error - {e.code()}: {e.details()}")
@@ -357,7 +359,7 @@ def clear_task_from_worker(file_ref: str) -> bool:
     stub = get_worker_stub()
     request = TaskIdRequest(task_id=file_ref)
     try:
-        response = stub.ClearTask(request)
+        response = stub.ClearTask(request, timeout=10)
         return response.success
     except grpc.RpcError as e:
         logger.error(f"Failed to clear task: {e.code()}: {e.details()}")
@@ -390,7 +392,7 @@ def cancel_task(file_ref: str) -> bool:
     stub = get_worker_stub()
     request = TaskIdRequest(task_id=file_ref)
     try:
-        response = stub.CancelTask(request)
+        response = stub.CancelTask(request, timeout=10)
         return response.success
     except grpc.RpcError as e:
         raise Exception(f"Failed to cancel task: {e.code()}: {e.details()}")
@@ -500,7 +502,7 @@ class BaseFetcher:
 
         while not self._stop_event.is_set():
             try:
-                response = stub.GetStatus(request)
+                response = stub.GetStatus(request, timeout=10)
 
                 if response.status == "Completed":
                     self._handle_completion(response)
@@ -789,7 +791,7 @@ class ExternalExecutorTracker:
 
             while not self.stop_event.is_set():
                 try:
-                    response = stub.GetStatus(request)
+                    response = stub.GetStatus(request, timeout=10)
 
                     if response.status == "Completed":
                         self.running = False
@@ -849,15 +851,19 @@ def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
     """
     Fetches unique values from a LazyFrame.
     """
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
     try:
-        try:
-            external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
-            if external_df_fetcher.status.status == "Completed":
-                unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
-                logger.info(f"Got {len(unique_values)} unique values from external source")
-                return unique_values
-        except Exception as e:
-            logger.debug(f"Failed reading external file: {str(e)}")
+        # Only try external fetcher if worker offloading is enabled
+        if OFFLOAD_TO_WORKER:
+            try:
+                external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
+                if external_df_fetcher.status.status == "Completed":
+                    unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
+                    logger.info(f"Got {len(unique_values)} unique values from external source")
+                    return unique_values
+            except Exception as e:
+                logger.debug(f"Failed reading external file: {str(e)}")
 
         unique_values = lf.unique().collect(engine="streaming")[:, 0].to_list()
 
