@@ -265,9 +265,10 @@ test.describe('Output Field Config Integration Tests', () => {
     await new Promise(r => setTimeout(r, 2000));
 
     // Verify that the validation modes are properly defined
-    const modes = ['select_only', 'add_missing', 'raise_on_missing'];
+    const modes = ['select_only', 'add_missing', 'add_missing_keep_extra', 'raise_on_missing'];
     expect(modes).toContain('select_only');
     expect(modes).toContain('add_missing');
+    expect(modes).toContain('add_missing_keep_extra');
     expect(modes).toContain('raise_on_missing');
   });
 });

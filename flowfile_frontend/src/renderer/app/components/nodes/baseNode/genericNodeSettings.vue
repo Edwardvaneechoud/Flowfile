@@ -113,6 +113,10 @@
                   value="add_missing"
                 />
                 <el-option
+                  label="Add Missing (Keep Extra) - Add missing, keep all incoming"
+                  value="add_missing_keep_extra"
+                />
+                <el-option
                   label="Raise on Missing - Error if fields are missing"
                   value="raise_on_missing"
                 />
