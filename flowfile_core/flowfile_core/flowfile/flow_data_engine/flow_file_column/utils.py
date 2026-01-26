@@ -21,20 +21,50 @@ dtype_to_pl = {
 def safe_eval_pl_type(type_string: str):
     """
     Safely evaluate a Polars type string with restricted namespace.
-    Only allows Polars types and basic Python literals.
+    Supports both formats:
+      - With pl. prefix: pl.List(pl.Int64)
+      - Without pl. prefix: List(Int64)
     """
     # Define allowed names in the evaluation namespace
     safe_dict = {
-        # Polars module and types
+        # Keep pl module for backwards compatibility with pl.X format
         "pl": pl,
-        # Basic Python built-ins for literals
-        "int": int,
-        "str": str,
-        "float": float,
-        "bool": bool,
-        "list": list,
-        "dict": dict,
-        "tuple": tuple,
+
+        # Polars types directly available (without pl. prefix)
+        "List": pl.List,
+        "Array": pl.Array,
+        "Struct": pl.Struct,
+        "Field": pl.Field,
+        "Decimal": pl.Decimal,
+
+        # Integer types
+        "Int8": pl.Int8,
+        "Int16": pl.Int16,
+        "Int32": pl.Int32,
+        "Int64": pl.Int64,
+        "UInt8": pl.UInt8,
+        "UInt16": pl.UInt16,
+        "UInt32": pl.UInt32,
+        "UInt64": pl.UInt64,
+
+        # Float types
+        "Float32": pl.Float32,
+        "Float64": pl.Float64,
+
+        # Other types
+        "Boolean": pl.Boolean,
+        "String": pl.String,
+        "Utf8": pl.Utf8,
+        "Binary": pl.Binary,
+        "Date": pl.Date,
+        "Time": pl.Time,
+        "Datetime": pl.Datetime,
+        "Duration": pl.Duration,
+        "Categorical": pl.Categorical,
+        "Enum": pl.Enum,
+        "Null": pl.Null,
+        "Object": pl.Object,
+
         # Disable dangerous built-ins
         "__builtins__": {},
     }
@@ -57,10 +87,10 @@ def get_polars_type(dtype: str):
     pl_datetype = dtype_to_pl.get(dtype.lower())
     if pl_datetype is not None:
         return pl_datetype
-    elif hasattr(pl, dtype):
-        return getattr(pl, dtype)
-    else:
-        return pl.String
+    try:
+        return safe_eval_pl_type(dtype)
+    except Exception:
+        return pl.String  # Fallback to String if evaluation fails
 
 
 def cast_str_to_polars_type(dtype: str) -> pl.DataType:
