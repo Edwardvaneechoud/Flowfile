@@ -58,9 +58,11 @@ def _get_active_flows():
 
 def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int | None:
     active_flows = _get_active_flows()
+    # Extract just the filename for comparison (handles full paths and avoids Windows casing issues)
+    search_filename = Path(flow_name).name
     for flow in active_flows:
         flow_path: str = flow.get('path')
-        if flow_name in flow_path:
+        if Path(flow_path).name == search_filename:
             return flow.get('flow_id')
 
 
