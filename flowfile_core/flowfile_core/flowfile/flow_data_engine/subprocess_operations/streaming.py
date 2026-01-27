@@ -24,6 +24,93 @@ def _get_ws_url() -> str:
     return WORKER_URL.replace("http://", "ws://").replace("https://", "wss://")
 
 
+# ---------------------------------------------------------------------------
+# Message building
+# ---------------------------------------------------------------------------
+
+def _build_metadata(
+    task_id: str,
+    operation_type: str,
+    flow_id: int,
+    node_id: int | str,
+    kwargs: dict | None,
+) -> dict:
+    """Build the JSON metadata message for the WebSocket protocol."""
+    metadata = {
+        "task_id": task_id,
+        "operation": operation_type,
+        "flow_id": flow_id,
+        "node_id": node_id,
+    }
+    if kwargs:
+        metadata["kwargs"] = kwargs
+    return metadata
+
+
+# ---------------------------------------------------------------------------
+# Message receiving
+# ---------------------------------------------------------------------------
+
+def _handle_complete_message(data: dict, task_id: str) -> Status:
+    """Build a Status from a 'complete' protocol message."""
+    return Status(
+        background_task_id=task_id,
+        status="Completed",
+        file_ref=data.get("file_ref", ""),
+        result_type=data.get("result_type", "polars"),
+        progress=100,
+    )
+
+
+def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
+    """Receive messages from the worker until a result or error arrives.
+
+    Handles the three message types in the protocol:
+    - progress: ignored in sync mode
+    - complete: builds Status, then reads result (binary or JSON) if present
+    - error: raises Exception
+
+    Returns:
+        (result, status) where result may be a LazyFrame, other data, or None.
+    """
+    result = None
+    status = None
+
+    while True:
+        msg = ws.recv()
+
+        if isinstance(msg, bytes):
+            # Binary frame = raw serialized LazyFrame bytes
+            result = pl.LazyFrame.deserialize(io.BytesIO(msg))
+            break
+
+        data = json.loads(msg)
+        msg_type = data.get("type")
+
+        if msg_type == "progress":
+            continue
+
+        if msg_type == "complete":
+            status = _handle_complete_message(data, task_id)
+            if not data.get("has_result", False):
+                break
+            # Next message will be binary (polars) or JSON (result_data)
+            continue
+
+        if msg_type == "result_data":
+            result = data.get("data")
+            break
+
+        if msg_type == "error":
+            raise Exception(data.get("error_message", "Unknown worker error"))
+
+    return result, status
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def streaming_submit(
     task_id: str,
     operation_type: str,
@@ -56,63 +143,12 @@ def streaming_submit(
     from websockets.sync.client import connect
 
     ws_url = _get_ws_url() + "/ws/submit"
-    result = None
-    status = None
+    metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
     with connect(ws_url) as ws:
-        # Send metadata
-        metadata = {
-            "task_id": task_id,
-            "operation": operation_type,
-            "flow_id": flow_id,
-            "node_id": node_id,
-        }
-        if kwargs:
-            metadata["kwargs"] = kwargs
         ws.send(json.dumps(metadata))
-
-        # Send binary payload
         ws.send(lf_bytes)
-
-        # Receive messages until result or error
-        while True:
-            msg = ws.recv()
-
-            if isinstance(msg, bytes):
-                # Binary frame = raw serialized LazyFrame bytes
-                result = pl.LazyFrame.deserialize(io.BytesIO(msg))
-                break
-            else:
-                data = json.loads(msg)
-                msg_type = data.get("type")
-
-                if msg_type == "progress":
-                    # Progress updates are received but not acted on in sync mode
-                    # Subclasses could override to expose progress
-                    continue
-
-                elif msg_type == "complete":
-                    status = Status(
-                        background_task_id=task_id,
-                        status="Completed",
-                        file_ref=data.get("file_ref", ""),
-                        result_type=data.get("result_type", "polars"),
-                        progress=100,
-                    )
-                    if not data.get("has_result", False):
-                        # No result data follows (e.g., store_sample)
-                        break
-                    # For polars results, next message will be binary
-                    # For other results, next message will be result_data JSON
-                    continue
-
-                elif msg_type == "result_data":
-                    # Non-binary result (schema stats, record count, etc.)
-                    result = data.get("data")
-                    break
-
-                elif msg_type == "error":
-                    raise Exception(data.get("error_message", "Unknown worker error"))
+        result, status = _receive_result(ws, task_id)
 
     if status is None:
         status = Status(
