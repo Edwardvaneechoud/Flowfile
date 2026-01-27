@@ -18,6 +18,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import streaming_submit
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
@@ -129,6 +130,7 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
 
 
 def get_results(file_ref: str) -> Status | None:
+    file_ref = '6f485eb-2708-4bd2-b184-00cc2c8b7c03'
     f = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if f.status_code == 200:
         return Status(**f.json())
@@ -464,8 +466,7 @@ class BaseFetcher:
         Sets self._result, self._running, self._started, and self.status.
         Raises on connection or task error (caller should fall back to REST).
         """
-        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import streaming_submit
-
+        breakpoint()
         result, status = streaming_submit(
             task_id=self.file_ref,
             operation_type=operation_type,

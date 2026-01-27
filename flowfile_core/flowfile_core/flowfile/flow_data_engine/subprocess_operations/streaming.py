@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 import polars as pl
+from websockets.sync.client import connect
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
@@ -59,6 +60,7 @@ def _handle_complete_message(data: dict, task_id: str) -> Status:
         file_ref=data.get("file_ref", ""),
         result_type=data.get("result_type", "polars"),
         progress=100,
+        results=data.get("results", None),
     )
 
 
@@ -75,7 +77,7 @@ def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
     """
     result = None
     status = None
-
+    breakpoint()
     while True:
         msg = ws.recv()
 
@@ -107,10 +109,6 @@ def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
     return result, status
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def streaming_submit(
     task_id: str,
     operation_type: str,
@@ -140,11 +138,10 @@ def streaming_submit(
     Raises:
         Exception: On connection failure, task error, or protocol error
     """
-    from websockets.sync.client import connect
 
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
-
+    breakpoint()
     with connect(ws_url) as ws:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)
