@@ -2512,6 +2512,7 @@ class FlowGraph:
             execution_location=self.flow_settings.execution_location,
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
+            max_parallel_workers=self.flow_settings.max_parallel_workers,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

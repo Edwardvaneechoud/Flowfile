@@ -233,6 +233,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         execution_location=flowfile_data.flowfile_settings.execution_location,
         auto_save=flowfile_data.flowfile_settings.auto_save,
         show_detailed_progress=flowfile_data.flowfile_settings.show_detailed_progress,
+        max_parallel_workers=flowfile_data.flowfile_settings.max_parallel_workers,
     )
 
     return schemas.FlowInformation(

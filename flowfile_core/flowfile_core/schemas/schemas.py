@@ -195,6 +195,7 @@ class FlowfileSettings(BaseModel):
     execution_location: ExecutionLocationsLiteral = "local"
     auto_save: bool = False
     show_detailed_progress: bool = True
+    max_parallel_workers: int = Field(default=4, ge=1)
 
 
 class FlowfileNode(BaseModel):
