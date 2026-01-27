@@ -822,7 +822,7 @@ class TestLambdaSerialization:
 
     def test_extract_lambda_source_simple(self):
         """Test that _extract_lambda_source converts a simple lambda to a named function."""
-        from flowfile_frame.utils import _extract_lambda_source
+        from flowfile_frame.callable_utils import _extract_lambda_source
 
         fn = lambda x: x * 2  # noqa: E731
         func_def, func_name = _extract_lambda_source(fn)
@@ -835,7 +835,7 @@ class TestLambdaSerialization:
 
     def test_extract_lambda_source_with_closure(self):
         """Test lambda extraction captures closure variables."""
-        from flowfile_frame.utils import _extract_lambda_source
+        from flowfile_frame.callable_utils import _extract_lambda_source
 
         threshold = 10
         fn = lambda x: x > threshold  # noqa: E731
@@ -846,7 +846,7 @@ class TestLambdaSerialization:
 
     def test_extract_lambda_source_non_representable_closure(self):
         """Test that lambdas with non-representable closures return None."""
-        from flowfile_frame.utils import _extract_lambda_source
+        from flowfile_frame.callable_utils import _extract_lambda_source
 
         class Custom:
             pass
