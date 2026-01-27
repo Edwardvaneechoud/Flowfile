@@ -228,7 +228,7 @@ class TestExpressions:
         assert str(expr) == "pl.col('name').str.len_chars().alias('name_length')"
 
         expr = col("name").map_elements(lambda x: x.upper()).str
-        assert not expr.convertable_to_code
+        assert expr.convertable_to_code  # lambdas are now convertible via AST extraction
 
     def test_datetime_methods(self):
         """Test datetime methods on expressions."""
@@ -257,7 +257,7 @@ class TestExpressions:
         assert expr.convertable_to_code
 
         expr = date_col.dt.day().map_elements(lambda x: x.upper())
-        assert not expr.convertable_to_code
+        assert expr.convertable_to_code  # lambdas are now convertible via AST extraction
 
     def test_null_related_methods(self):
         """Test null-related methods on expressions."""
@@ -804,6 +804,122 @@ class TestAdvancedExpressions:
 
         assert result["float_val"].dtype == pl.Float64
         assert result["float_val"].to_list() == [10.0, 20.0, 30.0, 40.0, 50.0]
+
+
+class TestLambdaSerialization:
+    """Tests for lambda-to-named-function conversion in code generation."""
+
+    @pytest.fixture
+    def sample_df(self):
+        return FlowFrame(
+            {
+                "id": [1, 2, 3, 4, 5],
+                "value_1": [10, 20, 30, 40, 50],
+                "nested": [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],
+                "category": ["A", "B", "A", "B", "C"],
+            }
+        )
+
+    def test_extract_lambda_source_simple(self):
+        """Test that _extract_lambda_source converts a simple lambda to a named function."""
+        from flowfile_frame.utils import _extract_lambda_source
+
+        fn = lambda x: x * 2  # noqa: E731
+        func_def, func_name = _extract_lambda_source(fn)
+        assert func_def is not None
+        assert func_name is not None
+        assert func_name.startswith("_lambda_fn_")
+        assert "def " in func_def
+        assert "return" in func_def
+        assert "x * 2" in func_def
+
+    def test_extract_lambda_source_with_closure(self):
+        """Test lambda extraction captures closure variables."""
+        from flowfile_frame.utils import _extract_lambda_source
+
+        threshold = 10
+        fn = lambda x: x > threshold  # noqa: E731
+        func_def, func_name = _extract_lambda_source(fn)
+        assert func_def is not None
+        assert "threshold = 10" in func_def
+        assert "return" in func_def
+
+    def test_extract_lambda_source_non_representable_closure(self):
+        """Test that lambdas with non-representable closures return None."""
+        from flowfile_frame.utils import _extract_lambda_source
+
+        class Custom:
+            pass
+
+        obj = Custom()
+        fn = lambda x: obj  # noqa: E731
+        func_def, func_name = _extract_lambda_source(fn)
+        assert func_def is None
+        assert func_name is None
+
+    def test_with_columns_lambda_generates_code(self, sample_df):
+        """Test that a lambda in with_columns produces code instead of serialized LazyFrame."""
+        result = sample_df.with_columns(
+            col("nested").map_elements(lambda x: x[0]).alias("first_elem")
+        )
+        node_settings = result.get_node_settings()
+        polars_code = node_settings.setting_input.polars_code_input.polars_code
+        # Should contain a function definition, not a serialized LazyFrame
+        assert "serialized_value" not in polars_code
+        assert "_lambda_fn_" in polars_code
+        assert "def " in polars_code
+
+    def test_with_columns_lambda_correctness(self, sample_df):
+        """Test that lambda code generation produces correct results."""
+        res = sample_df.with_columns(
+            col("nested").map_elements(lambda x: x[0]).alias("first_elem")
+        ).collect()
+        expected = sample_df.data.with_columns(
+            pl.col("nested").map_elements(lambda x: x[0]).alias("first_elem")
+        ).collect()
+        assert_frame_equal(res, expected)
+
+    def test_select_lambda_generates_code(self, sample_df):
+        """Test that a lambda in select produces code instead of serialized LazyFrame."""
+        result = sample_df.select(
+            col("nested").map_elements(lambda x: x[0])
+        )
+        node_settings = result.get_node_settings()
+        polars_code = node_settings.setting_input.polars_code_input.polars_code
+        assert "serialized_value" not in polars_code
+        assert "_lambda_fn_" in polars_code
+
+    def test_filter_lambda_correctness(self, sample_df):
+        """Test that filter with lambda still produces correct results."""
+        res = sample_df.filter(
+            col("nested").map_elements(lambda x: x[0] == 1)
+        ).collect()
+        expected = sample_df.data.filter(
+            pl.col("nested").map_elements(lambda x: x[0] == 1)
+        ).collect()
+        assert_frame_equal(res, expected)
+
+    def test_lambda_with_closure_variable(self, sample_df):
+        """Test that lambdas capturing closure variables work correctly."""
+        threshold = 25
+        res = sample_df.filter(
+            col("value_1").map_elements(lambda x: x > threshold)
+        ).collect()
+        expected = sample_df.data.filter(
+            pl.col("value_1").map_elements(lambda x: x > threshold)
+        ).collect()
+        assert_frame_equal(res, expected)
+
+    def test_named_function_still_works(self, sample_df):
+        """Verify that named functions continue to work as before."""
+        def double(x):
+            return x * 2
+
+        res = sample_df.with_columns(col("value_1").map_batches(double))
+        node_settings = res.get_node_settings()
+        polars_code = node_settings.setting_input.polars_code_input.polars_code
+        assert "double" in polars_code
+        assert "serialized_value" not in polars_code
 
 
 if __name__ == "__main__":

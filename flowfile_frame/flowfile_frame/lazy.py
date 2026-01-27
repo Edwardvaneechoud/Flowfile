@@ -8,7 +8,7 @@ import polars as pl
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_frame.expr import Expr
 from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
-from flowfile_frame.utils import _get_function_source
+from flowfile_frame.utils import _extract_lambda_source, _get_function_source
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -148,14 +148,21 @@ def _process_callable_arg(arg: Any) -> tuple[str, Any, bool, str | None]:
     """
     function_source = None
     if hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-        # Try to get function source
+        # Named function — try to get function source
         try:
             function_source, _ = _get_function_source(arg)
-        except:
+        except Exception:
             pass
         return arg.__name__, arg, True, function_source
+    elif hasattr(arg, "__name__") and arg.__name__ == "<lambda>":
+        # Lambda function — try to extract source via AST and convert to named function
+        func_def, func_name = _extract_lambda_source(arg)
+        if func_def and func_name:
+            return func_name, arg, True, func_def
+        # Fall back to existing behavior if extraction fails
+        return repr(arg), arg, False, None
     else:
-        # For lambdas or callables without a proper name
+        # For callables without a proper name
         return repr(arg), arg, False, None
 
 

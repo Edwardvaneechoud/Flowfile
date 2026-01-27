@@ -1,3 +1,4 @@
+import ast
 import inspect
 import textwrap
 import uuid
@@ -70,6 +71,105 @@ def _get_function_source(func):
     except (OSError, TypeError):
         # Can't get source (e.g., built-in function, C extension)
         return None, False
+
+
+def _is_safely_representable(value: Any) -> bool:
+    """Check if a value can be safely round-tripped through repr()."""
+    if isinstance(value, (int, float, bool, str, bytes, type(None))):
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_is_safely_representable(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            _is_safely_representable(k) and _is_safely_representable(v)
+            for k, v in value.items()
+        )
+    if isinstance(value, set):
+        return all(_is_safely_representable(item) for item in value)
+    return False
+
+
+def _extract_lambda_source(func) -> tuple[str | None, str | None]:
+    """
+    Extract a lambda function's source code and convert it to a named function definition.
+
+    Uses inspect.getsource() + AST parsing to find the lambda's argument list and body,
+    then generates a named function definition. Also captures closure variables so that
+    the generated code is self-contained.
+
+    Parameters
+    ----------
+    func : callable
+        A lambda function to extract source from.
+
+    Returns
+    -------
+    tuple[str | None, str | None]
+        (function_definition_source, function_name) or (None, None) if extraction fails.
+    """
+    try:
+        source = inspect.getsource(func)
+    except (OSError, TypeError):
+        return None, None
+
+    source = textwrap.dedent(source).strip()
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None, None
+
+    # Find all lambda nodes in the source
+    lambdas = [node for node in ast.walk(tree) if isinstance(node, ast.Lambda)]
+    if not lambdas:
+        return None, None
+
+    # Match the lambda to our function based on argument names
+    expected_args = list(func.__code__.co_varnames[: func.__code__.co_argcount])
+    matched_lambda = None
+    for lambda_node in lambdas:
+        node_args = [arg.arg for arg in lambda_node.args.args]
+        if node_args == expected_args:
+            matched_lambda = lambda_node
+            break
+
+    if matched_lambda is None:
+        # Fall back to first lambda if exact match not found
+        matched_lambda = lambdas[0]
+
+    # Generate a deterministic function name from the code object
+    func_name = f"_lambda_fn_{abs(hash(func.__code__)) % 100000}"
+
+    # Extract args and body via AST
+    args_str = ast.unparse(matched_lambda.args)
+    body_str = ast.unparse(matched_lambda.body)
+
+    # Capture closure variables so the generated code is self-contained
+    closure_defs: list[str] = []
+    if func.__code__.co_freevars and func.__closure__:
+        for var_name, cell in zip(func.__code__.co_freevars, func.__closure__):
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                # Cell is empty (variable not yet assigned)
+                return None, None
+
+            if not _is_safely_representable(value):
+                # Cannot safely serialize this closure variable
+                return None, None
+
+            closure_defs.append(f"{var_name} = {repr(value)}")
+
+    # Build function definition
+    lines: list[str] = []
+    if closure_defs:
+        lines.extend(closure_defs)
+        lines.append("")
+    lines.append(f"def {func_name}({args_str}):")
+    lines.append(f"    return {body_str}")
+
+    func_def = "\n".join(lines)
+    return func_def, func_name
 
 
 def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:

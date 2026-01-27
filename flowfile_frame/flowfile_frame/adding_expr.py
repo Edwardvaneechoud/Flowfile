@@ -5,7 +5,7 @@ from typing import TypeVar
 import polars as pl
 
 from flowfile_frame.config import logger
-from flowfile_frame.utils import _get_function_source
+from flowfile_frame.utils import _extract_lambda_source, _get_function_source
 
 T = TypeVar("T")
 ExprT = TypeVar("ExprT", bound="Expr")
@@ -44,17 +44,22 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         # Process positional arguments
         for arg in args:
             if callable(arg) and not isinstance(arg, type):
-                # Try to get function source
                 try:
-                    source, is_module_level = _get_function_source(arg)
-                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-                        function_sources.append(source)
-                        # Use the function name in the representation
-                        args_representations.append(arg.__name__)
+                    if hasattr(arg, "__name__") and arg.__name__ == "<lambda>":
+                        func_def, func_name = _extract_lambda_source(arg)
+                        if func_def and func_name:
+                            function_sources.append(func_def)
+                            args_representations.append(func_name)
+                        else:
+                            args_representations.append(repr(arg))
                     else:
-                        # Fallback to repr if we can't get the source
-                        args_representations.append(repr(arg))
-                except:
+                        source, is_module_level = _get_function_source(arg)
+                        if source and hasattr(arg, "__name__"):
+                            function_sources.append(source)
+                            args_representations.append(arg.__name__)
+                        else:
+                            args_representations.append(repr(arg))
+                except Exception:
                     args_representations.append(repr(arg))
             else:
                 args_representations.append(repr(arg))
@@ -62,17 +67,22 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         # Process keyword arguments
         for key, value in kwargs.items():
             if callable(value) and not isinstance(value, type):
-                # Try to get function source
                 try:
-                    source, is_module_level = _get_function_source(value)
-                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
-                        function_sources.append(source)
-                        # Use the function name in the representation
-                        kwargs_representations.append(f"{key}={value.__name__}")
+                    if hasattr(value, "__name__") and value.__name__ == "<lambda>":
+                        func_def, func_name = _extract_lambda_source(value)
+                        if func_def and func_name:
+                            function_sources.append(func_def)
+                            kwargs_representations.append(f"{key}={func_name}")
+                        else:
+                            kwargs_representations.append(f"{key}={repr(value)}")
                     else:
-                        # Fallback to repr if we can't get the source
-                        kwargs_representations.append(f"{key}={repr(value)}")
-                except:
+                        source, is_module_level = _get_function_source(value)
+                        if source and hasattr(value, "__name__"):
+                            function_sources.append(source)
+                            kwargs_representations.append(f"{key}={value.__name__}")
+                        else:
+                            kwargs_representations.append(f"{key}={repr(value)}")
+                except Exception:
                     kwargs_representations.append(f"{key}={repr(value)}")
             else:
                 kwargs_representations.append(f"{key}={repr(value)}")
@@ -229,27 +239,32 @@ def add_expr_methods(cls: type[ExprT]) -> type[ExprT]:
                         # Process positional arguments
                         for i, arg in enumerate(args):
                             if callable(arg) and not isinstance(arg, type):
-                                # Try to get function source
                                 try:
-                                    source, is_module_level = _get_function_source(arg)
-                                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-                                        function_sources.append(source)
-                                        # Use the function name in the representation
-                                        args_representations.append(arg.__name__)
-                                        arg.__repr__ = lambda: arg.__name__
-
+                                    if hasattr(arg, "__name__") and arg.__name__ == "<lambda>":
+                                        # Lambda — try to extract source via AST
+                                        func_def, func_name = _extract_lambda_source(arg)
+                                        if func_def and func_name:
+                                            function_sources.append(func_def)
+                                            args_representations.append(func_name)
+                                        else:
+                                            logger.warning(
+                                                f"Warning: Using anonymous functions in {method_name} is not convertable to UI code"
+                                            )
+                                            logger.warning(
+                                                "Consider using defined functions (def abc(a, b, c): return ...), "
+                                                "In a separate script"
+                                            )
+                                            convertable_to_code = False
+                                            args_representations.append(repr(arg))
                                     else:
-                                        # Lambda or unnamed function - not convertible
-                                        logger.warning(
-                                            f"Warning: Using anonymous functions in {method_name} is not convertable to UI code"
-                                        )
-                                        logger.warning(
-                                            "Consider using defined functions (def abc(a, b, c): return ...), "
-                                            "In a separate script"
-                                        )
-                                        convertable_to_code = False
-                                        args_representations.append(repr(arg))
-                                except:
+                                        # Named function — try to get source
+                                        source, is_module_level = _get_function_source(arg)
+                                        if source and hasattr(arg, "__name__"):
+                                            function_sources.append(source)
+                                            args_representations.append(arg.__name__)
+                                        else:
+                                            args_representations.append(repr(arg))
+                                except Exception:
                                     args_representations.append(repr(arg))
                             else:
                                 args_representations.append(repr(arg))
@@ -257,18 +272,25 @@ def add_expr_methods(cls: type[ExprT]) -> type[ExprT]:
                         # Process keyword arguments
                         for key, value in kwargs.items():
                             if callable(value) and not isinstance(value, type):
-                                # Try to get function source
                                 try:
-                                    source, is_module_level = _get_function_source(value)
-                                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
-                                        function_sources.append(source)
-                                        # Use the function name in the representation
-                                        kwargs_representations.append(f"{key}={value.__name__}")
+                                    if hasattr(value, "__name__") and value.__name__ == "<lambda>":
+                                        # Lambda — try to extract source via AST
+                                        func_def, func_name = _extract_lambda_source(value)
+                                        if func_def and func_name:
+                                            function_sources.append(func_def)
+                                            kwargs_representations.append(f"{key}={func_name}")
+                                        else:
+                                            convertable_to_code = False
+                                            kwargs_representations.append(f"{key}={repr(value)}")
                                     else:
-                                        # Lambda or unnamed function - not convertible
-                                        convertable_to_code = False
-                                        kwargs_representations.append(f"{key}={repr(value)}")
-                                except:
+                                        # Named function — try to get source
+                                        source, is_module_level = _get_function_source(value)
+                                        if source and hasattr(value, "__name__"):
+                                            function_sources.append(source)
+                                            kwargs_representations.append(f"{key}={value.__name__}")
+                                        else:
+                                            kwargs_representations.append(f"{key}={repr(value)}")
+                                except Exception:
                                     kwargs_representations.append(f"{key}={repr(value)}")
                             else:
                                 kwargs_representations.append(f"{key}={repr(value)}")
@@ -289,7 +311,6 @@ def add_expr_methods(cls: type[ExprT]) -> type[ExprT]:
                             params_repr = ""
                         # Create a representation string
                         new_repr = f"{self._repr_str}.{method_name}({params_repr})"
-                        # self._repr_str = new_repr
                         # Return a new expression with the convertable_to_code flag set appropriately
                         result = self._create_next_expr(
                             *args,
@@ -297,7 +318,8 @@ def add_expr_methods(cls: type[ExprT]) -> type[ExprT]:
                             result_expr=result_expr,
                             is_complex=True,
                             convertable_to_code=convertable_to_code,
-                            _function_sources=function_sources,  # Pass function sources
+                            _function_sources=function_sources,
+                            _repr_override=new_repr,
                             **kwargs,
                         )
                         return result

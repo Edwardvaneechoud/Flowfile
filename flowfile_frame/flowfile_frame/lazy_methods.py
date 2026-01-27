@@ -5,7 +5,7 @@ from typing import TypeVar
 import polars as pl
 
 from flowfile_frame.config import logger
-from flowfile_frame.utils import _get_function_source
+from flowfile_frame.utils import _extract_lambda_source, _get_function_source
 
 T = TypeVar("T")
 FlowFrameT = TypeVar("FlowFrameT", bound="FlowFrame")
@@ -122,32 +122,48 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         # Process positional arguments
         for arg in args:
             if callable(arg) and not isinstance(arg, type):
-                # Try to get function source
                 try:
-                    source, is_module_level = _get_function_source(arg)
-                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-                        function_sources.append(source)
-                        # Use the function name in the representation
-                        args_representations.append(arg.__name__)
+                    if hasattr(arg, "__name__") and arg.__name__ == "<lambda>":
+                        # Lambda — try to extract source via AST
+                        func_def, func_name = _extract_lambda_source(arg)
+                        if func_def and func_name:
+                            function_sources.append(func_def)
+                            args_representations.append(func_name)
+                        else:
+                            args_representations.append(repr(arg))
                     else:
-                        # Fallback to repr if we can't get the source
-                        args_representations.append(repr(arg))
-                except:
+                        # Named function — try to get source
+                        source, is_module_level = _get_function_source(arg)
+                        if source and hasattr(arg, "__name__"):
+                            function_sources.append(source)
+                            args_representations.append(arg.__name__)
+                        else:
+                            args_representations.append(repr(arg))
+                except Exception:
                     args_representations.append(repr(arg))
             else:
                 args_representations.append(repr(arg))
         # Process keyword arguments
         for key, value in kwargs.items():
             if callable(value) and not isinstance(value, type):
-                # Try to get function source
                 try:
-                    source, is_module_level = _get_function_source(value)
-                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
-                        function_sources.append(source)
-                        kwargs_representations.append(f"{key}={value.__name__}")
+                    if hasattr(value, "__name__") and value.__name__ == "<lambda>":
+                        # Lambda — try to extract source via AST
+                        func_def, func_name = _extract_lambda_source(value)
+                        if func_def and func_name:
+                            function_sources.append(func_def)
+                            kwargs_representations.append(f"{key}={func_name}")
+                        else:
+                            kwargs_representations.append(f"{key}={repr(value)}")
                     else:
-                        kwargs_representations.append(f"{key}={repr(value)}")
-                except:
+                        # Named function — try to get source
+                        source, is_module_level = _get_function_source(value)
+                        if source and hasattr(value, "__name__"):
+                            function_sources.append(source)
+                            kwargs_representations.append(f"{key}={value.__name__}")
+                        else:
+                            kwargs_representations.append(f"{key}={repr(value)}")
+                except Exception:
                     kwargs_representations.append(f"{key}={repr(value)}")
             else:
                 kwargs_representations.append(f"{key}={repr(value)}")
