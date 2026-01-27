@@ -424,7 +424,6 @@ class FlowNode:
 
         This includes the node's connections, settings, and position.
         """
-        logger.info("setting node information")
         node_information = self.node_information
         node_information.left_input_id = self.node_inputs.left_input.node_id if self.left_input else None
         node_information.right_input_id = self.node_inputs.right_input.node_id if self.right_input else None
