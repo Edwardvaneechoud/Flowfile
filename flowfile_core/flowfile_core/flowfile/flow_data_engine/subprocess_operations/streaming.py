@@ -132,47 +132,49 @@ def _deserialize_and_populate_status(
     return raw_result, status
 
 
-def streaming_submit(
+def streaming_start(
     task_id: str,
     operation_type: str,
     flow_id: int,
     node_id: int | str,
     lf_bytes: bytes,
     kwargs: dict | None = None,
-) -> tuple[Any, Status]:
-    """Submit a task via WebSocket and receive streamed results.
+):
+    """Open a WebSocket connection and send the task.
 
-    Opens a single WebSocket connection that:
-    1. Sends task metadata (JSON) + payload (binary)
-    2. Receives progress updates (JSON)
-    3. Receives result as binary frame (polars) or JSON (other)
+    Returns the **open** connection.  The caller must eventually call
+    :func:`streaming_receive` (which closes the connection) or close it
+    manually.
+
+    Raises immediately on connection failure or send error.
+    """
+    ws_url = _get_ws_url() + "/ws/submit"
+    metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
+
+    ws = connect(ws_url)
+    try:
+        ws.send(json.dumps(metadata))
+        ws.send(lf_bytes)
+    except Exception:
+        ws.close()
+        raise
+    return ws
+
+
+def streaming_receive(ws, task_id: str) -> tuple[Any, Status]:
+    """Block until the worker sends back a result, then close the connection.
 
     The returned ``Status`` object is fully populated (including
     ``results``) so it is equivalent to what the REST polling path
     would produce.
 
-    Args:
-        task_id: Unique identifier for the task
-        operation_type: Operation to perform (store, calculate_schema, etc.)
-        flow_id: Flow ID for logging and cache organization
-        node_id: Node ID for logging
-        lf_bytes: Serialized LazyFrame bytes
-        kwargs: Extra keyword arguments for the operation
-
     Returns:
         Tuple of (result, Status)
-
-    Raises:
-        Exception: On connection failure, task error, or protocol error
     """
-
-    ws_url = _get_ws_url() + "/ws/submit"
-    metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
-
-    with connect(ws_url) as ws:
-        ws.send(json.dumps(metadata))
-        ws.send(lf_bytes)
+    try:
         raw_result, status = _receive_raw_result(ws, task_id)
+    finally:
+        ws.close()
 
     if status is None:
         status = Status(
@@ -187,19 +189,18 @@ def streaming_submit(
     return _deserialize_and_populate_status(raw_result, status)
 
 
-def is_streaming_available() -> bool:
-    """Check if the worker supports WebSocket streaming.
+def streaming_submit(
+    task_id: str,
+    operation_type: str,
+    flow_id: int,
+    node_id: int | str,
+    lf_bytes: bytes,
+    kwargs: dict | None = None,
+) -> tuple[Any, Status]:
+    """Submit a task via WebSocket and block until the result arrives.
 
-    Attempts a WebSocket connection to the worker. Result is not cached
-    because worker availability can change.
+    Convenience wrapper around :func:`streaming_start` +
+    :func:`streaming_receive`.
     """
-    try:
-        from websockets.sync.client import connect
-
-        ws_url = _get_ws_url() + "/ws/submit"
-        # Quick connection test with short timeout
-        with connect(ws_url, open_timeout=2, close_timeout=1) as ws:
-            ws.close()
-        return True
-    except Exception:
-        return False
+    ws = streaming_start(task_id, operation_type, flow_id, node_id, lf_bytes, kwargs)
+    return streaming_receive(ws, task_id)
