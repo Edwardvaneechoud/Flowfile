@@ -8,7 +8,7 @@ import polars as pl
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_frame.expr import Expr
 from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
-from flowfile_frame.utils import _get_function_source
+from flowfile_frame.callable_utils import resolve_callable
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -146,17 +146,8 @@ def _process_callable_arg(arg: Any) -> tuple[str, Any, bool, str | None]:
     Returns:
         Tuple of (repr_string, processed_arg, convertible_to_code, function_source)
     """
-    function_source = None
-    if hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
-        # Try to get function source
-        try:
-            function_source, _ = _get_function_source(arg)
-        except:
-            pass
-        return arg.__name__, arg, True, function_source
-    else:
-        # For lambdas or callables without a proper name
-        return repr(arg), arg, False, None
+    resolved = resolve_callable(arg)
+    return resolved.name, arg, resolved.resolved, resolved.source
 
 
 def _process_argument(arg: Any, can_be_expr: bool) -> tuple[str, Any, bool, str | None]:

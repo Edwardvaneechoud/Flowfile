@@ -485,13 +485,17 @@ class Expr:
         convertable_to_code: bool = None,
         is_complex: bool,
         _function_sources: list[str] | None = None,
+        _repr_override: str | None = None,
         **kwargs,
     ) -> Expr:
         """Creates a new Expr instance, appending method call to repr string."""
-        # Filter out _function_sources from kwargs to avoid passing it to _repr_args
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_sources"}
-        args_repr = _repr_args(*args, **filtered_kwargs)
-        new_repr = f"{self._repr_str}.{method_name}({args_repr})"
+        if _repr_override is not None:
+            new_repr = _repr_override
+        else:
+            # Filter out _function_sources from kwargs to avoid passing it to _repr_args
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "_function_sources"}
+            args_repr = _repr_args(*args, **filtered_kwargs)
+            new_repr = f"{self._repr_str}.{method_name}({args_repr})"
 
         if convertable_to_code is None:
             convertable_to_code = self.convertable_to_code
