@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from flowfile_worker import mp_context
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
 from flowfile_worker.routes import router
+from flowfile_worker.streaming import streaming_router
 from shared.storage_config import storage
 
 should_exit = False
@@ -40,6 +41,7 @@ async def shutdown_handler(app: FastAPI):
 
 app = FastAPI(lifespan=shutdown_handler)
 app.include_router(router)
+app.include_router(streaming_router)
 
 
 @app.post("/shutdown")

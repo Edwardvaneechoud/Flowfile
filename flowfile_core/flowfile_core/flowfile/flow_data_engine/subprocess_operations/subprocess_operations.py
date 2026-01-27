@@ -467,6 +467,18 @@ class ExternalDfFetcher(BaseFetcher):
     ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+
+        # Try WebSocket streaming first (eliminates polling + base64 overhead)
+        if wait_on_completion:
+            try:
+                self._execute_streaming(
+                    flow_id=flow_id, node_id=node_id, lf=lf, operation_type=operation_type
+                )
+                return
+            except Exception as e:
+                logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+
+        # REST fallback (original behavior)
         r = trigger_df_operation(
             lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id
         )
@@ -474,6 +486,23 @@ class ExternalDfFetcher(BaseFetcher):
         if wait_on_completion:
             _ = self.get_result()
         self.status = get_status(self.file_ref)
+
+    def _execute_streaming(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame, operation_type: str):
+        """Execute via WebSocket streaming - no polling, binary result transfer."""
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import streaming_submit
+
+        result, status = streaming_submit(
+            task_id=self.file_ref,
+            operation_type=operation_type,
+            flow_id=flow_id,
+            node_id=node_id,
+            lf_bytes=lf.serialize(),
+        )
+        with self._lock:
+            self._result = result
+            self._running = False
+            self._started = True
+        self.status = status
 
 
 class ExternalSampler(BaseFetcher):
@@ -490,6 +519,18 @@ class ExternalSampler(BaseFetcher):
     ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+
+        # Try WebSocket streaming first (eliminates polling + base64 overhead)
+        if wait_on_completion:
+            try:
+                self._execute_streaming(
+                    flow_id=flow_id, node_id=node_id, lf=lf, sample_size=sample_size
+                )
+                return
+            except Exception as e:
+                logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+
+        # REST fallback (original behavior)
         r = trigger_sample_operation(
             lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
         )
@@ -497,6 +538,24 @@ class ExternalSampler(BaseFetcher):
         if wait_on_completion:
             _ = self.get_result()
         self.status = get_status(self.file_ref)
+
+    def _execute_streaming(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame, sample_size: int):
+        """Execute via WebSocket streaming - no polling, binary result transfer."""
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import streaming_submit
+
+        result, status = streaming_submit(
+            task_id=self.file_ref,
+            operation_type="store_sample",
+            flow_id=flow_id,
+            node_id=node_id,
+            lf_bytes=lf.serialize(),
+            kwargs={"sample_size": sample_size},
+        )
+        with self._lock:
+            self._result = result
+            self._running = False
+            self._started = True
+        self.status = status
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
