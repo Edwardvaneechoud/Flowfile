@@ -1,5 +1,6 @@
 import polars as pl
 import pytest
+from polars import LazyFrame
 from polars.testing import assert_frame_equal
 
 from flowfile_frame import FlowFrame
@@ -978,6 +979,19 @@ class TestLambdaSerialization:
         assert "_lambda_fn_" in func_def
         assert "return 42" in func_def
         assert "return x + inner()" in func_def
+
+    def test_func_in_func(self, sample_df):
+
+        def _random():
+            return 32
+
+        fn = lambda x: x + _random()  # noqa: E731
+        output_df = sample_df.with_columns(col("value_1").map_elements(fn, return_dtype=pl.Int32).alias('test'))
+        node_settings = output_df.get_node_settings()
+        assert node_settings.setting_input.polars_code_input.polars_code
+        assert 'return 32' in node_settings.setting_input.polars_code_input.polars_code
+        result = output_df.select('test')
+        assert_frame_equal(pl.LazyFrame({'test': [42, 52, 62, 72, 82]}, schema=pl.Schema([('test', pl.Int32)])), result.data)
 
 
 if __name__ == "__main__":
