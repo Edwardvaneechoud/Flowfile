@@ -782,9 +782,10 @@ class FlowGraph:
         add_un_drawn_nodes(drawn_nodes, node_info, lines)
 
         try:
-            skip_nodes, ordered_nodes = compute_execution_plan(
+            execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
+            ordered_nodes = execution_plan.all_nodes
             if ordered_nodes:
                 for i, node in enumerate(ordered_nodes, 1):
                     lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
@@ -2395,7 +2396,8 @@ class FlowGraph:
                 if not nodes_to_run:
                     continue
 
-                max_workers = self.flow_settings.max_parallel_workers
+                is_local = self.flow_settings.execution_location == "local"
+                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     # Single node or parallelism disabled — run sequentially
                     stage_results = [

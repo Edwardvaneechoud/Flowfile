@@ -1414,5 +1414,88 @@ class TestUserDefinedNodeSerialization:
             "Unconfigured user-defined node should have is_setup=False"
 
 
+# =============================================================================
+# MAX PARALLEL WORKERS YAML PERSISTENCE TESTS
+# =============================================================================
+
+class TestMaxParallelWorkersYaml:
+    """Test that max_parallel_workers is correctly stored and loaded from YAML."""
+
+    def test_max_parallel_workers_in_yaml(self, temp_dir: Path):
+        """Verify max_parallel_workers appears in the YAML output."""
+        handler = FlowfileHandler()
+        handler.register_flow(schemas.FlowSettings(
+            flow_id=2000,
+            name='parallel_test',
+            path='.',
+            max_parallel_workers=8,
+        ))
+        flow = handler.get_flow(2000)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        yaml_path = temp_dir / "parallel_workers.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+
+        assert data['flowfile_settings']['max_parallel_workers'] == 8
+
+    def test_max_parallel_workers_default_in_yaml(self, temp_dir: Path):
+        """Verify default max_parallel_workers (4) is written to YAML."""
+        flow = create_graph(flow_id=2001)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        yaml_path = temp_dir / "parallel_default.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+
+        assert data['flowfile_settings']['max_parallel_workers'] == 4
+
+    def test_max_parallel_workers_roundtrip(self, temp_dir: Path):
+        """Verify max_parallel_workers survives save → load round-trip."""
+        handler = FlowfileHandler()
+        handler.register_flow(schemas.FlowSettings(
+            flow_id=2002,
+            name='roundtrip_test',
+            path='.',
+            max_parallel_workers=10,
+        ))
+        flow = handler.get_flow(2002)
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        yaml_path = temp_dir / "parallel_roundtrip.yaml"
+        flow.save_flow(str(yaml_path))
+
+        loaded_flow = open_flow(yaml_path)
+        assert loaded_flow.flow_settings.max_parallel_workers == 10
+
+    def test_old_yaml_without_field_gets_default(self, temp_dir: Path):
+        """YAML files created before this field existed should load with the default."""
+        # Write a YAML file manually without max_parallel_workers
+        yaml_path = temp_dir / "old_format.yaml"
+        data = {
+            'flowfile_version': '0.5.0',
+            'flowfile_id': 2003,
+            'flowfile_name': 'old_flow',
+            'flowfile_settings': {
+                'description': None,
+                'execution_mode': 'Performance',
+                'execution_location': 'local',
+                'auto_save': False,
+                'show_detailed_progress': True,
+                # no max_parallel_workers key
+            },
+            'nodes': [],
+        }
+        with open(yaml_path, 'w') as f:
+            yaml.dump(data, f)
+
+        loaded_flow = open_flow(yaml_path)
+        assert loaded_flow.flow_settings.max_parallel_workers == 4
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

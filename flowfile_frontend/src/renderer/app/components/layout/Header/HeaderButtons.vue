@@ -169,7 +169,8 @@
             @change="pushFlowSettings"
           />
           <span class="form-hint">
-            Max threads for running independent nodes in parallel. Set to 1 to run sequentially.
+            Max threads for running independent nodes in parallel. Only applies when execution
+            location is Remote. Local execution always runs sequentially.
           </span>
         </div>
       </div>
