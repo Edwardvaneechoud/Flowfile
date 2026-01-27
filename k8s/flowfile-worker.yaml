@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowfile-worker
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: flowfile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowfile-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowfile-worker
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: flowfile
+    spec:
+      containers:
+        - name: flowfile-worker
+          image: flowfile/flowfile-worker:latest
+          ports:
+            - containerPort: 63579
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: flowfile-config
+            - secretRef:
+                name: flowfile-secrets
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: internal-storage
+              mountPath: /app/internal_storage
+            - name: user-data
+              mountPath: /app/user_data
+            - name: dshm
+              mountPath: /dev/shm
+          livenessProbe:
+            httpGet:
+              path: /docs
+              port: 63579
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: 63579
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: internal-storage
+          persistentVolumeClaim:
+            claimName: flowfile-internal-storage
+        - name: user-data
+          persistentVolumeClaim:
+            claimName: flowfile-user-data
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flowfile-worker
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: flowfile
+spec:
+  selector:
+    app.kubernetes.io/name: flowfile-worker
+  ports:
+    - port: 63579
+      targetPort: 63579
+      protocol: TCP
+  type: ClusterIP

@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flowfile-ingress
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile
+  annotations:
+    # Uncomment for nginx ingress controller:
+    # nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    #
+    # Uncomment for TLS with cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # Uncomment and set your ingress class:
+  # ingressClassName: nginx
+  #
+  # Uncomment for TLS:
+  # tls:
+  #   - hosts:
+  #       - flowfile.example.com
+  #     secretName: flowfile-tls
+  rules:
+    - host: flowfile.example.com
+      http:
+        paths:
+          # Frontend UI
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flowfile-frontend
+                port:
+                  number: 8080
+          # Core API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: flowfile-core
+                port:
+                  number: 63578

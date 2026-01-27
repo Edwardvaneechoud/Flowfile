@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowfile-config
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile
+data:
+  FLOWFILE_MODE: "docker"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  FLOWFILE_STORAGE_DIR: "/app/internal_storage"
+  FLOWFILE_USER_DATA_DIR: "/app/user_data"
+  # Service discovery: core reaches worker by K8s service name
+  WORKER_HOST: "flowfile-worker"
+  # Service discovery: worker reaches core by K8s service name
+  CORE_HOST: "flowfile-core"
+  CORE_PORT: "63578"

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile

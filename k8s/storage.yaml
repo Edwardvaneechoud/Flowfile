@@ -1,0 +1,56 @@
+---
+# Internal storage shared between core and worker.
+# Requires a ReadWriteMany-capable StorageClass (e.g. NFS, EFS, CephFS, Longhorn).
+# If your cluster only supports ReadWriteOnce, see the README for alternatives.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flowfile-internal-storage
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # Uncomment and set your StorageClass name:
+  # storageClassName: nfs-client
+---
+# User data storage shared between core and worker.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flowfile-user-data
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  # Uncomment and set your StorageClass name:
+  # storageClassName: nfs-client
+---
+# Saved flows storage (core only).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flowfile-saved-flows
+  namespace: flowfile
+  labels:
+    app.kubernetes.io/name: flowfile
+    app.kubernetes.io/part-of: flowfile
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # Uncomment and set your StorageClass name:
+  # storageClassName: nfs-client
