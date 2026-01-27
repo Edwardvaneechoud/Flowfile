@@ -308,7 +308,6 @@ def open_flow(flow_path: Path) -> FlowGraph:
     ingestion_order = determine_insertion_order(flow_storage_obj)
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
     # Create new FlowGraph
-
     # First pass: add node promises
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]

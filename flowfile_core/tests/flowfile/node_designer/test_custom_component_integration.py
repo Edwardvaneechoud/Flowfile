@@ -36,13 +36,14 @@ def create_flowfile_handler() -> FlowfileHandler:
     return handler
 
 
-def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowGraph:
+def create_graph(flow_id: int = 1, execution_mode: str = 'Development', execution_location: str = "local") -> FlowGraph:
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(
         flow_id=flow_id,
         name=f'flow_{flow_id}',
         path='.',
-        execution_mode=execution_mode
+        execution_mode=execution_mode,
+        execution_location=execution_location
     ))
     return handler.get_flow(flow_id)
 
