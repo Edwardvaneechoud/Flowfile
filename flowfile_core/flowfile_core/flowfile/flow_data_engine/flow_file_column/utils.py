@@ -42,6 +42,7 @@ def safe_eval_pl_type(type_string: str):
         "Int16": pl.Int16,
         "Int32": pl.Int32,
         "Int64": pl.Int64,
+        "Int128": pl.Int128,
         "UInt8": pl.UInt8,
         "UInt16": pl.UInt16,
         "UInt32": pl.UInt32,
