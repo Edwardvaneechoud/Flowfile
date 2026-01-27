@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_node.models import (
 )
 from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
@@ -200,11 +201,19 @@ class FlowNode:
     def schema_callback(self, f: Callable):
         """Sets the schema callback function for the node.
 
+        If the node has an enabled output_field_config, the callback is automatically
+        wrapped to use the output_field_config schema for prediction.
+
         Args:
             f: The function to be used for schema calculation.
         """
         if f is None:
             return
+
+        # Wrap callback with output_field_config support if present and enabled
+        output_field_config = getattr(self._setting_input, 'output_field_config', None)
+        if output_field_config and output_field_config.enabled:
+            f = create_schema_callback_with_output_config(f, output_field_config)
 
         def error_callback(e: Exception) -> list:
             logger.warning(e)
@@ -704,6 +713,13 @@ class FlowNode:
         """
         try:
             fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
+
+            # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
+            # This ensures schema prediction accounts for output_field_config validation
+            if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                if self._setting_input.output_field_config.enabled:
+                    fl = apply_output_field_config(fl, self._setting_input.output_field_config)
+
             return fl
         except ValueError as e:
             if str(e) == "generator already executing":

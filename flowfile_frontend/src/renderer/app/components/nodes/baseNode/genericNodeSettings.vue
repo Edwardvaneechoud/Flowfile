@@ -79,13 +79,13 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="Output Schema" name="output-schema">
+      <el-tab-pane label="Schema Validator" name="output-schema">
         <div class="settings-section">
           <div class="setting-group">
             <div class="setting-header">
-              <span class="setting-title">Enable Output Field Configuration</span>
+              <span class="setting-title">Enable Schema Validation</span>
               <span class="setting-description">
-                Define and enforce the output schema for predictable dataframe outputs
+                Guarantee data quality with automatic schema enforcement and validation
               </span>
             </div>
             <el-switch v-model="outputFieldConfig.enabled" @change="handleOutputConfigChange" />
@@ -105,15 +105,19 @@
                 style="width: 100%"
               >
                 <el-option
-                  label="Select Only - Keep only specified fields"
+                  label="Strict - Keep only defined fields"
                   value="select_only"
                 />
                 <el-option
-                  label="Add Missing - Add missing fields with defaults"
+                  label="Flexible - Add missing fields, remove extras"
                   value="add_missing"
                 />
                 <el-option
-                  label="Raise on Missing - Error if fields are missing"
+                  label="Permissive - Add missing fields, keep all extras"
+                  value="add_missing_keep_extra"
+                />
+                <el-option
+                  label="Validate - Error if any fields are missing"
                   value="raise_on_missing"
                 />
               </el-select>
@@ -121,9 +125,9 @@
 
             <div class="setting-group">
               <div class="setting-header">
-                <span class="setting-title">Validate Data Types</span>
+                <span class="setting-title">Type Checking</span>
                 <span class="setting-description">
-                  Raise an error if actual data types don't match the configured types (does not cast)
+                  Enforce data type constraints and catch type mismatches at runtime
                 </span>
               </div>
               <el-switch
@@ -134,10 +138,10 @@
 
             <div class="setting-group">
               <div class="setting-header">
-                <span class="setting-title">Output Fields</span>
+                <span class="setting-title">Schema Definition</span>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
                   <el-button size="small" :disabled="hasSchema" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
-                    Load from Schema
+                    Auto-Detect Schema
                   </el-button>
                   <el-button size="small" type="primary" @click="addField">
                     Add Field
@@ -147,10 +151,10 @@
 
               <div v-if="outputFieldConfig.fields.length === 0" class="no-fields">
                 <template v-if="isLoadingSchema">
-                  Loading schema...
+                  Detecting schema...
                 </template>
                 <template v-else>
-                  No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+                  No schema defined yet. Click "Auto-Detect Schema" to import from upstream data or "Add Field" to define manually.
                 </template>
               </div>
 
@@ -225,14 +229,14 @@
                 </el-table-column>
               </el-table>
 
-              <el-alert
+              <div
                 v-if="outputFieldConfig.fields.length > 0"
-                type="info"
-                :closable="false"
                 style="margin-top: 1rem"
+                class="tip"
+
               >
-                <strong>Tip:</strong> Default values can be any static value.
-              </el-alert>
+                <strong>Tip:</strong> Default values are used when fields are missing from the input data.
+            </div>
             </div>
           </template>
         </div>
@@ -563,5 +567,15 @@ const loadFieldsFromSchema = async () => {
   background-color: var(--el-fill-color-lighter);
   border-radius: 4px;
   margin-top: 1rem;
+}
+
+.tip {
+  padding: 0.5rem 1rem;
+  text-align: left;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  margin-top: 1rem;
+
 }
 </style>
