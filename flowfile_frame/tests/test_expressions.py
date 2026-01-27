@@ -921,6 +921,64 @@ class TestLambdaSerialization:
         assert "double" in polars_code
         assert "serialized_value" not in polars_code
 
+    def test_extract_lambda_with_function_closure(self):
+        """Test that a lambda capturing a locally-defined function extracts both sources."""
+        from flowfile_frame.callable_utils import _extract_lambda_source
+
+        def _random():
+            return 32
+
+        fn = lambda x: x + _random()  # noqa: E731
+        func_def, func_name = _extract_lambda_source(fn)
+        assert func_def is not None
+        assert func_name is not None
+        assert "def _random():" in func_def
+        assert "return 32" in func_def
+        assert "return x + _random()" in func_def
+
+    def test_func_in_func_generates_code(self, sample_df):
+        """Test that a lambda referencing a local function generates code, not a serialized blob."""
+        def _random():
+            return 32
+
+        fn = lambda x: x + _random()  # noqa: E731
+        result = sample_df.with_columns(
+            col("value_1").map_elements(fn, return_dtype=pl.Int64).alias("test")
+        )
+        node_settings = result.get_node_settings()
+        polars_code = node_settings.setting_input.polars_code_input.polars_code
+        assert "serialized_value" not in polars_code
+        assert "_random" in polars_code
+        assert "def " in polars_code
+
+    def test_func_in_func_correctness(self, sample_df):
+        """Test that a lambda referencing a local function produces correct results."""
+        def _random():
+            return 32
+
+        fn = lambda x: x + _random()  # noqa: E731
+        res = sample_df.with_columns(
+            col("value_1").map_elements(fn, return_dtype=pl.Int64).alias("test")
+        ).collect()
+        expected = sample_df.data.with_columns(
+            pl.col("value_1").map_elements(fn, return_dtype=pl.Int64).alias("test")
+        ).collect()
+        assert_frame_equal(res, expected)
+
+    def test_extract_lambda_with_lambda_closure(self):
+        """Test that a lambda capturing another lambda extracts both."""
+        from flowfile_frame.callable_utils import _extract_lambda_source
+
+        inner = lambda: 42  # noqa: E731
+        outer = lambda x: x + inner()  # noqa: E731
+        func_def, func_name = _extract_lambda_source(outer)
+        assert func_def is not None
+        assert func_name is not None
+        # Should contain the inner lambda converted to a named function
+        assert "_lambda_fn_" in func_def
+        assert "return 42" in func_def
+        assert "return x + inner()" in func_def
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

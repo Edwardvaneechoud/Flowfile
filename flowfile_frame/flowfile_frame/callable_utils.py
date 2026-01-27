@@ -108,10 +108,27 @@ def _extract_lambda_source(func) -> tuple[str | None, str | None]:
             except ValueError:
                 return None, None
 
-            if not _is_safely_representable(value):
+            if _is_safely_representable(value):
+                closure_defs.append(f"{var_name} = {repr(value)}")
+            elif callable(value) and hasattr(value, "__name__") and value.__name__ != "<lambda>":
+                # Closure variable is a named function — extract its source
+                source, _ = _get_function_source(value)
+                if source:
+                    closure_defs.append(source)
+                else:
+                    return None, None
+            elif callable(value) and hasattr(value, "__name__") and value.__name__ == "<lambda>":
+                # Closure variable is itself a lambda — recurse
+                inner_def, inner_name = _extract_lambda_source(value)
+                if inner_def and inner_name:
+                    # Assign the generated function to the variable name used in the outer lambda
+                    closure_defs.append(inner_def)
+                    closure_defs.append(f"{var_name} = {inner_name}")
+                else:
+                    return None, None
+            else:
+                # Cannot safely serialize this closure variable
                 return None, None
-
-            closure_defs.append(f"{var_name} = {repr(value)}")
 
     lines: list[str] = []
     if closure_defs:
