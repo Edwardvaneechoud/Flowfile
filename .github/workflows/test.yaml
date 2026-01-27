@@ -347,6 +347,8 @@ jobs:
         run: |
           npm install
           npm run build:test
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Run integration tests
         working-directory: flowfile_frontend
