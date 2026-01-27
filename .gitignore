@@ -54,6 +54,7 @@ local_data
 /custom_nodes/
 /flowfile_core/tests/support_files/flows/new_flow.flowfile
 /flowfile_frame/tests/output_csv.csv
+/output_csv.csv
 /flowfile_core/tests/support_files/flows/sample_flow_path.flowfile
 /flowfile_core/tests/support_files/flows/second_flow.flowfile
 /flowfile_core/tests/support_files/flows/tmp/

@@ -1,5 +1,3 @@
-import inspect
-import textwrap
 import uuid
 from collections.abc import Iterable
 from typing import Any
@@ -8,6 +6,13 @@ import polars as pl
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import schemas
+
+# Re-export for backwards compatibility — canonical home is callable_utils
+from flowfile_frame.callable_utils import (  # noqa: F401
+    _extract_lambda_source,
+    _get_function_source,
+    _is_safely_representable,
+)
 
 
 def _is_iterable(obj: Any) -> bool:
@@ -41,35 +46,6 @@ def _parse_inputs_as_iterable(
 def get_pl_expr_from_expr(expr: Any) -> pl.Expr:
     """Get the polars expression from the given expression."""
     return expr.expr
-
-
-def _get_function_source(func):
-    """
-    Get the source code of a function if possible.
-
-    Returns:
-        tuple: (source_code, is_module_level)
-    """
-    try:
-        # Try to get the source code
-        source = inspect.getsource(func)
-
-        # Check if it's a lambda
-        if func.__name__ == "<lambda>":
-            # Extract just the lambda expression
-            # This is tricky as getsource returns the entire line
-            return None, False
-
-        # Check if it's a module-level function
-        is_module_level = func.__code__.co_flags & 0x10 == 0
-
-        # Dedent the source to remove any indentation
-        source = textwrap.dedent(source)
-
-        return source, is_module_level
-    except (OSError, TypeError):
-        # Can't get source (e.g., built-in function, C extension)
-        return None, False
 
 
 def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:
