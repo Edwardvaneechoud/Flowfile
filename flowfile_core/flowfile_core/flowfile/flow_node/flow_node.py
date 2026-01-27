@@ -679,7 +679,6 @@ class FlowNode:
                                     input_data.append(input_result)
                                 self.print(f"All {len(input_data)} inputs collected, calling node function")
                                 fl = self._function(*input_data)
-                                self.print(f"Node function returned, result type: {type(fl)}")
                             except Exception as e:
                                 raise e
                         fl.set_streamable(self.node_settings.streamable)
