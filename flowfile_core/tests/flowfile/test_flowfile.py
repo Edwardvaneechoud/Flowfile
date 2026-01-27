@@ -79,7 +79,7 @@ def create_flowfile_handler():
 
 
 def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development',
-                 execution_location: Literal['local', 'remote'] | None = 'local') -> FlowGraph:
+                 execution_location: Literal['local', 'remote'] | None = 'remote') -> FlowGraph:
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode,
                                                execution_location=execution_location))
