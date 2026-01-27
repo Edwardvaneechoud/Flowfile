@@ -134,7 +134,6 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
 
 
 def get_results(file_ref: str) -> Status | None:
-    file_ref = '6f485eb-2708-4bd2-b184-00cc2c8b7c03'
     f = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if f.status_code == 200:
         return Status(**f.json())

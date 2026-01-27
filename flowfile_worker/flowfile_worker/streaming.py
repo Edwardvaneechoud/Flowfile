@@ -285,6 +285,7 @@ async def ws_submit(websocket: WebSocket):
     task_id = None
     progress = None
     error_message = None
+    queue = None
 
     try:
         # 1. Receive metadata + binary payload
@@ -316,7 +317,7 @@ async def ws_submit(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.warning(f"[WS] Client disconnected for task {task_id}")
-        if p is not None and p.is_alive():
+        if p is not None and p.is_alive() and queue is not None:
             _handoff_to_background(task_id, p, progress, error_message, queue)
             # Prevent finally block from cleaning up - handle_task owns these now
             p = None
