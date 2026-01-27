@@ -2395,15 +2395,18 @@ class FlowGraph:
                 if not nodes_to_run:
                     continue
 
-                if len(nodes_to_run) == 1:
-                    # Single node — run directly without thread pool overhead
+                max_workers = self.flow_settings.max_parallel_workers
+                if len(nodes_to_run) == 1 or max_workers == 1:
+                    # Single node or parallelism disabled — run sequentially
                     stage_results = [
-                        self._execute_single_node(nodes_to_run[0], performance_mode, run_info_lock)
+                        self._execute_single_node(node, performance_mode, run_info_lock)
+                        for node in nodes_to_run
                     ]
                 else:
                     # Multiple independent nodes — run in parallel
                     stage_results: list[tuple[NodeResult, FlowNode]] = []
-                    with ThreadPoolExecutor(max_workers=len(nodes_to_run)) as executor:
+                    workers = min(max_workers, len(nodes_to_run))
+                    with ThreadPoolExecutor(max_workers=workers) as executor:
                         futures = {
                             executor.submit(
                                 self._execute_single_node, node, performance_mode, run_info_lock

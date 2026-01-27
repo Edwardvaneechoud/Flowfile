@@ -10,6 +10,7 @@ from flowfile_core.flowfile.util.execution_orderer import (
     compute_execution_plan,
     determine_execution_order,
 )
+from flowfile_core.schemas.schemas import FlowGraphConfig, FlowSettings
 
 
 def _make_node(node_id: int, leads_to=None, is_correct: bool = True):
@@ -223,3 +224,35 @@ class TestComputeExecutionPlan:
         assert 20 in skip_ids
         # No stages should contain skipped nodes
         assert plan.node_count == 0
+
+
+# ---------------------------------------------------------------------------
+# max_parallel_workers setting
+# ---------------------------------------------------------------------------
+
+
+class TestMaxParallelWorkersSetting:
+    def test_default_value(self):
+        config = FlowGraphConfig(name="test", path=".")
+        assert config.max_parallel_workers == 4
+
+    def test_custom_value(self):
+        config = FlowGraphConfig(name="test", path=".", max_parallel_workers=8)
+        assert config.max_parallel_workers == 8
+
+    def test_minimum_is_one(self):
+        with pytest.raises(Exception):
+            FlowGraphConfig(name="test", path=".", max_parallel_workers=0)
+
+    def test_disable_parallelism(self):
+        config = FlowGraphConfig(name="test", path=".", max_parallel_workers=1)
+        assert config.max_parallel_workers == 1
+
+    def test_inherited_by_flow_settings(self):
+        settings = FlowSettings(name="test", path=".", max_parallel_workers=2)
+        assert settings.max_parallel_workers == 2
+
+    def test_from_flow_settings_input(self):
+        config = FlowGraphConfig(name="test", path=".", max_parallel_workers=6)
+        settings = FlowSettings.from_flow_settings_input(config)
+        assert settings.max_parallel_workers == 6
