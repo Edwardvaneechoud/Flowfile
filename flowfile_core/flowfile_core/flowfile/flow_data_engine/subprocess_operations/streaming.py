@@ -59,6 +59,7 @@ def _handle_complete_message(data: dict, task_id: str) -> Status:
         file_ref=data.get("file_ref", ""),
         result_type=data.get("result_type", "polars"),
         progress=100,
+        results=None,
     )
 
 
@@ -157,6 +158,7 @@ def streaming_submit(
             file_ref="",
             result_type="polars",
             progress=100,
+            results=None,
         )
 
     return result, status
