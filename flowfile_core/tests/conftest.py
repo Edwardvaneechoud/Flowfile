@@ -6,8 +6,6 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Generator
-from contextlib import contextmanager
 
 # Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
 import bcrypt
@@ -22,9 +20,9 @@ import pytest
 import requests
 
 os.environ['TESTING'] = 'True'
-# If worker tests are skipped, disable worker offloading to prevent gRPC connection attempts
-if os.environ.get("SKIP_WORKER_TESTS") == "1":
-    os.environ['FLOWFILE_OFFLOAD_TO_WORKER'] = '0'
+# Disable worker offloading by default to prevent gRPC connection hangs.
+# The flowfile_worker fixture will enable it if the worker starts successfully.
+os.environ['FLOWFILE_OFFLOAD_TO_WORKER'] = '0'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
@@ -206,43 +204,43 @@ def stop_worker(proc: subprocess.Popen) -> None:
         logger.warning(f"Error while terminating process: {e}")
 
 
-@contextmanager
-def managed_worker() -> Generator[None, None, None]:
-    """
-    Context manager for flowfile worker process management.
-    Ensures proper cleanup even when tests fail.
-    """
-    proc = None
-    try:
-        if is_worker_running():
-            logger.info("flowfile_worker is already running, using existing instance")
-            yield
-        else:
-            proc, success = start_worker()
-            if not success:
-                error_msg = "Failed to start flowfile_worker"
-                logger.error(error_msg)
-                if proc and proc.poll() is None:
-                    stop_worker(proc)
-                pytest.skip(error_msg)
-            yield
-    finally:
-        if proc is not None and proc.poll() is None:
-            stop_worker(proc)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def flowfile_worker(request):
     """
-    Pytest fixture that ensures flowfile_worker is running for the test session.
-    Uses the managed_worker context manager for proper resource management.
+    Pytest fixture that manages the flowfile_worker process for the test session.
 
-    Can be skipped by setting SKIP_WORKER_TESTS=1 environment variable.
+    Worker offloading is disabled by default (FLOWFILE_OFFLOAD_TO_WORKER=0 set in conftest)
+    and only enabled when the worker starts successfully, preventing gRPC connection hangs.
+
+    Can be skipped entirely by setting SKIP_WORKER_TESTS=1 environment variable.
     """
     if os.environ.get("SKIP_WORKER_TESTS") == "1":
+        logger.info("Worker tests skipped (SKIP_WORKER_TESTS=1)")
         yield
         return
-    with managed_worker():
+
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    if is_worker_running():
+        logger.info("flowfile_worker is already running, enabling worker offloading")
+        OFFLOAD_TO_WORKER.set(True)
+        yield
+        OFFLOAD_TO_WORKER.set(False)
+        return
+
+    proc, success = start_worker()
+    if success:
+        logger.info("Worker started successfully, enabling worker offloading")
+        OFFLOAD_TO_WORKER.set(True)
+        try:
+            yield
+        finally:
+            OFFLOAD_TO_WORKER.set(False)
+            stop_worker(proc)
+    else:
+        logger.warning("Failed to start flowfile_worker - tests will run without worker offloading")
+        if proc and proc.poll() is None:
+            stop_worker(proc)
         yield
 
 
