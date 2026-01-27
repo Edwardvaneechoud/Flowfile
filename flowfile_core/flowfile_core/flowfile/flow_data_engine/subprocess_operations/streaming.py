@@ -77,6 +77,7 @@ def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
     """
     result = None
     status = None
+
     while True:
         msg = ws.recv()
 
@@ -140,6 +141,7 @@ def streaming_submit(
 
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
+
     with connect(ws_url) as ws:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)
@@ -152,6 +154,7 @@ def streaming_submit(
             file_ref="",
             result_type="polars",
             progress=100,
+            results=None,
         )
 
     return result, status
