@@ -579,7 +579,6 @@ def test_execution_complex_flow_remote_development(complex_elaborate_flow: FlowG
     """Test executing the complex flow to ensure all nodes run without error."""
     complex_elaborate_flow.flow_settings.execution_mode = "Development"
     complex_elaborate_flow.flow_settings.execution_location = "remote"
-    breakpoint()
     # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)

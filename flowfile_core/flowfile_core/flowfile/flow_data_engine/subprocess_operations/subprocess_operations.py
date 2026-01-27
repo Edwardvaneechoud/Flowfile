@@ -466,7 +466,6 @@ class BaseFetcher:
         Sets self._result, self._running, self._started, and self.status.
         Raises on connection or task error (caller should fall back to REST).
         """
-        breakpoint()
         result, status = streaming_submit(
             task_id=self.file_ref,
             operation_type=operation_type,
