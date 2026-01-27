@@ -404,6 +404,9 @@ class BaseFetcher:
     Uses server streaming for efficient status updates.
     """
 
+    # Maximum time (seconds) to wait for an operation to complete
+    MAX_OPERATION_TIMEOUT = 600  # 10 minutes
+
     def __init__(self, file_ref: str = None):
         self.file_ref = file_ref if file_ref else str(uuid4())
 
@@ -465,8 +468,8 @@ class BaseFetcher:
             stub = get_worker_stub()
             request = TaskIdRequest(task_id=self.file_ref)
 
-            # Use streaming for real-time status updates
-            for status_response in stub.StreamStatus(request):
+            # Use streaming for real-time status updates with a deadline
+            for status_response in stub.StreamStatus(request, timeout=self.MAX_OPERATION_TIMEOUT):
                 if self._stop_event.is_set():
                     self._handle_cancellation()
                     return
@@ -488,19 +491,29 @@ class BaseFetcher:
                     return
 
         except grpc.RpcError as e:
-            # Fall back to polling if streaming fails
-            self._fetch_via_polling()
+            if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                self._handle_error(-1, f"Operation timed out after {self.MAX_OPERATION_TIMEOUT} seconds")
+            else:
+                # Fall back to polling if streaming fails
+                self._fetch_via_polling()
         except Exception as e:
             logger.exception("Unexpected error in gRPC fetch thread")
             self._handle_error(-1, f"Unexpected error: {e}")
 
     def _fetch_via_polling(self):
         """Fallback to polling if streaming is not available."""
+        import time as _time
+
         sleep_time = 0.5
         stub = get_worker_stub()
         request = TaskIdRequest(task_id=self.file_ref)
+        deadline = _time.monotonic() + self.MAX_OPERATION_TIMEOUT
 
         while not self._stop_event.is_set():
+            if _time.monotonic() > deadline:
+                self._handle_error(-1, f"Polling timed out after {self.MAX_OPERATION_TIMEOUT} seconds")
+                return
+
             try:
                 response = stub.GetStatus(request, timeout=10)
 
@@ -591,16 +604,26 @@ class BaseFetcher:
                 logger.warning("Fetch thread did not stop within timeout")
 
     def get_result(self) -> Any | None:
-        """Get the result, blocking until it's available."""
+        """Get the result, blocking until it's available or timeout is reached."""
         with self._lock:
             if not self._started:
                 if not self._running:
                     self._running = True
                 self._start_thread()
 
+        # Wait with periodic timeout checks to prevent indefinite blocking
+        import time as _time
+        deadline = _time.monotonic() + self.MAX_OPERATION_TIMEOUT + 30  # extra grace period
+
         with self._condition:
             while self._running:
-                self._condition.wait()
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    self._running = False
+                    self._error_description = f"get_result timed out after {self.MAX_OPERATION_TIMEOUT + 30} seconds"
+                    self._stop_event.set()
+                    break
+                self._condition.wait(timeout=min(remaining, 10))
 
         with self._lock:
             if self._error_description is not None:
@@ -819,17 +842,26 @@ class ExternalExecutorTracker:
             _ = self.get_result()
 
     def _fetch_via_grpc(self):
+        import time as _time
+
         with self.condition:
             if self.running:
                 logger.info("Already running the fetching")
                 return
             sleep_time = 1
             self.running = True
+            timeout = 600  # 10 minutes
+            deadline = _time.monotonic() + timeout
 
             stub = get_worker_stub()
             request = TaskIdRequest(task_id=self.file_ref)
 
             while not self.stop_event.is_set():
+                if _time.monotonic() > deadline:
+                    self.error_code = -1
+                    self.error_description = f"Polling timed out after {timeout} seconds"
+                    break
+
                 try:
                     response = stub.GetStatus(request, timeout=10)
 
@@ -879,9 +911,21 @@ class ExternalExecutorTracker:
     def get_result(self) -> pl.LazyFrame | Any | None:
         if not self.started:
             self.start()
+
+        import time as _time
+        timeout = 630  # 10.5 minutes
+        deadline = _time.monotonic() + timeout
+
         with self.condition:
             while self.running and self.result is None:
-                self.condition.wait()
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    self.running = False
+                    self.error_description = f"get_result timed out after {timeout} seconds"
+                    self.stop_event.set()
+                    break
+                self.condition.wait(timeout=min(remaining, 10))
+
         if self.error_description is not None:
             raise Exception(self.error_description)
         return self.result

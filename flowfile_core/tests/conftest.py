@@ -1,7 +1,11 @@
 # conftest.py
 import logging
 import os
+import platform
+import signal
+import subprocess
 import sys
+import time
 
 # Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
 import bcrypt
@@ -13,9 +17,11 @@ def _patched_hashpw(password, salt):
 bcrypt.hashpw = _patched_hashpw
 
 import pytest
+import requests
 
 os.environ['TESTING'] = 'True'
-# Disable worker offloading for core tests. These tests run locally without a worker.
+# Disable worker offloading by default to prevent gRPC connection hangs during startup.
+# The flowfile_worker fixture will enable it after the worker is confirmed running.
 os.environ['FLOWFILE_OFFLOAD_TO_WORKER'] = '0'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
@@ -44,6 +50,14 @@ logging.basicConfig(
 
 logger = logging.getLogger("flowfile_fixture")
 
+# Configuration constants
+WORKER_HOST = os.environ.get("FLOWFILE_WORKER_HOST", "0.0.0.0")
+WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
+WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
+STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
+STARTUP_CHECK_INTERVAL = 2  # seconds
+SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
@@ -71,6 +85,144 @@ def setup_test_db():
                 logger.info("Removed test database file")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+
+def is_worker_running() -> bool:
+    """Check if the flowfile worker service is already running."""
+    try:
+        response = requests.get(WORKER_URL, timeout=5)
+        return response.ok
+    except requests.exceptions.RequestException:
+        return False
+
+
+def start_worker() -> tuple[subprocess.Popen, bool]:
+    """
+    Start the flowfile worker process.
+
+    Returns:
+        Tuple containing the process object and a success flag
+    """
+    logger.info("Starting flowfile_worker process...")
+
+    # Determine the appropriate command based on platform
+    if platform.system() == "Windows":
+        proc = subprocess.Popen(
+            "poetry run flowfile_worker",
+            shell=True,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            universal_newlines=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
+        )
+    else:
+        proc = subprocess.Popen(
+            ["poetry", "run", "flowfile_worker"],
+            shell=False,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            universal_newlines=True,
+            preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+        )
+
+    # Check if process started successfully
+    retcode = proc.poll()
+    if retcode is not None:
+        logger.error(f"Process failed to start with return code {retcode}")
+        return proc, False
+
+    # Wait for service to be available
+    start_time = time.time()
+    max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
+
+    for i in range(max_retries):
+        if proc.poll() is not None:
+            logger.error(f"Process terminated unexpectedly with code {proc.poll()}")
+            return proc, False
+
+        try:
+            response = requests.get(WORKER_URL, timeout=5)
+            if response.ok:
+                elapsed = time.time() - start_time
+                logger.info(f"flowfile_worker started successfully in {elapsed:.2f} seconds")
+                return proc, True
+        except requests.exceptions.RequestException:
+            pass
+
+        elapsed = time.time() - start_time
+        logger.info(f"Waiting for flowfile_worker to start... ({elapsed:.1f}s / {STARTUP_TIMEOUT}s)")
+        time.sleep(STARTUP_CHECK_INTERVAL)
+
+    logger.error(f"flowfile_worker failed to start within {STARTUP_TIMEOUT} seconds")
+    return proc, False
+
+
+def stop_worker(proc: subprocess.Popen) -> None:
+    """Stop the flowfile worker process gracefully."""
+    logger.info("Stopping flowfile_worker process...")
+
+    if proc is None or proc.poll() is not None:
+        logger.info("Process is already terminated")
+        return
+
+    try:
+        if platform.system() == "Windows":
+            proc.send_signal(signal.CTRL_C_EVENT if hasattr(signal, 'CTRL_C_EVENT') else signal.SIGTERM)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM) if hasattr(os, 'killpg') else proc.terminate()
+
+        try:
+            proc.wait(timeout=SHUTDOWN_TIMEOUT)
+            logger.info("Process terminated gracefully")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Process did not terminate within {SHUTDOWN_TIMEOUT} seconds, forcing termination")
+            if platform.system() != "Windows":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL) if hasattr(os, 'killpg') else proc.kill()
+            else:
+                proc.kill()
+            proc.wait(timeout=5)
+            logger.info("Process forcefully terminated")
+    except (ProcessLookupError, OSError) as e:
+        logger.warning(f"Error while terminating process: {e}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def flowfile_worker(request):
+    """
+    Pytest fixture that manages the flowfile_worker process for the test session.
+
+    Worker offloading is disabled by default (FLOWFILE_OFFLOAD_TO_WORKER=0) and only
+    enabled after the worker is confirmed running. If the worker fails to start,
+    tests run locally without hanging.
+    """
+    if os.environ.get("SKIP_WORKER_TESTS") == "1":
+        logger.info("Worker tests skipped (SKIP_WORKER_TESTS=1)")
+        yield
+        return
+
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    if is_worker_running():
+        logger.info("flowfile_worker is already running, enabling worker offloading")
+        OFFLOAD_TO_WORKER.set(True)
+        yield
+        OFFLOAD_TO_WORKER.set(False)
+        return
+
+    proc, success = start_worker()
+    if success:
+        logger.info("Worker started successfully, enabling worker offloading")
+        OFFLOAD_TO_WORKER.set(True)
+        try:
+            yield
+        finally:
+            OFFLOAD_TO_WORKER.set(False)
+            stop_worker(proc)
+    else:
+        logger.warning("Failed to start flowfile_worker - tests will run without worker offloading")
+        if proc and proc.poll() is None:
+            stop_worker(proc)
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)
