@@ -40,6 +40,7 @@
         <file-browser
           :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
           mode="open"
+          context="dataFiles"
           :is-visible="modalVisibleForOpen"
           @file-selected="handleFileChange"
         />

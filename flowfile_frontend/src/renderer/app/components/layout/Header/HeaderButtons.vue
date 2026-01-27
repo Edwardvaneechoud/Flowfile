@@ -42,6 +42,7 @@
     <file-browser
       :allowed-file-types="FLOWFILE_EXTENSIONS"
       mode="open"
+      context="flows"
       :is-visible="modalVisibleForOpen"
       @file-selected="openFlowAction"
     />
@@ -57,6 +58,7 @@
       ref="fileBrowserRef"
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
+      context="flows"
       :initial-file-path="savePath"
       :is-visible="modalVisibleForSave"
       @create-file="saveFlowAction"
@@ -73,6 +75,7 @@
     <file-browser
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
+      context="flows"
       :is-visible="modalVisibleForCreate"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
