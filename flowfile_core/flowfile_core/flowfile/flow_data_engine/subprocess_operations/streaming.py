@@ -11,6 +11,7 @@ Falls back to REST automatically if the worker doesn't support WebSocket.
 
 import io
 import json
+from base64 import b64encode
 from typing import Any
 
 import polars as pl
@@ -52,7 +53,11 @@ def _build_metadata(
 # ---------------------------------------------------------------------------
 
 def _handle_complete_message(data: dict, task_id: str) -> Status:
-    """Build a Status from a 'complete' protocol message."""
+    """Build a partial Status from a 'complete' protocol message.
+
+    The ``results`` field is set to None here and populated by the caller
+    once the actual result payload has been received.
+    """
     return Status(
         background_task_id=task_id,
         status="Completed",
@@ -63,26 +68,25 @@ def _handle_complete_message(data: dict, task_id: str) -> Status:
     )
 
 
-def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
-    """Receive messages from the worker until a result or error arrives.
+def _receive_raw_result(ws, task_id: str) -> tuple[Any, Status | None]:
+    """Receive messages from the worker until a raw result or error arrives.
 
-    Handles the three message types in the protocol:
-    - progress: ignored in sync mode
-    - complete: builds Status, then reads result (binary or JSON) if present
-    - error: raises Exception
+    Returns the result **without** deserializing it so the caller can both
+    populate ``Status.results`` (b64-encoded bytes for polars) and
+    deserialize into the in-memory object.
 
     Returns:
-        (result, status) where result may be a LazyFrame, other data, or None.
+        (raw_result, status) where raw_result is ``bytes`` for polars
+        results, arbitrary data for "other" results, or ``None``.
     """
-    result = None
+    raw_result = None
     status = None
 
     while True:
         msg = ws.recv()
 
         if isinstance(msg, bytes):
-            # Binary frame = raw serialized LazyFrame bytes
-            result = pl.LazyFrame.deserialize(io.BytesIO(msg))
+            raw_result = msg
             break
 
         data = json.loads(msg)
@@ -95,17 +99,36 @@ def _receive_result(ws, task_id: str) -> tuple[Any, Status | None]:
             status = _handle_complete_message(data, task_id)
             if not data.get("has_result", False):
                 break
-            # Next message will be binary (polars) or JSON (result_data)
             continue
 
         if msg_type == "result_data":
-            result = data.get("data")
+            raw_result = data.get("data")
             break
 
         if msg_type == "error":
             raise Exception(data.get("error_message", "Unknown worker error"))
 
-    return result, status
+    return raw_result, status
+
+
+def _deserialize_and_populate_status(
+    raw_result: Any, status: Status
+) -> tuple[Any, Status]:
+    """Deserialize the raw result and fill ``status.results``.
+
+    For polars results (bytes): deserializes into a LazyFrame and stores
+    the b64-encoded bytes in ``status.results`` (matching REST behaviour).
+    For other results: stores the value directly in ``status.results``.
+    """
+    if raw_result is None:
+        return None, status
+
+    if isinstance(raw_result, bytes):
+        status.results = b64encode(raw_result).decode("ascii")
+        return pl.LazyFrame.deserialize(io.BytesIO(raw_result)), status
+
+    status.results = raw_result
+    return raw_result, status
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +149,10 @@ def streaming_submit(
     1. Sends task metadata (JSON) + payload (binary)
     2. Receives progress updates (JSON)
     3. Receives result as binary frame (polars) or JSON (other)
+
+    The returned ``Status`` object is fully populated (including
+    ``results``) so it is equivalent to what the REST polling path
+    would produce.
 
     Args:
         task_id: Unique identifier for the task
@@ -149,7 +176,7 @@ def streaming_submit(
     with connect(ws_url) as ws:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)
-        result, status = _receive_result(ws, task_id)
+        raw_result, status = _receive_raw_result(ws, task_id)
 
     if status is None:
         status = Status(
@@ -161,7 +188,7 @@ def streaming_submit(
             results=None,
         )
 
-    return result, status
+    return _deserialize_and_populate_status(raw_result, status)
 
 
 def is_streaming_available() -> bool:
