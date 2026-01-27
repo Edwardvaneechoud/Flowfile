@@ -18,6 +18,11 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
+    streaming_receive,
+    streaming_start,
+    streaming_submit,
+)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
@@ -240,6 +245,9 @@ class BaseFetcher:
         self._stop_event = threading.Event()
         self._thread = None
 
+        # WebSocket connection for non-blocking streaming mode
+        self._ws = None
+
         # State variables - use properties for thread-safe access
         self._result: Any | None = None
         self._started: bool = False
@@ -390,6 +398,16 @@ class BaseFetcher:
         """
         logger.warning("Cancelling the operation")
 
+        # Close WebSocket if streaming (causes recv thread to exit)
+        with self._lock:
+            ws = self._ws
+            self._ws = None
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
         # Cancel on the worker side
         try:
             cancel_task(self.file_ref)
@@ -451,6 +469,79 @@ class BaseFetcher:
         with self._lock:
             return self._error_code, self._error_description
 
+    def _execute_streaming(
+        self,
+        operation_type: str,
+        flow_id: int,
+        node_id: int | str,
+        lf_bytes: bytes,
+        kwargs: dict | None = None,
+        blocking: bool = True,
+    ) -> None:
+        """Execute via WebSocket streaming - no polling, binary result transfer.
+
+        Args:
+            blocking: If True (default), blocks until the result is available
+                and sets self._result directly.  If False, opens the
+                connection, sends the task, and hands off to a background
+                thread that will set self._result when done.
+
+        Raises on connection or send error so the caller can fall back to REST.
+        """
+        if blocking:
+            result, status = streaming_submit(
+                task_id=self.file_ref,
+                operation_type=operation_type,
+                flow_id=flow_id,
+                node_id=node_id,
+                lf_bytes=lf_bytes,
+                kwargs=kwargs,
+            )
+            with self._lock:
+                self._result = result
+                self._running = False
+                self._started = True
+            self.status = status
+        else:
+            # Non-blocking: open connection, send task, receive in background
+            ws = streaming_start(
+                task_id=self.file_ref,
+                operation_type=operation_type,
+                flow_id=flow_id,
+                node_id=node_id,
+                lf_bytes=lf_bytes,
+                kwargs=kwargs,
+            )
+            with self._lock:
+                self._ws = ws
+                self._running = True
+                self._started = True
+                self._thread = threading.Thread(
+                    target=self._ws_receive_thread,
+                    args=(ws,),
+                    daemon=True,
+                )
+                self._thread.start()
+
+    def _ws_receive_thread(self, ws) -> None:
+        """Background thread that receives results over an open WebSocket."""
+        try:
+            result, status = streaming_receive(ws, self.file_ref)
+            with self._condition:
+                self._result = result
+                self._running = False
+                self._ws = None
+                self._condition.notify_all()
+            self.status = status
+        except Exception as e:
+            logger.exception("Error in WebSocket receive thread")
+            with self._condition:
+                self._error_code = -1
+                self._error_description = str(e)
+                self._running = False
+                self._ws = None
+                self._condition.notify_all()
+
 
 class ExternalDfFetcher(BaseFetcher):
     status: Status | None = None
@@ -467,6 +558,21 @@ class ExternalDfFetcher(BaseFetcher):
     ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+
+        # Try WebSocket streaming first (blocking or non-blocking)
+        try:
+            self._execute_streaming(
+                operation_type=operation_type,
+                flow_id=flow_id,
+                node_id=node_id,
+                lf_bytes=lf.serialize(),
+                blocking=wait_on_completion,
+            )
+            return
+        except Exception as e:
+            logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+
+        # REST fallback (original behavior)
         r = trigger_df_operation(
             lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id
         )
@@ -490,6 +596,22 @@ class ExternalSampler(BaseFetcher):
     ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+
+        # Try WebSocket streaming first (blocking or non-blocking)
+        try:
+            self._execute_streaming(
+                operation_type="store_sample",
+                flow_id=flow_id,
+                node_id=node_id,
+                lf_bytes=lf.serialize(),
+                kwargs={"sample_size": sample_size},
+                blocking=wait_on_completion,
+            )
+            return
+        except Exception as e:
+            logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+
+        # REST fallback (original behavior)
         r = trigger_sample_operation(
             lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
         )

@@ -221,15 +221,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated, watch } from "vue";
 import { FileInfo } from "./types";
-import { useFileBrowserStore } from "../../../stores/fileBrowserStore";
+import {
+  useFileBrowserStore,
+  type FileBrowserContext,
+} from "../../../stores/fileBrowserStore";
 
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
-  getCurrentDirectoryContents,
-  getCurrentPath,
-  navigateUp,
-  navigateInto,
-  navigateTo,
+  getDirectoryContents,
+  getDefaultPath,
+  getParentPath,
+  joinPath,
 } from "./fileSystemApi";
 
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
@@ -257,6 +259,8 @@ interface Props {
   showWarningOnOverwrite?: boolean;
   /** External visibility control - when true, triggers auto-refresh */
   isVisible?: boolean;
+  /** Context for state management - each context maintains its own path state */
+  context?: FileBrowserContext;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -267,36 +271,8 @@ const props = withDefaults(defineProps<Props>(), {
   allowDirectorySelection: false,
   showWarningOnOverwrite: true,
   isVisible: true,
+  context: "flows",
 });
-
-const handleInitialFileSelection = async () => {
-  if (!props.initialFilePath) return;
-
-  loading.value = true;
-  error.value = null;
-
-  try {
-    // Get the directory path from the full file path
-    const directoryPath = path.dirname(props.initialFilePath);
-    const fileName = path.basename(props.initialFilePath);
-
-    // Navigate to the directory
-    await navigateTo(directoryPath);
-    await loadCurrentDirectory();
-
-    // Find and select the file
-    const fileToSelect = files.value.find((file) => file.name === fileName);
-    if (fileToSelect) {
-      selectedFile.value = fileToSelect;
-      emit("update:modelValue", fileToSelect);
-    }
-  } catch (err: any) {
-    error.value = err.message || "Failed to navigate to initial file";
-    ElMessage.error("Failed to navigate to initial file location");
-  } finally {
-    loading.value = false;
-  }
-};
 
 // Emits
 const emit = defineEmits<{
@@ -304,7 +280,7 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: FileInfo | null): void;
   (e: "createFile", file_path: string, currentPath: string, fileName: string): void;
   (e: "overwriteFile", file_path: string, currentPath: string, fileName: string): void;
-  (e: "directorySelected", path: string): void; // New emit
+  (e: "directorySelected", path: string): void;
 }>();
 
 // State
@@ -320,6 +296,104 @@ const showCreateDialog = ref(false);
 const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
+
+const loadDirectoryContents = async (directoryPath: string) => {
+  loading.value = true;
+  error.value = null;
+  try {
+    const filesResponse = await getDirectoryContents(directoryPath, {
+      include_hidden: showHidden.value,
+    });
+    files.value = filesResponse;
+    currentPath.value = directoryPath;
+    fileBrowserStore.setCurrentPath(props.context, directoryPath);
+  } catch (err: any) {
+    error.value = err.message || "Failed to load directory";
+  } finally {
+    loading.value = false;
+  }
+};
+
+const loadDefaultDirectory = async () => {
+  loading.value = true;
+  error.value = null;
+  try {
+    const defaultPath = await getDefaultPath();
+    await loadDirectoryContents(defaultPath);
+  } catch (err: any) {
+    error.value = err.message || "Failed to load directory";
+    loading.value = false;
+  }
+};
+
+const loadCurrentDirectory = async () => {
+  const storedPath = fileBrowserStore.getCurrentPath(props.context);
+
+  if (storedPath) {
+    await loadDirectoryContents(storedPath);
+    if (error.value) {
+      fileBrowserStore.resetContext(props.context);
+      await loadDefaultDirectory();
+    }
+  } else {
+    await loadDefaultDirectory();
+  }
+};
+
+/**
+ * Navigate to a specific directory path
+ */
+const navigateToPath = async (directoryPath: string) => {
+  await loadDirectoryContents(directoryPath);
+  searchTerm.value = "";
+  selectedFile.value = null;
+};
+
+/**
+ * Navigate up one directory level
+ */
+const navigateUpDirectory = async () => {
+  const parentPath = getParentPath(currentPath.value);
+  if (parentPath && parentPath !== currentPath.value) {
+    await navigateToPath(parentPath);
+  }
+};
+
+/**
+ * Navigate into a subdirectory
+ */
+const navigateIntoDirectory = async (directoryName: string) => {
+  const newPath = joinPath(currentPath.value, directoryName);
+  await navigateToPath(newPath);
+};
+
+const handleInitialFileSelection = async () => {
+  if (!props.initialFilePath) return;
+
+  loading.value = true;
+  error.value = null;
+
+  try {
+    // Get the directory path from the full file path
+    const directoryPath = path.dirname(props.initialFilePath);
+    const fileName = path.basename(props.initialFilePath);
+
+    // Navigate to the directory using stateless approach
+    await loadDirectoryContents(directoryPath);
+
+    // Find and select the file
+    const fileToSelect = files.value.find((file) => file.name === fileName);
+    if (fileToSelect) {
+      selectedFile.value = fileToSelect;
+      emit("update:modelValue", fileToSelect);
+    }
+  } catch (err: any) {
+    error.value = err.message || "Failed to navigate to initial file";
+    ElMessage.error("Failed to navigate to initial file location");
+  } finally {
+    loading.value = false;
+  }
+};
 
 const isDataFile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
@@ -365,7 +439,6 @@ const handleOpenFile = () => {
 };
 
 const handleSingleClick = (file: FileInfo) => {
-  console.log("handleSingleClick", file);
   emit("update:modelValue", file);
   selectedFile.value = file;
 };
@@ -376,51 +449,10 @@ const handleSelectDirectory = () => {
 
 const handleDoubleClick = async (file: FileInfo) => {
   if (file.is_directory) {
-    loading.value = true;
-    error.value = null;
     selectedFile.value = null;
-    try {
-      await navigateInto(file.name);
-      await loadCurrentDirectory();
-      searchTerm.value = "";
-    } catch (err: any) {
-      error.value = err.message || "Failed to open directory";
-    } finally {
-      loading.value = false;
-    }
+    await navigateIntoDirectory(file.name);
   } else {
     emit("fileSelected", file);
-  }
-};
-
-const loadCurrentDirectory = async () => {
-  loading.value = true;
-  error.value = null;
-  try {
-    const [pathResponse, filesResponse] = await Promise.all([
-      getCurrentPath(),
-      getCurrentDirectoryContents({ include_hidden: showHidden.value }),
-    ]);
-    currentPath.value = pathResponse;
-    files.value = filesResponse;
-  } catch (err: any) {
-    error.value = err.message || "Failed to load directory";
-  } finally {
-    loading.value = false;
-  }
-};
-
-const navigateUpDirectory = async () => {
-  loading.value = true;
-  error.value = null;
-  selectedFile.value = null;
-  try {
-    await navigateUp();
-    await loadCurrentDirectory();
-  } catch (err: any) {
-    error.value = err.message || "Failed to navigate up";
-  } finally {
-    loading.value = false;
   }
 };
 
@@ -510,9 +542,6 @@ defineExpose({
   navigateUpDirectory,
   selectedFile: computed(() => selectedFile.value),
 });
-// Add new sorting state
-// const sortBy = ref<"name" | "size" | "last_modified" | "created_date">("name");
-// const sortDirection = ref<"asc" | "desc">("asc");
 
 const calculateSortedFiles = () => {
   return files.value
