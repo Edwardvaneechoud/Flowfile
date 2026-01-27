@@ -1,14 +1,10 @@
 from collections.abc import Callable
 from functools import wraps
-from typing import TypeVar
 
 import polars as pl
 
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
-
-T = TypeVar("T")
-FlowFrameT = TypeVar("FlowFrameT", bound="FlowFrame")
 
 PASSTHROUGH_METHODS = {
     "collect",

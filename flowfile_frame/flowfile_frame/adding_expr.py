@@ -4,10 +4,9 @@ from typing import TypeVar
 
 import polars as pl
 
-from flowfile_frame.callable_utils import process_callable_args, resolve_callable
+from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
 
-T = TypeVar("T")
 ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
 
