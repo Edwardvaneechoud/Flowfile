@@ -123,21 +123,10 @@ async def get_default_path() -> str:
     return str(storage.user_data_directory)
 
 
-# Legacy endpoint - kept for backward compatibility, returns the default path
-@router.get('/files/current_path/', response_model=str, tags=['file manager'])
-async def get_current_path() -> str:
-    """Returns the default path for the file browser.
-
-    Note: This endpoint is kept for backward compatibility.
-    The file browser state is now managed on the frontend.
-    """
-    return str(storage.user_data_directory)
-
-
 @router.get('/files/directory_contents/', response_model=list[FileInfo], tags=['file manager'])
 async def get_directory_contents(directory: str, file_types: list[str] = None,
                                  include_hidden: bool = False) -> list[FileInfo]:
-    """Gets the contents of an arbitrary directory path.
+    """Gets the contents of a directory path.
 
     Args:
         directory: The absolute path to the directory.
@@ -153,18 +142,6 @@ async def get_directory_contents(directory: str, file_types: list[str] = None,
     except Exception as e:
         logger.error(e)
         HTTPException(404, 'Could not access the directory')
-
-
-@router.get('/files/current_directory_contents/', response_model=list[FileInfo], tags=['file manager'])
-async def get_current_directory_contents(file_types: list[str] = None, include_hidden: bool = False) -> list[FileInfo]:
-    """Gets the contents of the default directory.
-
-    Note: This endpoint is kept for backward compatibility.
-    The file browser state is now managed on the frontend.
-    Use /files/directory_contents/ with an explicit directory parameter instead.
-    """
-    directory_explorer = SecureFileExplorer(storage.user_data_directory, storage.user_data_directory)
-    return directory_explorer.list_contents(file_types=file_types, show_hidden=include_hidden)
 
 
 @router.post('/files/create_directory', response_model=output_model.OutputDir, tags=['file manager'])

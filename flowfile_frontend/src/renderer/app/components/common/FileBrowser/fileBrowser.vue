@@ -297,10 +297,6 @@ const newFileName = ref("");
 const fileNameError = ref("");
 const selectedFile = ref<FileInfo | null>(null);
 
-/**
- * Load directory contents for the given path
- * This is the main stateless directory loading function
- */
 const loadDirectoryContents = async (directoryPath: string) => {
   loading.value = true;
   error.value = null;
@@ -310,7 +306,6 @@ const loadDirectoryContents = async (directoryPath: string) => {
     });
     files.value = filesResponse;
     currentPath.value = directoryPath;
-    // Save the path to the store for this context
     fileBrowserStore.setCurrentPath(props.context, directoryPath);
   } catch (err: any) {
     error.value = err.message || "Failed to load directory";
@@ -319,26 +314,29 @@ const loadDirectoryContents = async (directoryPath: string) => {
   }
 };
 
-/**
- * Load the current directory based on stored context path or get default
- */
+const loadDefaultDirectory = async () => {
+  loading.value = true;
+  error.value = null;
+  try {
+    const defaultPath = await getDefaultPath();
+    await loadDirectoryContents(defaultPath);
+  } catch (err: any) {
+    error.value = err.message || "Failed to load directory";
+    loading.value = false;
+  }
+};
+
 const loadCurrentDirectory = async () => {
-  // First check if we have a stored path for this context
   const storedPath = fileBrowserStore.getCurrentPath(props.context);
 
   if (storedPath) {
     await loadDirectoryContents(storedPath);
-  } else {
-    // Get the default path from backend and use that
-    loading.value = true;
-    error.value = null;
-    try {
-      const defaultPath = await getDefaultPath();
-      await loadDirectoryContents(defaultPath);
-    } catch (err: any) {
-      error.value = err.message || "Failed to load directory";
-      loading.value = false;
+    if (error.value) {
+      fileBrowserStore.resetContext(props.context);
+      await loadDefaultDirectory();
     }
+  } else {
+    await loadDefaultDirectory();
   }
 };
 
