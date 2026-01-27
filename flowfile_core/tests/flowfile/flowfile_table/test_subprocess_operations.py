@@ -2,12 +2,12 @@ import polars as pl
 import pytest
 
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    DatabaseExternalReadSettings,
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     trigger_database_read_collector,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
     ExtDatabaseConnection,
 )
