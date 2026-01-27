@@ -1,4 +1,5 @@
 import gc
+from base64 import b64encode
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from time import sleep
@@ -62,7 +63,12 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
                 if final_progress == 100:
                     status.status = "Completed"
                     if not q.empty():
-                        status.results = q.get()
+                        result = q.get()
+                        # b64-encode bytes for JSON-safe storage in status_dict (REST responses)
+                        if isinstance(result, bytes):
+                            status.results = b64encode(result).decode("ascii")
+                        else:
+                            status.results = result
                 elif final_progress != -1:
                     status_dict[task_id].status = "Unknown Error"
 
