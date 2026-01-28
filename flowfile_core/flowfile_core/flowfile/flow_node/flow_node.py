@@ -884,19 +884,13 @@ class FlowNode:
             if self._execution_state.source_file_info.has_changed():
                 return False
 
-        # Check external cache
-        cache_exists = results_exists(self.hash)
+        # Cache-enabled nodes: only skip if the cache file is still present
+        if self.node_settings.cache_results:
+            return results_exists(self.hash)
 
-        # Cache enabled and exists -> skip
-        if self.node_settings.cache_results and cache_exists:
-            return True
-
-        # Development mode with cache -> skip
-        if not performance_mode and cache_exists:
-            return True
-
-        # Need full execution logic
-        return False
+        # Already ran with current settings → skip
+        # Results are available in memory from previous execution
+        return True
 
     def _do_execute_full_local(self, performance_mode: bool = False) -> None:
         """Executes the node's logic locally, including example data generation.

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
@@ -22,32 +22,78 @@ from flowfile_core.flowfile.flow_node.state import (
     SourceFileInfo,
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 # =============================================================================
 # Test Helpers
 # =============================================================================
 
-def create_graph(execution_mode: str = 'Development') -> FlowGraph:
+def create_graph(execution_mode: str = 'Development', flow_id: int = 1) -> FlowGraph:
     """Create a new flow graph for testing."""
     handler = FlowfileHandler()
     handler.register_flow(schemas.FlowSettings(
-        flow_id=1,
+        flow_id=flow_id,
         name='test_flow',
         path='.',
         execution_mode=execution_mode
     ))
-    return handler.get_flow(1)
+    return handler.get_flow(flow_id)
 
 
 def add_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1) -> FlowGraph:
     """Add a manual input node to the graph."""
     raw_data = input_schema.RawData.from_pylist(data)
-    node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
+    node_promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data_format=raw_data)
+    input_file = input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=node_id, raw_data_format=raw_data)
     graph.add_manual_input(input_file)
+    return graph
+
+
+def add_node_promise(graph: FlowGraph, node_type: str, node_id: int):
+    """Add a node promise to the graph."""
+    node_promise = input_schema.NodePromise(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        node_type=node_type,
+    )
+    graph.add_node_promise(node_promise)
+
+
+def create_graph_with_select(flow_id: int = 1, execution_mode: str = 'Development') -> FlowGraph:
+    """Create a graph with a manual input (node 1) connected to a select node (node 2)."""
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    add_manual_input(graph, [{"name": "Alice", "age": 30}], node_id=1)
+    add_node_promise(graph, 'select', node_id=2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    select_input = transform_schema.SelectInput(old_name='name', new_name='name', keep=True)
+    node_select = input_schema.NodeSelect(
+        flow_id=flow_id,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[select_input],
+    )
+    graph.add_select(node_select)
+    return graph
+
+
+def create_graph_with_sort(flow_id: int = 2, execution_mode: str = 'Development') -> FlowGraph:
+    """Create a graph with a manual input (node 1) connected to a sort node (node 2)."""
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    add_manual_input(graph, [{"name": "Charlie", "age": 25}, {"name": "Alice", "age": 30}], node_id=1)
+    add_node_promise(graph, 'sort', node_id=2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    sort_input = transform_schema.SortByInput(column='name', how='asc')
+    node_sort = input_schema.NodeSort(
+        flow_id=flow_id,
+        node_id=2,
+        depending_on_id=1,
+        sort_input=[sort_input],
+    )
+    graph.add_sort(node_sort)
     return graph
 
 
@@ -359,8 +405,8 @@ class TestNodeExecutor:
         assert decision.should_run is True
         assert decision.reason == InvalidationReason.FORCED_REFRESH
 
-    def test_decide_execution_performance_mode(self):
-        """Test execution decision in performance mode."""
+    def test_decide_execution_already_ran_skips(self):
+        """Already-ran nodes should skip regardless of mode."""
         graph = create_graph()
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
@@ -369,15 +415,24 @@ class TestNodeExecutor:
         node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(node)
+
+        # Development mode: skip
         decision = executor._decide_execution(
             state=node._execution_state,
             run_location="remote",
-            performance_mode=True,  # Performance mode
+            performance_mode=False,
             force_refresh=False,
         )
+        assert decision.should_run is False
 
-        assert decision.should_run is True
-        assert decision.reason == InvalidationReason.PERFORMANCE_MODE
+        # Performance mode: also skip
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=True,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
 
     def test_node_has_executor_property(self):
         """Test that FlowNode has an executor property."""
@@ -470,3 +525,380 @@ class TestExecutorIntegration:
 
         # After execution, state should be updated
         assert node._execution_state.has_run_with_current_setup is True
+
+
+# =============================================================================
+# Strategy Determination Tests (node_default routing)
+# =============================================================================
+
+class TestDetermineStrategyByNodeType:
+    """Tests that _determine_strategy routes to the correct strategy
+    based on whether the node has a node_default."""
+
+    def test_select_node_has_node_default(self):
+        """Verify that the select node has a node_default set."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        assert select_node.node_default is not None, "select node should have a node_default"
+
+    def test_select_node_is_narrow_transform(self):
+        """Verify that the select node is a narrow transform type."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        assert select_node.node_default.transform_type == "narrow"
+
+    def test_select_strategy_remote_returns_local_with_sampling(self):
+        """Select node should use LOCAL_WITH_SAMPLING when run_location is 'remote'."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        executor = NodeExecutor(select_node)
+
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+    def test_select_strategy_local_returns_full_local(self):
+        """Select node should use FULL_LOCAL when run_location is 'local',
+        regardless of having a node_default."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        executor = NodeExecutor(select_node)
+
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
+
+    def test_sort_node_has_node_default(self):
+        """Verify that the sort node has a node_default set."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        assert sort_node.node_default is not None, "sort node should have a node_default"
+
+    def test_sort_node_is_wide_transform(self):
+        """Verify that the sort node is a wide transform type."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        assert sort_node.node_default.transform_type == "wide"
+
+    def test_sort_strategy_remote_returns_remote(self):
+        """Sort node (wide transform) should get REMOTE directly from _determine_strategy.
+        Only narrow transforms get LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        executor = NodeExecutor(sort_node)
+
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_manual_input_has_no_default_settings(self):
+        """Verify that manual_input has a node_default but without has_default_settings."""
+        graph = create_graph()
+        add_manual_input(graph, [{"a": 1}], node_id=1)
+        node = graph.get_node(1)
+        # All nodes get a node_default, but only lightweight transforms
+        # (select, sample, etc.) have has_default_settings=True
+        assert node.node_default is not None
+        assert not node.node_default.has_default_settings
+
+    def test_manual_input_strategy_remote_returns_remote(self):
+        """Nodes without has_default_settings should get REMOTE strategy."""
+        graph = create_graph()
+        add_manual_input(graph, [{"a": 1}], node_id=1)
+        node = graph.get_node(1)
+        executor = NodeExecutor(node)
+
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+
+# =============================================================================
+# Execution Decision Tests (with real node types)
+# =============================================================================
+
+class TestDecideExecutionByNodeType:
+    """Tests that _decide_execution returns the correct decision
+    for different node types and scenarios."""
+
+    def test_select_never_ran_gets_local_with_sampling(self):
+        """Select node that never ran should decide LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(select_node)
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+        assert decision.reason == InvalidationReason.NEVER_RAN
+
+    def test_select_forced_refresh_gets_local_with_sampling(self):
+        """Select node with forced refresh should decide LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node._execution_state.has_run_with_current_setup = True
+
+        executor = NodeExecutor(select_node)
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=True,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+        assert decision.reason == InvalidationReason.FORCED_REFRESH
+
+    def test_select_already_ran_skips(self):
+        """Select node that already ran should skip, regardless of mode."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node._execution_state.has_run_with_current_setup = True
+
+        executor = NodeExecutor(select_node)
+
+        # Development mode: skip
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
+
+        # Performance mode: also skip
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=True,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
+
+    def test_select_local_always_full_local(self):
+        """Select node with run_location='local' should always get FULL_LOCAL."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(select_node)
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="local",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.FULL_LOCAL
+        assert decision.reason == InvalidationReason.NEVER_RAN
+
+    def test_sort_never_ran_gets_remote(self):
+        """Sort node (wide transform) should get REMOTE directly.
+        Wide transforms are too expensive to run locally."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        sort_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(sort_node)
+        decision = executor._decide_execution(
+            state=sort_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.REMOTE
+        assert decision.reason == InvalidationReason.NEVER_RAN
+
+    def test_manual_input_never_ran_gets_remote(self):
+        """Manual input node (no default) should get REMOTE strategy."""
+        graph = create_graph()
+        add_manual_input(graph, [{"a": 1}], node_id=1)
+        node = graph.get_node(1)
+        node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(node)
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.REMOTE
+        assert decision.reason == InvalidationReason.NEVER_RAN
+
+
+# =============================================================================
+# Wide Transform Override Tests
+# =============================================================================
+
+class TestWideVsNarrowTransformStrategy:
+    """Tests that narrow transforms get LOCAL_WITH_SAMPLING and wide
+    transforms go directly to REMOTE from _determine_strategy.
+
+    The override logic in execute() exists as a safety net but shouldn't
+    trigger now that _determine_strategy handles transform_type directly."""
+
+    def test_sort_always_remote(self):
+        """Sort (wide transform) should always get REMOTE when remote,
+        regardless of optimize_for_downstream."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        sort_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_select_always_local_with_sampling(self):
+        """Select (narrow transform) should get LOCAL_WITH_SAMPLING when remote."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+    def test_sort_local_still_full_local(self):
+        """Sort (wide transform) should use FULL_LOCAL when run_location='local'."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
+
+    def test_select_local_still_full_local(self):
+        """Select (narrow transform) should use FULL_LOCAL when run_location='local'."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
+
+
+# =============================================================================
+# Strategy Determination for All Nodes With Defaults
+# =============================================================================
+
+class TestNodesWithDefaults:
+    """Verify that all nodes registered in nodes_with_defaults get
+    LOCAL_WITH_SAMPLING and nodes outside that set get REMOTE."""
+
+    @pytest.mark.parametrize("node_type,expected_has_default", [
+        ("select", True),
+        ("sample", True),
+        ("sort", True),
+        ("union", True),
+        ("record_count", True),
+    ])
+    def test_nodes_with_defaults_have_node_default(self, node_type, expected_has_default):
+        """Nodes in nodes_with_defaults should have a node_default on the FlowNode."""
+        from flowfile_core.configs import node_store
+        node_default = node_store.node_defaults.get(node_type)
+        assert (node_default is not None) == expected_has_default, (
+            f"Expected node_default for '{node_type}' to be "
+            f"{'set' if expected_has_default else 'None'}"
+        )
+
+    @pytest.mark.parametrize("node_type,expected_transform_type", [
+        ("select", "narrow"),
+        ("sample", "narrow"),
+        ("union", "narrow"),
+        ("sort", "wide"),
+        ("record_count", "wide"),
+    ])
+    def test_nodes_with_defaults_transform_types(self, node_type, expected_transform_type):
+        """Verify transform_type for each node with defaults."""
+        from flowfile_core.configs import node_store
+        node_default = node_store.node_defaults.get(node_type)
+        assert node_default is not None
+        assert node_default.transform_type == expected_transform_type
+
+    def test_manual_input_has_no_default_settings(self):
+        """manual_input has a node_default but has_default_settings is False."""
+        from flowfile_core.configs import node_store
+        node_default = node_store.node_defaults.get("manual_input")
+        assert node_default is not None
+        assert not node_default.has_default_settings
+
+
+# =============================================================================
+# Cache Results Strategy Tests
+# =============================================================================
+
+class TestCacheResultsStrategy:
+    """When cache_results is enabled, everything should run fully remote.
+
+    Caching requires full materialization of results, which means even
+    narrow transforms that would normally get LOCAL_WITH_SAMPLING must
+    use REMOTE so the result can be stored in the cache."""
+
+    def test_select_with_cache_gets_remote(self):
+        """Select (narrow) with cache_results=True should get REMOTE, not LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_select_without_cache_gets_local_with_sampling(self):
+        """Select (narrow) without cache_results should still get LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        assert select_node.node_settings.cache_results is False
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+    def test_sort_with_cache_still_remote(self):
+        """Sort (wide) with cache_results=True should still get REMOTE (was already REMOTE)."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        sort_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_cache_does_not_affect_local_execution(self):
+        """cache_results should not affect local execution — still FULL_LOCAL."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
+
+    def test_select_with_cache_decide_execution_gets_remote(self):
+        """Full decision flow: select with cache_results should decide REMOTE."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+        select_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(select_node)
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.REMOTE
+        assert decision.reason == InvalidationReason.NEVER_RAN

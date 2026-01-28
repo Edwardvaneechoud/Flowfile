@@ -129,10 +129,8 @@ class NodeExecutor:
             decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
 
         if not decision.should_run:
-            node_logger.info("Node is up-to-date, skipping execution")
             return
 
-        # Log execution decision
         reason_str = decision.reason.name if decision.reason else "UNKNOWN"
         strategy_str = decision.strategy.name
         node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str})")
@@ -187,28 +185,16 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
 
-        # Check external cache
-        cache_exists = results_exists(self.node.hash)
-
-        # Node has explicit cache_results setting
+        # Cache-enabled nodes: check if cache file is still present
         if self.node.node_settings.cache_results:
-            if cache_exists:
+            if results_exists(self.node.hash):
                 return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
-        # Development mode (not performance_mode): use cache if available
-        if not performance_mode and cache_exists:
-            return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-
-        # Performance mode: always re-run for fresh results
-        if performance_mode:
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
-
-        # Default: settings changed since last run
-        strategy = self._determine_strategy(run_location)
-        return ExecutionDecision(True, strategy, InvalidationReason.SETTINGS_CHANGED)
+        # Already ran with current settings → skip
+        # Results are available in memory from previous execution
+        return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
 
     def _determine_strategy(
         self,
@@ -216,17 +202,34 @@ class NodeExecutor:
     ) -> ExecutionStrategy:
         """Determine the execution strategy based on location and node settings.
 
-        This matches the original execute_node behavior:
-        - local → FULL_LOCAL (execute_full_local)
-        - remote → REMOTE (execute_remote)
+        Decision logic:
+        - local → FULL_LOCAL
+        - remote + cache_results → REMOTE (caching needs full materialization)
+        - remote + narrow transform → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
+        - remote → REMOTE
+
+        Narrow transforms (e.g., select, sample, union) only operate on columns
+        without reshaping data, so they're cheap to compute locally. An external
+        sampler provides preview data for the UI.
+
+        When cache_results is enabled, the node must run fully remote so the
+        result can be materialized and stored in the cache.
         """
         # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
 
-        # Remote execution: use REMOTE strategy
-        # This matches original behavior where run_location == "remote"
-        # always triggered execute_remote
+        # Caching requires full remote execution to materialize and store results
+        if self.node.node_settings.cache_results:
+            return ExecutionStrategy.REMOTE
+
+        # Narrow transforms are lightweight column-level operations that can
+        # run locally with an external sampler for preview data
+        if (self.node.node_default is not None
+                and self.node.node_default.transform_type == "narrow"):
+            return ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+        # Full remote execution for wide transforms and everything else
         return ExecutionStrategy.REMOTE
 
     def _execute_with_strategy(
