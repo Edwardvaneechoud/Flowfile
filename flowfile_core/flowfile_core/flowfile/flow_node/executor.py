@@ -120,6 +120,7 @@ class NodeExecutor:
         decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
 
         # Override for wide transforms when optimizing for downstream
+        initial_strategy = decision.strategy
         if (decision.should_run
             and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
             and self.node.node_default
@@ -132,10 +133,24 @@ class NodeExecutor:
             node_logger.info("Node is up-to-date, skipping execution")
             return
 
-        # Log execution decision
+        # Log execution decision with strategy details
         reason_str = decision.reason.name if decision.reason else "UNKNOWN"
         strategy_str = decision.strategy.name
-        node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str})")
+        node_type = self.node.node_type
+        transform_type = self.node.node_default.transform_type if self.node.node_default else "none"
+        has_default = self.node.node_default is not None
+
+        if initial_strategy != decision.strategy:
+            node_logger.info(
+                f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str}) "
+                f"[node_type={node_type}, transform_type={transform_type}, has_default={has_default}, "
+                f"overridden from {initial_strategy.name}]"
+            )
+        else:
+            node_logger.info(
+                f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str}) "
+                f"[node_type={node_type}, transform_type={transform_type}, has_default={has_default}]"
+            )
 
         # Override performance_mode when cache_results is enabled
         # This ensures example data is generated even in Performance mode
@@ -216,17 +231,26 @@ class NodeExecutor:
     ) -> ExecutionStrategy:
         """Determine the execution strategy based on location and node settings.
 
-        This matches the original execute_node behavior:
+        Decision logic:
         - local → FULL_LOCAL (execute_full_local)
+        - remote + node has defaults → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
         - remote → REMOTE (execute_remote)
+
+        Nodes with defaults (e.g., select, sample, union) are lightweight transforms
+        that can run locally with an external sampler providing preview data.
         """
         # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
 
-        # Remote execution: use REMOTE strategy
-        # This matches original behavior where run_location == "remote"
-        # always triggered execute_remote
+        # Nodes with default settings (e.g., select, sample, union) are lightweight
+        # transforms that benefit from local execution with external sampling for
+        # preview data
+        if (self.node.node_default is not None
+                and self.node.node_default.has_default_settings):
+            return ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+        # Full remote execution for everything else
         return ExecutionStrategy.REMOTE
 
     def _execute_with_strategy(
