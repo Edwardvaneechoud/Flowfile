@@ -56,9 +56,7 @@
             <div v-if="referenceError" class="validation-error">
               {{ referenceError }}
             </div>
-            <div v-else-if="isValidatingReference" class="validation-loading">
-              Checking...
-            </div>
+            <div v-else-if="isValidatingReference" class="validation-loading">Checking...</div>
           </div>
 
           <div class="setting-group">
@@ -95,19 +93,14 @@
             <div class="setting-group">
               <div class="setting-header">
                 <span class="setting-title">Validation Mode</span>
-                <span class="setting-description">
-                  How to handle output fields
-                </span>
+                <span class="setting-description"> How to handle output fields </span>
               </div>
               <el-select
                 v-model="outputFieldConfig.validation_mode_behavior"
-                @change="handleOutputConfigChange"
                 style="width: 100%"
+                @change="handleOutputConfigChange"
               >
-                <el-option
-                  label="Strict - Keep only defined fields"
-                  value="select_only"
-                />
+                <el-option label="Strict - Keep only defined fields" value="select_only" />
                 <el-option
                   label="Flexible - Add missing fields, remove extras"
                   value="add_missing"
@@ -140,21 +133,23 @@
               <div class="setting-header">
                 <span class="setting-title">Schema Definition</span>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
-                  <el-button size="small" :disabled="hasSchema" :loading="isLoadingSchema" @click="loadFieldsFromSchema">
+                  <el-button
+                    size="small"
+                    :disabled="hasSchema"
+                    :loading="isLoadingSchema"
+                    @click="loadFieldsFromSchema"
+                  >
                     Auto-Detect Schema
                   </el-button>
-                  <el-button size="small" type="primary" @click="addField">
-                    Add Field
-                  </el-button>
+                  <el-button size="small" type="primary" @click="addField"> Add Field </el-button>
                 </div>
               </div>
 
               <div v-if="outputFieldConfig.fields.length === 0" class="no-fields">
-                <template v-if="isLoadingSchema">
-                  Detecting schema...
-                </template>
+                <template v-if="isLoadingSchema"> Detecting schema... </template>
                 <template v-else>
-                  No schema defined yet. Click "Auto-Detect Schema" to import from upstream data or "Add Field" to define manually.
+                  No schema defined yet. Click "Auto-Detect Schema" to import from upstream data or
+                  "Add Field" to define manually.
                 </template>
               </div>
 
@@ -174,11 +169,7 @@
 
                 <el-table-column label="Field Name" prop="name">
                   <template #default="{ row }">
-                    <el-input
-                      v-model="row.name"
-                      size="small"
-                      @change="handleOutputConfigChange"
-                    />
+                    <el-input v-model="row.name" size="small" @change="handleOutputConfigChange" />
                   </template>
                 </el-table-column>
 
@@ -217,26 +208,17 @@
 
                 <el-table-column width="60">
                   <template #default="{ $index }">
-                    <el-button
-                      type="danger"
-                      size="small"
-                      text
-                      @click="removeField($index)"
-                    >
+                    <el-button type="danger" size="small" text @click="removeField($index)">
                       <el-icon><Delete /></el-icon>
                     </el-button>
                   </template>
                 </el-table-column>
               </el-table>
 
-              <div
-                v-if="outputFieldConfig.fields.length > 0"
-                style="margin-top: 1rem"
-                class="tip"
-
-              >
-                <strong>Tip:</strong> Default values are used when fields are missing from the input data.
-            </div>
+              <div v-if="outputFieldConfig.fields.length > 0" style="margin-top: 1rem" class="tip">
+                <strong>Tip:</strong> Default values are used when fields are missing from the input
+                data.
+              </div>
             </div>
           </template>
         </div>
@@ -294,7 +276,7 @@ const outputFieldConfig = reactive<OutputFieldConfig>(
     validation_mode_behavior: "select_only",
     fields: [],
     validate_data_types: false,
-  }
+  },
 );
 
 watch(
@@ -466,7 +448,7 @@ const loadFieldsFromSchema = async () => {
     }
 
     // Give the backend a moment to process and update the schema
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Get the node data from the store with updated schema
     const nodeData = await nodeStore.getNodeData(props.modelValue.node_id, false);
@@ -576,6 +558,5 @@ const loadFieldsFromSchema = async () => {
   background-color: var(--el-fill-color-lighter);
   border-radius: 4px;
   margin-top: 1rem;
-
 }
 </style>

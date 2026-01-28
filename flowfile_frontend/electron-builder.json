@@ -3,7 +3,7 @@
   "productName": "Flowfile",
   "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "asar": true,
-  "compression": "maximum",
+  "compression": "normal",
   "directories": {
     "output": "dist",
     "buildResources": "src/assets/icons"
@@ -113,18 +113,21 @@
       "to": "static",
       "filter": ["**/*"]
     },
-    {
-      "from": "node_modules",
-      "to": "node_modules",
-      "filter": [
-        "**/*",
-        "!**/{CHANGELOG.md,README.md,README,readme.md,readme}",
-        "!**/{test,__tests__,tests,powered-test,example,examples}",
-        "!**/*.d.ts",
-        "!**/.bin"
-      ]
-    },
-    "!**/*",
-    "package.json"
+    "package.json",
+    "node_modules/**",
+    "!node_modules/electron/**",
+    "!node_modules/electron-builder/**",
+    "!node_modules/app-builder-bin/**",
+    "!node_modules/typescript/**",
+    "!node_modules/esbuild/**",
+    "!node_modules/@esbuild/**",
+    "!node_modules/7zip-bin/**",
+    "!node_modules/vite/**",
+    "!node_modules/@vitejs/**",
+    "!node_modules/playwright/**",
+    "!node_modules/@playwright/**",
+    "!node_modules/eslint/**",
+    "!node_modules/prettier/**"
+  
   ]
 }

@@ -56,7 +56,8 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
         let original_index = originalData.main_input?.table_schema.findIndex(
           (column) => column.name === newColumnSetting.old_name,
         );
-        let original_object = index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
+        let original_object =
+          index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
         if (original_object) {
           newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
           newColumnSetting.data_type_change = newColumnSetting.is_altered;

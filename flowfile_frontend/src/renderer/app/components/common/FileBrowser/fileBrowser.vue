@@ -221,18 +221,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated, watch } from "vue";
 import { FileInfo } from "./types";
-import {
-  useFileBrowserStore,
-  type FileBrowserContext,
-} from "../../../stores/fileBrowserStore";
+import { useFileBrowserStore, type FileBrowserContext } from "../../../stores/fileBrowserStore";
 
 import { ElMessage, ElMessageBox } from "element-plus";
-import {
-  getDirectoryContents,
-  getDefaultPath,
-  getParentPath,
-  joinPath,
-} from "./fileSystemApi";
+import { getDirectoryContents, getDefaultPath, getParentPath, joinPath } from "./fileSystemApi";
 
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
 
