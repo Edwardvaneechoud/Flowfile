@@ -36,7 +36,7 @@ def create_flowfile_handler() -> FlowfileHandler:
     return handler
 
 
-def create_graph(flow_id: int = 1, execution_mode: str = 'Development', execution_location: str = "local") -> FlowGraph:
+def create_graph(flow_id: int = 1, execution_mode: str = 'Development', execution_location: str = "remote") -> FlowGraph:
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(
         flow_id=flow_id,
@@ -705,10 +705,8 @@ class TestCustomNodeEdgeCases:
     def test_custom_node_with_empty_input(self, AddFixedColumnNode):
         """Test custom node with empty input data."""
         add_to_custom_node_store(AddFixedColumnNode)
-
         graph = create_graph()
         add_manual_input(graph, [], node_id=1)
-
         add_custom_node_to_graph(graph, AddFixedColumnNode, node_id=2, settings={
             "config": {"column_name": "new_col", "fixed_value": "value"}
         })
@@ -718,7 +716,7 @@ class TestCustomNodeEdgeCases:
         handle_run_info(run_result)
 
         result = graph.get_node(2).get_resulting_data()
-        assert result.count() == 0
+        assert result.count() == 0  # Should still be empty # TODO: Check if behaviour is correct in local run
 
     def test_custom_node_with_missing_settings(self, ColumnsToStringNode):
         """Test custom node when no columns are selected."""
