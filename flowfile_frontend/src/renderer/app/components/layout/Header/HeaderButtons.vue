@@ -161,6 +161,21 @@
             @change="pushFlowSettings"
           />
         </div>
+        <div class="form-group">
+          <label>Parallel workers:</label>
+          <el-input-number
+            v-model="flowSettings.max_parallel_workers"
+            :min="1"
+            :max="32"
+            size="small"
+            style="width: 100%"
+            @change="pushFlowSettings"
+          />
+          <span class="form-hint">
+            Max threads for running independent nodes in parallel. Only applies when execution
+            location is Remote. Local execution always runs sequentially.
+          </span>
+        </div>
       </div>
     </div>
   </el-dialog>
@@ -504,6 +519,14 @@ onMounted(async () => {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+}
+
+.form-hint {
+  display: block;
+  margin-top: var(--spacing-1);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-muted, #999);
+  line-height: 1.4;
 }
 
 .quick-create-modal {

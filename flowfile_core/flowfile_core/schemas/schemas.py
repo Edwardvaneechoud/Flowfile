@@ -106,6 +106,8 @@ class FlowGraphConfig(BaseModel):
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
         execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
+        max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
+            stage. Set to 1 to disable parallelism. Defaults to 4.
     """
 
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
@@ -115,6 +117,7 @@ class FlowGraphConfig(BaseModel):
     path: str = ""
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
+    max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
 
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
@@ -192,6 +195,7 @@ class FlowfileSettings(BaseModel):
     execution_location: ExecutionLocationsLiteral = "local"
     auto_save: bool = False
     show_detailed_progress: bool = True
+    max_parallel_workers: int = Field(default=4, ge=1)
 
 
 class FlowfileNode(BaseModel):

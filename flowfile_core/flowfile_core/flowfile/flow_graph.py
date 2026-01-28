@@ -2,7 +2,9 @@ import datetime
 import functools
 import json
 import os
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from functools import partial
 from importlib.metadata import PackageNotFoundError, version
@@ -60,7 +62,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import utils as 
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -199,15 +201,19 @@ def skip_node_message(flow_logger: FlowLogger, nodes: list[FlowNode]) -> None:
         flow_logger.warning(f"skipping nodes:\n{msg}")
 
 
-def execution_order_message(flow_logger: FlowLogger, nodes: list[FlowNode]) -> None:
-    """Logs an informational message showing the determined execution order of nodes.
+def execution_order_message(flow_logger: FlowLogger, stages: list[ExecutionStage]) -> None:
+    """Logs an informational message showing the determined execution order with parallel stages.
 
     Args:
         flow_logger: The logger instance for the flow.
-        nodes: A list of FlowNode objects in the order they will be executed.
+        stages: A list of ExecutionStage objects in execution order.
     """
-    msg = "\n".join(str(node) for node in nodes)
-    flow_logger.info(f"execution order:\n{msg}")
+    lines: list[str] = []
+    for i, stage in enumerate(stages):
+        node_strs = ", ".join(str(node) for node in stage)
+        parallel_tag = " (parallel)" if len(stage) > 1 else ""
+        lines.append(f"  Stage {i}{parallel_tag}: [{node_strs}]")
+    flow_logger.info(f"execution order:\n" + "\n".join(lines))
 
 
 def get_xlsx_schema_callback(
@@ -776,9 +782,10 @@ class FlowGraph:
         add_un_drawn_nodes(drawn_nodes, node_info, lines)
 
         try:
-            skip_nodes, ordered_nodes = compute_execution_plan(
+            execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
+            ordered_nodes = execution_plan.all_nodes
             if ordered_nodes:
                 for i, node in enumerate(ordered_nodes, 1):
                     lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
@@ -2213,10 +2220,10 @@ class FlowGraph:
         flow_node = self._node_db.get(node_id)
         if not flow_node:
             raise Exception("Node not found found")
-        skip_nodes, execution_order = compute_execution_plan(
+        execution_plan = compute_execution_plan(
             nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
         )
-        if flow_node.node_id in [skip_node.node_id for skip_node in skip_nodes]:
+        if flow_node.node_id in [skip_node.node_id for skip_node in execution_plan.skip_nodes]:
             raise Exception("Node can not be executed because it does not have it's inputs")
 
     def create_initial_run_information(self, number_of_nodes: int, run_type: Literal["fetch_one", "full_run"]):
@@ -2285,11 +2292,66 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
+    def _execute_single_node(
+        self,
+        node: FlowNode,
+        performance_mode: bool,
+        run_info_lock: threading.Lock,
+    ) -> tuple[NodeResult, FlowNode]:
+        """Executes a single node, records its result, and returns both.
+
+        Thread-safe: uses run_info_lock when mutating shared run information.
+
+        Args:
+            node: The node to execute.
+            performance_mode: Whether to run in performance mode.
+            run_info_lock: Lock protecting shared RunInformation state.
+
+        Returns:
+            A (NodeResult, FlowNode) tuple for post-stage failure propagation.
+        """
+        node_logger = self.flow_logger.get_node_logger(node.node_id)
+        node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+
+        with run_info_lock:
+            self.latest_run_info.node_step_result.append(node_result)
+
+        logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
+        node.execute_node(
+            run_location=self.flow_settings.execution_location,
+            performance_mode=performance_mode,
+            node_logger=node_logger,
+        )
+        try:
+            node_result.error = str(node.results.errors)
+            if self.flow_settings.is_canceled:
+                node_result.success = None
+                node_result.is_running = False
+                return node_result, node
+            node_result.success = node.results.errors is None
+            node_result.end_timestamp = time()
+            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.is_running = False
+        except Exception as e:
+            node_result.error = "Node did not run"
+            node_result.success = False
+            node_result.end_timestamp = time()
+            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.is_running = False
+            node_logger.error(f"Error in node {node.node_id}: {e}")
+
+        node_logger.info(f"Completed node with success: {node_result.success}")
+        with run_info_lock:
+            self.latest_run_info.nodes_completed += 1
+
+        return node_result, node
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
-        It determines the correct execution order, runs each node,
-        collects results, and handles errors and cancellations.
+        Independent nodes within the same execution stage are run in parallel
+        using threads. Stages are processed sequentially so that all dependencies
+        are satisfied before a stage begins.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -2304,54 +2366,64 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
-            skip_nodes, execution_order = compute_execution_plan(
+            execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
 
-            self.latest_run_info = self.create_initial_run_information(len(execution_order), "full_run")
+            self.latest_run_info = self.create_initial_run_information(
+                execution_plan.node_count, "full_run"
+            )
 
-            skip_node_message(self.flow_logger, skip_nodes)
-            execution_order_message(self.flow_logger, execution_order)
+            skip_node_message(self.flow_logger, execution_plan.skip_nodes)
+            execution_order_message(self.flow_logger, execution_plan.stages)
             performance_mode = self.flow_settings.execution_mode == "Performance"
 
-            for node in execution_order:
-                node_logger = self.flow_logger.get_node_logger(node.node_id)
+            run_info_lock = threading.Lock()
+            skip_node_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
+
+            for stage in execution_plan.stages:
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info("Flow canceled")
                     break
-                if node in skip_nodes:
-                    node_logger.info(f"Skipping node {node.node_id}")
+
+                nodes_to_run = [n for n in stage.nodes if n.node_id not in skip_node_ids]
+
+                for skipped in stage.nodes:
+                    if skipped.node_id in skip_node_ids:
+                        node_logger = self.flow_logger.get_node_logger(skipped.node_id)
+                        node_logger.info(f"Skipping node {skipped.node_id}")
+
+                if not nodes_to_run:
                     continue
-                node_result = NodeResult(node_id=node.node_id, node_name=node.name)
-                self.latest_run_info.node_step_result.append(node_result)
-                logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-                node.execute_node(
-                    run_location=self.flow_settings.execution_location,
-                    performance_mode=performance_mode,
-                    node_logger=node_logger,
-                )
-                try:
-                    node_result.error = str(node.results.errors)
-                    if self.flow_settings.is_canceled:
-                        node_result.success = None
-                        node_result.success = None
-                        node_result.is_running = False
-                        continue
-                    node_result.success = node.results.errors is None
-                    node_result.end_timestamp = time()
-                    node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
-                    node_result.is_running = False
-                except Exception as e:
-                    node_result.error = "Node did not run"
-                    node_result.success = False
-                    node_result.end_timestamp = time()
-                    node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
-                    node_result.is_running = False
-                    node_logger.error(f"Error in node {node.node_id}: {e}")
-                if not node_result.success:
-                    skip_nodes.extend(list(node.get_all_dependent_nodes()))
-                node_logger.info(f"Completed node with success: {node_result.success}")
-                self.latest_run_info.nodes_completed += 1
+
+                is_local = self.flow_settings.execution_location == "local"
+                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
+                if len(nodes_to_run) == 1 or max_workers == 1:
+                    # Single node or parallelism disabled — run sequentially
+                    stage_results = [
+                        self._execute_single_node(node, performance_mode, run_info_lock)
+                        for node in nodes_to_run
+                    ]
+                else:
+                    # Multiple independent nodes — run in parallel
+                    stage_results: list[tuple[NodeResult, FlowNode]] = []
+                    workers = min(max_workers, len(nodes_to_run))
+                    with ThreadPoolExecutor(max_workers=workers) as executor:
+                        futures = {
+                            executor.submit(
+                                self._execute_single_node, node, performance_mode, run_info_lock
+                            ): node
+                            for node in nodes_to_run
+                        }
+                        for future in as_completed(futures):
+                            stage_results.append(future.result())
+
+                # After the stage completes, propagate failures to downstream nodes
+                for node_result, node in stage_results:
+                    if not node_result.success:
+                        for dep in node.get_all_dependent_nodes():
+                            skip_node_ids.add(dep.node_id)
+
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()
@@ -2442,6 +2514,7 @@ class FlowGraph:
             execution_location=self.flow_settings.execution_location,
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
+            max_parallel_workers=self.flow_settings.max_parallel_workers,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

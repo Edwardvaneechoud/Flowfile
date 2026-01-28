@@ -460,6 +460,9 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if "track_history" not in fs.__dict__:
         object.__setattr__(fs, '__dict__', {**fs.__dict__, 'track_history': True})
 
+    if "max_parallel_workers" not in fs.__dict__ or fs.max_parallel_workers is None:
+        object.__setattr__(fs, '__dict__', {**fs.__dict__, 'max_parallel_workers': 4})
+
     return flow_storage_obj
 
 
