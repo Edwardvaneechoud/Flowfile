@@ -233,24 +233,24 @@ class NodeExecutor:
 
         Decision logic:
         - local → FULL_LOCAL (execute_full_local)
-        - remote + node has defaults → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
+        - remote + narrow transform → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
         - remote → REMOTE (execute_remote)
 
-        Nodes with defaults (e.g., select, sample, union) are lightweight transforms
-        that can run locally with an external sampler providing preview data.
+        Narrow transforms (e.g., select, sample, union) only operate on columns
+        without reshaping data, so they're cheap to compute locally. An external
+        sampler provides preview data for the UI.
         """
         # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
 
-        # Nodes with default settings (e.g., select, sample, union) are lightweight
-        # transforms that benefit from local execution with external sampling for
-        # preview data
+        # Narrow transforms are lightweight column-level operations that can
+        # run locally with an external sampler for preview data
         if (self.node.node_default is not None
-                and self.node.node_default.has_default_settings):
+                and self.node.node_default.transform_type == "narrow"):
             return ExecutionStrategy.LOCAL_WITH_SAMPLING
 
-        # Full remote execution for everything else
+        # Full remote execution for wide transforms and everything else
         return ExecutionStrategy.REMOTE
 
     def _execute_with_strategy(

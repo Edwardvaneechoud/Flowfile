@@ -569,15 +569,15 @@ class TestDetermineStrategyByNodeType:
         sort_node = graph.get_node(2)
         assert sort_node.node_default.transform_type == "wide"
 
-    def test_sort_strategy_remote_returns_local_with_sampling(self):
-        """Sort node should initially get LOCAL_WITH_SAMPLING from _determine_strategy
-        (the override to REMOTE happens in execute(), not here)."""
+    def test_sort_strategy_remote_returns_remote(self):
+        """Sort node (wide transform) should get REMOTE directly from _determine_strategy.
+        Only narrow transforms get LOCAL_WITH_SAMPLING."""
         graph = create_graph_with_sort()
         sort_node = graph.get_node(2)
         executor = NodeExecutor(sort_node)
 
         strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+        assert strategy == ExecutionStrategy.REMOTE
 
     def test_manual_input_has_no_default_settings(self):
         """Verify that manual_input has a node_default but without has_default_settings."""
@@ -680,9 +680,9 @@ class TestDecideExecutionByNodeType:
         assert decision.strategy == ExecutionStrategy.FULL_LOCAL
         assert decision.reason == InvalidationReason.NEVER_RAN
 
-    def test_sort_never_ran_gets_local_with_sampling(self):
-        """Sort node (wide transform) that never ran should initially get LOCAL_WITH_SAMPLING
-        from _decide_execution (before the wide-transform override in execute())."""
+    def test_sort_never_ran_gets_remote(self):
+        """Sort node (wide transform) should get REMOTE directly.
+        Wide transforms are too expensive to run locally."""
         graph = create_graph_with_sort()
         sort_node = graph.get_node(2)
         sort_node._execution_state.has_run_with_current_setup = False
@@ -696,7 +696,7 @@ class TestDecideExecutionByNodeType:
         )
 
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+        assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
 
     def test_manual_input_never_ran_gets_remote(self):
@@ -723,88 +723,51 @@ class TestDecideExecutionByNodeType:
 # Wide Transform Override Tests
 # =============================================================================
 
-class TestWideTransformOverride:
-    """Tests that the wide-transform override in execute() promotes
-    LOCAL_WITH_SAMPLING to REMOTE for wide transforms when optimizing
-    for downstream nodes."""
+class TestWideVsNarrowTransformStrategy:
+    """Tests that narrow transforms get LOCAL_WITH_SAMPLING and wide
+    transforms go directly to REMOTE from _determine_strategy.
 
-    def _make_decision_with_override(self, node, run_location="remote", optimize_for_downstream=True):
-        """Simulate the override logic from NodeExecutor.execute()."""
-        executor = NodeExecutor(node)
-        decision = executor._decide_execution(
-            state=node._execution_state,
-            run_location=run_location,
-            performance_mode=False,
-            force_refresh=False,
-        )
+    The override logic in execute() exists as a safety net but shouldn't
+    trigger now that _determine_strategy handles transform_type directly."""
 
-        # Apply the override logic from executor.execute()
-        if (decision.should_run
-            and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-            and node.node_default
-            and node.node_default.transform_type == "wide"
-            and optimize_for_downstream
-            and run_location != "local"):
-            decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
-
-        return decision
-
-    def test_sort_overridden_to_remote_when_optimizing(self):
-        """Sort (wide transform) should be overridden from LOCAL_WITH_SAMPLING to REMOTE
-        when optimize_for_downstream=True."""
+    def test_sort_always_remote(self):
+        """Sort (wide transform) should always get REMOTE when remote,
+        regardless of optimize_for_downstream."""
         graph = create_graph_with_sort()
         sort_node = graph.get_node(2)
         sort_node._execution_state.has_run_with_current_setup = False
 
-        decision = self._make_decision_with_override(
-            sort_node, run_location="remote", optimize_for_downstream=True,
-        )
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
 
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.REMOTE
-        assert decision.reason == InvalidationReason.NEVER_RAN
-
-    def test_sort_stays_local_with_sampling_when_not_optimizing(self):
-        """Sort (wide transform) should stay at LOCAL_WITH_SAMPLING
-        when optimize_for_downstream=False."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
-        sort_node._execution_state.has_run_with_current_setup = False
-
-        decision = self._make_decision_with_override(
-            sort_node, run_location="remote", optimize_for_downstream=False,
-        )
-
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-
-    def test_select_not_overridden_narrow_transform(self):
-        """Select (narrow transform) should NOT be overridden even with
-        optimize_for_downstream=True."""
+    def test_select_always_local_with_sampling(self):
+        """Select (narrow transform) should get LOCAL_WITH_SAMPLING when remote."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         select_node._execution_state.has_run_with_current_setup = False
 
-        decision = self._make_decision_with_override(
-            select_node, run_location="remote", optimize_for_downstream=True,
-        )
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
 
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-
-    def test_sort_not_overridden_when_local(self):
-        """Sort (wide transform) should not be overridden when run_location='local'
-        because it uses FULL_LOCAL (not LOCAL_WITH_SAMPLING)."""
+    def test_sort_local_still_full_local(self):
+        """Sort (wide transform) should use FULL_LOCAL when run_location='local'."""
         graph = create_graph_with_sort()
         sort_node = graph.get_node(2)
-        sort_node._execution_state.has_run_with_current_setup = False
 
-        decision = self._make_decision_with_override(
-            sort_node, run_location="local", optimize_for_downstream=True,
-        )
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
 
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.FULL_LOCAL
+    def test_select_local_still_full_local(self):
+        """Select (narrow transform) should use FULL_LOCAL when run_location='local'."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
 
 
 # =============================================================================
