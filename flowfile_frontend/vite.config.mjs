@@ -1,11 +1,12 @@
-// vite.config.js
-const Path = require('path');
-const vuePlugin = require('@vitejs/plugin-vue');
-const reactPlugin = require('@vitejs/plugin-react');
+import Path from 'path';
+import { fileURLToPath } from 'url';
+import vuePlugin from '@vitejs/plugin-vue';
+import reactPlugin from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 
-const { defineConfig } = require('vite');
+const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
-const config = defineConfig({
+export default defineConfig({
     root: Path.join(__dirname, 'src', 'renderer'),
     publicDir: 'public',
     server: {
@@ -32,5 +33,3 @@ const config = defineConfig({
         },
     },
 });
-
-module.exports = config;
