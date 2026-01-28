@@ -20,6 +20,27 @@ class ExecutionStage:
 
 
 @dataclass(frozen=True)
+class NodeDependencyGraph:
+    """Pre-computed dependency information for dependency-aware scheduling.
+
+    Attributes:
+        node_map: Mapping from node ID to FlowNode.
+        successors: Mapping from node ID to list of successor node IDs.
+        pending_count: Mapping from node ID to the number of predecessors that must
+            complete before this node can run.
+    """
+
+    node_map: dict[int | str, FlowNode]
+    successors: dict[int | str, list[int | str]]
+    pending_count: dict[int | str, int]
+
+    @property
+    def initial_ready(self) -> list[int | str]:
+        """Node IDs with zero pending predecessors (ready to run immediately)."""
+        return [nid for nid, count in self.pending_count.items() if count == 0]
+
+
+@dataclass(frozen=True)
 class ExecutionPlan:
     """Complete execution plan: nodes to skip and ordered stages of parallelizable nodes."""
 
@@ -34,6 +55,11 @@ class ExecutionPlan:
     @property
     def node_count(self) -> int:
         return sum(len(stage) for stage in self.stages)
+
+    @property
+    def dependency_graph(self) -> NodeDependencyGraph:
+        """Builds a NodeDependencyGraph for dependency-aware scheduling."""
+        return build_dependency_graph(self.all_nodes)
 
 
 def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> ExecutionPlan:
@@ -209,3 +235,36 @@ def perform_topological_sort(
             stages.append(ExecutionStage(nodes=stage_nodes))
 
     return stages
+
+
+def build_dependency_graph(all_nodes: list[FlowNode]) -> NodeDependencyGraph:
+    """Builds a NodeDependencyGraph from a list of nodes for dependency-aware scheduling.
+
+    For each node, computes how many in-plan predecessors it must wait for, and which
+    in-plan successors it should notify upon completion.  Predecessor counts are
+    derived from ``leads_to_nodes`` (outgoing edges), consistent with the existing
+    topological sort.
+
+    Args:
+        all_nodes: Nodes to include (typically ``ExecutionPlan.all_nodes``).
+
+    Returns:
+        A ``NodeDependencyGraph`` ready for use by the scheduler.
+    """
+    node_map: dict[int | str, FlowNode] = {n.node_id: n for n in all_nodes}
+    node_id_set = set(node_map.keys())
+
+    successors: dict[int | str, list[int | str]] = defaultdict(list)
+    pending_count: dict[int | str, int] = {nid: 0 for nid in node_id_set}
+
+    for node in all_nodes:
+        for next_node in node.leads_to_nodes:
+            if next_node.node_id in node_id_set:
+                successors[node.node_id].append(next_node.node_id)
+                pending_count[next_node.node_id] += 1
+
+    return NodeDependencyGraph(
+        node_map=dict(node_map),
+        successors=dict(successors),
+        pending_count=pending_count,
+    )
