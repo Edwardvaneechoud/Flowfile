@@ -389,15 +389,43 @@ This architecture provides a powerful combination of flexibility, introspection,
 
 When a node executes, it doesn't just "run." It goes through a decision pipeline that determines **whether** to run and **how** to run. This is handled by the `NodeExecutor` class (`flowfile_core.flowfile.flow_node.executor`).
 
+The behavior depends on two settings visible in the frontend:
+
+- **Execution mode** — *Development* or *Performance* (set per flow)
+- **Execution location** — *local* or *remote* (derived from global settings)
+
+### Execution Modes from the Frontend
+
+In the UI, users choose between **Development** and **Performance** mode. Here's what each mode does when running remotely:
+
+#### Development Mode (remote)
+
+Development mode is the interactive, debugging-friendly mode. It produces **preview data** (100-row samples) so the UI can show what each node outputs.
+
+| Node type | What happens |
+|---|---|
+| **Narrow transforms** (select, sample, union) | Computation runs locally, only a 100-row sample is sent to the remote worker for preview (`LOCAL_WITH_SAMPLING`) |
+| **Wide transforms** (sort, record_count) | Entire computation runs on the remote worker (`REMOTE`) |
+| **Everything else** (filter, join, group_by, input nodes) | Entire computation runs on the remote worker (`REMOTE`) |
+| **Any node with `cache_results` enabled** | Always fully remote regardless of transform type (`REMOTE`) |
+
+#### Performance Mode (remote)
+
+Performance mode skips preview data generation and only runs nodes when strictly necessary — output nodes, cache rebuilds, or nodes that have never run. Once a node has run, it is skipped on subsequent executions. No sampling takes place.
+
+#### Local Mode
+
+When `run_location = "local"` (e.g. no worker available), all nodes use **FULL_LOCAL** — everything runs in-process regardless of execution mode.
+
 ### The Three Strategies
 
-Every node execution uses one of three strategies:
+Under the hood, the mode and location map to one of three execution strategies:
 
 | Strategy | What happens | When used |
 |---|---|---|
-| **FULL_LOCAL** | Everything runs in-process | `run_location = "local"` (e.g. WASM, no worker) |
-| **LOCAL_WITH_SAMPLING** | Computation runs locally, a remote worker generates a 100-row sample for UI preview | Narrow transforms (select, sample, union) in remote mode |
-| **REMOTE** | Entire computation is offloaded to the remote worker | Wide transforms (sort, record_count), input nodes, and all other node types in remote mode |
+| **FULL_LOCAL** | Everything runs in-process | `run_location = "local"` |
+| **LOCAL_WITH_SAMPLING** | Computation runs locally, remote worker generates a 100-row sample for UI preview | Development mode + narrow transforms |
+| **REMOTE** | Entire computation is offloaded to the remote worker | Development mode + wide/other transforms, or `cache_results` enabled |
 
 ### How the Strategy Is Determined
 
@@ -416,8 +444,10 @@ The decision lives in `_determine_strategy` and follows this priority:
 
 ### The LOCAL_WITH_SAMPLING Flow
 
+This is the path taken by narrow transforms in Development mode:
+
 ```
-LOCAL_WITH_SAMPLING (e.g. select node):
+LOCAL_WITH_SAMPLING (e.g. select node, Development mode):
 
   ┌──────────────────┐              ┌─────────────────┐
   │   Local process   │              │  Remote worker   │
@@ -431,7 +461,7 @@ LOCAL_WITH_SAMPLING (e.g. select node):
   └──────────────────┘              └─────────────────┘
 ```
 
-Compare this to **REMOTE**, where the worker does all the heavy lifting:
+Compare this to **REMOTE**, used by wide transforms and other node types:
 
 ```
 REMOTE (e.g. sort node, join node):
@@ -461,25 +491,25 @@ cache_results + cache missing?  → RUN REMOTE (rebuild cache)
 already ran?                    → SKIP
 ```
 
-If a node has already run (`has_run_with_current_setup = True`) and nothing invalidated it, it skips. Results from the previous execution are still available in memory.
+If a node has already run (`has_run_with_current_setup = True`) and nothing invalidated it, it skips. Results from the previous execution are still available in memory. This applies to both Development and Performance mode.
 
 ### Node Classification
 
 The strategy routing depends on how nodes are classified in the node store:
 
-| Node | `transform_type` | Remote strategy |
-|---|---|---|
-| select | narrow | LOCAL_WITH_SAMPLING |
-| sample | narrow | LOCAL_WITH_SAMPLING |
-| union | narrow | LOCAL_WITH_SAMPLING |
-| sort | wide | REMOTE |
-| record_count | wide | REMOTE |
-| filter | other | REMOTE |
-| join | other | REMOTE |
-| group_by | other | REMOTE |
-| manual_input | other | REMOTE |
+| Node | `transform_type` | Development + remote | Performance + remote |
+|---|---|---|---|
+| select | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
+| sample | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
+| union | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
+| sort | wide | REMOTE | skip if already ran |
+| record_count | wide | REMOTE | skip if already ran |
+| filter | other | REMOTE | skip if already ran |
+| join | other | REMOTE | skip if already ran |
+| group_by | other | REMOTE | skip if already ran |
+| manual_input | other | REMOTE | skip if already ran |
 
-Narrow transforms are registered in `nodes_with_defaults` in `configs/node_store/nodes.py` with `transform_type="narrow"`.
+Narrow transforms are defined with `transform_type="narrow"` in `configs/node_store/nodes.py`.
 
 ---
 
