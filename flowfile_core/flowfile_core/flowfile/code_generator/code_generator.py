@@ -64,14 +64,14 @@ class FlowGraphToPolarsConverter:
             UnsupportedNodeError: If the graph contains nodes that cannot be converted
                 to standalone code (e.g., database nodes, explore_data, external_source).
         """
-        # Get execution order
-        execution_order = determine_execution_order(
+        # Get execution order (stages of parallelizable nodes)
+        stages = determine_execution_order(
             all_nodes=[node for node in self.flow_graph.nodes if node.is_correct],
             flow_starts=self.flow_graph._flow_starts + self.flow_graph.get_implicit_starter_nodes(),
         )
 
-        # Generate code for each node in order
-        for node in execution_order:
+        # Generate code for each node in topological order
+        for node in (node for stage in stages for node in stage):
             self._generate_node_code(node)
 
         # Check for unsupported nodes and raise an error with all of them listed

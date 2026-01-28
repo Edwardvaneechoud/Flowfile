@@ -1,45 +1,90 @@
 from collections import defaultdict, deque
+from dataclasses import dataclass
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.node_skipper import determine_nodes_to_skip
 
 
-def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = None):
-    """Computes the execution order after finding the nodes to skip on the execution step."""
-    skip_nodes = determine_nodes_to_skip(nodes=nodes)
-    computed_execution_order = determine_execution_order(
-        all_nodes=[node for node in nodes if node not in skip_nodes], flow_starts=flow_starts
-    )
-    return skip_nodes, computed_execution_order
+@dataclass(frozen=True)
+class ExecutionStage:
+    """A group of nodes with no mutual dependencies that can execute in parallel."""
+
+    nodes: list[FlowNode]
+
+    def __len__(self) -> int:
+        return len(self.nodes)
+
+    def __iter__(self):
+        return iter(self.nodes)
 
 
-def determine_execution_order(all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> list[FlowNode]:
-    """
-    Determines the execution order of nodes using topological sorting based on node dependencies.
+@dataclass(frozen=True)
+class ExecutionPlan:
+    """Complete execution plan: nodes to skip and ordered stages of parallelizable nodes."""
+
+    skip_nodes: list[FlowNode]
+    stages: list[ExecutionStage]
+
+    @property
+    def all_nodes(self) -> list[FlowNode]:
+        """Flattened list of all nodes across all stages, preserving topological order."""
+        return [node for stage in self.stages for node in stage.nodes]
+
+    @property
+    def node_count(self) -> int:
+        return sum(len(stage) for stage in self.stages)
+
+
+def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> ExecutionPlan:
+    """Computes the execution plan: nodes to skip and parallelizable execution stages.
 
     Args:
-        all_nodes (List[FlowNode]): A list of all nodes (steps) in the flow.
-        flow_starts (List[FlowNode], optional): A list of starting nodes for the flow. If not provided, the function starts with nodes having zero in-degree.
+        nodes: All nodes in the flow.
+        flow_starts: Explicit starting nodes for the flow.
 
     Returns:
-        List[FlowNode]: A list of nodes in the order they should be executed.
+        An ExecutionPlan containing skip_nodes and ordered execution stages.
+    """
+    skip_nodes = determine_nodes_to_skip(nodes=nodes)
+    stages = determine_execution_order(
+        all_nodes=[node for node in nodes if node not in skip_nodes], flow_starts=flow_starts
+    )
+    return ExecutionPlan(skip_nodes=skip_nodes, stages=stages)
+
+
+def determine_execution_order(
+    all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None
+) -> list[ExecutionStage]:
+    """
+    Determines the execution order of nodes using topological sorting based on node dependencies.
+    Returns stages of nodes where each stage contains nodes that can execute in parallel.
+
+    Args:
+        all_nodes: A list of all nodes in the flow.
+        flow_starts: Starting nodes for the flow. If not provided, starts with zero in-degree nodes.
+
+    Returns:
+        A list of ExecutionStage objects in dependency order. Nodes within a stage have no
+        mutual dependencies and can run concurrently.
 
     Raises:
-        Exception: If a cycle is detected, meaning that a valid execution order cannot be determined.
+        Exception: If a cycle is detected in the graph.
     """
     node_map = build_node_map(all_nodes)
     in_degree, adjacency_list = compute_in_degrees_and_adjacency_list(all_nodes, node_map)
 
     queue, visited_nodes = initialize_queue(flow_starts, all_nodes, in_degree)
 
-    execution_order = perform_topological_sort(queue, node_map, in_degree, adjacency_list, visited_nodes)
-    if len(execution_order) != len(node_map):
+    stages = perform_topological_sort(queue, node_map, in_degree, adjacency_list, visited_nodes)
+    total_nodes = sum(len(stage) for stage in stages)
+    if total_nodes != len(node_map):
         raise Exception("Cycle detected in the graph. Execution order cannot be determined.")
 
-    logger.info(f"execution order: \n {[node for node in execution_order if node.is_correct]}")
+    all_nodes_flat = [node for stage in stages for node in stage if node.is_correct]
+    logger.info(f"execution order: \n {all_nodes_flat}")
 
-    return execution_order
+    return stages
 
 
 def build_node_map(all_nodes: list[FlowNode]) -> dict[str, FlowNode]:
@@ -124,35 +169,43 @@ def perform_topological_sort(
     in_degree: dict[str, int],
     adjacency_list: dict[str, list[str]],
     visited_nodes: set[str],
-) -> list[FlowNode]:
+) -> list[ExecutionStage]:
     """
-    Performs topological sorting to determine the execution order of nodes.
+    Performs a level-based topological sort, grouping nodes into execution stages.
+    Nodes within the same stage have no dependencies on each other and can run in parallel.
 
     Args:
-        queue (deque): A deque containing nodes with zero in-degree.
-        node_map (Dict[str, FlowNode]): A dictionary mapping node IDs to FlowNode objects.
-        in_degree (Dict[str, int]): A dictionary mapping node IDs to their in-degree count.
-        adjacency_list (Dict[str, List[str]]): A dictionary mapping node IDs to a list of their connected nodes (outgoing edges).
-        visited_nodes (Set[str]): A set of visited node IDs.
+        queue: A deque containing node IDs with zero in-degree.
+        node_map: A dictionary mapping node IDs to FlowNode objects.
+        in_degree: A dictionary mapping node IDs to their in-degree count.
+        adjacency_list: A dictionary mapping node IDs to a list of their outgoing node IDs.
+        visited_nodes: A set of visited node IDs.
 
     Returns:
-        List[FlowNode]: A list of nodes in the order they should be executed.
+        A list of ExecutionStage objects. Each stage contains nodes that can execute concurrently.
     """
-    execution_order = []
+    stages: list[ExecutionStage] = []
     logger.info("Starting topological sort to determine execution order")
 
     while queue:
-        current_node_id = queue.popleft()
-        current_node = node_map.get(current_node_id)
-        if current_node is None:
-            logger.warning(f"Node with ID {current_node_id} not found in the node map.")
-            continue
-        execution_order.append(current_node)
+        current_stage_ids = list(queue)
+        queue.clear()
 
-        for next_node_id in adjacency_list.get(current_node_id, []):
-            in_degree[next_node_id] -= 1
-            if in_degree[next_node_id] == 0 and next_node_id not in visited_nodes:
-                queue.append(next_node_id)
-                visited_nodes.add(next_node_id)
+        stage_nodes: list[FlowNode] = []
+        for node_id in current_stage_ids:
+            node = node_map.get(node_id)
+            if node is None:
+                logger.warning(f"Node with ID {node_id} not found in the node map.")
+                continue
+            stage_nodes.append(node)
 
-    return execution_order
+            for next_node_id in adjacency_list.get(node_id, []):
+                in_degree[next_node_id] -= 1
+                if in_degree[next_node_id] == 0 and next_node_id not in visited_nodes:
+                    queue.append(next_node_id)
+                    visited_nodes.add(next_node_id)
+
+        if stage_nodes:
+            stages.append(ExecutionStage(nodes=stage_nodes))
+
+    return stages
