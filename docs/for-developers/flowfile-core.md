@@ -385,6 +385,104 @@ This architecture provides a powerful combination of flexibility, introspection,
 
 ---
 
+## Execution Strategy: How Nodes Decide Where to Run
+
+When a node executes, it doesn't just "run." It goes through a decision pipeline that determines **whether** to run and **how** to run. This is handled by the `NodeExecutor` class (`flowfile_core.flowfile.flow_node.executor`).
+
+### The Three Strategies
+
+Every node execution uses one of three strategies:
+
+| Strategy | What happens | When used |
+|---|---|---|
+| **FULL_LOCAL** | Everything runs in-process | `run_location = "local"` (e.g. WASM, no worker) |
+| **LOCAL_WITH_SAMPLING** | Computation runs locally, a remote worker generates a 100-row sample for UI preview | Narrow transforms (select, sample, union) in remote mode |
+| **REMOTE** | Entire computation is offloaded to the remote worker | Wide transforms (sort, record_count), input nodes, and all other node types in remote mode |
+
+### How the Strategy Is Determined
+
+The decision lives in `_determine_strategy` and follows this priority:
+
+```
+1. local            → FULL_LOCAL
+2. cache_results    → REMOTE
+3. narrow transform → LOCAL_WITH_SAMPLING
+4. everything else  → REMOTE
+```
+
+**Why narrow transforms get LOCAL_WITH_SAMPLING:** Narrow transforms like `select` only operate on columns — dropping, renaming, reordering. They don't reshape or aggregate data, so they're cheap to compute locally. The only thing sent to the remote worker is a request to materialize 100 sample rows for the UI preview (`ExternalSampler` → `POST /store_sample/`).
+
+**Why cache overrides to REMOTE:** When `cache_results` is enabled on a node, the full result must be materialized and written to disk by the remote worker. A local computation with sampling wouldn't produce the cached artifact the downstream nodes expect.
+
+### The LOCAL_WITH_SAMPLING Flow
+
+```
+LOCAL_WITH_SAMPLING (e.g. select node):
+
+  ┌──────────────────┐              ┌─────────────────┐
+  │   Local process   │              │  Remote worker   │
+  │                   │              │                  │
+  │ 1. Compute full   │              │                  │
+  │    result locally  │──serialize──▶│ 2. Materialize   │
+  │    (LazyFrame)     │  LazyFrame   │    100 rows only │
+  │                   │              │    (POST /store_  │
+  │ 3. Store sample   │◀────done─────│     sample/)     │
+  │    for UI preview  │              │                  │
+  └──────────────────┘              └─────────────────┘
+```
+
+Compare this to **REMOTE**, where the worker does all the heavy lifting:
+
+```
+REMOTE (e.g. sort node, join node):
+
+  ┌──────────────────┐              ┌─────────────────┐
+  │   Local process   │              │  Remote worker   │
+  │                   │              │                  │
+  │ 1. Serialize the  │──serialize──▶│ 2. Compute full  │
+  │    LazyFrame plan  │  LazyFrame   │    result        │
+  │                   │              │ 3. Write to disk  │
+  │ 4. Fetch result   │◀────done─────│ 4. Generate      │
+  │    + sample data   │              │    sample data   │
+  └──────────────────┘              └─────────────────┘
+```
+
+### The Decision Pipeline
+
+Before choosing a strategy, the executor decides **whether** to run at all:
+
+```
+output node?                    → RUN
+forced refresh (reset_cache)?   → RUN
+never ran before?               → RUN (with strategy)
+source file changed? (read)     → RUN (with strategy)
+cache_results + cache present?  → SKIP
+cache_results + cache missing?  → RUN REMOTE (rebuild cache)
+already ran?                    → SKIP
+```
+
+If a node has already run (`has_run_with_current_setup = True`) and nothing invalidated it, it skips. Results from the previous execution are still available in memory.
+
+### Node Classification
+
+The strategy routing depends on how nodes are classified in the node store:
+
+| Node | `transform_type` | Remote strategy |
+|---|---|---|
+| select | narrow | LOCAL_WITH_SAMPLING |
+| sample | narrow | LOCAL_WITH_SAMPLING |
+| union | narrow | LOCAL_WITH_SAMPLING |
+| sort | wide | REMOTE |
+| record_count | wide | REMOTE |
+| filter | other | REMOTE |
+| join | other | REMOTE |
+| group_by | other | REMOTE |
+| manual_input | other | REMOTE |
+
+Narrow transforms are registered in `nodes_with_defaults` in `configs/node_store/nodes.py` with `transform_type="narrow"`.
+
+---
+
 ## The FastAPI Service: Your API Layer
 
 While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logic, the **FastAPI service** is what makes it accessible from the outside world.

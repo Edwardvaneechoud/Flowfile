@@ -120,7 +120,6 @@ class NodeExecutor:
         decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
 
         # Override for wide transforms when optimizing for downstream
-        initial_strategy = decision.strategy
         if (decision.should_run
             and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
             and self.node.node_default
@@ -130,27 +129,11 @@ class NodeExecutor:
             decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
 
         if not decision.should_run:
-            node_logger.info("Node is up-to-date, skipping execution")
             return
 
-        # Log execution decision with strategy details
         reason_str = decision.reason.name if decision.reason else "UNKNOWN"
         strategy_str = decision.strategy.name
-        node_type = self.node.node_type
-        transform_type = self.node.node_default.transform_type if self.node.node_default else "none"
-        has_default = self.node.node_default is not None
-
-        if initial_strategy != decision.strategy:
-            node_logger.info(
-                f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str}) "
-                f"[node_type={node_type}, transform_type={transform_type}, has_default={has_default}, "
-                f"overridden from {initial_strategy.name}]"
-            )
-        else:
-            node_logger.info(
-                f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str}) "
-                f"[node_type={node_type}, transform_type={transform_type}, has_default={has_default}]"
-            )
+        node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str})")
 
         # Override performance_mode when cache_results is enabled
         # This ensures example data is generated even in Performance mode
