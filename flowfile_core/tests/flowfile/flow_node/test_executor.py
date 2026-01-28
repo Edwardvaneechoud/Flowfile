@@ -405,8 +405,8 @@ class TestNodeExecutor:
         assert decision.should_run is True
         assert decision.reason == InvalidationReason.FORCED_REFRESH
 
-    def test_decide_execution_performance_mode(self):
-        """Test execution decision in performance mode."""
+    def test_decide_execution_already_ran_skips(self):
+        """Already-ran nodes should skip regardless of mode."""
         graph = create_graph()
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
@@ -415,15 +415,24 @@ class TestNodeExecutor:
         node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(node)
+
+        # Development mode: skip
         decision = executor._decide_execution(
             state=node._execution_state,
             run_location="remote",
-            performance_mode=True,  # Performance mode
+            performance_mode=False,
             force_refresh=False,
         )
+        assert decision.should_run is False
 
-        assert decision.should_run is True
-        assert decision.reason == InvalidationReason.PERFORMANCE_MODE
+        # Performance mode: also skip
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=True,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
 
     def test_node_has_executor_property(self):
         """Test that FlowNode has an executor property."""
@@ -644,23 +653,31 @@ class TestDecideExecutionByNodeType:
         assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
         assert decision.reason == InvalidationReason.FORCED_REFRESH
 
-    def test_select_performance_mode_gets_local_with_sampling(self):
-        """Select node in performance mode should still get LOCAL_WITH_SAMPLING."""
+    def test_select_already_ran_skips(self):
+        """Select node that already ran should skip, regardless of mode."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         select_node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(select_node)
+
+        # Development mode: skip
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+        assert decision.should_run is False
+
+        # Performance mode: also skip
         decision = executor._decide_execution(
             state=select_node._execution_state,
             run_location="remote",
             performance_mode=True,
             force_refresh=False,
         )
-
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-        assert decision.reason == InvalidationReason.PERFORMANCE_MODE
+        assert decision.should_run is False
 
     def test_select_local_always_full_local(self):
         """Select node with run_location='local' should always get FULL_LOCAL."""

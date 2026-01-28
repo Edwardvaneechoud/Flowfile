@@ -202,28 +202,16 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
 
-        # Check external cache
-        cache_exists = results_exists(self.node.hash)
-
-        # Node has explicit cache_results setting
+        # Cache-enabled nodes: check if cache file is still present
         if self.node.node_settings.cache_results:
-            if cache_exists:
+            if results_exists(self.node.hash):
                 return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
-        # Development mode (not performance_mode): use cache if available
-        if not performance_mode and cache_exists:
-            return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-
-        # Performance mode: always re-run for fresh results
-        if performance_mode:
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
-
-        # Default: settings changed since last run
-        strategy = self._determine_strategy(run_location)
-        return ExecutionDecision(True, strategy, InvalidationReason.SETTINGS_CHANGED)
+        # Already ran with current settings → skip
+        # Results are available in memory from previous execution
+        return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
 
     def _determine_strategy(
         self,
