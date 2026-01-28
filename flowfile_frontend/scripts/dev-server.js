@@ -18,7 +18,7 @@ let mkdocsProcess = null; // Global variable for MkDocs process
 
 async function startRenderer() {
   viteServer = await Vite.createServer({
-    configFile: Path.join(__dirname, '..', 'vite.config.js'),
+    configFile: Path.join(__dirname, '..', 'vite.config.mjs'),
     mode: 'development',
   });
 

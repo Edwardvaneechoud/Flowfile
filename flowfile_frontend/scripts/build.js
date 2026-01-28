@@ -25,7 +25,7 @@ function copyLoadingHtml() {
 
 function buildRenderer() {
     return Vite.build({
-        configFile: Path.join(__dirname, '..', 'vite.config.js'),
+        configFile: Path.join(__dirname, '..', 'vite.config.mjs'),
         base: './',
         mode: 'production'
     });
