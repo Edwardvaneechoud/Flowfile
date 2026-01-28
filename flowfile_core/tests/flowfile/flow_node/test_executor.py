@@ -814,3 +814,74 @@ class TestNodesWithDefaults:
         node_default = node_store.node_defaults.get("manual_input")
         assert node_default is not None
         assert not node_default.has_default_settings
+
+
+# =============================================================================
+# Cache Results Strategy Tests
+# =============================================================================
+
+class TestCacheResultsStrategy:
+    """When cache_results is enabled, everything should run fully remote.
+
+    Caching requires full materialization of results, which means even
+    narrow transforms that would normally get LOCAL_WITH_SAMPLING must
+    use REMOTE so the result can be stored in the cache."""
+
+    def test_select_with_cache_gets_remote(self):
+        """Select (narrow) with cache_results=True should get REMOTE, not LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_select_without_cache_gets_local_with_sampling(self):
+        """Select (narrow) without cache_results should still get LOCAL_WITH_SAMPLING."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        assert select_node.node_settings.cache_results is False
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+
+    def test_sort_with_cache_still_remote(self):
+        """Sort (wide) with cache_results=True should still get REMOTE (was already REMOTE)."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+        sort_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(sort_node)
+        strategy = executor._determine_strategy("remote")
+        assert strategy == ExecutionStrategy.REMOTE
+
+    def test_cache_does_not_affect_local_execution(self):
+        """cache_results should not affect local execution — still FULL_LOCAL."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+
+        executor = NodeExecutor(select_node)
+        strategy = executor._determine_strategy("local")
+        assert strategy == ExecutionStrategy.FULL_LOCAL
+
+    def test_select_with_cache_decide_execution_gets_remote(self):
+        """Full decision flow: select with cache_results should decide REMOTE."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+        select_node._execution_state.has_run_with_current_setup = False
+
+        executor = NodeExecutor(select_node)
+        decision = executor._decide_execution(
+            state=select_node._execution_state,
+            run_location="remote",
+            performance_mode=False,
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.strategy == ExecutionStrategy.REMOTE
+        assert decision.reason == InvalidationReason.NEVER_RAN

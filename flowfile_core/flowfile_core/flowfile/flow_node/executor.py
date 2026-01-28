@@ -232,17 +232,25 @@ class NodeExecutor:
         """Determine the execution strategy based on location and node settings.
 
         Decision logic:
-        - local → FULL_LOCAL (execute_full_local)
+        - local → FULL_LOCAL
+        - remote + cache_results → REMOTE (caching needs full materialization)
         - remote + narrow transform → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
-        - remote → REMOTE (execute_remote)
+        - remote → REMOTE
 
         Narrow transforms (e.g., select, sample, union) only operate on columns
         without reshaping data, so they're cheap to compute locally. An external
         sampler provides preview data for the UI.
+
+        When cache_results is enabled, the node must run fully remote so the
+        result can be materialized and stored in the cache.
         """
         # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
+
+        # Caching requires full remote execution to materialize and store results
+        if self.node.node_settings.cache_results:
+            return ExecutionStrategy.REMOTE
 
         # Narrow transforms are lightweight column-level operations that can
         # run locally with an external sampler for preview data
