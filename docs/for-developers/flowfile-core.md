@@ -438,7 +438,7 @@ The decision lives in `_determine_strategy` and follows this priority:
 4. everything else  → REMOTE
 ```
 
-**Why narrow transforms get LOCAL_WITH_SAMPLING:** Narrow transforms like `select` only operate on columns — dropping, renaming, reordering. They don't reshape or aggregate data, so they're cheap to compute locally. The only thing sent to the remote worker is a request to materialize 100 sample rows for the UI preview (`ExternalSampler` → `POST /store_sample/`).
+**Why narrow transforms get LOCAL_WITH_SAMPLING:** Narrow transforms like `select` only operate on columns — dropping, renaming, filtering. They don't reshape or aggregate data, so they're cheap to compute locally. The only thing sent to the remote worker is a request to materialize 100 sample rows for the UI preview (`ExternalSampler` → `POST /store_sample/`).
 
 **Why cache overrides to REMOTE:** When `cache_results` is enabled on a node, the full result must be materialized and written to disk by the remote worker. A local computation with sampling wouldn't produce the cached artifact the downstream nodes expect.
 
