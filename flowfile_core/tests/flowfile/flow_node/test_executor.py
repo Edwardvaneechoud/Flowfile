@@ -1276,7 +1276,6 @@ class TestPreviewAfterUpstreamChange:
         graph.run_graph()
         select_node = graph.get_node(3)
         assert select_node.results.example_data_generator
-        breakpoint()
         first_preview = select_node.get_table_example(include_data=True)
         assert first_preview.columns == ["Name"]
         assert len(first_preview.data) > 0
