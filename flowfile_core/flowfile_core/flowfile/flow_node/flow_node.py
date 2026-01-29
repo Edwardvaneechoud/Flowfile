@@ -649,7 +649,8 @@ class FlowNode:
         """Executes the node's function to produce the actual output data.
 
         Handles both regular functions and external data sources.
-        Thread-safe: uses _execution_lock to prevent concurrent execution.
+        Thread-safe: uses _execution_lock to prevent concurrent execution
+        and concurrent access to the underlying LazyFrame by sibling nodes.
 
         Returns:
             A FlowDataEngine instance containing the result, or None on error.
@@ -672,13 +673,24 @@ class FlowNode:
                             try:
                                 self.print("Collecting input data from all inputs")
                                 input_data = []
-                                for i, v in enumerate(self.all_inputs):
-                                    self.print(f"Getting resulting data from input {i} (node {v.node_id})")
-                                    input_result = v.get_resulting_data()
-                                    self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
-                                    input_data.append(input_result)
-                                self.print(f"All {len(input_data)} inputs collected, calling node function")
-                                fl = self._function(*input_data)
+                                input_locks = []
+                                try:
+                                    for i, v in enumerate(self.all_inputs):
+                                        self.print(f"Getting resulting data from input {i} (node {v.node_id})")
+                                        # Acquire the input node's lock before reading its data.
+                                        # This prevents sibling nodes (in the same parallel stage)
+                                        # from concurrently accessing the same upstream LazyFrame,
+                                        # which causes Polars "Already borrowed" errors.
+                                        v._execution_lock.acquire()
+                                        input_locks.append(v._execution_lock)
+                                        input_result = v.get_resulting_data()
+                                        self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
+                                        input_data.append(input_result)
+                                    self.print(f"All {len(input_data)} inputs collected, calling node function")
+                                    fl = self._function(*input_data)
+                                finally:
+                                    for lock in input_locks:
+                                        lock.release()
                             except Exception as e:
                                 raise e
                         fl.set_streamable(self.node_settings.streamable)
