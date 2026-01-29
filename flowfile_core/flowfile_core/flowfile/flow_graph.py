@@ -2418,6 +2418,28 @@ class FlowGraph:
                         for future in as_completed(futures):
                             stage_results.append(future.result())
 
+                    # Retry nodes that failed with "Already borrowed" sequentially.
+                    # This error occurs when parallel threads access the same upstream
+                    # LazyFrame concurrently — Polars' internal RefCell detects the
+                    # double borrow. Running the node alone avoids the contention.
+                    retry_results: list[tuple[NodeResult, FlowNode]] = []
+                    for node_result, node in stage_results:
+                        if (not node_result.success
+                                and node_result.error is not None
+                                and "Already borrowed" in node_result.error):
+                            node_logger = self.flow_logger.get_node_logger(node.node_id)
+                            node_logger.warning(
+                                "Parallel borrow conflict detected, retrying sequentially"
+                            )
+                            node.results.errors = None
+                            retry_result = self._execute_single_node(
+                                node, performance_mode, run_info_lock
+                            )
+                            retry_results.append(retry_result)
+                        else:
+                            retry_results.append((node_result, node))
+                    stage_results = retry_results
+
                 # After the stage completes, propagate failures to downstream nodes
                 for node_result, node in stage_results:
                     if not node_result.success:
