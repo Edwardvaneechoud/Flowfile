@@ -1,4 +1,5 @@
-"""Tests for execution_orderer: ExecutionStage, ExecutionPlan, and parallel stage grouping."""
+"""Tests for execution_orderer: ExecutionStage, ExecutionPlan, parallel stage grouping,
+and dependency-aware scheduling support (NodeDependencyGraph)."""
 
 from unittest.mock import MagicMock, PropertyMock
 
@@ -7,6 +8,8 @@ import pytest
 from flowfile_core.flowfile.util.execution_orderer import (
     ExecutionPlan,
     ExecutionStage,
+    NodeDependencyGraph,
+    build_dependency_graph,
     compute_execution_plan,
     determine_execution_order,
 )
@@ -256,3 +259,159 @@ class TestMaxParallelWorkersSetting:
         config = FlowGraphConfig(name="test", path=".", max_parallel_workers=6)
         settings = FlowSettings.from_flow_settings_input(config)
         assert settings.max_parallel_workers == 6
+
+
+# ---------------------------------------------------------------------------
+# NodeDependencyGraph / build_dependency_graph
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDependencyGraph:
+    def test_single_node(self):
+        """A single node has zero pending predecessors and no successors."""
+        n1 = _make_node(1)
+        graph = build_dependency_graph([n1])
+        assert graph.pending_count[1] == 0
+        assert graph.successors.get(1, []) == []
+        assert graph.initial_ready == [1]
+
+    def test_linear_chain(self):
+        """A → B → C: each non-root node has pending_count == 1."""
+        n3 = _make_node(3)
+        n2 = _make_node(2, leads_to=[n3])
+        n1 = _make_node(1, leads_to=[n2])
+        graph = build_dependency_graph([n1, n2, n3])
+
+        assert graph.pending_count[1] == 0
+        assert graph.pending_count[2] == 1
+        assert graph.pending_count[3] == 1
+        assert graph.successors[1] == [2]
+        assert graph.successors[2] == [3]
+        assert graph.initial_ready == [1]
+
+    def test_diamond_graph(self):
+        """
+        Diamond: A → B, A → C, B → D, C → D
+        D has pending_count == 2 (waits for both B and C).
+        """
+        n4 = _make_node(4)
+        n2 = _make_node(2, leads_to=[n4])
+        n3 = _make_node(3, leads_to=[n4])
+        n1 = _make_node(1, leads_to=[n2, n3])
+        graph = build_dependency_graph([n1, n2, n3, n4])
+
+        assert graph.pending_count[1] == 0
+        assert graph.pending_count[2] == 1
+        assert graph.pending_count[3] == 1
+        assert graph.pending_count[4] == 2
+        assert set(graph.successors[1]) == {2, 3}
+        assert graph.initial_ready == [1]
+
+    def test_independent_nodes(self):
+        """Three independent nodes are all immediately ready."""
+        n1, n2, n3 = _make_node(1), _make_node(2), _make_node(3)
+        graph = build_dependency_graph([n1, n2, n3])
+
+        assert all(graph.pending_count[nid] == 0 for nid in [1, 2, 3])
+        assert set(graph.initial_ready) == {1, 2, 3}
+
+    def test_fan_in(self):
+        """A → D, B → D, C → D: D waits for 3 predecessors."""
+        n4 = _make_node(4)
+        n1 = _make_node(1, leads_to=[n4])
+        n2 = _make_node(2, leads_to=[n4])
+        n3 = _make_node(3, leads_to=[n4])
+        graph = build_dependency_graph([n1, n2, n3, n4])
+
+        assert graph.pending_count[4] == 3
+        assert set(graph.initial_ready) == {1, 2, 3}
+
+    def test_fan_out(self):
+        """A → B, A → C, A → D: B, C, D each have pending_count == 1."""
+        n2, n3, n4 = _make_node(2), _make_node(3), _make_node(4)
+        n1 = _make_node(1, leads_to=[n2, n3, n4])
+        graph = build_dependency_graph([n1, n2, n3, n4])
+
+        assert graph.pending_count[1] == 0
+        for nid in [2, 3, 4]:
+            assert graph.pending_count[nid] == 1
+        assert set(graph.successors[1]) == {2, 3, 4}
+
+    def test_out_of_plan_edges_ignored(self):
+        """Edges to nodes not in the plan are not counted."""
+        n_external = _make_node(99)
+        n1 = _make_node(1, leads_to=[n_external])
+        graph = build_dependency_graph([n1])
+
+        assert graph.pending_count[1] == 0
+        # n_external should not appear in successors or node_map
+        assert 99 not in graph.node_map
+        assert graph.successors.get(1, []) == []
+
+    def test_node_map_populated(self):
+        """node_map contains all planned nodes keyed by ID."""
+        n1, n2 = _make_node(1), _make_node(2)
+        graph = build_dependency_graph([n1, n2])
+        assert set(graph.node_map.keys()) == {1, 2}
+        assert graph.node_map[1] is n1
+        assert graph.node_map[2] is n2
+
+
+class TestExecutionPlanDependencyGraph:
+    def test_dependency_graph_property(self):
+        """ExecutionPlan.dependency_graph returns a valid NodeDependencyGraph."""
+        n3 = _make_node(3)
+        n2 = _make_node(2, leads_to=[n3])
+        n1 = _make_node(1, leads_to=[n2])
+        plan = ExecutionPlan(
+            skip_nodes=[],
+            stages=[
+                ExecutionStage(nodes=[n1]),
+                ExecutionStage(nodes=[n2]),
+                ExecutionStage(nodes=[n3]),
+            ],
+        )
+        graph = plan.dependency_graph
+        assert isinstance(graph, NodeDependencyGraph)
+        assert set(graph.node_map.keys()) == {1, 2, 3}
+        assert graph.pending_count[1] == 0
+        assert graph.pending_count[2] == 1
+        assert graph.pending_count[3] == 1
+
+    def test_user_scenario_asymmetric_stages(self):
+        """Reproduces the original issue: fast node 2 should not block node 3.
+
+        Graph:
+            1 (read) → 2 (select) → 3 (sort) → 5 (union) → 6, 7, 8
+            1 (read) → 9 (sort) → 5 (union)
+
+        With stage-based execution, node 3 waits for node 9 (both in stage 1).
+        With dependency-aware scheduling, node 3 can start as soon as node 2
+        completes, because node 3 only depends on node 2.
+
+        This test verifies the dependency graph reflects that node 3 has
+        pending_count == 1 (only node 2), not blocked by node 9.
+        """
+        n6 = _make_node(6)
+        n7 = _make_node(7)
+        n8 = _make_node(8)
+        n5 = _make_node(5, leads_to=[n6, n7, n8])
+        n3 = _make_node(3, leads_to=[n5])
+        n9 = _make_node(9, leads_to=[n5])
+        n2 = _make_node(2, leads_to=[n3])
+        n1 = _make_node(1, leads_to=[n2, n9])
+
+        graph = build_dependency_graph([n1, n2, n3, n5, n6, n7, n8, n9])
+
+        # Node 3 depends ONLY on node 2
+        assert graph.pending_count[3] == 1
+        # Node 5 (union) depends on both 3 and 9
+        assert graph.pending_count[5] == 2
+        # Node 9 depends ONLY on node 1
+        assert graph.pending_count[9] == 1
+        # Only node 1 is initially ready
+        assert graph.initial_ready == [1]
+        # Successors of node 2 include node 3 (not node 9)
+        assert graph.successors[2] == [3]
+        # Successors of node 9 include node 5
+        assert graph.successors[9] == [5]

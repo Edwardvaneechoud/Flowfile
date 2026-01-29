@@ -62,7 +62,12 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import utils as 
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.execution_orderer import (
+    ExecutionPlan,
+    ExecutionStage,
+    NodeDependencyGraph,
+    compute_execution_plan,
+)
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -2346,12 +2351,120 @@ class FlowGraph:
 
         return node_result, node
 
+    def _run_dependency_aware(
+        self,
+        dep_graph: NodeDependencyGraph,
+        skip_node_ids: set[str | int],
+        performance_mode: bool,
+        run_info_lock: threading.Lock,
+        max_workers: int,
+    ) -> None:
+        """Execute nodes as soon as all their predecessors complete.
+
+        Instead of waiting for an entire stage to finish, each node is submitted
+        to the thread pool the moment its last predecessor signals completion.
+        This eliminates unnecessary waiting when independent branches have
+        different runtimes.
+
+        Args:
+            dep_graph: Pre-computed dependency graph from the execution plan.
+            skip_node_ids: Mutable set of node IDs to skip (updated on failures).
+            performance_mode: Whether to run in performance mode.
+            run_info_lock: Lock protecting shared RunInformation state.
+            max_workers: Maximum number of parallel worker threads.
+        """
+        node_map = dep_graph.node_map
+        successors = dep_graph.successors
+        # Copy pending counts so we can mutate them during execution
+        pending_count: dict[int | str, int] = dict(dep_graph.pending_count)
+
+        if not node_map:
+            return
+
+        lock = threading.Lock()
+        remaining = len(node_map)
+        all_done = threading.Event()
+
+        def _on_node_done(node_id: int | str, future):
+            """Callback fired when a node's future completes."""
+            nonlocal remaining
+
+            try:
+                node_result, node = future.result()
+            except Exception as exc:
+                logger.error(f"Unexpected error executing node {node_id}: {exc}")
+                node = node_map[node_id]
+                node_result = NodeResult(node_id=node_id, node_name=node.name)
+                node_result.success = False
+                node_result.error = str(exc)
+                node_result.end_timestamp = time()
+                node_result.is_running = False
+
+            newly_ready: list[int | str] = []
+
+            with lock:
+                remaining -= 1
+
+                if self.flow_settings.is_canceled:
+                    # On cancellation, count all un-resolved nodes as done
+                    remaining = 0
+                elif not node_result.success:
+                    # Propagate failure: skip all transitive dependents
+                    for dep in node.get_all_dependent_nodes():
+                        dep_id = dep.node_id
+                        if dep_id not in skip_node_ids and dep_id in node_map:
+                            skip_node_ids.add(dep_id)
+                            remaining -= 1
+                            dep_logger = self.flow_logger.get_node_logger(dep_id)
+                            dep_logger.info(f"Skipping node {dep_id} (upstream failure)")
+
+                # Notify successors: decrement their pending counts
+                for succ_id in successors.get(node_id, []):
+                    if succ_id in skip_node_ids:
+                        continue
+                    pending_count[succ_id] -= 1
+                    if pending_count[succ_id] == 0:
+                        newly_ready.append(succ_id)
+
+                done = remaining <= 0
+
+            # Submit newly ready nodes outside the lock
+            if not self.flow_settings.is_canceled:
+                for nid in newly_ready:
+                    _submit(nid)
+
+            if done:
+                all_done.set()
+
+        def _submit(node_id: int | str):
+            """Submit a single node for execution on the thread pool."""
+            node = node_map[node_id]
+            fut = executor.submit(
+                self._execute_single_node, node, performance_mode, run_info_lock
+            )
+            fut.add_done_callback(lambda f: _on_node_done(node_id, f))
+
+        initial_ready = [
+            nid for nid in dep_graph.initial_ready if nid not in skip_node_ids
+        ]
+
+        if not initial_ready:
+            return
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for nid in initial_ready:
+                if not self.flow_settings.is_canceled:
+                    _submit(nid)
+
+            all_done.wait()
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
-        Independent nodes within the same execution stage are run in parallel
-        using threads. Stages are processed sequentially so that all dependencies
-        are satisfied before a stage begins.
+        Nodes are executed as soon as all their predecessors complete, using
+        dependency-aware scheduling.  Independent nodes run in parallel on a
+        shared thread pool, and a node whose inputs are satisfied does not wait
+        for unrelated siblings in the same topological stage.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -2381,48 +2494,13 @@ class FlowGraph:
             run_info_lock = threading.Lock()
             skip_node_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
 
-            for stage in execution_plan.stages:
-                if self.flow_settings.is_canceled:
-                    self.flow_logger.info("Flow canceled")
-                    break
+            is_local = self.flow_settings.execution_location == "local"
+            max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
 
-                nodes_to_run = [n for n in stage.nodes if n.node_id not in skip_node_ids]
-
-                for skipped in stage.nodes:
-                    if skipped.node_id in skip_node_ids:
-                        node_logger = self.flow_logger.get_node_logger(skipped.node_id)
-                        node_logger.info(f"Skipping node {skipped.node_id}")
-
-                if not nodes_to_run:
-                    continue
-
-                is_local = self.flow_settings.execution_location == "local"
-                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
-                if len(nodes_to_run) == 1 or max_workers == 1:
-                    # Single node or parallelism disabled — run sequentially
-                    stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock)
-                        for node in nodes_to_run
-                    ]
-                else:
-                    # Multiple independent nodes — run in parallel
-                    stage_results: list[tuple[NodeResult, FlowNode]] = []
-                    workers = min(max_workers, len(nodes_to_run))
-                    with ThreadPoolExecutor(max_workers=workers) as executor:
-                        futures = {
-                            executor.submit(
-                                self._execute_single_node, node, performance_mode, run_info_lock
-                            ): node
-                            for node in nodes_to_run
-                        }
-                        for future in as_completed(futures):
-                            stage_results.append(future.result())
-
-                # After the stage completes, propagate failures to downstream nodes
-                for node_result, node in stage_results:
-                    if not node_result.success:
-                        for dep in node.get_all_dependent_nodes():
-                            skip_node_ids.add(dep.node_id)
+            dep_graph = execution_plan.dependency_graph
+            self._run_dependency_aware(
+                dep_graph, skip_node_ids, performance_mode, run_info_lock, max_workers
+            )
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
