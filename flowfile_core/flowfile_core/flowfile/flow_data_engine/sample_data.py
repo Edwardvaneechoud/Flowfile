@@ -1,8 +1,6 @@
-from collections.abc import Generator
 from functools import partial
 from math import ceil
 from random import randint
-from typing import Any
 
 import polars as pl
 from faker import Faker
@@ -76,69 +74,3 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
     return pl.DataFrame(data)
 
 
-def create_fake_data_raw(
-    n_records: int = 1000, col_selection: list[str] = None
-) -> Generator[dict[str, Any], None, None]:
-    fake = Faker()
-    selector = partial(randint, 0)
-
-    # Caching static data to avoid regenerating it unnecessarily
-    cities = partial(fake.city)
-    companies = partial(fake.company)
-    zipcodes = partial(fake.zipcode)
-    countries = partial(fake.country)
-    street_names = partial(fake.street_name)
-    dob = partial(fake.date_of_birth)
-    first_names = partial(fake.first_name)
-    last_names = partial(fake.last_name)
-    domain_names = [fake.domain_name() for _ in range(10)]  # Pre-generate a small list
-    sales_data = lambda: fake.random_int(0, 1000)
-
-    def generate_name():
-        return f"{first_names()} {last_names()}"
-
-    def generate_address():
-        return f"{randint(100, 999)} {street_names()}"
-
-    def generate_email(_name):
-        return f"{_name.lower().replace(' ', '_')}.{randint(1, 99)}@{domain_names[selector(10)-1]}"
-
-    def generate_phone_number():
-        return fake.phone_number()
-
-    # Default columns if no selection is provided
-    all_columns = {
-        "ID": lambda: randint(1, 1000000),
-        "Name": generate_name,
-        "Address": generate_address,
-        "City": cities,
-        "Email": lambda name: generate_email(name),
-        "Phone": generate_phone_number,
-        "DOB": dob,
-        "Work": companies,
-        "Zipcode": zipcodes,
-        "Country": countries,
-        "sales_data": sales_data,
-    }
-
-    # Filter the available columns based on col_selection
-    if col_selection is not None:
-        all_columns = {col: all_columns[col] for col in col_selection if col in all_columns}
-
-    # Use a generator to yield one record at a time
-    for _ in range(n_records):
-        record = {}
-        for col, generator in all_columns.items():
-            if col == "Email":  # Email depends on the Name column
-                name = record.get("Name", generate_name())
-                record["Email"] = generate_email(name)
-            else:
-                record[col] = generator()
-        yield record
-
-
-def write_fake_data():
-    df = create_fake_data()
-    df.write_parquet("backend/tests/data/fake_data.parquet")
-    df.write_csv("backend/tests/data/fake_data.csv")
-    df.write_excel("backend/tests/data/fake_data.xlsx")

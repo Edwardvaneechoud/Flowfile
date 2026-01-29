@@ -68,12 +68,6 @@ class FlowfileStorage:
         """Cache directory for worker-core communication (internal)."""
         return self.base_directory / "cache"
 
-    def get_flow_cache_directory(self, flow_id: int) -> Path:
-        """Get or create a cache directory for a specific flow (internal)."""
-        flow_cache_dir = self.cache_directory / str(flow_id)
-        flow_cache_dir.mkdir(parents=True, exist_ok=True)
-        return flow_cache_dir
-
     @property
     def system_logs_directory(self) -> Path:
         """Directory for system logs (internal)."""
@@ -165,34 +159,6 @@ class FlowfileStorage:
 
         for directory in internal_directories + user_directories:
             directory.mkdir(parents=True, exist_ok=True)
-
-    def get_cache_file_path(self, filename: str) -> Path:
-        """Get full path for a cache file (internal)."""
-        return self.cache_directory / filename
-
-    def get_flow_file_path(self, filename: str) -> Path:
-        """Get full path for a flow file (user-accessible)."""
-        return self.flows_directory / filename
-
-    def get_upload_file_path(self, filename: str) -> Path:
-        """Get full path for an uploaded file (user-accessible)."""
-        return self.uploads_directory / filename
-
-    def get_output_file_path(self, filename: str) -> Path:
-        """Get full path for an output file (user-accessible)."""
-        return self.outputs_directory / filename
-
-    def get_log_file_path(self, filename: str) -> Path:
-        """Get full path for an application log file (internal)."""
-        return self.logs_directory / filename
-
-    def get_system_log_file_path(self, filename: str) -> Path:
-        """Get full path for a system log file (internal)."""
-        return self.system_logs_directory / filename
-
-    def get_temp_file_path(self, filename: str) -> Path:
-        """Get full path for a temporary file (internal)."""
-        return self.temp_directory / filename
 
     def cleanup_directory(self, directory_option: DirectoryOptions, storage_duration_hours: int = 24) -> None:
         """Clean up any directory of the folder"""

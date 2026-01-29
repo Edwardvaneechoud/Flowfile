@@ -121,7 +121,6 @@ def string_concat(*column: str):
 
 SideLit = Literal["left", "right"]
 JoinStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "cross", "outer"]
-FuzzyTypeLiteral = Literal["levenshtein", "jaro", "jaro_winkler", "hamming", "damerau_levenshtein", "indel"]
 
 
 def construct_join_key_name(side: SideLit, column_name: str) -> str:

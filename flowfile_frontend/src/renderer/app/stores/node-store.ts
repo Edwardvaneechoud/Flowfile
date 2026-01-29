@@ -143,25 +143,6 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    // ========== Node ID Management ==========
-    setFlowIdAndNodeId(flowId: number, nodeId: number) {
-      const flowStore = useFlowStore();
-
-      if (this.nodeId === nodeId && flowStore.flowId === flowId) {
-        return;
-      }
-
-      console.log("Automatically pushing the node data");
-      if (flowStore.flowId !== flowId) {
-        flowStore.setFlowId(flowId);
-      }
-      this.nodeId = nodeId;
-    },
-
-    doReset() {
-      this.isLoaded = false;
-    },
-
     // ========== Node Validation ==========
     setNodeValidateFunc(nodeId: number | string, func: () => void) {
       if (typeof nodeId === "string") {
@@ -181,39 +162,17 @@ export const useNodeStore = defineStore("node", {
     },
 
     // ========== Node Descriptions ==========
-    initializeDescriptionCache(flowId: number): void {
-      if (!this.nodeDescriptions[flowId]) {
-        this.nodeDescriptions[flowId] = {};
-      }
-    },
-
-    cacheNodeDescriptionDict(flowId: number, nodeId: number, description: string): void {
-      this.initializeDescriptionCache(flowId);
-      this.nodeDescriptions[flowId][nodeId] = description;
-      if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
-        this.nodeData.setting_input.description = description;
-      }
-    },
-
-    clearNodeDescriptionCache(flowId: number, nodeId: number): void {
-      if (this.nodeDescriptions[flowId] && this.nodeDescriptions[flowId][nodeId]) {
-        delete this.nodeDescriptions[flowId][nodeId];
-      }
-    },
-
     clearFlowDescriptionCache(flowId: number): void {
       if (this.nodeDescriptions[flowId]) {
         delete this.nodeDescriptions[flowId];
       }
     },
 
-    clearAllDescriptionCaches(): void {
-      this.nodeDescriptions = {};
-    },
-
     async getNodeDescription(nodeId: number, forceRefresh = false): Promise<string> {
       const flowStore = useFlowStore();
-      this.initializeDescriptionCache(flowStore.flowId);
+      if (!this.nodeDescriptions[flowStore.flowId]) {
+        this.nodeDescriptions[flowStore.flowId] = {};
+      }
 
       if (!forceRefresh && this.nodeDescriptions[flowStore.flowId]?.[nodeId]) {
         return this.nodeDescriptions[flowStore.flowId][nodeId];
@@ -221,7 +180,10 @@ export const useNodeStore = defineStore("node", {
 
       try {
         const description = await NodeApi.getNodeDescription(flowStore.flowId, nodeId);
-        this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
+        this.nodeDescriptions[flowStore.flowId][nodeId] = description;
+        if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+          this.nodeData.setting_input.description = description;
+        }
         return description;
       } catch (error) {
         console.info("Error fetching node description:", error);
@@ -237,7 +199,13 @@ export const useNodeStore = defineStore("node", {
       const flowStore = useFlowStore();
 
       try {
-        this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
+        if (!this.nodeDescriptions[flowStore.flowId]) {
+          this.nodeDescriptions[flowStore.flowId] = {};
+        }
+        this.nodeDescriptions[flowStore.flowId][nodeId] = description;
+        if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+          this.nodeData.setting_input.description = description;
+        }
         const result = await NodeApi.setNodeDescription(flowStore.flowId, nodeId, description);
 
         if (result === true) {
@@ -259,43 +227,21 @@ export const useNodeStore = defineStore("node", {
 
     updateNodeDescription(nodeId: number, description: string) {
       const flowStore = useFlowStore();
-      this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description);
+      if (!this.nodeDescriptions[flowStore.flowId]) {
+        this.nodeDescriptions[flowStore.flowId] = {};
+      }
+      this.nodeDescriptions[flowStore.flowId][nodeId] = description;
+      if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+        this.nodeData.setting_input.description = description;
+      }
     },
 
     // ========== Node References ==========
-    initializeReferenceCache(flowId: number): void {
-      if (!this.nodeReferences[flowId]) {
-        this.nodeReferences[flowId] = {};
-      }
-    },
-
-    cacheNodeReferenceDict(flowId: number, nodeId: number, reference: string): void {
-      this.initializeReferenceCache(flowId);
-      this.nodeReferences[flowId][nodeId] = reference;
-      if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
-        this.nodeData.setting_input.node_reference = reference;
-      }
-    },
-
-    clearNodeReferenceCache(flowId: number, nodeId: number): void {
-      if (this.nodeReferences[flowId] && this.nodeReferences[flowId][nodeId]) {
-        delete this.nodeReferences[flowId][nodeId];
-      }
-    },
-
-    clearFlowReferenceCache(flowId: number): void {
-      if (this.nodeReferences[flowId]) {
-        delete this.nodeReferences[flowId];
-      }
-    },
-
-    clearAllReferenceCaches(): void {
-      this.nodeReferences = {};
-    },
-
     async getNodeReference(nodeId: number, forceRefresh = false): Promise<string> {
       const flowStore = useFlowStore();
-      this.initializeReferenceCache(flowStore.flowId);
+      if (!this.nodeReferences[flowStore.flowId]) {
+        this.nodeReferences[flowStore.flowId] = {};
+      }
 
       if (!forceRefresh && this.nodeReferences[flowStore.flowId]?.[nodeId]) {
         return this.nodeReferences[flowStore.flowId][nodeId];
@@ -303,7 +249,10 @@ export const useNodeStore = defineStore("node", {
 
       try {
         const reference = await NodeApi.getNodeReference(flowStore.flowId, nodeId);
-        this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
+        this.nodeReferences[flowStore.flowId][nodeId] = reference;
+        if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+          this.nodeData.setting_input.node_reference = reference;
+        }
         return reference;
       } catch (error) {
         console.info("Error fetching node reference:", error);
@@ -319,7 +268,13 @@ export const useNodeStore = defineStore("node", {
       const flowStore = useFlowStore();
 
       try {
-        this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
+        if (!this.nodeReferences[flowStore.flowId]) {
+          this.nodeReferences[flowStore.flowId] = {};
+        }
+        this.nodeReferences[flowStore.flowId][nodeId] = reference;
+        if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+          this.nodeData.setting_input.node_reference = reference;
+        }
         const result = await NodeApi.setNodeReference(flowStore.flowId, nodeId, reference);
 
         if (result === true) {
@@ -351,11 +306,6 @@ export const useNodeStore = defineStore("node", {
         console.error("Error validating node reference:", error);
         return { valid: false, error: "Failed to validate reference" };
       }
-    },
-
-    updateNodeReference(nodeId: number, reference: string) {
-      const flowStore = useFlowStore();
-      this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
     },
 
     // ========== Node Settings Updates ==========
@@ -441,7 +391,10 @@ export const useNodeStore = defineStore("node", {
     },
 
     // ========== Expressions ==========
-    async fetchExpressionsOverview(): Promise<ExpressionsOverview[]> {
+    async getExpressionsOverview(): Promise<ExpressionsOverview[]> {
+      if (this.allExpressions) {
+        return this.allExpressions;
+      }
       try {
         const expressions = await ExpressionsApi.getExpressionsOverview();
         this.allExpressions = expressions;
@@ -452,33 +405,9 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    async getExpressionsOverview(): Promise<ExpressionsOverview[]> {
-      if (this.allExpressions) {
-        return this.allExpressions;
-      } else {
-        return await this.fetchExpressionsOverview();
-      }
-    },
-
     // ========== Utilities ==========
     getDataTypes() {
       return this.dataTypes;
-    },
-
-    getSizeDataPreview() {
-      return this.sizeDataPreview;
-    },
-
-    setSizeDataPreview(newHeight: number) {
-      this.sizeDataPreview = newHeight;
-    },
-
-    getEditorNodeData() {
-      const flowStore = useFlowStore();
-      if (this.nodeId) {
-        return flowStore.vueFlowInstance?.findNode(String(this.nodeId));
-      }
-      return null;
     },
 
     // ========== Backward Compatibility Actions (Proxy to other stores) ==========

@@ -851,12 +851,6 @@ class NodeConnection(BaseModel):
         return cls(input_connection=node_input, output_connection=node_output)
 
 
-class NodeDescription(BaseModel):
-    """A simple model for updating a node's description text."""
-
-    description: str = ""
-
-
 class NodeExploreData(NodeBase):
     """Settings for a node that provides an interactive data exploration interface."""
 

@@ -2,7 +2,6 @@ import os
 import re
 
 video_types = ["mp4", "webm", "opgg"]
-audio_types = ["mp3", "wav", "ogg", "mpeg", "aac", "3gpp", "3gpp2", "aiff", "x-aiff", "amr", "mpga"]
 
 
 def get_chunk(start_byte=None, end_byte=None, full_path=None):

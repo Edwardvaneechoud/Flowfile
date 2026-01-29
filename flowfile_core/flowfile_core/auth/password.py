@@ -48,21 +48,6 @@ def validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def validate_password_or_raise(password: str) -> None:
-    """
-    Validate password and raise exception if invalid.
-
-    Args:
-        password: The plain text password to validate
-
-    Raises:
-        PasswordValidationError: If password doesn't meet requirements
-    """
-    is_valid, error_message = validate_password(password)
-    if not is_valid:
-        raise PasswordValidationError(error_message)
-
-
 def verify_password(plain: str, hashed: str) -> bool:
     """
     Verify a plain password against a hashed password.

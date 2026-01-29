@@ -62,7 +62,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import utils as 
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -796,22 +796,6 @@ class FlowGraph:
         output = "\n".join(lines)
 
         print(output)
-
-    def get_nodes_overview(self):
-        """Gets a list of dictionary representations for all nodes in the graph."""
-        output = []
-        for v in self._node_db.values():
-            output.append(v.get_repr())
-        return output
-
-    def remove_from_output_cols(self, columns: list[str]):
-        """Removes specified columns from the list of expected output columns.
-
-        Args:
-            columns: A list of column names to remove.
-        """
-        cols = set(columns)
-        self._output_cols = [c for c in self._output_cols if c not in cols]
 
     def get_node(self, node_id: int | str = None) -> FlowNode | None:
         """Retrieves a node from the graph by its ID.
@@ -1642,19 +1626,6 @@ class FlowGraph:
         self._node_ids.append(node_id)
         return node
 
-    def add_include_cols(self, include_columns: list[str]):
-        """Adds columns to both the input and output column lists.
-
-        Args:
-            include_columns: A list of column names to include.
-        """
-        for column in include_columns:
-            if column not in self._input_cols:
-                self._input_cols.append(column)
-            if column not in self._output_cols:
-                self._output_cols.append(column)
-        return self
-
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_output(self, output_file: input_schema.NodeOutput):
         """Adds an output node to write the final data to a destination.
@@ -1842,17 +1813,6 @@ class FlowGraph:
             self._node_db[node_database_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
-
-    def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
-        """Adds a node that reads data from a SQL source.
-
-        This is a convenience alias for `add_external_source`.
-
-        Args:
-            external_source_input: The settings for the external SQL source node.
-        """
-        logger.info("Adding sql source")
-        self.add_external_source(external_source_input)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:

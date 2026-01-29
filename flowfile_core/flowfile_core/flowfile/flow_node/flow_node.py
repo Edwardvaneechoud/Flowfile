@@ -543,19 +543,6 @@ class FlowNode:
             self.print(f"resetting node: {node.node_id}")
             node.reset(deep)
 
-    def get_flow_file_column_schema(self, col_name: str) -> FlowfileColumn | None:
-        """Retrieves the schema for a specific column from the output schema.
-
-        Args:
-            col_name: The name of the column.
-
-        Returns:
-            The FlowfileColumn object for that column, or None if not found.
-        """
-        for s in self.schema:
-            if s.column_name == col_name:
-                return s
-
     def get_predicted_schema(self, force: bool = False) -> list[FlowfileColumn] | None:
         """Predicts the output schema of the node without full execution.
 
@@ -1069,13 +1056,6 @@ class FlowNode:
         """Backward-compatible alias for _do_execute_remote."""
         return self._do_execute_remote(performance_mode, node_logger)
 
-    def prepare_before_run(self):
-        """Resets results and errors before a new execution."""
-
-        self.results.errors = None
-        self.results.resulting_data = None
-        self.results.example_data = None
-
     def cancel(self):
         """Cancels an ongoing external process if one is running."""
 
@@ -1423,14 +1403,6 @@ class FlowNode:
         if node.setting_input is not None and not isinstance(node.setting_input, input_schema.NodePromise):
             self.setting_input = node.setting_input
         return node
-
-    def get_output_data(self) -> TableExample:
-        """Gets the full output data sample for this node.
-
-        Returns:
-            A `TableExample` object with data.
-        """
-        return self.get_table_example(True)
 
     def get_node_input(self) -> schemas.NodeInput:
         """Creates a `NodeInput` schema object for representing this node in the UI.
