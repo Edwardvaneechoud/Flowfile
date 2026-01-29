@@ -67,7 +67,7 @@ class FlowfileHandler:
     def import_flow(self, flow_path: Path | str, user_id: int | None = None) -> int:
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
-        imported_flow = open_flow(flow_path)
+        imported_flow = open_flow(flow_path, user_id=user_id)
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
         imported_flow.flow_settings.is_running = False
