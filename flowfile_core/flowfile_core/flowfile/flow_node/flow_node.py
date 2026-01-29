@@ -990,7 +990,7 @@ class FlowNode:
             raise Exception("Node logger is not defined")
         if self.node_settings.cache_results and results_exists(self.hash):
             try:
-                self.results.resulting_data = get_external_df_result(self.hash)
+                self.results.resulting_data = FlowDataEngine(get_external_df_result(self.hash))
                 self._cache_progress = None
                 return
             except Exception:
