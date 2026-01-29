@@ -86,6 +86,7 @@ mkdocs-material = "^9.5.46"
 psycopg2-binary = "^2.9.9"
 sqlalchemy = "^2.0.27"
 pytest = "^8.4.1"
+pytest-cov = "^6.0"
 testcontainers = "^4.10.0"
 numpy = "1.26.4"
 pandas = "^2.3.1"
@@ -103,6 +104,27 @@ markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package"
 ]
+
+[tool.coverage.run]
+source = [
+    "flowfile_core/flowfile_core",
+    "flowfile_worker/flowfile_worker",
+]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/conftest.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+precision = 2
+fail_under = 0
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.ruff]
 # Target Python 3.10 (minimum supported version)

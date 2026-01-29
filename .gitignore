@@ -59,6 +59,11 @@ local_data
 /flowfile_core/tests/support_files/flows/second_flow.flowfile
 /flowfile_core/tests/support_files/flows/tmp/
 
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
 # Docker
 flowfile_data/
 
