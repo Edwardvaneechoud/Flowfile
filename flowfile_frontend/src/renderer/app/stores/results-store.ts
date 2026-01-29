@@ -23,14 +23,10 @@ export const useResultsStore = defineStore("results", {
 
   actions: {
     // ========== Result Cache Management ==========
-    initializeResultCache(flowId: number): void {
+    setNodeResult(flowId: number, nodeId: number, result: NodeResult): void {
       if (!this.runNodeResults[flowId]) {
         this.runNodeResults[flowId] = {};
       }
-    },
-
-    setNodeResult(flowId: number, nodeId: number, result: NodeResult): void {
-      this.initializeResultCache(flowId);
       this.runNodeResults[flowId][nodeId] = result;
     },
 
@@ -50,12 +46,6 @@ export const useResultsStore = defineStore("results", {
     },
 
     // ========== Validation Cache Management ==========
-    initializeValidationCache(flowId: number): void {
-      if (!this.runNodeValidations[flowId]) {
-        this.runNodeValidations[flowId] = {};
-      }
-    },
-
     setNodeValidation(
       flowId: number,
       nodeId: number | string,
@@ -64,7 +54,9 @@ export const useResultsStore = defineStore("results", {
       if (typeof nodeId === "string") {
         nodeId = parseInt(nodeId);
       }
-      this.initializeValidationCache(flowId);
+      if (!this.runNodeValidations[flowId]) {
+        this.runNodeValidations[flowId] = {};
+      }
       const nodeValidation: NodeValidation = {
         ...nodeValidationInput,
         validationTime: Date.now() / 1000,
@@ -90,7 +82,9 @@ export const useResultsStore = defineStore("results", {
     insertRunResult(runResult: RunInformation): void {
       this.currentRunResult = runResult;
       this.runResults[runResult.flow_id] = runResult;
-      this.initializeResultCache(runResult.flow_id);
+      if (!this.runNodeResults[runResult.flow_id]) {
+        this.runNodeResults[runResult.flow_id] = {};
+      }
 
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResults[runResult.flow_id][nodeResult.node_id] = nodeResult;

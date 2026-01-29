@@ -3,7 +3,6 @@ import logging.handlers
 import os
 import queue
 import threading
-from datetime import datetime
 from pathlib import Path
 
 from shared.storage_config import storage
@@ -294,20 +293,6 @@ class FlowLogger:
         """Get the path to the log file for this flow"""
         return str(self.log_file_path)
 
-    def read_from_line(self, start_line: int = 0):
-        """Read log content starting from a specific line"""
-        # Refresh logger if needed before reading
-        self.refresh_logger_if_needed()
-
-        if self._file_lock.acquire(blocking=False):
-            try:
-                return read_log_from_line(self.log_file_path, start_line)
-            finally:
-                self._file_lock.release()
-        else:
-            # Reading is safe without lock
-            return read_log_from_line(self.log_file_path, start_line)
-
     @classmethod
     def refresh_all_loggers(cls):
         """Refresh all loggers that need it"""
@@ -355,24 +340,6 @@ class FlowLogger:
 def get_flow_log_file(flow_id: int) -> Path:
     """Get the path to the log file for a specific flow"""
     return storage.logs_directory / f"flow_{flow_id}.log"
-
-
-def cleanup_old_logs(max_age_days: int = 7):
-    """Delete log files older than specified days"""
-    logs_dir = storage.logs_directory
-    now = datetime.now().timestamp()
-    deleted_count = 0
-
-    for log_file in logs_dir.glob("flow_*.log"):
-        try:
-            if (now - log_file.stat().st_mtime) > (max_age_days * 24 * 60 * 60):
-                log_file.unlink()
-                deleted_count += 1
-        except Exception as e:
-            main_logger.error(f"Failed to delete old log file {log_file}: {e}")
-
-    if deleted_count > 0:
-        main_logger.info(f"Deleted {deleted_count} old log files")
 
 
 def clear_all_flow_logs():

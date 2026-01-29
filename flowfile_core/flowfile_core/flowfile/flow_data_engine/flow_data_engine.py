@@ -40,7 +40,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
     cast_str_to_polars_type,
     get_polars_type,
-    safe_eval_pl_type,
 )
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
@@ -131,22 +130,6 @@ def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.
     if join_input.how in ("semi", "anti"):
         for jk in join_input.right_select.renames:
             jk.keep = False
-
-
-def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -> list[str]:
-    """Extracts a list of column names to be selected from a SelectInput list.
-
-    This function filters a list of `SelectInput` objects to return the names
-    of columns that are marked as available and are either a join key or
-    explicitly marked to be kept.
-
-    Args:
-        full_select_input: A list of SelectInput objects.
-
-    Returns:
-        A list of column names to be selected.
-    """
-    return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
 
 
 @dataclass
@@ -1543,23 +1526,6 @@ class FlowDataEngine:
                 self.data_frame = pl.LazyFrame(list(self.external_source.get_iter()))
             self._schema = None  # enforce reset schema
 
-    def get_output_sample(self, n_rows: int = 10) -> list[dict]:
-        """Gets a sample of the data as a list of dictionaries.
-
-        This is typically used to display a preview of the data in a UI.
-
-        Args:
-            n_rows: The number of rows to sample.
-
-        Returns:
-            A list of dictionaries, where each dictionary represents a row.
-        """
-        if self.number_of_records > n_rows or self.number_of_records < 0:
-            df = self.collect(n_rows)
-        else:
-            df = self.collect()
-        return df.to_dicts()
-
     def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> FlowDataEngine:
         """Internal method to get a sample of the data."""
         if not self.lazy:
@@ -1622,20 +1588,6 @@ class FlowDataEngine:
             sample_df = self.data_frame.head(n_rows)
 
         return FlowDataEngine(sample_df, schema=self.schema)
-
-    def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
-        """Gets the first `n_rows` from the DataFrame.
-
-        Args:
-            n_rows: The number of rows to include in the subset.
-
-        Returns:
-            A new `FlowDataEngine` instance containing the subset of data.
-        """
-        if not self.lazy:
-            return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
-        else:
-            return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
 
     def iter_batches(
         self, batch_size: int = 1000, columns: list | tuple | str = None
@@ -2066,17 +2018,6 @@ class FlowDataEngine:
     def __name__(self) -> str:
         """The name of the table."""
         return self.name
-
-    def get_select_inputs(self) -> transform_schemas.SelectInputs:
-        """Gets `SelectInput` specifications for all columns in the current schema.
-
-        Returns:
-            A `SelectInputs` object that can be used to configure selection or
-            transformation operations.
-        """
-        return transform_schemas.SelectInputs(
-            [transform_schemas.SelectInput(old_name=c.name, data_type=c.data_type) for c in self.schema]
-        )
 
     def select_columns(self, list_select: list[str] | tuple[str] | str) -> FlowDataEngine:
         """Selects a subset of columns from the DataFrame.

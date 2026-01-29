@@ -95,10 +95,6 @@ export const useAuthStore = defineStore("auth", {
       this.error = null;
     },
 
-    clearError() {
-      this.error = null;
-    },
-
     async refreshUserInfo() {
       const userInfo = await authService.getCurrentUser();
       if (userInfo) {

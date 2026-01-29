@@ -20,10 +20,6 @@ class User(BaseModel):
     must_change_password: bool | None = False
 
 
-class UserInDB(User):
-    hashed_password: str
-
-
 class UserCreate(BaseModel):
     """Model for creating a new user (admin only)"""
     username: str
@@ -58,8 +54,3 @@ class Secret(SecretInput):
     user_id: str
 
 
-class SecretInDB(BaseModel):
-    id: str
-    name: str
-    encrypted_value: str
-    user_id: str

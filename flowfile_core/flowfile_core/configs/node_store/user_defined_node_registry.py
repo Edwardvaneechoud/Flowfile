@@ -10,63 +10,6 @@ from shared import storage
 logger = logging.getLogger(__name__)
 
 
-def get_all_custom_nodes() -> dict[str, type[CustomNodeBase]]:
-    """
-    Scan the user-defined nodes directory and import all CustomNodeBase subclasses.
-
-    Returns:
-        Dictionary mapping node names to node classes
-    """
-    custom_nodes = {}
-
-    # Get the directory path where user-defined nodes are stored
-    nodes_directory = storage.user_defined_nodes_icons
-
-    # Convert to Path object for easier handling
-    nodes_path = Path(nodes_directory)
-
-    if not nodes_path.exists() or not nodes_path.is_dir():
-        print(f"Warning: Nodes directory {nodes_path} does not exist or is not a directory")
-        return custom_nodes
-
-    # Scan all Python files in the directory
-    for file_path in nodes_path.glob("*.py"):
-        # Skip __init__.py and other special files
-        if file_path.name.startswith("__"):
-            continue
-
-        try:
-            # Load the module dynamically
-            module_name = file_path.stem  # filename without extension
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
-
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-
-                # Add to sys.modules to handle imports within the module
-                sys.modules[module_name] = module
-
-                # Execute the module
-                spec.loader.exec_module(module)
-
-                # Inspect the module for CustomNodeBase subclasses
-                for name, obj in inspect.getmembers(module):
-                    # Check if it's a class and a subclass of CustomNodeBase
-                    # but not CustomNodeBase itself
-                    if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
-                        # Use the node_name attribute if it exists, otherwise use class name
-                        node_name = getattr(obj, "node_name", name)
-                        custom_nodes[node_name] = obj
-                        print(f"Loaded custom node: {node_name} from {file_path.name}")
-
-        except Exception as e:
-            print(f"Error loading module from {file_path}: {e}")
-            # Continue with other files even if one fails
-            continue
-
-    return custom_nodes
-
-
 def get_all_custom_nodes_with_validation() -> dict[str, type[CustomNodeBase]]:
     """
     Enhanced version that validates the nodes before adding them.
@@ -127,55 +70,6 @@ def get_all_custom_nodes_with_validation() -> dict[str, type[CustomNodeBase]]:
             print(f"Unexpected error loading {file_path}: {e}")
 
     return custom_nodes
-
-
-def get_custom_nodes_lazy() -> list[type[CustomNodeBase]]:
-    """
-    Returns a list of custom node classes without instantiating them.
-    Useful for registration or catalog purposes.
-    """
-    nodes = []
-    nodes_path = Path(storage.user_defined_nodes_directory)
-
-    if not nodes_path.exists():
-        return nodes
-
-    for file_path in nodes_path.glob("*.py"):
-        if file_path.name.startswith("__"):
-            continue
-
-        try:
-            # Create a unique module name to avoid conflicts
-            module_name = f"custom_node_{file_path.stem}_{id(file_path)}"
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
-
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                for name, obj in inspect.getmembers(module):
-                    if (
-                        inspect.isclass(obj)
-                        and issubclass(obj, CustomNodeBase)
-                        and obj is not CustomNodeBase
-                        and obj.__module__ == module.__name__
-                    ):  # Only get classes defined in this module
-                        nodes.append(obj)
-
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
-            continue
-
-    return nodes
-
-
-# Example usage function that matches your original pattern
-def add_custom_node(node_class: type[CustomNodeBase], registry: dict[str, type[CustomNodeBase]]):
-    """Add a single custom node to the registry."""
-    if hasattr(node_class, "node_name"):
-        registry[node_class.node_name] = node_class
-    else:
-        registry[node_class.__name__] = node_class
 
 
 def get_all_nodes_from_standard_location() -> dict[str, type[CustomNodeBase]]:

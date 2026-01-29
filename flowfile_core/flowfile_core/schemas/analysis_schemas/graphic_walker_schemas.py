@@ -72,13 +72,6 @@ class DraggableFieldState(BaseModel):
     text: list[ViewField]
 
 
-class ConfigScale(BaseModel):
-    rangeMax: int | None
-    rangeMin: int | None
-    domainMin: int | None
-    domainMax: int | None
-
-
 class MutField(BaseModel):
     fid: str
     key: str | None = None

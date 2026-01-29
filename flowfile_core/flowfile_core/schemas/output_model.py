@@ -105,12 +105,6 @@ class OutputFiles(BaseItem):
     files: list[OutputFile] = Field(default_factory=list)
 
 
-class OutputTree(OutputFiles):
-    """Represents a directory tree, including subdirectories."""
-
-    directories: list[OutputFiles] = Field(default_factory=list)
-
-
 class ItemInfo(OutputFile):
     """Provides detailed information about a single item in an output directory."""
 

@@ -3,10 +3,6 @@ from typing import Any
 from pydantic import BaseModel
 
 
-class ColumnInfo:
-    pass
-
-
 class PlType(BaseModel):
     column_name: str
     col_index: int = -1

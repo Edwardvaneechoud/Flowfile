@@ -22,7 +22,6 @@ status_dict: dict[str, Status] = dict()
 process_dict = dict()
 
 status_dict_lock = threading.Lock()
-process_dict_lock = threading.Lock()
 
 
 CACHE_EXPIRATION_TIME = 24 * 60 * 60

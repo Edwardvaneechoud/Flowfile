@@ -32,11 +32,7 @@ export const useEditorStore = defineStore("editor", {
     tableVisible: false,
   }),
 
-  getters: {
-    drawerOpen(): boolean {
-      return !!this.activeDrawerComponent;
-    },
-  },
+  getters: {},
 
   actions: {
     async executeDrawCloseFunction() {
@@ -81,25 +77,6 @@ export const useEditorStore = defineStore("editor", {
       if (this.drawCloseFunction && !this.isRunning) {
         this.drawCloseFunction();
         this.drawCloseFunction = null;
-      }
-    },
-
-    openAnalysisDrawer(closeFunction?: () => void) {
-      console.log("openAnalysisDrawer in editor-store.ts");
-      if (this.isAnalysisOpen) {
-        this.pushNodeData();
-      }
-      if (closeFunction) {
-        this.drawCloseFunction = closeFunction;
-      }
-      this.isAnalysisOpen = true;
-    },
-
-    closeAnalysisDrawer() {
-      this.isAnalysisOpen = false;
-      if (this.drawCloseFunction) {
-        console.log("closeDrawer in editor-store.ts");
-        this.pushNodeData();
       }
     },
 
@@ -150,12 +127,5 @@ export const useEditorStore = defineStore("editor", {
       this.showFlowResult = show;
     },
 
-    setTableVisible(visible: boolean) {
-      this.tableVisible = visible;
-    },
-
-    setIsRunning(running: boolean) {
-      this.isRunning = running;
-    },
   },
 });

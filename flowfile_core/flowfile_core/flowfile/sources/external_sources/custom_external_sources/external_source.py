@@ -8,17 +8,6 @@ from flowfile_core.flowfile.sources.external_sources.base_class import ExternalD
 from flowfile_core.schemas import input_schema
 
 
-class CustomExternalSourceSettings:
-    data_getter: Generator
-    initial_data_getter: Callable | None = None
-    orientation: str = "row"
-
-    def __init__(self, data_getter: Generator, initial_data_getter: Callable | None = None, orientation: str = "row"):
-        self.data_getter = data_getter
-        self.initial_data_getter = initial_data_getter
-        self.orientation = orientation
-
-
 class CustomExternalSource(ExternalDataSource):
     data_getter: Generator = None
     schema: list[FlowfileColumn] | None = None

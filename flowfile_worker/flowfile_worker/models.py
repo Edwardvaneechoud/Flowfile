@@ -52,10 +52,6 @@ class PolarsScript(PolarsOperation):
     operation_type: OperationType
 
 
-class PolarsScriptSample(PolarsScript):
-    sample_size: int | None = 100
-
-
 class PolarsScriptWrite(BaseModel):
     operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     data_type: str

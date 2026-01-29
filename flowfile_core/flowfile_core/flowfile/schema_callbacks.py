@@ -107,12 +107,6 @@ def get_schema_of_column(node_input_schema: list[FlowfileColumn], col_name: str)
             return s
 
 
-class InvalidSetup(ValueError):
-    """Error raised when pivot column has too many unique values."""
-
-    pass
-
-
 def get_output_data_type_pivot(schema: FlowfileColumn, agg_type: str) -> datatypes:
     if agg_type in ("count", "n_unique"):
         output_type = datatypes.Float64  # count is always float

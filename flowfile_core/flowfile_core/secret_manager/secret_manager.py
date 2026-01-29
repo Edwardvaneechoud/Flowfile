@@ -49,13 +49,6 @@ def derive_user_key(user_id: int) -> bytes:
     return base64.urlsafe_b64encode(derived_key)
 
 
-def _encrypt_with_master_key(secret_value: str) -> str:
-    """Legacy encryption using master key directly (for backward compatibility)."""
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.encrypt(secret_value.encode()).decode()
-
-
 def _decrypt_with_master_key(encrypted_value: str) -> SecretStr:
     """Legacy decryption using master key directly (for backward compatibility)."""
     key = get_master_key().encode()

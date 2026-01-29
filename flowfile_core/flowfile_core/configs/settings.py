@@ -2,7 +2,6 @@
 import argparse
 import os
 import platform
-import tempfile
 
 from passlib.context import CryptContext
 from starlette.config import Config
@@ -35,16 +34,6 @@ def parse_args():
     args = parser.parse_known_args()[0]
 
     return args
-
-
-def get_temp_dir() -> str:
-    """Get the appropriate temp directory path based on environment"""
-    # Check for Docker environment variable first
-    docker_temp = os.getenv("TEMP_DIR")
-    if docker_temp:
-        return docker_temp
-
-    return tempfile.gettempdir()
 
 
 def get_default_worker_url(worker_port=None):
@@ -101,10 +90,6 @@ def is_docker_mode() -> bool:
 def is_electron_mode() -> bool:
     """Check if running in Electron desktop app mode"""
     return FLOWFILE_MODE == "electron"
-
-def is_package_mode() -> bool:
-    """Check if running as Python package"""
-    return FLOWFILE_MODE == "package"
 
 # Legacy compatibility - will be removed in future versions
 IS_RUNNING_IN_DOCKER = is_docker_mode()

@@ -8,65 +8,6 @@ from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
 
 
-def create_from_json(received_table: input_schema.ReceivedTable):
-    f = received_table.abs_file_path
-    gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
-    low_mem = gbs_to_load > 10
-
-    if not isinstance(received_table.table_settings, input_schema.InputJsonTable):
-        raise ValueError("Received table settings are not of type InputJsonTable")
-    table_settings: input_schema.InputJsonTable = received_table.table_settings
-
-    if table_settings.encoding.upper() == "UTF8" or table_settings.encoding.upper() == "UTF-8":
-        try:
-            data = pl.scan_csv(
-                f,
-                low_memory=low_mem,
-                try_parse_dates=True,
-                separator=table_settings.delimiter,
-                has_header=table_settings.has_headers,
-                skip_rows=table_settings.starting_from_line,
-                encoding="utf8",
-                infer_schema_length=table_settings.infer_schema_length,
-            )
-            data.head(1).collect()
-            return data
-        except:
-            try:
-                data = pl.scan_csv(
-                    f,
-                    low_memory=low_mem,
-                    separator=table_settings.delimiter,
-                    has_header=table_settings.has_headers,
-                    skip_rows=table_settings.starting_from_line,
-                    encoding="utf8-lossy",
-                    ignore_errors=True,
-                )
-                return data
-            except:
-                data = pl.scan_csv(
-                    f,
-                    low_memory=low_mem,
-                    separator=table_settings.delimiter,
-                    has_header=table_settings.has_headers,
-                    skip_rows=table_settings.starting_from_line,
-                    encoding="utf8",
-                    ignore_errors=True,
-                )
-                return data
-    else:
-        data = pl.read_csv(
-            f,
-            low_memory=low_mem,
-            separator=table_settings.delimiter,
-            has_header=table_settings.has_headers,
-            skip_rows=table_settings.starting_from_line,
-            encoding=table_settings.encoding,
-            ignore_errors=True,
-        )
-        return data
-
-
 def standardize_utf8_encoding(non_standardized_encoding: str) -> CsvEncoding:
     if non_standardized_encoding.upper() in ("UTF-8", "UTF8"):
         return "utf8"
