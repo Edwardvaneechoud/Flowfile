@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -260,6 +261,7 @@ class FlowDataEngine:
         self._lazy = False
         self.errors = []
         self._calculate_schema_stats = False
+        self._schema_lock = threading.Lock()
         self.is_collected = True
         self.is_future = False
 
@@ -839,6 +841,8 @@ class FlowDataEngine:
         """The schema of the DataFrame as a list of `FlowfileColumn` objects.
 
         This property lazily calculates the schema if it hasn't been determined yet.
+        Thread-safe: uses _schema_lock to prevent concurrent collect_schema() calls
+        on the same LazyFrame (Polars does not support this, see polars#24203).
 
         Returns:
             A list of `FlowfileColumn` objects describing the schema.
@@ -846,12 +850,15 @@ class FlowDataEngine:
         if self.number_of_fields == 0:
             return []
         if self._schema is None or (self._calculate_schema_stats and not self.ind_schema_calculated):
-            if self._calculate_schema_stats and not self.ind_schema_calculated:
-                schema_stats = self._calculate_schema()
-                self.ind_schema_calculated = True
-            else:
-                schema_stats = self._create_schema_stats_from_pl_schema(self.data_frame.collect_schema())
-            self._add_schema_from_schema_stats(schema_stats)
+            with self._schema_lock:
+                # Double-check after acquiring lock (another thread may have computed it)
+                if self._schema is None or (self._calculate_schema_stats and not self.ind_schema_calculated):
+                    if self._calculate_schema_stats and not self.ind_schema_calculated:
+                        schema_stats = self._calculate_schema()
+                        self.ind_schema_calculated = True
+                    else:
+                        schema_stats = self._create_schema_stats_from_pl_schema(self.data_frame.collect_schema())
+                    self._add_schema_from_schema_stats(schema_stats)
         return self._schema
 
     @property

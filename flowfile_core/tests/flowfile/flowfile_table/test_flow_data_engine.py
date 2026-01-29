@@ -1,3 +1,5 @@
+import threading
+
 import polars as pl
 import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
@@ -753,6 +755,88 @@ def test_remove_comments_and_docstrings():
         except Exception as e:
             print(f"Test failed for:\n{input_code}")
             raise e
+
+
+class TestConcurrentSchemaAccess:
+    """Tests for thread-safe schema access on FlowDataEngine.
+
+    Polars does not support concurrent collect_schema() calls on the same
+    LazyFrame (see polars#24203). FlowDataEngine.schema uses a lock to
+    prevent this. These tests verify the lock works correctly.
+    """
+
+    @staticmethod
+    def _concurrent_collect_schema_on_raw_lazyframe(lf: pl.LazyFrame, n_threads: int = 8, iterations: int = 50):
+        """Call collect_schema() concurrently on a raw LazyFrame WITHOUT any lock.
+        Returns (successes, errors) counts."""
+        errors = []
+        successes = []
+
+        def worker():
+            try:
+                for _ in range(iterations):
+                    _ = lf.collect_schema()
+                successes.append(True)
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return len(successes), len(errors)
+
+    @staticmethod
+    def _concurrent_schema_access_on_fde(fde: FlowDataEngine, n_threads: int = 8, iterations: int = 50):
+        """Access .schema concurrently on a FlowDataEngine (which uses the lock).
+        Returns (successes, errors) counts."""
+        errors = []
+        successes = []
+
+        def worker():
+            try:
+                for _ in range(iterations):
+                    # Reset _schema to force re-computation via collect_schema()
+                    fde._schema = None
+                    _ = fde.schema
+                successes.append(True)
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return len(successes), len(errors)
+
+    def test_raw_polars_collect_schema_is_not_thread_safe(self):
+        """Demonstrates that raw Polars collect_schema() is NOT thread-safe (polars#24203).
+        Without protection, concurrent calls on the same LazyFrame raise 'Already borrowed'."""
+        lf = pl.LazyFrame({'a': [1] * 1000, 'b': [2] * 1000, 'c': ['x'] * 1000})
+        successes, errors = self._concurrent_collect_schema_on_raw_lazyframe(lf)
+        # We expect at least some errors due to the Polars race condition.
+        # This test documents the known issue — if Polars fixes #24203 in the
+        # future, this test will start passing with 0 errors, which is fine.
+        assert errors > 0, (
+            "Expected 'Already borrowed' errors from concurrent collect_schema() on raw LazyFrame. "
+            "If this passes, Polars may have fixed issue #24203."
+        )
+
+    def test_flow_data_engine_schema_is_thread_safe(self):
+        """FlowDataEngine.schema uses a lock to prevent concurrent collect_schema() calls."""
+        lf = pl.LazyFrame({'a': [1] * 1000, 'b': [2] * 1000, 'c': ['x'] * 1000})
+        fde = FlowDataEngine(raw_data=lf, optimize_memory=True)
+        successes, errors = self._concurrent_schema_access_on_fde(fde)
+        assert errors == 0, f"FlowDataEngine.schema should be thread-safe but got errors: {errors}"
+        assert successes == 8
+
+    def test_schema_lock_exists_on_new_instance(self):
+        """Every FlowDataEngine instance should have a _schema_lock."""
+        fde = FlowDataEngine()
+        assert hasattr(fde, '_schema_lock')
+        assert isinstance(fde._schema_lock, type(threading.Lock()))
 
 
 if __name__ == "__main__":
