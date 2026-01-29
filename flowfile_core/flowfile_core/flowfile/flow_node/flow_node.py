@@ -677,10 +677,8 @@ class FlowNode:
                                 try:
                                     for i, v in enumerate(self.all_inputs):
                                         self.print(f"Getting resulting data from input {i} (node {v.node_id})")
-                                        # Acquire the input node's lock before reading its data.
-                                        # This prevents sibling nodes (in the same parallel stage)
-                                        # from concurrently accessing the same upstream LazyFrame,
-                                        # which causes Polars "Already borrowed" errors.
+                                        # Lock the input node to prevent sibling nodes from
+                                        # concurrently accessing the same upstream LazyFrame.
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
                                         input_result = v.get_resulting_data()

@@ -50,7 +50,6 @@ def create_graph(execution_mode: ExecutionModeLit = 'Development', flow_id: int 
         path='.',
         execution_mode=execution_mode,
         execution_location=execution_location,
-
     ))
     return handler.get_flow(flow_id)
 
@@ -1042,10 +1041,8 @@ class TestPreviewAfterExecution:
 
         select_node = graph.get_node(2)
 
-        # Patch get_resulting_data to track if it gets called with fresh computation.
-        # get_resulting_data is called once inside get_table_example for metadata
-        # (number_of_fields, columns), but it should return the cached result
-        # (results.resulting_data is not None) — never re-enter the computation path.
+        # Track whether get_resulting_data re-enters the computation path.
+        # It's called for metadata, but results.resulting_data should still be cached.
         original_fn = select_node.get_resulting_data
         computation_entered = False
 
@@ -1152,13 +1149,8 @@ class TestPreviewAfterUpstreamChange:
         )
         graph.add_select(node_select)
 
-        # This documents the current behavior — node_stats.has_completed_last_run
-        # is NOT reset by FlowNode.reset(). This means get_table_example will
-        # still enter the data path after a settings change.
-        #
-        # If this assertion fails in the future (i.e., has_completed_last_run
-        # becomes False), that means the bug has been fixed and the stale-data
-        # scenario below no longer applies.
+        # KNOWN ISSUE: node_stats.has_completed_last_run is NOT reset by
+        # FlowNode.reset(). If this starts failing, the stale-data bug is fixed.
         assert select_node.node_stats.has_completed_last_run is True, (
             "KNOWN ISSUE: node_stats.has_completed_last_run is not reset "
             "when the node's settings change. If this assertion starts failing, "
@@ -1166,17 +1158,9 @@ class TestPreviewAfterUpstreamChange:
         )
 
     def test_preview_after_settings_change_returns_stale_data(self):
-        """After changing settings without re-running, preview returns stale data.
-
-        This documents the current (incorrect) behavior:
-        - Run with select=[Name] → preview shows Name column
-        - Change to select=[City] without re-running
-        - Preview still returns the old Name data because:
-          1. node_stats.has_completed_last_run is still True (not reset)
-          2. example_data_generator still points to the old sample
-          3. results.resulting_data is cleared, but example_data_generator is not
-
-        When this test starts failing, the bug is fixed."""
+        """Documents current (incorrect) behavior: preview returns stale data
+        after changing settings without re-running. When this starts failing,
+        the stale-data bug is fixed."""
         graph = create_graph_with_read_and_select()
         graph.run_graph()
 
@@ -1199,24 +1183,12 @@ class TestPreviewAfterUpstreamChange:
         # Preview without re-running: this is the stale data scenario
         second_preview = select_node.get_table_example(include_data=True)
 
-        # The stale example_data_generator is still set and returns old data.
-        # The resulting_data was cleared by reset(), so get_resulting_data()
-        # will recompute — but example_data_generator was never cleared.
-        #
-        # Depending on node_stats.has_completed_last_run being True (stale)
-        # and example_data_generator being non-None (stale), get_table_example
-        # returns the OLD sample data and the NEW schema/columns from the
-        # recomputed get_resulting_data().
-        #
+        # Stale behavior: example_data_generator was never cleared by reset(),
+        # so preview returns OLD sample data with NEW column headers.
         # If this behavior changes, update this test to reflect the fix.
         if select_node.node_stats.has_completed_last_run:
-            # Stale path: preview entered the data branch
             assert second_preview.data is not None
-            # The columns come from get_resulting_data() which recomputes,
-            # so they reflect the new settings
             assert second_preview.columns == ["City"]
-            # But the data comes from the stale example_data_generator which
-            # still has Name data from the first run
             if len(second_preview.data) > 0:
                 first_row = second_preview.data[0]
                 assert "Name" in first_row or "City" in first_row, (
@@ -1261,17 +1233,8 @@ class TestPreviewAfterUpstreamChange:
 
     @pytest.mark.parametrize("execution_location", ["local", "remote"])
     def test_preview_after_upstream_settings_change_returns_stale_data(self, execution_location: ExecutionLocationLit):
-        """After changing settings without re-running, preview returns stale data.
-
-        This documents the current (incorrect) behavior:
-        - Run with select=[Name] → preview shows Name column
-        - Change to select=[City] without re-running
-        - Preview still returns the old Name data because:
-          1. node_stats.has_completed_last_run is still True (not reset)
-          2. example_data_generator still points to the old sample
-          3. results.resulting_data is cleared, but example_data_generator is not
-
-        When this test starts failing, the bug is fixed."""
+        """Documents stale-data behavior after upstream settings change without re-run.
+        When this starts failing, the bug is fixed."""
         graph = create_graph_with_sort_and_select(execution_location=execution_location)
         graph.run_graph()
         select_node = graph.get_node(3)
@@ -1280,7 +1243,7 @@ class TestPreviewAfterUpstreamChange:
         assert first_preview.columns == ["Name"]
         assert len(first_preview.data) > 0
 
-        # Change select to keep City instead of Name
+        # Change sort direction (upstream settings change)
         node_sort = input_schema.NodeSort(
             flow_id=graph.flow_id,
             node_id=2,
