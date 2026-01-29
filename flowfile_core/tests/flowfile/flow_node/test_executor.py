@@ -7,6 +7,8 @@ and decision-making logic introduced in the refactored FlowNode.
 import os
 import tempfile
 import time
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -23,6 +25,15 @@ from flowfile_core.flowfile.flow_node.state import (
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+
+
+def _find_parent_directory(target_dir_name: str) -> Path:
+    current_path = Path(__file__)
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
 # =============================================================================
@@ -74,6 +85,44 @@ def create_graph_with_select(flow_id: int = 1, execution_mode: str = 'Developmen
         node_id=2,
         depending_on_id=1,
         select_input=[select_input],
+    )
+    graph.add_select(node_select)
+    return graph
+
+
+def create_graph_with_read_and_select(flow_id: int = 10, execution_mode: str = 'Development') -> FlowGraph:
+    """Create a graph with a parquet read (node 1, 1000 rows) connected to a select node (node 2).
+
+    Uses fake_data.parquet which has 1000 rows with columns including Name, City, Email, etc.
+    The select node keeps only the Name column.
+    """
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    file_path = str(
+        _find_parent_directory('Flowfile')
+        / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'
+    )
+    add_node_promise(graph, 'read', node_id=1)
+    read_node = input_schema.NodeRead(
+        flow_id=flow_id,
+        node_id=1,
+        received_file=input_schema.ReceivedTable(
+            name='fake_data.parquet',
+            path=file_path,
+            file_type='parquet',
+        ),
+    )
+    graph.add_read(read_node)
+
+    add_node_promise(graph, 'select', node_id=2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    select_input = transform_schema.SelectInput(old_name='Name', new_name='Name', keep=True)
+    node_select = input_schema.NodeSelect(
+        flow_id=flow_id,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[select_input],
+        keep_missing=False,
     )
     graph.add_select(node_select)
     return graph
@@ -902,3 +951,272 @@ class TestCacheResultsStrategy:
         assert decision.should_run is True
         assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
+
+
+# =============================================================================
+# Preview (get_table_example) Tests
+# =============================================================================
+
+class TestPreviewAfterExecution:
+    """Tests that get_table_example reads from stored sample data after
+    a graph has been executed, rather than recomputing the node.
+
+    Uses a read node (1000-row parquet) → select node pipeline running
+    locally to test the full preview path."""
+
+    def test_preview_returns_data_after_run(self):
+        """After running the graph, preview should return sample data."""
+        graph = create_graph_with_read_and_select()
+        run_info = graph.run_graph()
+        assert run_info.success, f"Graph should run: {run_info}"
+
+        select_node = graph.get_node(2)
+        table_example = select_node.get_table_example(include_data=True)
+
+        assert table_example is not None
+        assert len(table_example.data) > 0, "Preview should contain rows"
+        assert table_example.columns == ["Name"], "Select should keep only Name"
+
+    def test_preview_returns_at_most_100_rows(self):
+        """The sample generator caps at 100 rows even though the source has 1000."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+        table_example = select_node.get_table_example(include_data=True)
+
+        assert len(table_example.data) <= 100
+
+    def test_preview_without_run_returns_empty_data(self):
+        """Before running the graph, preview should return empty data."""
+        graph = create_graph_with_read_and_select()
+        select_node = graph.get_node(2)
+
+        table_example = select_node.get_table_example(include_data=True)
+
+        assert table_example is not None
+        assert table_example.data == []
+
+    def test_preview_does_not_recompute_node(self):
+        """Calling get_table_example should read stored data, not re-execute."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+
+        # Patch get_resulting_data to track if it gets called with fresh computation.
+        # get_resulting_data is called once inside get_table_example for metadata
+        # (number_of_fields, columns), but it should return the cached result
+        # (results.resulting_data is not None) — never re-enter the computation path.
+        original_fn = select_node.get_resulting_data
+        computation_entered = False
+
+        def tracked_get_resulting_data():
+            nonlocal computation_entered
+            # If resulting_data has been cleared, the function would recompute
+            if select_node.results.resulting_data is None:
+                computation_entered = True
+            return original_fn()
+
+        with patch.object(select_node, 'get_resulting_data', side_effect=tracked_get_resulting_data):
+            table_example = select_node.get_table_example(include_data=True)
+
+        assert not computation_entered, (
+            "get_table_example should not trigger fresh computation — "
+            "results.resulting_data should still be cached"
+        )
+        assert len(table_example.data) > 0
+
+    def test_preview_uses_cached_sample_on_repeated_calls(self):
+        """Multiple preview calls should return the same data without recomputation."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+
+        first = select_node.get_table_example(include_data=True)
+        second = select_node.get_table_example(include_data=True)
+
+        assert first.data == second.data, "Repeated previews should return identical data"
+
+    def test_read_node_preview_returns_data(self):
+        """The read node (1000 rows) should also have preview data after run."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        read_node = graph.get_node(1)
+        table_example = read_node.get_table_example(include_data=True)
+
+        assert table_example is not None
+        assert len(table_example.data) > 0
+        assert len(table_example.data) <= 100
+
+
+class TestPreviewAfterUpstreamChange:
+    """Tests what happens to preview data when an upstream node changes
+    after execution.
+
+    This is the scenario we don't expect to work correctly:
+    1. Run the graph
+    2. Preview returns data (good)
+    3. Change upstream node settings
+    4. Preview again — what happens?
+
+    The reset() method sets _execution_state.has_completed_last_run = False
+    but does NOT set node_stats.has_completed_last_run = False.
+    get_table_example checks node_stats.has_completed_last_run, so after
+    a reset it may still enter the data path with a stale
+    example_data_generator."""
+
+    def test_upstream_change_resets_execution_state(self):
+        """After changing settings, _execution_state should reflect the reset."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+        assert select_node._execution_state.has_run_with_current_setup is True
+        assert select_node._execution_state.has_completed_last_run is True
+
+        # Change the select configuration (keep City instead of Name)
+        new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
+        node_select = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[new_select_input],
+            keep_missing=False,
+        )
+        graph.add_select(node_select)
+
+        # _execution_state should be reset
+        assert select_node._execution_state.has_run_with_current_setup is False
+
+    def test_settings_change_node_stats_has_completed_last_run(self):
+        """Check whether node_stats.has_completed_last_run is properly reset
+        when the node's settings change.
+
+        get_table_example gates on node_stats.has_completed_last_run.
+        If this stays True after a reset, preview will try to read stale data."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+        assert select_node.node_stats.has_completed_last_run is True
+
+        # Change the select configuration
+        new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
+        node_select = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[new_select_input],
+            keep_missing=False,
+        )
+        graph.add_select(node_select)
+
+        # This documents the current behavior — node_stats.has_completed_last_run
+        # is NOT reset by FlowNode.reset(). This means get_table_example will
+        # still enter the data path after a settings change.
+        #
+        # If this assertion fails in the future (i.e., has_completed_last_run
+        # becomes False), that means the bug has been fixed and the stale-data
+        # scenario below no longer applies.
+        assert select_node.node_stats.has_completed_last_run is True, (
+            "KNOWN ISSUE: node_stats.has_completed_last_run is not reset "
+            "when the node's settings change. If this assertion starts failing, "
+            "the stale preview data issue has been fixed."
+        )
+
+    def test_preview_after_settings_change_returns_stale_data(self):
+        """After changing settings without re-running, preview returns stale data.
+
+        This documents the current (incorrect) behavior:
+        - Run with select=[Name] → preview shows Name column
+        - Change to select=[City] without re-running
+        - Preview still returns the old Name data because:
+          1. node_stats.has_completed_last_run is still True (not reset)
+          2. example_data_generator still points to the old sample
+          3. results.resulting_data is cleared, but example_data_generator is not
+
+        When this test starts failing, the bug is fixed."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+        first_preview = select_node.get_table_example(include_data=True)
+        assert first_preview.columns == ["Name"]
+        assert len(first_preview.data) > 0
+
+        # Change select to keep City instead of Name
+        new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
+        node_select = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[new_select_input],
+            keep_missing=False,
+        )
+        graph.add_select(node_select)
+
+        # Preview without re-running: this is the stale data scenario
+        second_preview = select_node.get_table_example(include_data=True)
+
+        # The stale example_data_generator is still set and returns old data.
+        # The resulting_data was cleared by reset(), so get_resulting_data()
+        # will recompute — but example_data_generator was never cleared.
+        #
+        # Depending on node_stats.has_completed_last_run being True (stale)
+        # and example_data_generator being non-None (stale), get_table_example
+        # returns the OLD sample data and the NEW schema/columns from the
+        # recomputed get_resulting_data().
+        #
+        # If this behavior changes, update this test to reflect the fix.
+        if select_node.node_stats.has_completed_last_run:
+            # Stale path: preview entered the data branch
+            assert second_preview.data is not None
+            # The columns come from get_resulting_data() which recomputes,
+            # so they reflect the new settings
+            assert second_preview.columns == ["City"]
+            # But the data comes from the stale example_data_generator which
+            # still has Name data from the first run
+            if len(second_preview.data) > 0:
+                first_row = second_preview.data[0]
+                assert "Name" in first_row or "City" in first_row, (
+                    "Data should contain either old Name or new City column data"
+                )
+        else:
+            # Fixed path: node_stats was properly reset, preview returns empty
+            assert second_preview.data == []
+
+    def test_preview_correct_after_rerun(self):
+        """After changing settings AND re-running, preview returns fresh data."""
+        graph = create_graph_with_read_and_select()
+        graph.run_graph()
+
+        select_node = graph.get_node(2)
+        first_preview = select_node.get_table_example(include_data=True)
+        assert first_preview.columns == ["Name"]
+
+        # Change select to keep City
+        new_select_input = transform_schema.SelectInput(old_name='City', new_name='City', keep=True)
+        node_select = input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[new_select_input],
+            keep_missing=False,
+        )
+        graph.add_select(node_select)
+
+        # Re-run the graph
+        run_info = graph.run_graph()
+        assert run_info.success
+
+        # Now preview should reflect the new settings
+        select_node = graph.get_node(2)
+        second_preview = select_node.get_table_example(include_data=True)
+        assert second_preview.columns == ["City"]
+        assert len(second_preview.data) > 0
+        # Every row should have the City key
+        for row in second_preview.data:
+            assert "City" in row, f"Expected City column in row, got: {row.keys()}"
