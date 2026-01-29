@@ -25,6 +25,7 @@ from flowfile_core.flowfile.flow_node.state import (
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from typing import Literal
 
 
 def _find_parent_directory(target_dir_name: str) -> Path:
@@ -36,18 +37,20 @@ def _find_parent_directory(target_dir_name: str) -> Path:
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
-# =============================================================================
-# Test Helpers
-# =============================================================================
+ExecutionModeLit = Literal["Development", "Performance"]
+ExecutionLocationLit = Literal["remote", "local"]
 
-def create_graph(execution_mode: str = 'Development', flow_id: int = 1) -> FlowGraph:
+def create_graph(execution_mode: ExecutionModeLit = 'Development', flow_id: int = 1,
+                 execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """Create a new flow graph for testing."""
     handler = FlowfileHandler()
     handler.register_flow(schemas.FlowSettings(
         flow_id=flow_id,
         name='test_flow',
         path='.',
-        execution_mode=execution_mode
+        execution_mode=execution_mode,
+        execution_location=execution_location,
+
     ))
     return handler.get_flow(flow_id)
 
@@ -72,7 +75,8 @@ def add_node_promise(graph: FlowGraph, node_type: str, node_id: int):
     graph.add_node_promise(node_promise)
 
 
-def create_graph_with_select(flow_id: int = 1, execution_mode: str = 'Development') -> FlowGraph:
+def create_graph_with_select(flow_id: int = 1,
+                             execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
     """Create a graph with a manual input (node 1) connected to a select node (node 2)."""
     graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
     add_manual_input(graph, [{"name": "Alice", "age": 30}], node_id=1)
@@ -90,7 +94,8 @@ def create_graph_with_select(flow_id: int = 1, execution_mode: str = 'Developmen
     return graph
 
 
-def create_graph_with_read_and_select(flow_id: int = 10, execution_mode: str = 'Development') -> FlowGraph:
+def create_graph_with_read_and_select(flow_id: int = 10,
+                                      execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
     """Create a graph with a parquet read (node 1, 1000 rows) connected to a select node (node 2).
 
     Uses fake_data.parquet which has 1000 rows with columns including Name, City, Email, etc.
@@ -128,7 +133,7 @@ def create_graph_with_read_and_select(flow_id: int = 10, execution_mode: str = '
     return graph
 
 
-def create_graph_with_sort(flow_id: int = 2, execution_mode: str = 'Development') -> FlowGraph:
+def create_graph_with_sort(flow_id: int = 2, execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
     """Create a graph with a manual input (node 1) connected to a sort node (node 2)."""
     graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
     add_manual_input(graph, [{"name": "Charlie", "age": 25}, {"name": "Alice", "age": 30}], node_id=1)
@@ -143,6 +148,39 @@ def create_graph_with_sort(flow_id: int = 2, execution_mode: str = 'Development'
         sort_input=[sort_input],
     )
     graph.add_sort(node_sort)
+    return graph
+
+
+def create_graph_with_sort_and_select(flow_id: int = 3,
+                                      execution_mode: ExecutionModeLit = 'Development',
+                                      execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
+    """Create a graph with a manual input (node 1) connected to a sort node (node 2)."""
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
+    add_manual_input(graph, [{"name": "Charlie", "age": 25}, {"name": "Alice", "age": 30}], node_id=1)
+    add_node_promise(graph, 'sort', node_id=2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    sort_input = transform_schema.SortByInput(column='name', how='asc')
+    node_sort = input_schema.NodeSort(
+        flow_id=flow_id,
+        node_id=2,
+        depending_on_id=1,
+        sort_input=[sort_input],
+    )
+    graph.add_sort(node_sort)
+    connection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    add_node_promise(graph, 'select', node_id=3)
+
+    add_connection(graph, connection)
+    select_input = transform_schema.SelectInput(old_name='name', new_name='Name', keep=True)
+    node_select = input_schema.NodeSelect(
+        flow_id=flow_id,
+        node_id=3,
+        depending_on_id=2,
+        select_input=[select_input],
+        keep_missing=False,
+    )
+    graph.add_select(node_select)
     return graph
 
 
@@ -1220,3 +1258,42 @@ class TestPreviewAfterUpstreamChange:
         # Every row should have the City key
         for row in second_preview.data:
             assert "City" in row, f"Expected City column in row, got: {row.keys()}"
+
+    @pytest.mark.parametrize("execution_location", ["local", "remote"])
+    def test_preview_after_upstream_settings_change_returns_stale_data(self, execution_location: ExecutionLocationLit):
+        """After changing settings without re-running, preview returns stale data.
+
+        This documents the current (incorrect) behavior:
+        - Run with select=[Name] → preview shows Name column
+        - Change to select=[City] without re-running
+        - Preview still returns the old Name data because:
+          1. node_stats.has_completed_last_run is still True (not reset)
+          2. example_data_generator still points to the old sample
+          3. results.resulting_data is cleared, but example_data_generator is not
+
+        When this test starts failing, the bug is fixed."""
+        graph = create_graph_with_sort_and_select(execution_location=execution_location)
+        graph.run_graph()
+        select_node = graph.get_node(3)
+        assert select_node.results.example_data_generator
+        breakpoint()
+        first_preview = select_node.get_table_example(include_data=True)
+        assert first_preview.columns == ["Name"]
+        assert len(first_preview.data) > 0
+
+        # Change select to keep City instead of Name
+        node_sort = input_schema.NodeSort(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            sort_input=[transform_schema.SortByInput(column='name', how='desc')]
+        )
+        graph.add_sort(node_sort)
+        # Preview without re-running: this is the stale data scenario
+        assert select_node.results.example_data_generator is not None
+        assert not select_node.node_stats.has_run_with_current_setup
+        assert select_node.node_stats.has_completed_last_run
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
