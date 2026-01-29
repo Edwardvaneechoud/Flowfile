@@ -1,11 +1,32 @@
 """Cloud storage connection schemas for S3, ADLS, and other cloud providers."""
 
+import os
 from typing import Any, Literal
+from urllib.parse import urlparse, urlunparse
 
 import boto3
 from pydantic import BaseModel, SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
+
+_LOCALHOST_ADDRESSES = {"localhost", "127.0.0.1", "0.0.0.0"}
+
+
+def resolve_endpoint_for_docker(endpoint_url: str) -> str:
+    """Translate localhost endpoint URLs to host.docker.internal when running in Docker.
+
+    When a user configures a MinIO/S3 endpoint as http://localhost:9000,
+    it works fine outside Docker. But inside a Docker container, 'localhost'
+    refers to the container itself. This function rewrites the hostname to
+    'host.docker.internal' so the container can reach services on the host.
+    """
+    if os.environ.get("FLOWFILE_MODE") != "docker":
+        return endpoint_url
+    parsed = urlparse(endpoint_url)
+    if parsed.hostname in _LOCALHOST_ADDRESSES:
+        replaced = parsed._replace(netloc=parsed.netloc.replace(parsed.hostname, "host.docker.internal"))
+        return urlunparse(replaced)
+    return endpoint_url
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal[
@@ -99,7 +120,7 @@ class FullCloudStorageConnection(BaseModel):
         if self.aws_region:
             storage_options["aws_region"] = self.aws_region
         if self.endpoint_url:
-            storage_options["endpoint_url"] = self.endpoint_url
+            storage_options["endpoint_url"] = resolve_endpoint_for_docker(self.endpoint_url)
         if not self.verify_ssl:
             storage_options["verify"] = "False"
         if self.aws_allow_unsafe_html:  # Note: Polars uses aws_allow_http
