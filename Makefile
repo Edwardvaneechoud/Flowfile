@@ -180,5 +180,16 @@ test_e2e_electron: build_for_electron_test
 	$(CD) "$(ELECTRON_DIR)" && npx playwright test tests/app.spec.ts tests/complex-flow.spec.ts --reporter=html
 	@echo "Electron E2E tests completed."
 
+# Coverage - run core and worker tests sequentially to avoid import collisions
+test_coverage:
+	@echo "Running tests with coverage..."
+	$(POETRY_RUN) pytest flowfile_core/tests --cov --cov-report= --disable-warnings
+	$(POETRY_RUN) pytest flowfile_worker/tests --cov --cov-append --cov-report= --disable-warnings
+	@echo ""
+	$(POETRY_RUN) coverage report --show-missing
+	@echo ""
+	@echo "To generate XML: $(POETRY_RUN) coverage xml"
+	@echo "To generate HTML: $(POETRY_RUN) coverage html"
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test build_for_electron_test test_e2e_electron
+.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test build_for_electron_test test_e2e_electron test_coverage

@@ -100,7 +100,6 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-importmode = "importlib"
 markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package"
