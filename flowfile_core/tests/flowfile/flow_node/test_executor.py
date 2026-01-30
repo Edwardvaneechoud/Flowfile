@@ -8,7 +8,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -34,6 +34,20 @@ def _find_parent_directory(target_dir_name: str) -> Path:
         if current_path.name == target_dir_name:
             return current_path
         current_path = current_path.parent
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
+
+
+def find_parent_directory(target_dir_name, start_path=None):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(start_path) if start_path else Path.cwd()
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
@@ -1255,6 +1269,89 @@ class TestPreviewAfterUpstreamChange:
         assert select_node.results.example_data_generator is not None
         assert not select_node.node_stats.has_run_with_current_setup
         assert select_node.node_stats.has_completed_last_run
+
+    def test_fuzzy_match_behaviour(self):
+        # found an issue with the fuzzy match schema predictor invoking a full run to observe the schema
+        from copy import deepcopy
+
+        graph = create_graph(execution_mode="Development", execution_location="remote", flow_id=1)
+
+        received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
+                                                    path=str(Path(find_parent_directory(
+                                                        'Flowfile')) / 'flowfile_core/tests/support_files/data/large_table.parquet'))
+        add_node_promise(graph, 'read', node_id=1)
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_table)
+        graph.add_read(node_read)
+
+        node_select = input_schema.NodeSelect(flow_id=1, node_id=2,
+                                              select_input=[
+                                                  transform_schema.SelectInput("Name"),
+                                                  transform_schema.SelectInput("Address"),
+                                                  transform_schema.SelectInput("ID"),
+                                                  transform_schema.SelectInput("Work")
+                                              ],
+                                              keep_missing=False
+                                              )
+        add_node_promise(graph, 'select', node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_select(node_select)
+
+        add_node_promise(graph, "fuzzy_match", 3)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+        graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(
+            flow_id=1,
+            node_id=3,
+            join_input=transform_schema.FuzzyMatchInput(
+                join_mapping=[transform_schema.FuzzyMapping(
+                    left_col='Name',
+                    right_col='Name',
+                    threshold_score=75,
+                    fuzzy_type='levenshtein',
+                    valid=True
+                )],
+                left_select=transform_schema.JoinInputs(renames=[
+                    transform_schema.SelectInput(old_name='ID', new_name='ID', keep=True),
+                    transform_schema.SelectInput(old_name='Name', new_name='customer_name', keep=True, join_key=True),
+                ]),
+                right_select=transform_schema.JoinInputs(renames=[
+                    transform_schema.SelectInput(old_name='Name', new_name='customer_name_right', keep=True, join_key=True),
+                    transform_schema.SelectInput(old_name='Address', new_name='address', keep=True),
+                ]),
+                how='inner'
+            ),
+            auto_keep_all=True,
+            depending_on_ids=[1, 2]
+        ))
+        # Start test
+
+        fuzzy_node = graph.get_node(3)
+        result = fuzzy_node.get_table_example(True)
+
+        assert not fuzzy_node.node_stats.has_completed_last_run
+        assert not fuzzy_node.node_stats.has_run_with_current_setup
+
+        r = fuzzy_node.get_predicted_schema()
+        assert r
+        run_result = graph.run_graph()
+        assert fuzzy_node.node_stats.has_completed_last_run
+        assert fuzzy_node.node_stats.has_run_with_current_setup
+
+        new_select = deepcopy(node_select)
+
+        new_select.keep_missing = True
+
+        graph.add_select(new_select)
+
+        assert fuzzy_node.node_stats.has_completed_last_run
+        assert not fuzzy_node.node_stats.has_run_with_current_setup
+
+        fuzzy_node.get_resulting_data = MagicMock()
+        result = fuzzy_node.get_table_example(True)
+        fuzzy_node.get_resulting_data.assert_not_called()
+        assert fuzzy_node.node_stats.has_completed_last_run
+        assert not fuzzy_node.node_stats.has_run_with_current_setup
+        assert result.columns
 
 
 if __name__ == "__main__":
