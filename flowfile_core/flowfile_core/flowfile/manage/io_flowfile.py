@@ -282,7 +282,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
         raise ValueError(f"Unsupported file format: {suffix}")
 
 
-def open_flow(flow_path: Path) -> FlowGraph:
+def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     """
     Open a flowfile from a given path.
 
@@ -293,7 +293,7 @@ def open_flow(flow_path: Path) -> FlowGraph:
 
     Args:
         flow_path (Path): The absolute or relative path to the flowfile
-
+        user_id (int | None): The ID of the user importing the flow, used to resolve cloud connections.
     Returns:
         FlowGraph: The flowfile object
     """
@@ -325,6 +325,8 @@ def open_flow(flow_path: Path) -> FlowGraph:
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
         if node_info.is_setup:
+            if user_id is not None and hasattr(node_info.setting_input, "user_id"):
+                node_info.setting_input.user_id = user_id
             if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
                 if node_info.type not in CUSTOM_NODE_STORE:
                     continue
