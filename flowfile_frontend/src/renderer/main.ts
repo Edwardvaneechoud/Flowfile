@@ -12,6 +12,7 @@ import "./styles/main.css";
 
 // Import auth service and configured axios
 import authService from "./app/services/auth.service";
+import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
 import { useThemeStore } from "./app/stores/theme-store";
 
@@ -31,8 +32,12 @@ const themeStore = useThemeStore();
 themeStore.initialize();
 
 // Initialize auth before mounting app
-authService
-  .initialize()
+setupService
+  .getSetupStatus()
+  .then((status) => {
+    authService.setModeFromBackend(status.mode);
+    return authService.initialize();
+  })
   .then((authenticated) => {
     console.log("Auth initialized:", authenticated ? "Authenticated" : "Not authenticated");
     console.log("Electron mode:", authService.isInElectronMode());

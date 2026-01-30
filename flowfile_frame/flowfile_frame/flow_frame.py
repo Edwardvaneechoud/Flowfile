@@ -2348,7 +2348,6 @@ class FlowFrame:
             DataFrame with unique rows.
         """
         new_node_id = generate_node_id()
-
         processed_subset = None
         can_use_native = True
         if subset is not None:
@@ -2374,6 +2373,8 @@ class FlowFrame:
         can_use_native = can_use_native and keep in ["any", "first", "last", "none"] and not maintain_order
 
         if can_use_native:
+            if not processed_subset:  # Ensure the subset is selecting all columns
+                processed_subset = self.columns
             # Use the native NodeUnique implementation
             unique_input = transform_schema.UniqueInput(columns=processed_subset, strategy=keep)
 

@@ -146,7 +146,7 @@ router.beforeEach(async (to, _from, next) => {
       next({ name: "login" });
     }
   } else {
-    if (to.name === "login" && authService.isAuthenticated()) {
+   if (to.name === "login" && (authService.isInElectronMode() || authService.isAuthenticated())) {
       next({ name: "designer" });
     } else {
       next();

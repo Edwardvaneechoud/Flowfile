@@ -126,6 +126,7 @@ def test_filter():
 
 def test_sort():
     """Test sorting a FlowFrame."""
+    from flowfile_core.schemas.input_schema import NodeSort
     data = {
         "id": [3, 1, 4, 5, 2],
         "name": ["Charlie", "Alice", "David", "Eve", "Bob"],
@@ -134,16 +135,19 @@ def test_sort():
     df = FlowFrame(data)
 
     # Sort by a single column
-    result = df.sort("id").collect()
-    assert result["id"].to_list() == [1, 2, 3, 4, 5]
+    result = df.sort("id")
+    assert isinstance(result.get_node_settings().setting_input, NodeSort)
+    assert result.collect()["id"].to_list() == [1, 2, 3, 4, 5]
 
     # Sort by multiple columns
-    result = df.sort(by=["age", "name"], descending=[True, False]).collect()
-    assert result["name"].to_list() == ["Eve", "David", "Charlie", "Bob", "Alice"]
+    result = df.sort(by=["age", "name"], descending=[True, False])
+    assert isinstance(result.get_node_settings().setting_input, NodeSort)
+    assert result.collect()["name"].to_list() == ["Eve", "David", "Charlie", "Bob", "Alice"]
 
     # Sort with expressions
-    result = df.sort(by=col("name"), descending=True).collect()
-    assert result["name"].to_list() == ["Eve", "David", "Charlie", "Bob", "Alice"]
+    result = df.sort(by=col("name"), descending=True)
+    assert isinstance(result.get_node_settings().setting_input, NodeSort)
+    assert result.collect()["name"].to_list() == ["Eve", "David", "Charlie", "Bob", "Alice"]
 
 
 def test_with_columns():
@@ -784,6 +788,32 @@ def test_read_csv_complex_operations():
     finally:
         # Clean up
         os.unlink(tmp_path)
+
+
+def test_unique_integration(df):
+    df = df.concat(df)
+    from flowfile_core.schemas.input_schema import NodeUnique, NodePolarsCode
+
+    result = df.unique()
+    assert isinstance(result.get_node_settings().setting_input, NodeUnique)
+    assert result.get_node_settings().setting_input.unique_input.columns == df.columns
+
+    specific_result = df.unique("age")
+    assert isinstance(specific_result.get_node_settings().setting_input, NodeUnique)
+    assert specific_result.get_node_settings().setting_input.unique_input.columns == ["age"]
+    assert specific_result.get_node_settings().setting_input.unique_input.strategy == "any"
+
+    strategic_result = df.unique(["age", "city"], keep="last")
+    assert isinstance(strategic_result.get_node_settings().setting_input, NodeUnique)
+    assert strategic_result.get_node_settings().setting_input.unique_input.columns == ["age", "city"]
+    assert strategic_result.get_node_settings().setting_input.unique_input.strategy == "last"
+
+    # sort the dataframe
+    sorted_df = df.sort(by=["age"], descending=True)
+
+    custom_result = sorted_df.unique(["age"], keep="first", maintain_order=True)
+    assert isinstance(custom_result.get_node_settings().setting_input, NodePolarsCode)
+    assert custom_result.collect()["age"].to_list() == sorted(list(set(df.collect()["age"].to_list())), reverse=True)
 
 
 def test_read_csv_integration():
