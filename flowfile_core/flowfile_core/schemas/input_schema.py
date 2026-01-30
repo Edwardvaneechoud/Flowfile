@@ -887,6 +887,19 @@ class NodePolarsCode(NodeMultiInput):
     polars_code_input: transform_schema.PolarsCodeInput
 
 
+class PythonScriptInput(BaseModel):
+    """Settings for Python code execution on a kernel."""
+
+    code: str = ""
+    kernel_id: str | None = None
+
+
+class NodePythonScript(NodeSingleInput):
+    """Node that executes Python code on a kernel container."""
+
+    python_script_input: PythonScriptInput = PythonScriptInput()
+
+
 class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 

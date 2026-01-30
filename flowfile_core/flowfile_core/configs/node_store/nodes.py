@@ -287,6 +287,18 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_intro="Write custom Polars DataFrame transformations",
         ),
         NodeTemplate(
+            name="Python Script",
+            item="python_script",
+            input=1,
+            output=1,
+            transform_type="narrow",
+            image="polars_code.png",
+            node_group="transform",
+            node_type="process",
+            drawer_title="Python Script",
+            drawer_intro="Execute Python code on an isolated kernel container",
+        ),
+        NodeTemplate(
             name="Read from Database",
             item="database_reader",
             input=0,

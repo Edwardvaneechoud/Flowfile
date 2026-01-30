@@ -16,4 +16,17 @@ __all__ = [
     "ExecuteRequest",
     "ExecuteResult",
     "router",
+    "get_kernel_manager",
 ]
+
+_manager: KernelManager | None = None
+
+
+def get_kernel_manager() -> KernelManager:
+    global _manager
+    if _manager is None:
+        from shared.storage_config import storage
+
+        shared_path = str(storage.temp_directory / "kernel_shared")
+        _manager = KernelManager(shared_volume_path=shared_path)
+    return _manager
