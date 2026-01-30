@@ -5,6 +5,17 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
+      <div class="list-wrapper">
+        <div class="listbox-subtitle">Keep strategy</div>
+        <el-select v-model="uniqueInput.strategy" size="small" style="width: 100%">
+          <el-option
+            v-for="option in strategyOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </div>
       <select-dynamic
         :select-inputs="selection"
         :show-keep-option="true"
@@ -27,6 +38,7 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import {
   UniqueInput,
+  UniqueSorttrategy,
   NodeUnique,
   createSelectInputFromName,
   SelectInput,
@@ -51,6 +63,13 @@ const uniqueInput = ref<UniqueInput>({
   columns: [],
   strategy: "any",
 });
+
+const strategyOptions: { value: UniqueSorttrategy; label: string }[] = [
+  { value: "first", label: "First" },
+  { value: "last", label: "Last" },
+  { value: "any", label: "Any" },
+  { value: "none", label: "None" },
+];
 
 const getMissingColumns = (availableColumns: string[], usedColumns: string[]): string[] => {
   const availableSet = new Set(availableColumns);

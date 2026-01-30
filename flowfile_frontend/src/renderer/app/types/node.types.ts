@@ -437,9 +437,11 @@ export interface UnpivotInput {
   data_type_selector_mode: DataSelectorMode;
 }
 
+export type UniqueSorttrategy = "first" | "last" | "any" | "none";
+
 export interface UniqueInput {
   columns: string[];
-  strategy: "first" | "last" | "any" | "none";
+  strategy: UniqueSorttrategy;
 }
 
 // ============================================================================
