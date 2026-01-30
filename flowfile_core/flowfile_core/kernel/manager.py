@@ -28,6 +28,10 @@ class KernelManager:
         self._next_port = _BASE_PORT
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
 
+    @property
+    def shared_volume_path(self) -> str:
+        return self._shared_volume
+
     def _allocate_port(self) -> int:
         port = self._next_port
         self._next_port += 1

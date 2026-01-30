@@ -1136,7 +1136,7 @@ class FlowGraph:
             node_id = node_python_script.node_id
             flow_id = self.flow_id
 
-            shared_base = manager._shared_volume
+            shared_base = manager.shared_volume_path
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
 

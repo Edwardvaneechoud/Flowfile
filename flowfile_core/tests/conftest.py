@@ -28,6 +28,7 @@ import socket
 
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.flowfile_core_test_utils import is_docker_available
+from tests.kernel_fixtures import managed_kernel
 
 
 def is_port_in_use(port, host='localhost'):
@@ -263,3 +264,18 @@ def postgres_db():
         if not db_info:
             pytest.fail("PostgreSQL container could not be started")
         yield db_info
+
+
+@pytest.fixture(scope="session")
+def kernel_manager():
+    """
+    Pytest fixture that builds the flowfile-kernel Docker image, creates a
+    KernelManager, starts a test kernel, and tears everything down afterwards.
+
+    Yields a (KernelManager, kernel_id) tuple.
+    """
+    if not is_docker_available():
+        pytest.skip("Docker is not available, skipping kernel tests")
+
+    with managed_kernel() as ctx:
+        yield ctx
