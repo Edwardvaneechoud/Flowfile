@@ -289,7 +289,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
         NodeTemplate(
             name="Python Script",
             item="python_script",
-            input=1,
+            input=10,
             output=1,
             transform_type="narrow",
             image="polars_code.png",
