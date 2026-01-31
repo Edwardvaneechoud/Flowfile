@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 class KernelState(str, Enum):
     STOPPED = "stopped"
     STARTING = "starting"
-    RUNNING = "running"
+    IDLE = "idle"
+    EXECUTING = "executing"
     ERROR = "error"
 
 
@@ -27,6 +28,9 @@ class KernelInfo(BaseModel):
     container_id: str | None = None
     port: int | None = None
     packages: list[str] = Field(default_factory=list)
+    memory_gb: float = 4.0
+    cpu_cores: float = 2.0
+    gpu: bool = False
     created_at: datetime = Field(default_factory=datetime.now)
     error_message: str | None = None
 

@@ -76,7 +76,7 @@ class TestKernelRuntime:
         manager, kernel_id = kernel_manager
         info = _run(manager.get_kernel(kernel_id))
         assert info is not None
-        assert info.state.value == "running"
+        assert info.state.value == "idle"
 
     def test_execute_print(self, kernel_manager: tuple[KernelManager, str]):
         """Simple print() produces stdout."""

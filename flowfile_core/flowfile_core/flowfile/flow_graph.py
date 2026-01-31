@@ -1121,8 +1121,6 @@ class FlowGraph:
         """Adds a node that executes Python code on a kernel container."""
 
         def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
-            import asyncio
-
             from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
@@ -1149,26 +1147,14 @@ class FlowGraph:
             flowfile_table.data_frame.collect().write_parquet(input_path)
             input_paths["main"] = f"/shared/{flow_id}/{node_id}/inputs/main.parquet"
 
-            # Execute on kernel
+            # Execute on kernel (synchronous — no async boundary issues)
             request = ExecuteRequest(
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
                 output_dir=f"/shared/{flow_id}/{node_id}/outputs",
             )
-
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(asyncio.run, manager.execute(kernel_id, request)).result()
-            else:
-                result = asyncio.run(manager.execute(kernel_id, request))
+            result = manager.execute_sync(kernel_id, request)
 
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
