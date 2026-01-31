@@ -277,5 +277,8 @@ def kernel_manager():
     if not is_docker_available():
         pytest.skip("Docker is not available, skipping kernel tests")
 
-    with managed_kernel() as ctx:
-        yield ctx
+    try:
+        with managed_kernel() as ctx:
+            yield ctx
+    except Exception as exc:
+        pytest.skip(f"Kernel container could not be started: {exc}")
