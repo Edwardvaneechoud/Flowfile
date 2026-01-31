@@ -21,6 +21,8 @@ from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
 from flowfile_core.schemas import input_schema, schemas
 
+pytestmark = pytest.mark.kernel
+
 
 # ---------------------------------------------------------------------------
 # Helpers (same pattern as test_flowfile.py)

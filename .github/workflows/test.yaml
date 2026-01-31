@@ -25,6 +25,7 @@ jobs:
       backend_worker: ${{ steps.filter.outputs.backend_worker }}
       backend_frame: ${{ steps.filter.outputs.backend_frame }}
       backend_flowfile: ${{ steps.filter.outputs.backend_flowfile }}
+      kernel: ${{ steps.filter.outputs.kernel }}
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
       shared: ${{ steps.filter.outputs.shared }}
@@ -46,6 +47,11 @@ jobs:
               - 'flowfile_frame/**'
             backend_flowfile:
               - 'flowfile/**'
+            kernel:
+              - 'kernel_runtime/**'
+              - 'flowfile_core/flowfile_core/kernel/**'
+              - 'flowfile_core/tests/flowfile/test_kernel_integration.py'
+              - 'flowfile_core/tests/kernel_fixtures.py'
             frontend:
               - 'flowfile_frontend/**'
             docs:
@@ -145,7 +151,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests --disable-warnings $COV_ARGS
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings $COV_ARGS
         env:
           COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
 
@@ -271,7 +277,7 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
-        run: poetry run pytest flowfile_core/tests --disable-warnings
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -298,6 +304,43 @@ jobs:
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
+
+  # Kernel integration tests - runs in parallel on a separate worker
+  kernel-tests:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.kernel == 'true' ||
+      needs.detect-changes.outputs.backend_core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: |
+          poetry install --no-interaction --no-ansi --with dev
+
+      - name: Build kernel Docker image
+        run: |
+          docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
+
+      - name: Run kernel integration tests
+        run: |
+          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings --timeout=300
 
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
@@ -472,7 +515,7 @@ jobs:
 
   # Summary job - always runs to provide status
   test-summary:
-    needs: [detect-changes, backend-tests, backend-tests-windows, test-web, electron-tests-macos, electron-tests-windows, docs-test]
+    needs: [detect-changes, backend-tests, backend-tests-windows, kernel-tests, test-web, electron-tests-macos, electron-tests-windows, docs-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -485,6 +528,7 @@ jobs:
           echo "  - Backend Worker: ${{ needs.detect-changes.outputs.backend_worker }}"
           echo "  - Backend Frame: ${{ needs.detect-changes.outputs.backend_frame }}"
           echo "  - Backend Flowfile: ${{ needs.detect-changes.outputs.backend_flowfile }}"
+          echo "  - Kernel: ${{ needs.detect-changes.outputs.kernel }}"
           echo "  - Frontend: ${{ needs.detect-changes.outputs.frontend }}"
           echo "  - Docs: ${{ needs.detect-changes.outputs.docs }}"
           echo "  - Shared/Dependencies: ${{ needs.detect-changes.outputs.shared }}"
@@ -493,6 +537,7 @@ jobs:
           echo "Job results:"
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
           echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
+          echo "  - Kernel Tests: ${{ needs.kernel-tests.result }}"
           echo "  - Web Tests: ${{ needs.test-web.result }}"
           echo "  - Electron Tests (macOS): ${{ needs.electron-tests-macos.result }}"
           echo "  - Electron Tests (Windows): ${{ needs.electron-tests-windows.result }}"
@@ -501,6 +546,7 @@ jobs:
           # Fail if any non-skipped job failed
           if [[ "${{ needs.backend-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
+             [[ "${{ needs.kernel-tests.result }}" == "failure" ]] || \
              [[ "${{ needs.test-web.result }}" == "failure" ]] || \
              [[ "${{ needs.electron-tests-macos.result }}" == "failure" ]] || \
              [[ "${{ needs.electron-tests-windows.result }}" == "failure" ]] || \

@@ -103,7 +103,8 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 markers = [
     "worker: Tests for the flowfile_worker package",
-    "core: Tests for the flowfile_core package"
+    "core: Tests for the flowfile_core package",
+    "kernel: Integration tests requiring Docker kernel containers"
 ]
 
 [tool.coverage.run]
