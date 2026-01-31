@@ -271,7 +271,7 @@ class TestPythonScriptNode:
         python_script node reads input, passes it through, and writes output.
         """
         manager, kernel_id = kernel_manager
-
+        breakpoint()
         # Patch the singleton so flow_graph picks up *this* manager
         import flowfile_core.kernel as _kernel_mod
 
