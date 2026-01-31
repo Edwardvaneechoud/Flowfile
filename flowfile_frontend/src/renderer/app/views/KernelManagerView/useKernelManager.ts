@@ -1,7 +1,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import type { Ref } from "vue";
 import { KernelApi } from "../../api/kernel.api";
-import type { KernelInfo, KernelConfig } from "../../types";
+import type { DockerStatus, KernelInfo, KernelConfig } from "../../types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -9,8 +9,13 @@ export function useKernelManager() {
   const kernels: Ref<KernelInfo[]> = ref([]);
   const isLoading = ref(true);
   const errorMessage: Ref<string | null> = ref(null);
+  const dockerStatus: Ref<DockerStatus | null> = ref(null);
   const actionInProgress: Ref<Record<string, boolean>> = ref({});
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const checkDockerStatus = async () => {
+    dockerStatus.value = await KernelApi.getDockerStatus();
+  };
 
   const loadKernels = async () => {
     try {
@@ -84,7 +89,12 @@ export function useKernelManager() {
   };
 
   onMounted(async () => {
-    await loadKernels();
+    await checkDockerStatus();
+    try {
+      await loadKernels();
+    } catch {
+      // Error already captured in errorMessage
+    }
     startPolling();
   });
 
@@ -96,6 +106,7 @@ export function useKernelManager() {
     kernels,
     isLoading,
     errorMessage,
+    dockerStatus,
     actionInProgress,
     loadKernels,
     createKernel,

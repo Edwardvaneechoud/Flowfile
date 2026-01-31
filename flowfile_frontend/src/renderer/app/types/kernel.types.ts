@@ -11,6 +11,12 @@ export interface KernelConfig {
   gpu: boolean;
 }
 
+export interface DockerStatus {
+  available: boolean;
+  image_available: boolean;
+  error: string | null;
+}
+
 export interface KernelInfo {
   id: string;
   name: string;

@@ -5,8 +5,28 @@
       <p class="page-description">Manage Python execution environments for your flows</p>
     </div>
 
-    <!-- Docker / service error banner -->
-    <div v-if="errorMessage" class="error-banner mb-3">
+    <!-- Docker status banners -->
+    <div v-if="dockerStatus && !dockerStatus.available" class="status-banner status-banner--error mb-3">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <div>
+        <strong>Docker is not running.</strong>
+        Kernels require Docker to create and run containers. Please start Docker and reload this page.
+      </div>
+    </div>
+    <div
+      v-else-if="dockerStatus && dockerStatus.available && !dockerStatus.image_available"
+      class="status-banner status-banner--warning mb-3"
+    >
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <div>
+        <strong>Kernel image not found.</strong>
+        The <code>flowfile-kernel</code> Docker image is not available. Build or pull the image before
+        starting kernels.
+      </div>
+    </div>
+
+    <!-- API-level error (e.g. network failure) -->
+    <div v-if="errorMessage && (!dockerStatus || dockerStatus.available)" class="status-banner status-banner--error mb-3">
       <i class="fa-solid fa-circle-exclamation"></i>
       <span>{{ errorMessage }}</span>
     </div>
@@ -90,6 +110,7 @@ const {
   kernels,
   isLoading,
   errorMessage,
+  dockerStatus,
   createKernel,
   startKernel,
   stopKernel,
@@ -167,16 +188,38 @@ const handleDelete = async () => {
   gap: var(--spacing-3);
 }
 
-.error-banner {
+.status-banner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--spacing-2);
   padding: var(--spacing-3) var(--spacing-4);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.status-banner i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.status-banner code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  background-color: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: var(--border-radius-sm);
+}
+
+.status-banner--error {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
   border: 1px solid var(--color-danger);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+}
+
+.status-banner--warning {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  border: 1px solid var(--color-warning);
 }
 </style>

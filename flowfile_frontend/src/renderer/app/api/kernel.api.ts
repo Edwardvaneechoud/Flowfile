@@ -1,5 +1,5 @@
 import axios from "../services/axios.config";
-import type { KernelConfig, KernelInfo } from "../types";
+import type { DockerStatus, KernelConfig, KernelInfo } from "../types";
 
 const API_BASE_URL = "/kernels";
 
@@ -66,6 +66,16 @@ export class KernelApi {
     } catch (error) {
       console.error("API Error: Failed to stop kernel:", error);
       throw error;
+    }
+  }
+
+  static async getDockerStatus(): Promise<DockerStatus> {
+    try {
+      const response = await axios.get<DockerStatus>(`${API_BASE_URL}/docker-status`);
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to check Docker status:", error);
+      return { available: false, image_available: false, error: "Failed to reach server" };
     }
   }
 }

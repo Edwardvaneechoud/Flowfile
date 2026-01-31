@@ -1,5 +1,6 @@
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
+    DockerStatus,
     ExecuteRequest,
     ExecuteResult,
     KernelConfig,
@@ -10,6 +11,7 @@ from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
+    "DockerStatus",
     "KernelConfig",
     "KernelInfo",
     "KernelState",
