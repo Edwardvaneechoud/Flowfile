@@ -1116,6 +1116,65 @@ class FlowGraph:
             node = self.get_node(node_id=node_polars_code.node_id)
             node.results.errors = str(e)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_python_script(self, node_python_script: input_schema.NodePythonScript):
+        """Adds a node that executes Python code on a kernel container."""
+
+        def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
+
+            kernel_id = node_python_script.python_script_input.kernel_id
+            code = node_python_script.python_script_input.code
+
+            if not kernel_id:
+                raise ValueError("No kernel selected for python_script node")
+
+            manager = get_kernel_manager()
+
+            node_id = node_python_script.node_id
+            flow_id = self.flow_id
+
+            shared_base = manager.shared_volume_path
+            input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
+            output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
+
+            os.makedirs(input_dir, exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Write input to parquet
+            input_paths: dict[str, str] = {}
+            input_path = os.path.join(input_dir, "main.parquet")
+            flowfile_table.data_frame.collect().write_parquet(input_path)
+            input_paths["main"] = f"/shared/{flow_id}/{node_id}/inputs/main.parquet"
+
+            # Execute on kernel (synchronous — no async boundary issues)
+            request = ExecuteRequest(
+                node_id=node_id,
+                code=code,
+                input_paths=input_paths,
+                output_dir=f"/shared/{flow_id}/{node_id}/outputs",
+            )
+            result = manager.execute_sync(kernel_id, request)
+
+            if not result.success:
+                raise RuntimeError(f"Kernel execution failed: {result.error}")
+
+            # Read output
+            output_path = os.path.join(output_dir, "main.parquet")
+            if os.path.exists(output_path):
+                return FlowDataEngine(pl.scan_parquet(output_path))
+
+            # No output published, pass through input
+            return flowfile_table
+
+        self.add_node_step(
+            node_id=node_python_script.node_id,
+            function=_func,
+            node_type="python_script",
+            setting_input=node_python_script,
+            input_node_ids=[node_python_script.depending_on_id],
+        )
+
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
         """Adds a special node that directly injects a Polars LazyFrame into the graph.
 
