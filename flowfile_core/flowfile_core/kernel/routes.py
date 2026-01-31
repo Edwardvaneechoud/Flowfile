@@ -1,12 +1,23 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
-from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult, KernelConfig, KernelInfo
+from flowfile_core.kernel.models import DockerStatus, ExecuteRequest, ExecuteResult, KernelConfig, KernelInfo
+
+logger = logging.getLogger(__name__)
 
 
 def _get_manager():
     from flowfile_core.kernel import get_kernel_manager
 
-    return get_kernel_manager()
+    try:
+        return get_kernel_manager()
+    except Exception as exc:
+        logger.error("Kernel manager unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Docker is not available. Please ensure Docker is installed and running.",
+        )
 
 
 router = APIRouter(prefix="/kernels")
@@ -23,6 +34,30 @@ async def create_kernel(config: KernelConfig):
         return await _get_manager().create_kernel(config)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/docker-status", response_model=DockerStatus)
+async def docker_status():
+    """Check if Docker is reachable and the kernel image is available."""
+    import docker as _docker
+
+    try:
+        client = _docker.from_env()
+        client.ping()
+    except Exception as exc:
+        return DockerStatus(available=False, image_available=False, error=str(exc))
+
+    from flowfile_core.kernel.manager import _KERNEL_IMAGE
+
+    try:
+        client.images.get(_KERNEL_IMAGE)
+        image_available = True
+    except _docker.errors.ImageNotFound:
+        image_available = False
+    except Exception:
+        image_available = False
+
+    return DockerStatus(available=True, image_available=image_available)
 
 
 @router.get("/{kernel_id}", response_model=KernelInfo)

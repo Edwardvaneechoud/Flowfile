@@ -6,3 +6,4 @@ export * from "./canvas.types";
 export * from "./editor.types";
 export * from "./file.types";
 export * from "./secrets.types";
+export * from "./kernel.types";

@@ -35,6 +35,12 @@ class KernelInfo(BaseModel):
     error_message: str | None = None
 
 
+class DockerStatus(BaseModel):
+    available: bool
+    image_available: bool
+    error: str | None = None
+
+
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
