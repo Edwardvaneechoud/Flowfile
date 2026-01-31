@@ -894,7 +894,7 @@ class PythonScriptInput(BaseModel):
     kernel_id: str | None = None
 
 
-class NodePythonScript(NodeSingleInput):
+class NodePythonScript(NodeMultiInput):
     """Node that executes Python code on a kernel container."""
 
     python_script_input: PythonScriptInput = PythonScriptInput()

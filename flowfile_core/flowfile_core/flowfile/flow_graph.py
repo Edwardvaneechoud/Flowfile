@@ -1122,7 +1122,7 @@ class FlowGraph:
     def add_python_script(self, node_python_script: input_schema.NodePythonScript):
         """Adds a node that executes Python code on a kernel container."""
 
-        def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
@@ -1153,9 +1153,14 @@ class FlowGraph:
 
             # Write input to parquet
             input_paths: dict[str, str] = {}
-            input_path = os.path.join(input_dir, "main.parquet")
-            flowfile_table.data_frame.collect().write_parquet(input_path)
-            input_paths["main"] = f"/shared/{flow_id}/{node_id}/inputs/main.parquet"
+            for idx, table in enumerate(flowfile_tables):
+                input_path = os.path.join(input_dir, f"input_{idx}.parquet")
+                table.data_frame.collect().write_parquet(input_path)
+                input_paths[f"input_{idx}"] = f"/shared/{flow_id}/{node_id}/inputs/input_{idx}.parquet"
+
+            # If only one input, also alias it as "main" for convenience
+            if len(flowfile_tables) == 1:
+                input_paths["main"] = input_paths["input_0"]
 
             # Execute on kernel (synchronous — no async boundary issues)
             request = ExecuteRequest(
