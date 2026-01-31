@@ -1202,7 +1202,7 @@ class FlowGraph:
             function=_func,
             node_type="python_script",
             setting_input=node_python_script,
-            input_node_ids=[node_python_script.depending_on_id],
+            input_node_ids=node_python_script.depending_on_ids,
         )
 
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):

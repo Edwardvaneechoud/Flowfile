@@ -306,7 +306,7 @@ flowfile.publish_output(df)
                 input_schema.NodePythonScript(
                     flow_id=1,
                     node_id=2,
-                    depending_on_id=1,
+                    depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code,
                         kernel_id=kernel_id,
@@ -368,7 +368,7 @@ flowfile.publish_output(df)
                 input_schema.NodePythonScript(
                     flow_id=1,
                     node_id=2,
-                    depending_on_id=1,
+                    depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code,
                         kernel_id=kernel_id,
@@ -416,7 +416,7 @@ flowfile.publish_output(df)
             input_schema.NodePythonScript(
                 flow_id=1,
                 node_id=2,
-                depending_on_id=1,
+                depending_on_ids=[1],
                 python_script_input=input_schema.PythonScriptInput(
                     code='print("hi")',
                     kernel_id=None,  # intentionally no kernel
@@ -470,7 +470,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code, kernel_id=kernel_id,
                     ),
@@ -519,7 +519,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_publish, kernel_id=kernel_id,
                     ),
@@ -537,7 +537,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=3, depending_on_id=2,
+                    flow_id=1, node_id=3, depending_on_ids=[2],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_consume, kernel_id=kernel_id,
                     ),
@@ -559,7 +559,7 @@ flowfile.publish_output(df)
         """Running flow twice doesn't leak artifacts from first run."""
         manager, kernel_id = kernel_manager
         import flowfile_core.kernel as _kernel_mod
-
+        breakpoint()
         _prev = _kernel_mod._manager
         _kernel_mod._manager = manager
 
@@ -586,7 +586,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code, kernel_id=kernel_id,
                     ),
@@ -645,7 +645,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code, kernel_id=kernel_id,
                     ),
@@ -695,7 +695,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code, kernel_id=kernel_id,
                     ),
@@ -760,7 +760,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=train_code, kernel_id=kernel_id,
                     ),
@@ -785,7 +785,7 @@ flowfile.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=3, depending_on_id=2,
+                    flow_id=1, node_id=3, depending_on_ids=[2],
                     python_script_input=input_schema.PythonScriptInput(
                         code=apply_code, kernel_id=kernel_id,
                     ),
@@ -852,7 +852,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_a, kernel_id=kernel_id,
                     ),
@@ -872,7 +872,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=3, depending_on_id=2,
+                    flow_id=1, node_id=3, depending_on_ids=[2],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_b, kernel_id=kernel_id,
                     ),
@@ -890,7 +890,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=4, depending_on_id=3,
+                    flow_id=1, node_id=4, depending_on_ids=[3],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_c, kernel_id=kernel_id,
                     ),
@@ -909,7 +909,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=5, depending_on_id=4,
+                    flow_id=1, node_id=5, depending_on_ids=[4],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_d, kernel_id=kernel_id,
                     ),
@@ -964,7 +964,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=2, depending_on_id=1,
+                    flow_id=1, node_id=2, depending_on_ids=[1],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_publish, kernel_id=kernel_id,
                     ),
@@ -982,7 +982,7 @@ flowfile.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
-                    flow_id=1, node_id=3, depending_on_id=2,
+                    flow_id=1, node_id=3, depending_on_ids=[2],
                     python_script_input=input_schema.PythonScriptInput(
                         code=code_dup, kernel_id=kernel_id,
                     ),
