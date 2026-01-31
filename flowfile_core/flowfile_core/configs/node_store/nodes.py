@@ -294,6 +294,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             transform_type="narrow",
             image="polars_code.png",
             node_group="transform",
+            multi=True,
+            can_be_start=True,
             node_type="process",
             drawer_title="Python Script",
             drawer_intro="Execute Python code on an isolated kernel container",
