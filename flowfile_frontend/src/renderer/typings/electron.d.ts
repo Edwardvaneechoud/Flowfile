@@ -8,11 +8,17 @@ export interface ServicesStatus {
   error: string | null;
 }
 
+export interface ServicePorts {
+  corePort: number;
+  workerPort: number;
+}
+
 export default interface ElectronAPI {
   sendMessage: (message: string) => void;
   getDockerStatus: () => Promise<DockerStatus>;
   getServicesStatus: () => Promise<ServicesStatus>;
   getAppVersion: () => Promise<string>;
+  getServicePorts: () => Promise<ServicePorts>;
   onStartupSuccess: (callback: () => void) => () => void;
   onDockerStatusUpdate: (callback: (status: DockerStatus) => void) => () => void;
   onServicesStatusUpdate: (callback: (status: ServicesStatus) => void) => () => void;

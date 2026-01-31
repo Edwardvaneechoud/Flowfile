@@ -15,6 +15,7 @@ import authService from "./app/services/auth.service";
 import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
 import { useThemeStore } from "./app/stores/theme-store";
+import { initializeServiceConfig } from "./config/constants";
 
 const app = createApp(App);
 
@@ -31,9 +32,9 @@ app.use(ElementPlus, {
 const themeStore = useThemeStore();
 themeStore.initialize();
 
-// Initialize auth before mounting app
-setupService
-  .getSetupStatus()
+// Initialize service config (resolve dynamic ports) before making any API calls
+initializeServiceConfig()
+  .then(() => setupService.getSetupStatus())
   .then((status) => {
     authService.setModeFromBackend(status.mode);
     return authService.initialize();

@@ -59,7 +59,7 @@ app = FastAPI(
     lifespan=shutdown_handler,
 )
 
-# Configure CORS
+# Configure CORS - allow any localhost port to support dynamic service ports
 origins = [
     "http://localhost",
     "http://localhost:5173",
@@ -75,6 +75,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

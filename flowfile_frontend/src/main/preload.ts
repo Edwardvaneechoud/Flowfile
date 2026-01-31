@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getDockerStatus: () => ipcRenderer.invoke("get-docker-status"),
   getServicesStatus: () => ipcRenderer.invoke("get-services-status"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  getServicePorts: () => ipcRenderer.invoke("get-service-ports"),
   onStartupSuccess: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("startup-success", listener);

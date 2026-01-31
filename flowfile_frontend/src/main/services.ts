@@ -3,13 +3,17 @@ import { join, dirname } from "path";
 import { ChildProcess, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
+import * as net from "net";
 import {
   SHUTDOWN_TIMEOUT,
   FORCE_KILL_TIMEOUT,
   WORKER_PORT,
   CORE_PORT,
+  DEFAULT_CORE_PORT,
+  DEFAULT_WORKER_PORT,
   SERVICE_START_TIMEOUT,
   HEALTH_CHECK_TIMEOUT,
+  setRuntimePorts,
 } from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
@@ -17,6 +21,38 @@ export const shutdownState = { isShuttingDown: false };
 let cleanupInProgress = false;
 export let workerProcess: ChildProcess | null = null;
 export let coreProcess: ChildProcess | null = null;
+
+/**
+ * Finds an available port, trying the preferred port first.
+ * If the preferred port is in use, asks the OS for a random available port.
+ */
+export function findAvailablePort(preferredPort: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+
+    server.listen(preferredPort, "127.0.0.1", () => {
+      const port = (server.address() as net.AddressInfo).port;
+      server.close(() => resolve(port));
+    });
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.log(`Port ${preferredPort} is in use, finding an available port...`);
+        const fallbackServer = net.createServer();
+        fallbackServer.listen(0, "127.0.0.1", () => {
+          const port = (fallbackServer.address() as net.AddressInfo).port;
+          fallbackServer.close(() => {
+            console.log(`Found available port: ${port}`);
+            resolve(port);
+          });
+        });
+        fallbackServer.on("error", reject);
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
 
 export async function shutdownService(port: number): Promise<void> {
   try {
@@ -160,6 +196,7 @@ export function startProcess(
   path: string,
   port: number,
   onData?: (data: string) => void,
+  extraArgs: string[] = [],
 ): Promise<ChildProcess | null> {
   return new Promise((resolve) => {
     if (!path) {
@@ -168,12 +205,13 @@ export function startProcess(
       return;
     }
 
-    console.log(`Starting ${name} from ${path}`);
+    const spawnArgs = ["--port", String(port), ...extraArgs];
+    console.log(`Starting ${name} from ${path} with args: ${spawnArgs.join(" ")}`);
 
     try {
       const workingDirectory = path.endsWith(name) ? join(path, "..") : join(path, "../..");
 
-      const childProcess = spawn(path, [], {
+      const childProcess = spawn(path, spawnArgs, {
         env: getProcessEnv(),
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -246,17 +284,39 @@ export async function startServices(retry = true): Promise<void> {
       `Starting services with paths - Core: ${corePath || "Not found"}, Worker: ${workerPath || "Not found"}`,
     );
 
+    // Find available ports (tries defaults first, falls back to OS-assigned ports)
+    const [corePort, workerPort] = await Promise.all([
+      findAvailablePort(DEFAULT_CORE_PORT),
+      findAvailablePort(DEFAULT_WORKER_PORT),
+    ]);
+
+    // Update the runtime ports so they are available throughout the app
+    setRuntimePorts(corePort, workerPort);
+    console.log(`Dynamic ports assigned - Core: ${corePort}, Worker: ${workerPort}`);
+
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
-      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
-        if (data.includes("Core server started")) {
-          console.log("Core process is ready");
-        }
-      }),
-      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
-        if (data.includes("Server started")) {
-          console.log("Worker process is ready");
-        }
-      }),
+      startProcessWithError(
+        "flowfile_core",
+        corePath,
+        corePort,
+        (data: string) => {
+          if (data.includes("Core server started")) {
+            console.log("Core process is ready");
+          }
+        },
+        ["--worker-port", String(workerPort)],
+      ),
+      startProcessWithError(
+        "flowfile_worker",
+        workerPath,
+        workerPort,
+        (data: string) => {
+          if (data.includes("Server started")) {
+            console.log("Worker process is ready");
+          }
+        },
+        ["--core-port", String(corePort)],
+      ),
     ]);
 
     coreProcess = newCoreProcess;

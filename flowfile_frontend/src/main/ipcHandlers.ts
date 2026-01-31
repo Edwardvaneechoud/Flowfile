@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, app } from "electron";
 import { loadWindow } from "./windowLoader";
+import { CORE_PORT, WORKER_PORT } from "./constants";
 
 interface AppState {
   dockerStatus: { isAvailable: boolean; error: string | null };
@@ -27,6 +28,10 @@ export function setupIpcHandlers(): void {
   ipcMain.handle("get-docker-status", () => appState.dockerStatus);
   ipcMain.handle("get-services-status", () => appState.servicesStatus);
   ipcMain.handle("get-app-version", () => app.getVersion());
+  ipcMain.handle("get-service-ports", () => ({
+    corePort: CORE_PORT,
+    workerPort: WORKER_PORT,
+  }));
 }
 
 export function setupWindowIpcHandlers(mainWindow: BrowserWindow): void {
