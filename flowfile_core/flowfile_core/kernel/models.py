@@ -38,7 +38,7 @@ class KernelInfo(BaseModel):
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    input_paths: dict[str, str] = Field(default_factory=dict)
+    input_paths: dict[str, list[str]] = Field(default_factory=dict)
     output_dir: str = ""
 
 

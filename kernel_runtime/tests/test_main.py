@@ -129,7 +129,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 10,
                 "code": code,
-                "input_paths": {"main": str(input_path)},
+                "input_paths": {"main": [str(input_path)]},
                 "output_dir": str(output_dir),
             },
         )
@@ -170,8 +170,8 @@ class TestExecuteWithParquet:
                 "node_id": 11,
                 "code": code,
                 "input_paths": {
-                    "left": str(input_dir / "left.parquet"),
-                    "right": str(input_dir / "right.parquet"),
+                    "left": [str(input_dir / "left.parquet")],
+                    "right": [str(input_dir / "right.parquet")],
                 },
                 "output_dir": str(output_dir),
             },
@@ -182,6 +182,76 @@ class TestExecuteWithParquet:
         df_out = pl.read_parquet(str(output_dir / "main.parquet"))
         assert set(df_out.columns) == {"id", "name", "score"}
         assert len(df_out) == 2
+
+    def test_multi_main_inputs_union(self, client: TestClient, tmp_dir: Path):
+        """Multiple paths under 'main' are concatenated (union) by read_input."""
+        input_dir = tmp_dir / "inputs"
+        output_dir = tmp_dir / "outputs"
+        input_dir.mkdir()
+        output_dir.mkdir()
+
+        pl.DataFrame({"v": [1, 2]}).write_parquet(str(input_dir / "main_0.parquet"))
+        pl.DataFrame({"v": [3, 4]}).write_parquet(str(input_dir / "main_1.parquet"))
+
+        code = (
+            "df = flowfile.read_input().collect()\n"
+            "flowfile.publish_output(df)\n"
+        )
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 13,
+                "code": code,
+                "input_paths": {
+                    "main": [
+                        str(input_dir / "main_0.parquet"),
+                        str(input_dir / "main_1.parquet"),
+                    ],
+                },
+                "output_dir": str(output_dir),
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+
+        df_out = pl.read_parquet(str(output_dir / "main.parquet"))
+        assert sorted(df_out["v"].to_list()) == [1, 2, 3, 4]
+
+    def test_read_first_via_execute(self, client: TestClient, tmp_dir: Path):
+        """read_first returns only the first input file."""
+        input_dir = tmp_dir / "inputs"
+        output_dir = tmp_dir / "outputs"
+        input_dir.mkdir()
+        output_dir.mkdir()
+
+        pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "a.parquet"))
+        pl.DataFrame({"v": [30, 40]}).write_parquet(str(input_dir / "b.parquet"))
+
+        code = (
+            "df = flowfile.read_first().collect()\n"
+            "flowfile.publish_output(df)\n"
+        )
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 14,
+                "code": code,
+                "input_paths": {
+                    "main": [
+                        str(input_dir / "a.parquet"),
+                        str(input_dir / "b.parquet"),
+                    ],
+                },
+                "output_dir": str(output_dir),
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+
+        df_out = pl.read_parquet(str(output_dir / "main.parquet"))
+        assert df_out["v"].to_list() == [10, 20]
 
     def test_publish_lazyframe_output(self, client: TestClient, tmp_dir: Path):
         input_dir = tmp_dir / "inputs"
@@ -201,7 +271,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 12,
                 "code": code,
-                "input_paths": {"main": str(input_dir / "main.parquet")},
+                "input_paths": {"main": [str(input_dir / "main.parquet")]},
                 "output_dir": str(output_dir),
             },
         )

@@ -1151,16 +1151,15 @@ class FlowGraph:
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
-            # Write input to parquet
-            input_paths: dict[str, str] = {}
-            for idx, table in enumerate(flowfile_tables):
-                input_path = os.path.join(input_dir, f"input_{idx}.parquet")
-                table.data_frame.collect().write_parquet(input_path)
-                input_paths[f"input_{idx}"] = f"/shared/{flow_id}/{node_id}/inputs/input_{idx}.parquet"
-
-            # If only one input, also alias it as "main" for convenience
-            if len(flowfile_tables) == 1:
-                input_paths["main"] = input_paths["input_0"]
+            # Write inputs to parquet — supports N inputs under "main"
+            input_paths: dict[str, list[str]] = {}
+            main_paths: list[str] = []
+            for idx, ft in enumerate(flowfile_tables):
+                filename = f"main_{idx}.parquet"
+                local_path = os.path.join(input_dir, filename)
+                ft.data_frame.collect().write_parquet(local_path)
+                main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
+            input_paths["main"] = main_paths
 
             # Execute on kernel (synchronous — no async boundary issues)
             request = ExecuteRequest(
@@ -1195,8 +1194,8 @@ class FlowGraph:
             if os.path.exists(output_path):
                 return FlowDataEngine(pl.scan_parquet(output_path))
 
-            # No output published, pass through input
-            return flowfile_table
+            # No output published, pass through first input
+            return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
         self.add_node_step(
             node_id=node_python_script.node_id,

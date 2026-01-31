@@ -13,7 +13,7 @@ _context: dict[str, Any] = {}
 
 def _set_context(
     node_id: int,
-    input_paths: dict[str, str],
+    input_paths: dict[str, list[str]],
     output_dir: str,
     artifact_store: ArtifactStore,
 ) -> None:
@@ -34,16 +34,48 @@ def _get_context_value(key: str) -> Any:
 
 
 def read_input(name: str = "main") -> pl.LazyFrame:
-    input_paths: dict[str, str] = _get_context_value("input_paths")
+    """Read all input files for *name* and return them as a single LazyFrame.
+
+    When multiple paths are registered under the same name (e.g. a union
+    of several upstream nodes), all files are scanned and concatenated
+    automatically by Polars.
+    """
+    input_paths: dict[str, list[str]] = _get_context_value("input_paths")
     if name not in input_paths:
         available = list(input_paths.keys())
         raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
-    return pl.scan_parquet(input_paths[name])
+    paths = input_paths[name]
+    if len(paths) == 1:
+        return pl.scan_parquet(paths[0])
+    return pl.scan_parquet(paths)
+
+
+def read_first(name: str = "main") -> pl.LazyFrame:
+    """Read only the first input file for *name*.
+
+    This is a convenience shortcut equivalent to scanning
+    ``input_paths[name][0]``.
+    """
+    input_paths: dict[str, list[str]] = _get_context_value("input_paths")
+    if name not in input_paths:
+        available = list(input_paths.keys())
+        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
+    return pl.scan_parquet(input_paths[name][0])
 
 
 def read_inputs() -> dict[str, pl.LazyFrame]:
-    input_paths: dict[str, str] = _get_context_value("input_paths")
-    return {name: pl.scan_parquet(path) for name, path in input_paths.items()}
+    """Read all named inputs, returning a dict of LazyFrames.
+
+    Each entry concatenates all paths registered under that name.
+    """
+    input_paths: dict[str, list[str]] = _get_context_value("input_paths")
+    result: dict[str, pl.LazyFrame] = {}
+    for name, paths in input_paths.items():
+        if len(paths) == 1:
+            result[name] = pl.scan_parquet(paths[0])
+        else:
+            result[name] = pl.scan_parquet(paths)
+    return result
 
 
 def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
