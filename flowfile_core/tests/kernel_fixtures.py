@@ -101,7 +101,7 @@ def managed_kernel(
             name="Integration Test Kernel",
             packages=packages or [],
         )
-        loop.run_until_complete(manager.create_kernel(config))
+        loop.run_until_complete(manager.create_kernel(config, user_id=1))
         loop.run_until_complete(manager.start_kernel(kernel_id))
 
         yield manager, kernel_id

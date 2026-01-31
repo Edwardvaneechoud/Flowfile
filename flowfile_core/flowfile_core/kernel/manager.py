@@ -37,12 +37,65 @@ class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
         self._docker = docker.from_env()
         self._kernels: dict[str, KernelInfo] = {}
+        self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
+        self._restore_kernels_from_db()
         self._reclaim_running_containers()
 
     @property
     def shared_volume_path(self) -> str:
         return self._shared_volume
+
+    # ------------------------------------------------------------------
+    # Database persistence helpers
+    # ------------------------------------------------------------------
+
+    def _restore_kernels_from_db(self) -> None:
+        """Load persisted kernel configs from the database on startup."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import get_all_kernels
+
+            with get_db_context() as db:
+                for config, user_id in get_all_kernels(db):
+                    if config.id in self._kernels:
+                        continue
+                    kernel = KernelInfo(
+                        id=config.id,
+                        name=config.name,
+                        state=KernelState.STOPPED,
+                        packages=config.packages,
+                        memory_gb=config.memory_gb,
+                        cpu_cores=config.cpu_cores,
+                        gpu=config.gpu,
+                    )
+                    self._kernels[config.id] = kernel
+                    self._kernel_owners[config.id] = user_id
+                    logger.info("Restored kernel '%s' for user %d from database", config.id, user_id)
+        except Exception as exc:
+            logger.warning("Could not restore kernels from database: %s", exc)
+
+    def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
+        """Save a kernel record to the database."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import save_kernel
+
+            with get_db_context() as db:
+                save_kernel(db, kernel, user_id)
+        except Exception as exc:
+            logger.warning("Could not persist kernel '%s': %s", kernel.id, exc)
+
+    def _remove_kernel_from_db(self, kernel_id: str) -> None:
+        """Remove a kernel record from the database."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import delete_kernel
+
+            with get_db_context() as db:
+                delete_kernel(db, kernel_id)
+        except Exception as exc:
+            logger.warning("Could not remove kernel '%s' from database: %s", kernel_id, exc)
 
     # ------------------------------------------------------------------
     # Port allocation
@@ -73,18 +126,26 @@ class KernelManager:
             except (KeyError, IndexError, TypeError, ValueError):
                 pass
 
-            if port is not None and kernel_id not in self._kernels:
-                self._kernels[kernel_id] = KernelInfo(
-                    id=kernel_id,
-                    name=kernel_id,
-                    state=KernelState.IDLE,
-                    container_id=container.id,
-                    port=port,
-                )
+            if port is not None and kernel_id in self._kernels:
+                # Kernel was restored from DB — update with runtime info
+                self._kernels[kernel_id].container_id = container.id
+                self._kernels[kernel_id].port = port
+                self._kernels[kernel_id].state = KernelState.IDLE
                 logger.info(
                     "Reclaimed running kernel '%s' on port %d (container %s)",
                     kernel_id, port, container.short_id,
                 )
+            elif port is not None and kernel_id not in self._kernels:
+                # Orphan container with no DB record — stop it
+                logger.warning(
+                    "Found orphan kernel container '%s' with no database record, stopping it",
+                    kernel_id,
+                )
+                try:
+                    container.stop(timeout=10)
+                    container.remove(force=True)
+                except Exception as exc:
+                    logger.warning("Error stopping orphan container '%s': %s", kernel_id, exc)
 
     def _allocate_port(self) -> int:
         """Find the next available port in the kernel port range."""
@@ -100,7 +161,7 @@ class KernelManager:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def create_kernel(self, config: KernelConfig) -> KernelInfo:
+    async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
         if config.id in self._kernels:
             raise ValueError(f"Kernel '{config.id}' already exists")
 
@@ -116,7 +177,9 @@ class KernelManager:
             gpu=config.gpu,
         )
         self._kernels[config.id] = kernel
-        logger.info("Created kernel '%s' on port %d", config.id, port)
+        self._kernel_owners[config.id] = user_id
+        self._persist_kernel(kernel, user_id)
+        logger.info("Created kernel '%s' on port %d for user %d", config.id, port, user_id)
         return kernel
 
     async def start_kernel(self, kernel_id: str) -> KernelInfo:
@@ -164,7 +227,21 @@ class KernelManager:
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
         del self._kernels[kernel_id]
+        self._kernel_owners.pop(kernel_id, None)
+        self._remove_kernel_from_db(kernel_id)
         logger.info("Deleted kernel '%s'", kernel_id)
+
+    def shutdown_all(self) -> None:
+        """Stop and remove all running kernel containers. Called on core shutdown."""
+        kernel_ids = list(self._kernels.keys())
+        for kernel_id in kernel_ids:
+            kernel = self._kernels.get(kernel_id)
+            if kernel and kernel.state in (KernelState.IDLE, KernelState.EXECUTING, KernelState.STARTING):
+                logger.info("Shutting down kernel '%s'", kernel_id)
+                self._cleanup_container(kernel_id)
+                kernel.state = KernelState.STOPPED
+                kernel.container_id = None
+        logger.info("All kernels have been shut down")
 
     # ------------------------------------------------------------------
     # Execution
@@ -218,11 +295,19 @@ class KernelManager:
     # Queries
     # ------------------------------------------------------------------
 
-    async def list_kernels(self) -> list[KernelInfo]:
+    async def list_kernels(self, user_id: int | None = None) -> list[KernelInfo]:
+        if user_id is not None:
+            return [
+                k for kid, k in self._kernels.items()
+                if self._kernel_owners.get(kid) == user_id
+            ]
         return list(self._kernels.values())
 
     async def get_kernel(self, kernel_id: str) -> KernelInfo | None:
         return self._kernels.get(kernel_id)
+
+    def get_kernel_owner(self, kernel_id: str) -> int | None:
+        return self._kernel_owners.get(kernel_id)
 
     # ------------------------------------------------------------------
     # Internal helpers
