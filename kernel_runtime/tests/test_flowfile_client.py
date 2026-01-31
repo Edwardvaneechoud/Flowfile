@@ -33,7 +33,7 @@ def ctx(tmp_dir: Path) -> dict:
 
     flowfile_client._set_context(
         node_id=1,
-        input_paths={"main": str(main_path)},
+        input_paths={"main": [str(main_path)]},
         output_dir=str(output_dir),
         artifact_store=store,
     )
@@ -103,7 +103,7 @@ class TestReadMultipleInputs:
 
         flowfile_client._set_context(
             node_id=2,
-            input_paths={"left": str(left_path), "right": str(right_path)},
+            input_paths={"left": [str(left_path)], "right": [str(right_path)]},
             output_dir=str(tmp_dir / "outputs"),
             artifact_store=store,
         )
@@ -112,6 +112,76 @@ class TestReadMultipleInputs:
         assert set(inputs.keys()) == {"left", "right"}
         assert inputs["left"].collect()["id"].to_list() == [1, 2]
         assert inputs["right"].collect()["id"].to_list() == [3, 4]
+
+    def test_read_input_concatenates_multiple_main_paths(self, tmp_dir: Path):
+        """When 'main' has multiple paths, read_input returns a union of all."""
+        store = ArtifactStore()
+        input_dir = tmp_dir / "inputs"
+        input_dir.mkdir(exist_ok=True)
+
+        path_a = input_dir / "main_0.parquet"
+        path_b = input_dir / "main_1.parquet"
+        pl.DataFrame({"val": [1, 2]}).write_parquet(str(path_a))
+        pl.DataFrame({"val": [3, 4]}).write_parquet(str(path_b))
+
+        flowfile_client._set_context(
+            node_id=3,
+            input_paths={"main": [str(path_a), str(path_b)]},
+            output_dir=str(tmp_dir / "outputs"),
+            artifact_store=store,
+        )
+
+        df = flowfile_client.read_input().collect()
+        assert sorted(df["val"].to_list()) == [1, 2, 3, 4]
+
+    def test_read_first_returns_only_first(self, tmp_dir: Path):
+        """read_first returns only the first file, not the union."""
+        store = ArtifactStore()
+        input_dir = tmp_dir / "inputs"
+        input_dir.mkdir(exist_ok=True)
+
+        path_a = input_dir / "main_0.parquet"
+        path_b = input_dir / "main_1.parquet"
+        pl.DataFrame({"val": [1, 2]}).write_parquet(str(path_a))
+        pl.DataFrame({"val": [3, 4]}).write_parquet(str(path_b))
+
+        flowfile_client._set_context(
+            node_id=4,
+            input_paths={"main": [str(path_a), str(path_b)]},
+            output_dir=str(tmp_dir / "outputs"),
+            artifact_store=store,
+        )
+
+        df = flowfile_client.read_first().collect()
+        assert df["val"].to_list() == [1, 2]
+
+    def test_read_first_missing_name_raises(self, ctx: dict):
+        with pytest.raises(KeyError, match="not found"):
+            flowfile_client.read_first("nonexistent")
+
+    def test_read_inputs_with_multiple_main_paths(self, tmp_dir: Path):
+        """read_inputs should concatenate paths per name."""
+        store = ArtifactStore()
+        input_dir = tmp_dir / "inputs"
+        input_dir.mkdir(exist_ok=True)
+
+        path_0 = input_dir / "main_0.parquet"
+        path_1 = input_dir / "main_1.parquet"
+        path_2 = input_dir / "main_2.parquet"
+        pl.DataFrame({"x": [1]}).write_parquet(str(path_0))
+        pl.DataFrame({"x": [2]}).write_parquet(str(path_1))
+        pl.DataFrame({"x": [3]}).write_parquet(str(path_2))
+
+        flowfile_client._set_context(
+            node_id=5,
+            input_paths={"main": [str(path_0), str(path_1), str(path_2)]},
+            output_dir=str(tmp_dir / "outputs"),
+            artifact_store=store,
+        )
+
+        inputs = flowfile_client.read_inputs()
+        df = inputs["main"].collect()
+        assert sorted(df["x"].to_list()) == [1, 2, 3]
 
 
 class TestPublishOutput:
@@ -166,3 +236,24 @@ class TestArtifacts:
     def test_read_missing_artifact_raises(self, ctx: dict):
         with pytest.raises(KeyError, match="not found"):
             flowfile_client.read_artifact("missing")
+
+    def test_publish_duplicate_artifact_raises(self, ctx: dict):
+        flowfile_client.publish_artifact("model", {"v": 1})
+        with pytest.raises(ValueError, match="already exists"):
+            flowfile_client.publish_artifact("model", {"v": 2})
+
+    def test_delete_artifact(self, ctx: dict):
+        flowfile_client.publish_artifact("temp", 42)
+        flowfile_client.delete_artifact("temp")
+        with pytest.raises(KeyError, match="not found"):
+            flowfile_client.read_artifact("temp")
+
+    def test_delete_missing_artifact_raises(self, ctx: dict):
+        with pytest.raises(KeyError, match="not found"):
+            flowfile_client.delete_artifact("nonexistent")
+
+    def test_delete_then_republish(self, ctx: dict):
+        flowfile_client.publish_artifact("model", "v1")
+        flowfile_client.delete_artifact("model")
+        flowfile_client.publish_artifact("model", "v2")
+        assert flowfile_client.read_artifact("model") == "v2"

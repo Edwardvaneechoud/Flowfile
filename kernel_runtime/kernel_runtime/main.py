@@ -17,7 +17,7 @@ artifact_store = ArtifactStore()
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    input_paths: dict[str, str] = {}
+    input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
 
 
@@ -25,6 +25,7 @@ class ExecuteResponse(BaseModel):
     success: bool
     output_paths: list[str] = []
     artifacts_published: list[str] = []
+    artifacts_deleted: list[str] = []
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
@@ -63,12 +64,14 @@ async def execute(request: ExecuteRequest):
 
         artifacts_after = set(artifact_store.list_all().keys())
         new_artifacts = sorted(artifacts_after - artifacts_before)
+        deleted_artifacts = sorted(artifacts_before - artifacts_after)
 
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=True,
             output_paths=output_paths,
             artifacts_published=new_artifacts,
+            artifacts_deleted=deleted_artifacts,
             stdout=stdout_buf.getvalue(),
             stderr=stderr_buf.getvalue(),
             execution_time_ms=elapsed,

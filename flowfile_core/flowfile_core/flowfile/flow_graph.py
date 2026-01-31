@@ -41,6 +41,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseWriter,
     ExternalDfFetcher,
 )
+from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
@@ -356,6 +357,7 @@ class FlowGraph:
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
+        self.artifact_context = ArtifactContext()
 
         # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
@@ -1120,7 +1122,7 @@ class FlowGraph:
     def add_python_script(self, node_python_script: input_schema.NodePythonScript):
         """Adds a node that executes Python code on a kernel container."""
 
-        def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
@@ -1134,6 +1136,14 @@ class FlowGraph:
             node_id = node_python_script.node_id
             flow_id = self.flow_id
 
+            # Compute available artifacts before execution
+            upstream_ids = self._get_upstream_node_ids(node_id)
+            self.artifact_context.compute_available(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                upstream_node_ids=upstream_ids,
+            )
+
             shared_base = manager.shared_volume_path
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
@@ -1141,11 +1151,15 @@ class FlowGraph:
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
-            # Write input to parquet
-            input_paths: dict[str, str] = {}
-            input_path = os.path.join(input_dir, "main.parquet")
-            flowfile_table.data_frame.collect().write_parquet(input_path)
-            input_paths["main"] = f"/shared/{flow_id}/{node_id}/inputs/main.parquet"
+            # Write inputs to parquet — supports N inputs under "main"
+            input_paths: dict[str, list[str]] = {}
+            main_paths: list[str] = []
+            for idx, ft in enumerate(flowfile_tables):
+                filename = f"main_{idx}.parquet"
+                local_path = os.path.join(input_dir, filename)
+                ft.data_frame.collect().write_parquet(local_path)
+                main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
+            input_paths["main"] = main_paths
 
             # Execute on kernel (synchronous — no async boundary issues)
             request = ExecuteRequest(
@@ -1159,20 +1173,36 @@ class FlowGraph:
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
 
+            # Record published artifacts after successful execution
+            if result.artifacts_published:
+                self.artifact_context.record_published(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifacts=[{"name": n} for n in result.artifacts_published],
+                )
+
+            # Record deleted artifacts after successful execution
+            if result.artifacts_deleted:
+                self.artifact_context.record_deleted(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifact_names=result.artifacts_deleted,
+                )
+
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
             if os.path.exists(output_path):
                 return FlowDataEngine(pl.scan_parquet(output_path))
 
-            # No output published, pass through input
-            return flowfile_table
+            # No output published, pass through first input
+            return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
         self.add_node_step(
             node_id=node_python_script.node_id,
             function=_func,
             node_type="python_script",
             setting_input=node_python_script,
-            input_node_ids=[node_python_script.depending_on_id],
+            input_node_ids=node_python_script.depending_on_ids,
         )
 
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
@@ -2351,6 +2381,47 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
+    # ------------------------------------------------------------------
+    # Artifact helpers
+    # ------------------------------------------------------------------
+
+    def _get_upstream_node_ids(self, node_id: int) -> list[int]:
+        """Get all upstream node IDs (direct and transitive) for *node_id*.
+
+        Traverses the ``all_inputs`` links recursively and returns a
+        deduplicated list in breadth-first order.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return []
+
+        visited: set[int] = set()
+        result: list[int] = []
+        queue = list(node.all_inputs)
+        while queue:
+            current = queue.pop(0)
+            cid = current.node_id
+            if cid in visited:
+                continue
+            visited.add(cid)
+            result.append(cid)
+            queue.extend(current.all_inputs)
+        return result
+
+    def _get_required_kernel_ids(self) -> set[str]:
+        """Return the set of kernel IDs used by ``python_script`` nodes."""
+        kernel_ids: set[str] = set()
+        for node in self.nodes:
+            if node.node_type == "python_script" and node.setting_input is not None:
+                kid = getattr(
+                    getattr(node.setting_input, "python_script_input", None),
+                    "kernel_id",
+                    None,
+                )
+                if kid:
+                    kernel_ids.add(kid)
+        return kernel_ids
+
     def _execute_single_node(
         self,
         node: FlowNode,
@@ -2425,6 +2496,19 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
+
+            # Clear artifact tracking for a fresh run.
+            # Snapshot first so we can restore state for cached (skipped) nodes.
+            _prev_artifact_states = self.artifact_context.snapshot_node_states()
+            self.artifact_context.clear_all()
+            for kid in self._get_required_kernel_ids():
+                self.artifact_context.clear_kernel(kid)
+                try:
+                    from flowfile_core.kernel import get_kernel_manager
+                    manager = get_kernel_manager()
+                    manager.clear_artifacts_sync(kid)
+                except Exception:
+                    logger.debug("Could not clear kernel artifacts for '%s'", kid)
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
@@ -2482,6 +2566,18 @@ class FlowGraph:
                     if not node_result.success:
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
+
+            # Restore artifact state for graph nodes that were cached (skipped).
+            # Their _func didn't re-execute, so record_published was never
+            # called — replay their state from the pre-clear snapshot.
+            # Only restore nodes that actually belong to this graph to avoid
+            # resurrecting stale entries injected outside the graph.
+            graph_node_ids = set(self._node_db.keys())
+            for nid, prev_state in _prev_artifact_states.items():
+                if (nid in graph_node_ids
+                        and nid not in self.artifact_context._node_states
+                        and prev_state.published):
+                    self.artifact_context.restore_node_state(nid, prev_state)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
