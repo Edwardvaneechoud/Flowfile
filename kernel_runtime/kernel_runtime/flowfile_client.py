@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import os
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
 
-_context: dict[str, Any] = {}
+_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
 
 def _set_context(
@@ -17,20 +18,23 @@ def _set_context(
     output_dir: str,
     artifact_store: ArtifactStore,
 ) -> None:
-    _context["node_id"] = node_id
-    _context["input_paths"] = input_paths
-    _context["output_dir"] = output_dir
-    _context["artifact_store"] = artifact_store
+    _context.set({
+        "node_id": node_id,
+        "input_paths": input_paths,
+        "output_dir": output_dir,
+        "artifact_store": artifact_store,
+    })
 
 
 def _clear_context() -> None:
-    _context.clear()
+    _context.set({})
 
 
 def _get_context_value(key: str) -> Any:
-    if key not in _context:
+    ctx = _context.get({})
+    if key not in ctx:
         raise RuntimeError(f"flowfile context not initialized (missing '{key}'). This API is only available during /execute.")
-    return _context[key]
+    return ctx[key]
 
 
 def read_input(name: str = "main") -> pl.LazyFrame:

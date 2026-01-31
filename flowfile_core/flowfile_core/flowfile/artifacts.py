@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,9 @@ class ArtifactContext:
     def __init__(self) -> None:
         self._node_states: dict[int, NodeArtifactState] = {}
         self._kernel_artifacts: dict[str, dict[str, ArtifactRef]] = {}
+        # Reverse index: (kernel_id, artifact_name) → set of node_ids that
+        # published it.  Avoids O(N) scan in record_deleted / clear_kernel.
+        self._publisher_index: dict[tuple[str, str], set[int]] = {}
 
     # ------------------------------------------------------------------
     # Recording
@@ -99,7 +102,7 @@ class ArtifactContext:
                 type_name=item.get("type_name", ""),
                 module=item.get("module", ""),
                 size_bytes=item.get("size_bytes", 0),
-                created_at=datetime.now(),
+                created_at=datetime.now(timezone.utc),
             )
             refs.append(ref)
             state.published.append(ref)
@@ -107,6 +110,10 @@ class ArtifactContext:
             # Update the per-kernel index
             kernel_map = self._kernel_artifacts.setdefault(kernel_id, {})
             kernel_map[ref.name] = ref
+
+            # Update the reverse index
+            key = (kernel_id, ref.name)
+            self._publisher_index.setdefault(key, set()).add(node_id)
 
         logger.debug(
             "Node %s published %d artifact(s) on kernel '%s': %s",
@@ -131,7 +138,7 @@ class ArtifactContext:
         """Record that *node_id* deleted the given artifacts from *kernel_id*.
 
         Removes the artifacts from the kernel index and from published
-        lists of any node that originally published them.
+        lists of the publishing nodes (looked up via reverse index).
         """
         state = self._get_or_create_state(node_id)
         state.deleted.extend(artifact_names)
@@ -140,12 +147,16 @@ class ArtifactContext:
         for name in artifact_names:
             kernel_map.pop(name, None)
 
-        # Remove from published lists so downstream nodes won't see them
-        for ns in self._node_states.values():
-            ns.published = [
-                r for r in ns.published
-                if not (r.kernel_id == kernel_id and r.name in artifact_names)
-            ]
+            # Use the reverse index to update only the affected nodes
+            key = (kernel_id, name)
+            publisher_ids = self._publisher_index.pop(key, set())
+            for pid in publisher_ids:
+                ns = self._node_states.get(pid)
+                if ns is not None:
+                    ns.published = [
+                        r for r in ns.published
+                        if not (r.kernel_id == kernel_id and r.name == name)
+                    ]
 
         logger.debug(
             "Node %s deleted %d artifact(s) on kernel '%s': %s",
@@ -229,8 +240,14 @@ class ArtifactContext:
     def clear_kernel(self, kernel_id: str) -> None:
         """Remove tracking for a specific kernel.
 
-        Also removes the corresponding published refs from node states.
+        Also removes the corresponding published refs from node states
+        and cleans up the reverse index.
         """
+        # Clean reverse index entries for this kernel
+        keys_to_remove = [k for k in self._publisher_index if k[0] == kernel_id]
+        for k in keys_to_remove:
+            del self._publisher_index[k]
+
         self._kernel_artifacts.pop(kernel_id, None)
         for state in self._node_states.values():
             state.published = [r for r in state.published if r.kernel_id != kernel_id]
@@ -242,6 +259,7 @@ class ArtifactContext:
         """Remove all tracking data."""
         self._node_states.clear()
         self._kernel_artifacts.clear()
+        self._publisher_index.clear()
 
     # ------------------------------------------------------------------
     # Serialisation

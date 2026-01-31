@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ class KernelConfig(BaseModel):
     cpu_cores: float = 2.0
     memory_gb: float = 4.0
     gpu: bool = False
+    health_timeout: int = 120
 
 
 class KernelInfo(BaseModel):
@@ -31,7 +32,8 @@ class KernelInfo(BaseModel):
     memory_gb: float = 4.0
     cpu_cores: float = 2.0
     gpu: bool = False
-    created_at: datetime = Field(default_factory=datetime.now)
+    health_timeout: int = 120
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
 
 
