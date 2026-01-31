@@ -559,7 +559,6 @@ flowfile.publish_output(df)
         """Running flow twice doesn't leak artifacts from first run."""
         manager, kernel_id = kernel_manager
         import flowfile_core.kernel as _kernel_mod
-        breakpoint()
         _prev = _kernel_mod._manager
         _kernel_mod._manager = manager
 
