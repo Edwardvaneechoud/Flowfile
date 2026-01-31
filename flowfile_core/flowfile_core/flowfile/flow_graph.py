@@ -2567,11 +2567,16 @@ class FlowGraph:
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
 
-            # Restore artifact state for nodes that were cached (skipped).
+            # Restore artifact state for graph nodes that were cached (skipped).
             # Their _func didn't re-execute, so record_published was never
             # called — replay their state from the pre-clear snapshot.
+            # Only restore nodes that actually belong to this graph to avoid
+            # resurrecting stale entries injected outside the graph.
+            graph_node_ids = set(self._node_db.keys())
             for nid, prev_state in _prev_artifact_states.items():
-                if nid not in self.artifact_context._node_states and prev_state.published:
+                if (nid in graph_node_ids
+                        and nid not in self.artifact_context._node_states
+                        and prev_state.published):
                     self.artifact_context.restore_node_state(nid, prev_state)
 
             self.latest_run_info.end_time = datetime.datetime.now()
