@@ -261,6 +261,27 @@ class ArtifactContext:
         self._kernel_artifacts.clear()
         self._publisher_index.clear()
 
+    def snapshot_node_states(self) -> dict[int, NodeArtifactState]:
+        """Return a shallow copy of the current per-node states.
+
+        Useful for saving state before ``clear_all()`` so cached
+        (skipped) nodes can have their artifact state restored afterwards.
+        """
+        return dict(self._node_states)
+
+    def restore_node_state(self, node_id: int, state: NodeArtifactState) -> None:
+        """Re-insert a previously-snapshotted node state.
+
+        Rebuilds the kernel index and reverse index entries for every
+        published artifact in *state*.
+        """
+        self._node_states[node_id] = state
+        for ref in state.published:
+            kernel_map = self._kernel_artifacts.setdefault(ref.kernel_id, {})
+            kernel_map[ref.name] = ref
+            key = (ref.kernel_id, ref.name)
+            self._publisher_index.setdefault(key, set()).add(node_id)
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------

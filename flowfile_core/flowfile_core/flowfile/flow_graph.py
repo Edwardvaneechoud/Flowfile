@@ -2497,7 +2497,9 @@ class FlowGraph:
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
-            # Clear artifact tracking for a fresh run
+            # Clear artifact tracking for a fresh run.
+            # Snapshot first so we can restore state for cached (skipped) nodes.
+            _prev_artifact_states = self.artifact_context.snapshot_node_states()
             self.artifact_context.clear_all()
             for kid in self._get_required_kernel_ids():
                 self.artifact_context.clear_kernel(kid)
@@ -2564,6 +2566,13 @@ class FlowGraph:
                     if not node_result.success:
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
+
+            # Restore artifact state for nodes that were cached (skipped).
+            # Their _func didn't re-execute, so record_published was never
+            # called — replay their state from the pre-clear snapshot.
+            for nid, prev_state in _prev_artifact_states.items():
+                if nid not in self.artifact_context._node_states and prev_state.published:
+                    self.artifact_context.restore_node_state(nid, prev_state)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")

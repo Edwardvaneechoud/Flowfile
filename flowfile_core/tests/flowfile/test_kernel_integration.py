@@ -1000,3 +1000,148 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+    def test_multi_input_python_script(self, kernel_manager: tuple[KernelManager, str]):
+        """python_script node receives data from multiple input nodes and unions them."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: first input dataset
+            data_a = [{"id": 1, "value": "alpha"}, {"id": 2, "value": "beta"}]
+            node_promise_1 = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise_1)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data_a),
+                )
+            )
+
+            # Node 2: second input dataset (same schema, different rows)
+            data_b = [{"id": 3, "value": "gamma"}, {"id": 4, "value": "delta"}]
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="manual_input")
+            graph.add_node_promise(node_promise_2)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=2,
+                    raw_data_format=input_schema.RawData.from_pylist(data_b),
+                )
+            )
+
+            # Node 3: python_script that reads all inputs (union) and outputs the result
+            node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            graph.add_node_promise(node_promise_3)
+
+            code = """
+import polars as pl
+df = flowfile.read_input().collect()
+# Should contain all 4 rows from both inputs
+assert len(df) == 4, f"Expected 4 rows, got {len(df)}"
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[1, 2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Connect both inputs to node 3
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify the output contains all rows from both inputs
+            result = graph.get_node(3).get_resulting_data()
+            assert result is not None
+            df = result.data_frame
+            if hasattr(df, "collect"):
+                df = df.collect()
+            assert len(df) == 4
+            assert set(df.columns) >= {"id", "value"}
+            ids = sorted(df["id"].to_list())
+            assert ids == [1, 2, 3, 4]
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_multi_input_read_inputs_named(self, kernel_manager: tuple[KernelManager, str]):
+        """python_script node uses read_inputs() to access multiple named inputs individually."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: users dataset
+            users = [{"user_id": 1, "name": "Alice"}, {"user_id": 2, "name": "Bob"}]
+            node_promise_1 = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise_1)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(users),
+                )
+            )
+
+            # Node 2: scores dataset
+            scores = [{"user_id": 1, "score": 95}, {"user_id": 2, "score": 87}]
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="manual_input")
+            graph.add_node_promise(node_promise_2)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=2,
+                    raw_data_format=input_schema.RawData.from_pylist(scores),
+                )
+            )
+
+            # Node 3: python_script that reads first input and passes it through
+            # Since all inputs go under "main", read_first gets just the first
+            node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            graph.add_node_promise(node_promise_3)
+
+            code = """
+import polars as pl
+df = flowfile.read_first().collect()
+# read_first should return only the first input (2 rows, not 4)
+assert len(df) == 2, f"Expected 2 rows from read_first, got {len(df)}"
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[1, 2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            result = graph.get_node(3).get_resulting_data()
+            assert result is not None
+            df = result.data_frame
+            if hasattr(df, "collect"):
+                df = df.collect()
+            # read_first returns only the first input's data
+            assert len(df) == 2
+
+        finally:
+            _kernel_mod._manager = _prev
