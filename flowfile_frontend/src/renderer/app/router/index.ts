@@ -62,6 +62,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/SecretsView/SecretsView.vue"),
       },
       {
+        name: "kernelManager",
+        path: "kernelManager",
+        component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
+      },
+      {
         name: "nodeDesigner",
         path: "nodeDesigner",
         component: () => import("../pages/NodeDesigner.vue"),
