@@ -179,7 +179,9 @@ const handleDelete = async () => {
 
 <style scoped>
 .kernel-manager-container {
-  max-width: 1000px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--spacing-5);
 }
 
 .kernel-grid {
