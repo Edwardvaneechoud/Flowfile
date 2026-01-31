@@ -41,6 +41,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseWriter,
     ExternalDfFetcher,
 )
+from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
@@ -356,6 +357,7 @@ class FlowGraph:
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
+        self.artifact_context = ArtifactContext()
 
         # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
@@ -1134,6 +1136,14 @@ class FlowGraph:
             node_id = node_python_script.node_id
             flow_id = self.flow_id
 
+            # Compute available artifacts before execution
+            upstream_ids = self._get_upstream_node_ids(node_id)
+            self.artifact_context.compute_available(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                upstream_node_ids=upstream_ids,
+            )
+
             shared_base = manager.shared_volume_path
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
@@ -1158,6 +1168,14 @@ class FlowGraph:
 
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
+
+            # Record published artifacts after successful execution
+            if result.artifacts_published:
+                self.artifact_context.record_published(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifacts=[{"name": n} for n in result.artifacts_published],
+                )
 
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
@@ -2351,6 +2369,47 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
+    # ------------------------------------------------------------------
+    # Artifact helpers
+    # ------------------------------------------------------------------
+
+    def _get_upstream_node_ids(self, node_id: int) -> list[int]:
+        """Get all upstream node IDs (direct and transitive) for *node_id*.
+
+        Traverses the ``all_inputs`` links recursively and returns a
+        deduplicated list in breadth-first order.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return []
+
+        visited: set[int] = set()
+        result: list[int] = []
+        queue = list(node.all_inputs)
+        while queue:
+            current = queue.pop(0)
+            cid = current.node_id
+            if cid in visited:
+                continue
+            visited.add(cid)
+            result.append(cid)
+            queue.extend(current.all_inputs)
+        return result
+
+    def _get_required_kernel_ids(self) -> set[str]:
+        """Return the set of kernel IDs used by ``python_script`` nodes."""
+        kernel_ids: set[str] = set()
+        for node in self.nodes:
+            if node.node_type == "python_script" and node.setting_input is not None:
+                kid = getattr(
+                    getattr(node.setting_input, "python_script_input", None),
+                    "kernel_id",
+                    None,
+                )
+                if kid:
+                    kernel_ids.add(kid)
+        return kernel_ids
+
     def _execute_single_node(
         self,
         node: FlowNode,
@@ -2425,6 +2484,17 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
+
+            # Clear artifact tracking for a fresh run
+            self.artifact_context.clear_all()
+            for kid in self._get_required_kernel_ids():
+                self.artifact_context.clear_kernel(kid)
+                try:
+                    from flowfile_core.kernel import get_kernel_manager
+                    manager = get_kernel_manager()
+                    manager.clear_artifacts_sync(kid)
+                except Exception:
+                    logger.debug("Could not clear kernel artifacts for '%s'", kid)
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )

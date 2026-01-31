@@ -214,6 +214,17 @@ class KernelManager:
             response = await client.post(url)
             response.raise_for_status()
 
+    def clear_artifacts_sync(self, kernel_id: str) -> None:
+        """Synchronous wrapper around clear_artifacts() for use from non-async code."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/clear"
+        with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+            response = client.post(url)
+            response.raise_for_status()
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
