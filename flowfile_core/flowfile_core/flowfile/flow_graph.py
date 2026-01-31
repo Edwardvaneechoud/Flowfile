@@ -60,6 +60,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
@@ -362,6 +363,9 @@ class FlowGraph:
         from flowfile_core.schemas.history_schema import HistoryConfig
         history_config = HistoryConfig(enabled=flow_settings.track_history)
         self._history_manager = HistoryManager(config=history_config)
+
+        # Initialize artifact tracking for kernel-based nodes
+        self.artifact_context = ArtifactContext()
 
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
@@ -813,6 +817,54 @@ class FlowGraph:
         cols = set(columns)
         self._output_cols = [c for c in self._output_cols if c not in cols]
 
+    def _get_upstream_node_ids(self, node_id: int) -> list[int]:
+        """Get all upstream node IDs (direct and transitive).
+
+        Traverses the graph backwards from the given node to collect all
+        ancestor node IDs.
+
+        Args:
+            node_id: The node to find upstream nodes for.
+
+        Returns:
+            A list of all upstream node IDs.
+        """
+        upstream: set[int] = set()
+        to_visit = [node_id]
+        visited: set[int] = set()
+
+        while to_visit:
+            current = to_visit.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+
+            node = self.get_node(current)
+            if node:
+                for input_node in node.all_inputs:
+                    dep_id = input_node.node_id
+                    if dep_id != node_id:
+                        upstream.add(dep_id)
+                        to_visit.append(dep_id)
+
+        return list(upstream)
+
+    def _get_required_kernel_ids(self) -> set[str]:
+        """Get set of kernel IDs used by python_script nodes in this graph.
+
+        Returns:
+            A set of kernel ID strings.
+        """
+        kernel_ids: set[str] = set()
+        for node in self.nodes:
+            if node.node_type == "python_script":
+                setting = node.setting_input
+                if hasattr(setting, "python_script_input"):
+                    kernel_id = setting.python_script_input.kernel_id
+                    if kernel_id:
+                        kernel_ids.add(kernel_id)
+        return kernel_ids
+
     def get_node(self, node_id: int | str = None) -> FlowNode | None:
         """Retrieves a node from the graph by its ID.
 
@@ -1134,6 +1186,18 @@ class FlowGraph:
             node_id = node_python_script.node_id
             flow_id = self.flow_id
 
+            # Compute available artifacts for this node
+            upstream_ids = self._get_upstream_node_ids(node_id)
+            available_artifacts = self.artifact_context.compute_available(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                upstream_node_ids=upstream_ids,
+            )
+            if available_artifacts:
+                logger.debug(
+                    f"Node {node_id} has access to artifacts: {list(available_artifacts.keys())}"
+                )
+
             shared_base = manager.shared_volume_path
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
@@ -1158,6 +1222,17 @@ class FlowGraph:
 
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
+
+            # Record published artifacts
+            if result.artifacts_published:
+                self.artifact_context.record_published(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifacts=[{"name": name} for name in result.artifacts_published],
+                )
+                logger.debug(
+                    f"Node {node_id} published artifacts: {result.artifacts_published}"
+                )
 
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
@@ -2425,6 +2500,7 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
+            self.artifact_context.clear_all()
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )

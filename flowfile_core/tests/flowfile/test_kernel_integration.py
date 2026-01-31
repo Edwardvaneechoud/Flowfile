@@ -8,6 +8,7 @@ starts a container, and tears it down after all tests in this module finish.
 
 import asyncio
 import os
+import textwrap
 from pathlib import Path
 from typing import Literal
 
@@ -429,3 +430,206 @@ flowfile.publish_output(df)
         run_info = graph.run_graph()
         # Should fail because no kernel is selected
         assert not run_info.success
+
+
+# ---------------------------------------------------------------------------
+# Tests — ArtifactContext integration with FlowGraph
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextIntegration:
+    """Tests that verify ArtifactContext tracks artifacts correctly during flow execution."""
+
+    def test_artifact_context_tracks_published(self, kernel_manager: tuple[KernelManager, str]):
+        """ArtifactContext records what nodes publish."""
+        manager, kernel_id = kernel_manager
+
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: Manual input
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist([{"x": 1}]),
+                )
+            )
+
+            # Node 2: Publishes an artifact
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            )
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        kernel_id=kernel_id,
+                        code=textwrap.dedent("""\
+                            flowfile.publish_artifact("my_model", {"trained": True})
+                            df = flowfile.read_input()
+                            flowfile.publish_output(df)
+                        """),
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Run
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify artifact context
+            published = graph.artifact_context.get_published_by_node(2)
+            assert len(published) == 1
+            assert published[0].name == "my_model"
+            assert published[0].source_node_id == 2
+            assert published[0].kernel_id == kernel_id
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_artifact_context_computes_availability(self, kernel_manager: tuple[KernelManager, str]):
+        """Downstream nodes have correct available artifacts."""
+        manager, kernel_id = kernel_manager
+
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: Input
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist([{"x": 1}]),
+                )
+            )
+
+            # Node 2: Publishes
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            )
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        kernel_id=kernel_id,
+                        code=textwrap.dedent("""\
+                            flowfile.publish_artifact("encoder", {"classes": ["a", "b"]})
+                            flowfile.publish_output(flowfile.read_input())
+                        """),
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Node 3: Reads artifact
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            )
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=3,
+                    depending_on_id=2,
+                    python_script_input=input_schema.PythonScriptInput(
+                        kernel_id=kernel_id,
+                        code=textwrap.dedent("""\
+                            encoder = flowfile.read_artifact("encoder")
+                            assert encoder["classes"] == ["a", "b"]
+                            flowfile.publish_output(flowfile.read_input())
+                        """),
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            # Run
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify availability was computed
+            available = graph.artifact_context.get_available_for_node(3)
+            assert "encoder" in available
+            assert available["encoder"].source_node_id == 2
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_artifact_context_cleared_on_rerun(self, kernel_manager: tuple[KernelManager, str]):
+        """ArtifactContext is cleared at the start of each run."""
+        manager, kernel_id = kernel_manager
+
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: Manual input
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist([{"x": 1}]),
+                )
+            )
+
+            # Node 2: python_script passthrough
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            )
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        kernel_id=kernel_id,
+                        code=textwrap.dedent("""\
+                            flowfile.publish_artifact("run_artifact", {"v": 1})
+                            flowfile.publish_output(flowfile.read_input())
+                        """),
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # First run
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+            assert len(graph.artifact_context.get_published_by_node(2)) == 1
+
+            # Second run — context should be cleared and rebuilt
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+            # Should still have exactly 1, not 2 (accumulated)
+            assert len(graph.artifact_context.get_published_by_node(2)) == 1
+
+        finally:
+            _kernel_mod._manager = _prev
