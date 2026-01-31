@@ -163,7 +163,7 @@ flowfile.publish_output(df)
                 ExecuteRequest(
                     node_id=4,
                     code=code,
-                    input_paths={"main": "/shared/test_rw/inputs/main.parquet"},
+                    input_paths={"main": ["/shared/test_rw/inputs/main.parquet"]},
                     output_dir="/shared/test_rw/outputs",
                 ),
             )
@@ -209,8 +209,8 @@ flowfile.publish_output(merged)
                     node_id=5,
                     code=code,
                     input_paths={
-                        "left": "/shared/test_multi/inputs/left.parquet",
-                        "right": "/shared/test_multi/inputs/right.parquet",
+                        "left": ["/shared/test_multi/inputs/left.parquet"],
+                        "right": ["/shared/test_multi/inputs/right.parquet"],
                     },
                     output_dir="/shared/test_multi/outputs",
                 ),

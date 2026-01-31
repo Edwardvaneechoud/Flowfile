@@ -17,7 +17,7 @@ artifact_store = ArtifactStore()
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    input_paths: dict[str, str] = {}
+    input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
 
 
