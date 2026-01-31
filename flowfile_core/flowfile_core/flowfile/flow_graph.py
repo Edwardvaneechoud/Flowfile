@@ -1177,6 +1177,14 @@ class FlowGraph:
                     artifacts=[{"name": n} for n in result.artifacts_published],
                 )
 
+            # Record deleted artifacts after successful execution
+            if result.artifacts_deleted:
+                self.artifact_context.record_deleted(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifact_names=result.artifacts_deleted,
+                )
+
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
             if os.path.exists(output_path):

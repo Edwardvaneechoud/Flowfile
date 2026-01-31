@@ -166,3 +166,24 @@ class TestArtifacts:
     def test_read_missing_artifact_raises(self, ctx: dict):
         with pytest.raises(KeyError, match="not found"):
             flowfile_client.read_artifact("missing")
+
+    def test_publish_duplicate_artifact_raises(self, ctx: dict):
+        flowfile_client.publish_artifact("model", {"v": 1})
+        with pytest.raises(ValueError, match="already exists"):
+            flowfile_client.publish_artifact("model", {"v": 2})
+
+    def test_delete_artifact(self, ctx: dict):
+        flowfile_client.publish_artifact("temp", 42)
+        flowfile_client.delete_artifact("temp")
+        with pytest.raises(KeyError, match="not found"):
+            flowfile_client.read_artifact("temp")
+
+    def test_delete_missing_artifact_raises(self, ctx: dict):
+        with pytest.raises(KeyError, match="not found"):
+            flowfile_client.delete_artifact("nonexistent")
+
+    def test_delete_then_republish(self, ctx: dict):
+        flowfile_client.publish_artifact("model", "v1")
+        flowfile_client.delete_artifact("model")
+        flowfile_client.publish_artifact("model", "v2")
+        assert flowfile_client.read_artifact("model") == "v2"

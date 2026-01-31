@@ -46,6 +46,7 @@ class ExecuteResult(BaseModel):
     success: bool
     output_paths: list[str] = Field(default_factory=list)
     artifacts_published: list[str] = Field(default_factory=list)
+    artifacts_deleted: list[str] = Field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     error: str | None = None

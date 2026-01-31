@@ -183,6 +183,55 @@ class TestArtifactContextAvailability:
 
 
 # ---------------------------------------------------------------------------
+# ArtifactContext — Deletion tracking
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextDeletion:
+    def test_record_deleted_removes_from_kernel_index(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        assert ctx.get_kernel_artifacts("k1") == {}
+
+    def test_record_deleted_removes_from_published_lists(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model", "scaler"])
+        ctx.record_deleted(2, "k1", ["model"])
+        published = ctx.get_published_by_node(1)
+        names = [r.name for r in published]
+        assert "model" not in names
+        assert "scaler" in names
+
+    def test_record_deleted_tracks_on_node_state(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        state = ctx._node_states[2]
+        assert "model" in state.deleted
+
+    def test_deleted_artifact_not_available_downstream(self):
+        """If node 2 deletes an artifact published by node 1,
+        node 3 should not see it as available."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        avail = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
+        assert "model" not in avail
+
+    def test_delete_and_republish_flow(self):
+        """Node 1 publishes, node 2 deletes, node 3 re-publishes,
+        node 4 should see the new version."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        ctx.record_published(3, "k1", ["model"])
+        avail = ctx.compute_available(node_id=4, kernel_id="k1", upstream_node_ids=[1, 2, 3])
+        assert "model" in avail
+        assert avail["model"].source_node_id == 3
+
+
+# ---------------------------------------------------------------------------
 # ArtifactContext — Clearing
 # ---------------------------------------------------------------------------
 

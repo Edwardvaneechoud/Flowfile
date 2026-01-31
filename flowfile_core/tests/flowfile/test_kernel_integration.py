@@ -716,3 +716,288 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+    def test_train_model_and_apply(self, kernel_manager: tuple[KernelManager, str]):
+        """Train a numpy linear-regression model in node 2, apply it in node 3."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data with features and target
+            data = [
+                {"x1": 1.0, "x2": 2.0, "y": 5.0},
+                {"x1": 2.0, "x2": 3.0, "y": 8.0},
+                {"x1": 3.0, "x2": 4.0, "y": 11.0},
+                {"x1": 4.0, "x2": 5.0, "y": 14.0},
+            ]
+            node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: train model (least-squares fit) and publish as artifact
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            graph.add_node_promise(node_promise_2)
+            train_code = """
+import numpy as np
+import polars as pl
+
+df = flowfile.read_input().collect()
+X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
+y_vals = df["y"].to_numpy()
+coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]
+flowfile.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=train_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Node 3: load model and apply predictions
+            node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            graph.add_node_promise(node_promise_3)
+            apply_code = """
+import numpy as np
+import polars as pl
+
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = np.array(model["coefficients"])
+X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
+predictions = X @ coeffs
+result = df.with_columns(pl.Series("predicted_y", predictions))
+flowfile.publish_output(result)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_id=2,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=apply_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify model was published and tracked
+            published = graph.artifact_context.get_published_by_node(2)
+            assert any(r.name == "linear_model" for r in published)
+
+            # Verify node 3 had the model available
+            available = graph.artifact_context.get_available_for_node(3)
+            assert "linear_model" in available
+
+            # Verify predictions were produced
+            node_3 = graph.get_node(3)
+            result_df = node_3.get_resulting_data().data_frame.collect()
+            assert "predicted_y" in result_df.columns
+            # The predictions should be close to the actual y values
+            preds = result_df["predicted_y"].to_list()
+            actuals = result_df["y"].to_list()
+            for pred, actual in zip(preds, actuals):
+                assert abs(pred - actual) < 0.01, f"Prediction {pred} too far from {actual}"
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_publish_delete_republish_access(self, kernel_manager: tuple[KernelManager, str]):
+        """
+        Flow: node_a publishes model -> node_b uses & deletes model ->
+              node_c publishes new model -> node_d accesses new model.
+        """
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data
+            data = [{"val": 1}]
+            node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2 (node_a): publish artifact_model v1
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            graph.add_node_promise(node_promise_2)
+            code_a = """
+df = flowfile.read_input()
+flowfile.publish_artifact("artifact_model", {"version": 1, "weights": [0.5]})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_a, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Node 3 (node_b): read artifact_model, use it, then delete it
+            node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            graph.add_node_promise(node_promise_3)
+            code_b = """
+df = flowfile.read_input()
+model = flowfile.read_artifact("artifact_model")
+assert model["version"] == 1, f"Expected v1, got {model}"
+flowfile.delete_artifact("artifact_model")
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_id=2,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_b, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            # Node 4 (node_c): publish new artifact_model v2
+            node_promise_4 = input_schema.NodePromise(flow_id=1, node_id=4, node_type="python_script")
+            graph.add_node_promise(node_promise_4)
+            code_c = """
+df = flowfile.read_input()
+flowfile.publish_artifact("artifact_model", {"version": 2, "weights": [0.9]})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=4, depending_on_id=3,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_c, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+            # Node 5 (node_d): read artifact_model — should get v2
+            node_promise_5 = input_schema.NodePromise(flow_id=1, node_id=5, node_type="python_script")
+            graph.add_node_promise(node_promise_5)
+            code_d = """
+df = flowfile.read_input()
+model = flowfile.read_artifact("artifact_model")
+assert model["version"] == 2, f"Expected v2, got {model}"
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=5, depending_on_id=4,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_d, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify artifact context tracks the flow correctly
+            # Node 4 re-published artifact_model
+            published_4 = graph.artifact_context.get_published_by_node(4)
+            assert any(r.name == "artifact_model" for r in published_4)
+
+            # Node 5 should see artifact_model as available (from node 4)
+            available_5 = graph.artifact_context.get_available_for_node(5)
+            assert "artifact_model" in available_5
+            assert available_5["artifact_model"].source_node_id == 4
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_duplicate_publish_fails(self, kernel_manager: tuple[KernelManager, str]):
+        """Publishing an artifact with the same name without deleting first should fail."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            data = [{"val": 1}]
+            node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: publishes artifact
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            graph.add_node_promise(node_promise_2)
+            code_publish = """
+df = flowfile.read_input()
+flowfile.publish_artifact("model", "v1")
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_id=1,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_publish, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Node 3: tries to publish same name without deleting — should fail
+            node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
+            graph.add_node_promise(node_promise_3)
+            code_dup = """
+df = flowfile.read_input()
+flowfile.publish_artifact("model", "v2")
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_id=2,
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_dup, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+            run_info = graph.run_graph()
+
+            # Node 3 should have failed
+            node_3_result = next(
+                r for r in run_info.node_step_result if r.node_id == 3
+            )
+            assert node_3_result.success is False
+            assert "already exists" in node_3_result.error
+
+        finally:
+            _kernel_mod._manager = _prev

@@ -66,6 +66,11 @@ def read_artifact(name: str) -> Any:
     return store.get(name)
 
 
+def delete_artifact(name: str) -> None:
+    store: ArtifactStore = _get_context_value("artifact_store")
+    store.delete(name)
+
+
 def list_artifacts() -> dict:
     store: ArtifactStore = _get_context_value("artifact_store")
     return store.list_all()

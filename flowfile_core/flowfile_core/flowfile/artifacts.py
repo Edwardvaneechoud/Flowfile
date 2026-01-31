@@ -48,12 +48,14 @@ class NodeArtifactState:
     published: list[ArtifactRef] = field(default_factory=list)
     available: dict[str, ArtifactRef] = field(default_factory=dict)
     consumed: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "published": [r.to_dict() for r in self.published],
             "available": {k: v.to_dict() for k, v in self.available.items()},
             "consumed": list(self.consumed),
+            "deleted": list(self.deleted),
         }
 
 
@@ -119,6 +121,39 @@ class ArtifactContext:
         """Record that *node_id* consumed (read) the given artifact names."""
         state = self._get_or_create_state(node_id)
         state.consumed.extend(artifact_names)
+
+    def record_deleted(
+        self,
+        node_id: int,
+        kernel_id: str,
+        artifact_names: list[str],
+    ) -> None:
+        """Record that *node_id* deleted the given artifacts from *kernel_id*.
+
+        Removes the artifacts from the kernel index and from published
+        lists of any node that originally published them.
+        """
+        state = self._get_or_create_state(node_id)
+        state.deleted.extend(artifact_names)
+
+        kernel_map = self._kernel_artifacts.get(kernel_id, {})
+        for name in artifact_names:
+            kernel_map.pop(name, None)
+
+        # Remove from published lists so downstream nodes won't see them
+        for ns in self._node_states.values():
+            ns.published = [
+                r for r in ns.published
+                if not (r.kernel_id == kernel_id and r.name in artifact_names)
+            ]
+
+        logger.debug(
+            "Node %s deleted %d artifact(s) on kernel '%s': %s",
+            node_id,
+            len(artifact_names),
+            kernel_id,
+            artifact_names,
+        )
 
     # ------------------------------------------------------------------
     # Availability computation
