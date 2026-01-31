@@ -13,6 +13,13 @@ class ArtifactStore:
 
     def publish(self, name: str, obj: Any, node_id: int) -> None:
         with self._lock:
+            if name in self._artifacts:
+                raise ValueError(
+                    f"Artifact '{name}' already exists (published by node "
+                    f"{self._artifacts[name]['node_id']}). "
+                    f"Delete it first with flowfile.delete_artifact('{name}') "
+                    f"before publishing a new one with the same name."
+                )
             self._artifacts[name] = {
                 "object": obj,
                 "name": name,
@@ -22,6 +29,12 @@ class ArtifactStore:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "size_bytes": sys.getsizeof(obj),
             }
+
+    def delete(self, name: str) -> None:
+        with self._lock:
+            if name not in self._artifacts:
+                raise KeyError(f"Artifact '{name}' not found")
+            del self._artifacts[name]
 
     def get(self, name: str) -> Any:
         with self._lock:

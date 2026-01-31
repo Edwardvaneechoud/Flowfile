@@ -12,8 +12,14 @@ class TestPublishAndGet:
         store.publish("my_obj", {"a": 1}, node_id=1)
         assert store.get("my_obj") == {"a": 1}
 
-    def test_publish_overwrites(self, store: ArtifactStore):
+    def test_publish_duplicate_raises(self, store: ArtifactStore):
         store.publish("key", "first", node_id=1)
+        with pytest.raises(ValueError, match="already exists"):
+            store.publish("key", "second", node_id=2)
+
+    def test_publish_after_delete_succeeds(self, store: ArtifactStore):
+        store.publish("key", "first", node_id=1)
+        store.delete("key")
         store.publish("key", "second", node_id=2)
         assert store.get("key") == "second"
 
@@ -74,6 +80,30 @@ class TestClear:
         store.clear()
         store.clear()
         assert store.list_all() == {}
+
+
+class TestDelete:
+    def test_delete_removes_artifact(self, store: ArtifactStore):
+        store.publish("model", {"w": [1, 2]}, node_id=1)
+        store.delete("model")
+        assert "model" not in store.list_all()
+
+    def test_delete_missing_raises(self, store: ArtifactStore):
+        with pytest.raises(KeyError, match="not found"):
+            store.delete("nonexistent")
+
+    def test_delete_then_get_raises(self, store: ArtifactStore):
+        store.publish("tmp", 42, node_id=1)
+        store.delete("tmp")
+        with pytest.raises(KeyError, match="not found"):
+            store.get("tmp")
+
+    def test_delete_only_target(self, store: ArtifactStore):
+        store.publish("keep", 1, node_id=1)
+        store.publish("remove", 2, node_id=1)
+        store.delete("remove")
+        assert store.get("keep") == 1
+        assert set(store.list_all().keys()) == {"keep"}
 
 
 class TestThreadSafety:
