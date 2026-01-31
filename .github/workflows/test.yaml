@@ -338,6 +338,11 @@ jobs:
         run: |
           docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
 
+      - name: Run kernel_runtime unit tests
+        run: |
+          pip install -e "kernel_runtime/[test]"
+          python -m pytest kernel_runtime/tests -v --disable-warnings
+
       - name: Run kernel integration tests
         run: |
           poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings
