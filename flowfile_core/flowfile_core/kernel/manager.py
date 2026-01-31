@@ -258,7 +258,12 @@ class KernelManager:
                     response = await client.get(url)
                     if response.status_code == 200:
                         return
-            except (httpx.ConnectError, httpx.ReadError, httpx.ConnectTimeout):
+            except httpx.HTTPError:
+                # Catches all transient errors: ConnectError, ReadError,
+                # ConnectTimeout, RemoteProtocolError, etc.
+                pass
+            except Exception:
+                # Safety net for unexpected errors during startup polling
                 pass
             await asyncio.sleep(_HEALTH_POLL_INTERVAL)
 
