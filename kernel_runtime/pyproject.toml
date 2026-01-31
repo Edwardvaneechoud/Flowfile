@@ -11,6 +11,12 @@ dependencies = [
     "httpx>=0.24.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "httpx>=0.24.0",
+]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
