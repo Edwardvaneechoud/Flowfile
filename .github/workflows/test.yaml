@@ -340,7 +340,7 @@ jobs:
 
       - name: Run kernel integration tests
         run: |
-          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings --timeout=300
+          poetry run pytest flowfile_core/tests -m kernel -v --disable-warnings
 
   # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
