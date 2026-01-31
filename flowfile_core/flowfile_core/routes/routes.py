@@ -136,12 +136,18 @@ async def get_directory_contents(directory: str, file_types: list[str] = None,
     Returns:
         A list of `FileInfo` objects representing the directory's contents.
     """
-    directory_explorer = SecureFileExplorer(directory, storage.user_data_directory)
+    from flowfile_core.configs.settings import is_electron_mode
+    # In Electron mode, allow browsing the entire filesystem (no sandbox).
+    # In other modes, sandbox to the user data directory.
+    sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
+        directory_explorer = SecureFileExplorer(directory, sandbox_root)
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
+    except PermissionError:
+        raise HTTPException(403, 'Access denied: path is outside the allowed directory')
     except Exception as e:
         logger.error(e)
-        HTTPException(404, 'Could not access the directory')
+        raise HTTPException(404, 'Could not access the directory')
 
 
 @router.post('/files/create_directory', response_model=output_model.OutputDir, tags=['file manager'])
