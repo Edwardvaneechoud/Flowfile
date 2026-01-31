@@ -10,7 +10,8 @@ export class KernelApi {
       return response.data;
     } catch (error) {
       console.error("API Error: Failed to load kernels:", error);
-      throw error;
+      const errorMsg = (error as any).response?.data?.detail || "Failed to load kernels";
+      throw new Error(errorMsg);
     }
   }
 

@@ -5,6 +5,12 @@
       <p class="page-description">Manage Python execution environments for your flows</p>
     </div>
 
+    <!-- Docker / service error banner -->
+    <div v-if="errorMessage" class="error-banner mb-3">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <span>{{ errorMessage }}</span>
+    </div>
+
     <!-- Create Kernel Form -->
     <CreateKernelForm @create="handleCreate" />
 
@@ -21,7 +27,7 @@
         </div>
 
         <!-- Empty state -->
-        <div v-else-if="kernels.length === 0" class="empty-state">
+        <div v-else-if="kernels.length === 0 && !errorMessage" class="empty-state">
           <i class="fa-solid fa-server"></i>
           <p>No kernels configured yet</p>
           <p>Create a kernel above to start running Python code in your flows</p>
@@ -83,6 +89,7 @@ import KernelCard from "./KernelCard.vue";
 const {
   kernels,
   isLoading,
+  errorMessage,
   createKernel,
   startKernel,
   stopKernel,
@@ -158,5 +165,18 @@ const handleDelete = async () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--spacing-3);
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 </style>

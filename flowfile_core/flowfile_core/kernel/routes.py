@@ -1,12 +1,23 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult, KernelConfig, KernelInfo
+
+logger = logging.getLogger(__name__)
 
 
 def _get_manager():
     from flowfile_core.kernel import get_kernel_manager
 
-    return get_kernel_manager()
+    try:
+        return get_kernel_manager()
+    except Exception as exc:
+        logger.error("Kernel manager unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Docker is not available. Please ensure Docker is installed and running.",
+        )
 
 
 router = APIRouter(prefix="/kernels")

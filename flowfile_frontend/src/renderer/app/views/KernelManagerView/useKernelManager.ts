@@ -8,14 +8,17 @@ const POLL_INTERVAL_MS = 5000;
 export function useKernelManager() {
   const kernels: Ref<KernelInfo[]> = ref([]);
   const isLoading = ref(true);
+  const errorMessage: Ref<string | null> = ref(null);
   const actionInProgress: Ref<Record<string, boolean>> = ref({});
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const loadKernels = async () => {
     try {
       kernels.value = await KernelApi.getAll();
-    } catch (error) {
+      errorMessage.value = null;
+    } catch (error: any) {
       console.error("Failed to load kernels:", error);
+      errorMessage.value = error.message || "Failed to load kernels";
       throw error;
     } finally {
       isLoading.value = false;
@@ -92,6 +95,7 @@ export function useKernelManager() {
   return {
     kernels,
     isLoading,
+    errorMessage,
     actionInProgress,
     loadKernels,
     createKernel,
