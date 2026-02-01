@@ -283,6 +283,90 @@ class ArtifactContext:
             self._publisher_index.setdefault(key, set()).add(node_id)
 
     # ------------------------------------------------------------------
+    # Visualisation helpers
+    # ------------------------------------------------------------------
+
+    def get_artifact_edges(self) -> list[dict[str, Any]]:
+        """Build a list of artifact edges for canvas visualisation.
+
+        Each edge connects a publisher node to every consumer node that
+        consumed one of its artifacts (on the same kernel).
+
+        Returns a list of dicts with keys:
+            source, target, artifact_name, artifact_type, kernel_id
+        """
+        edges: list[dict[str, Any]] = []
+        seen: set[tuple[int, int, str]] = set()
+
+        for nid, state in self._node_states.items():
+            if not state.consumed:
+                continue
+            for art_name in state.consumed:
+                # Look up the publisher via the available map first
+                ref = state.available.get(art_name)
+                if ref is None:
+                    # Fallback: scan kernel artifacts
+                    for km in self._kernel_artifacts.values():
+                        if art_name in km:
+                            ref = km[art_name]
+                            break
+                if ref is None:
+                    continue
+                key = (ref.source_node_id, nid, art_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({
+                    "source": ref.source_node_id,
+                    "target": nid,
+                    "artifact_name": art_name,
+                    "artifact_type": ref.type_name,
+                    "kernel_id": ref.kernel_id,
+                })
+
+        return edges
+
+    def get_node_summaries(self) -> dict[str, dict[str, Any]]:
+        """Return per-node artifact summary for badge display.
+
+        Returns a dict keyed by str(node_id) with:
+            published_count, consumed_count, published, consumed, kernel_id
+        """
+        summaries: dict[str, dict[str, Any]] = {}
+        for nid, state in self._node_states.items():
+            if not state.published and not state.consumed:
+                continue
+            kernel_id = ""
+            if state.published:
+                kernel_id = state.published[0].kernel_id
+            summaries[str(nid)] = {
+                "published_count": len(state.published),
+                "consumed_count": len(state.consumed),
+                "published": [
+                    {
+                        "name": r.name,
+                        "type_name": r.type_name,
+                        "module": r.module,
+                    }
+                    for r in state.published
+                ],
+                "consumed": [
+                    {
+                        "name": name,
+                        "source_node_id": state.available[name].source_node_id
+                        if name in state.available
+                        else None,
+                        "type_name": state.available[name].type_name
+                        if name in state.available
+                        else "",
+                    }
+                    for name in state.consumed
+                ],
+                "kernel_id": kernel_id,
+            }
+        return summaries
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 

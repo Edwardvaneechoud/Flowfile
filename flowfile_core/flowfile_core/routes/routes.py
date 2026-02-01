@@ -909,6 +909,24 @@ def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
     return data
 
 
+@router.get('/flow/artifacts', tags=['editor'])
+def get_flow_artifacts(flow_id: int):
+    """Returns artifact visualization data for the canvas.
+
+    Includes per-node artifact summaries (for badges/tooltips) and
+    artifact edges (for dashed-line connections between publisher and
+    consumer nodes).
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    ctx = flow.artifact_context
+    return {
+        "nodes": ctx.get_node_summaries(),
+        "edges": ctx.get_artifact_edges(),
+    }
+
+
 @router.get('/analysis_data/graphic_walker_input', tags=['analysis'], response_model=input_schema.NodeExploreData)
 def get_graphic_walker_input(flow_id: int, node_id: int):
     """Gets the data and configuration for the Graphic Walker data exploration tool."""

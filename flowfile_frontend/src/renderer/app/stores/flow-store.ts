@@ -1,7 +1,8 @@
 // Flow Store - Manages flow ID and flow-level state
 import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
-import type { HistoryState } from "../types";
+import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
+import { FlowApi } from "../api";
 
 const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
@@ -15,6 +16,11 @@ const defaultHistoryState: HistoryState = {
   redo_count: 0,
 };
 
+const defaultArtifactData: FlowArtifactData = {
+  nodes: {},
+  edges: [],
+};
+
 export const useFlowStore = defineStore("flow", {
   state: () => {
     const savedFlowId = sessionStorage.getItem(FLOW_ID_STORAGE_KEY);
@@ -25,6 +31,9 @@ export const useFlowStore = defineStore("flow", {
       vueFlowInstance: null as any | VueFlowStore,
       // History state for undo/redo
       historyState: { ...defaultHistoryState } as HistoryState,
+      // Artifact visualization data
+      artifactData: { ...defaultArtifactData } as FlowArtifactData,
+      showArtifactEdges: true,
     };
   },
 
@@ -34,6 +43,8 @@ export const useFlowStore = defineStore("flow", {
     canRedo: (state) => state.historyState.can_redo,
     undoDescription: (state) => state.historyState.undo_description,
     redoDescription: (state) => state.historyState.redo_description,
+    hasArtifacts: (state) =>
+      Object.keys(state.artifactData.nodes).length > 0 || state.artifactData.edges.length > 0,
   },
 
   actions: {
@@ -46,6 +57,7 @@ export const useFlowStore = defineStore("flow", {
       }
       // Reset history state when flow changes
       this.historyState = { ...defaultHistoryState };
+      this.artifactData = { ...defaultArtifactData };
     },
 
     setVueFlowInstance(vueFlowInstance: VueFlowStore) {
@@ -64,6 +76,25 @@ export const useFlowStore = defineStore("flow", {
     // Reset history state
     resetHistoryState() {
       this.historyState = { ...defaultHistoryState };
+    },
+
+    // Artifact actions
+    async fetchArtifacts() {
+      if (this.flowId < 0) return;
+      try {
+        this.artifactData = await FlowApi.getArtifacts(this.flowId);
+      } catch {
+        // Artifacts are optional; don't break the UI
+        this.artifactData = { ...defaultArtifactData };
+      }
+    },
+
+    getNodeArtifactSummary(nodeId: number): NodeArtifactSummary | null {
+      return this.artifactData.nodes[String(nodeId)] ?? null;
+    },
+
+    toggleArtifactEdges() {
+      this.showArtifactEdges = !this.showArtifactEdges;
     },
   },
 });

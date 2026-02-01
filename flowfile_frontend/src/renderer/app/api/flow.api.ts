@@ -11,6 +11,7 @@ import type {
   HistoryState,
   UndoRedoResult,
   OperationResponse,
+  FlowArtifactData,
 } from "../types";
 
 export class FlowApi {
@@ -313,6 +314,21 @@ export class FlowApi {
    */
   static async getHistoryStatus(flowId: number): Promise<HistoryState> {
     const response = await axios.get<HistoryState>("/editor/history_status/", {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  // ============================================================================
+  // Artifact Operations
+  // ============================================================================
+
+  /**
+   * Get artifact visualization data for a flow (badges, edges)
+   */
+  static async getArtifacts(flowId: number): Promise<FlowArtifactData> {
+    const response = await axios.get<FlowArtifactData>("/flow/artifacts", {
       params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });
