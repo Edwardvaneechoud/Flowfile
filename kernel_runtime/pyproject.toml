@@ -9,6 +9,7 @@ dependencies = [
     "polars>=1.0.0",
     "pyarrow>=14.0.0",
     "httpx>=0.24.0",
+    "cloudpickle>=3.0.0",
 ]
 
 [project.optional-dependencies]

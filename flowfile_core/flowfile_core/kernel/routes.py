@@ -2,7 +2,17 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from flowfile_core.kernel.models import DockerStatus, ExecuteRequest, ExecuteResult, KernelConfig, KernelInfo
+from flowfile_core.kernel.models import (
+    CleanupRequest,
+    CleanupResult,
+    DockerStatus,
+    ExecuteRequest,
+    ExecuteResult,
+    KernelConfig,
+    KernelInfo,
+    PersistenceInfo,
+    RecoveryStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +146,76 @@ async def clear_artifacts(kernel_id: str):
         raise HTTPException(status_code=404, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ------------------------------------------------------------------
+# Recovery & persistence endpoints
+# ------------------------------------------------------------------
+
+
+@router.post("/{kernel_id}/recover", response_model=RecoveryStatus)
+async def recover_artifacts(kernel_id: str):
+    """Trigger artifact recovery from persisted storage."""
+    try:
+        result = await _get_manager().recover_artifacts(kernel_id)
+        return RecoveryStatus(
+            mode=result.get("mode", "unknown"),
+            status=result.get("status", "completed"),
+            recovered_artifacts=result.get("recovered_artifacts", []),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{kernel_id}/recovery-status", response_model=RecoveryStatus)
+async def get_recovery_status(kernel_id: str):
+    """Get the current recovery status for a kernel."""
+    try:
+        result = await _get_manager().get_recovery_status(kernel_id)
+        return RecoveryStatus(
+            mode=result.get("mode", "unknown"),
+            status=result.get("status", "unknown"),
+            recovered_artifacts=result.get("recovered_artifacts", []),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/{kernel_id}/cleanup", response_model=CleanupResult)
+async def cleanup_artifacts(kernel_id: str, request: CleanupRequest | None = None):
+    """Clean up old persisted artifacts."""
+    max_age_hours = request.max_age_hours if request else 24
+    try:
+        result = await _get_manager().cleanup_artifacts(kernel_id, max_age_hours)
+        return CleanupResult(
+            removed_artifacts=result.get("removed_artifacts", []),
+            remaining_count=result.get("remaining_count", 0),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{kernel_id}/persistence", response_model=PersistenceInfo)
+async def get_persistence_info(kernel_id: str):
+    """Get persistence statistics for a kernel."""
+    try:
+        result = await _get_manager().get_persistence_info(kernel_id)
+        return PersistenceInfo(**result)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

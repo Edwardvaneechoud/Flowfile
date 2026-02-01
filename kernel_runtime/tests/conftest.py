@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from kernel_runtime.artifact_store import ArtifactStore
 from kernel_runtime.main import app, artifact_store
+from kernel_runtime.persistence import ArtifactPersistence
 
 
 @pytest.fixture()
@@ -38,3 +39,15 @@ def tmp_dir() -> Generator[Path, None, None]:
     """Temporary directory cleaned up after each test."""
     with tempfile.TemporaryDirectory(prefix="kernel_test_") as d:
         yield Path(d)
+
+
+@pytest.fixture()
+def persistence(tmp_dir: Path) -> ArtifactPersistence:
+    """Fresh ArtifactPersistence with a temporary directory."""
+    return ArtifactPersistence(str(tmp_dir), "test-kernel")
+
+
+@pytest.fixture()
+def persistent_store(persistence: ArtifactPersistence) -> ArtifactStore:
+    """ArtifactStore backed by persistence."""
+    return ArtifactStore(persistence=persistence)

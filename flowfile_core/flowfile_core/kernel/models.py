@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,12 @@ class KernelState(str, Enum):
     ERROR = "error"
 
 
+class RecoveryMode(str, Enum):
+    LAZY = "lazy"
+    EAGER = "eager"
+    NONE = "none"
+
+
 class KernelConfig(BaseModel):
     id: str
     name: str
@@ -20,6 +27,8 @@ class KernelConfig(BaseModel):
     memory_gb: float = 4.0
     gpu: bool = False
     health_timeout: int = 120
+    persistence_enabled: bool = True
+    persistence_mode: RecoveryMode = RecoveryMode.LAZY
 
 
 class KernelInfo(BaseModel):
@@ -33,6 +42,8 @@ class KernelInfo(BaseModel):
     cpu_cores: float = 2.0
     gpu: bool = False
     health_timeout: int = 120
+    persistence_enabled: bool = True
+    persistence_mode: RecoveryMode = RecoveryMode.LAZY
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
 
@@ -59,3 +70,28 @@ class ExecuteResult(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+
+
+class RecoveryStatus(BaseModel):
+    mode: str
+    status: str
+    recovered_artifacts: list[str] = Field(default_factory=list)
+
+
+class CleanupRequest(BaseModel):
+    max_age_hours: int = 24
+
+
+class CleanupResult(BaseModel):
+    removed_artifacts: list[str] = Field(default_factory=list)
+    remaining_count: int = 0
+
+
+class PersistenceInfo(BaseModel):
+    enabled: bool
+    kernel_id: str = ""
+    persistence_path: str = ""
+    mode: str = "lazy"
+    artifact_count: int = 0
+    total_disk_bytes: int = 0
+    artifacts: dict[str, Any] = Field(default_factory=dict)

@@ -109,4 +109,4 @@ def delete_artifact(name: str) -> None:
 
 def list_artifacts() -> dict:
     store: ArtifactStore = _get_context_value("artifact_store")
-    return store.list_all()
+    return store.list_available()

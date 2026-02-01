@@ -1,17 +1,51 @@
 import contextlib
 import io
+import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from kernel_runtime import flowfile_client
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.persistence import ArtifactPersistence, RecoveryMode
 
-app = FastAPI(title="FlowFile Kernel Runtime")
-artifact_store = ArtifactStore()
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Persistence configuration from environment
+# ---------------------------------------------------------------------------
+_kernel_id = os.environ.get("KERNEL_ID", "")
+_persistence_enabled = os.environ.get("PERSISTENCE_ENABLED", "true").lower() == "true"
+_persistence_path = os.environ.get("PERSISTENCE_PATH", "/shared/artifacts")
+_recovery_mode_str = os.environ.get("PERSISTENCE_MODE", "lazy")
+
+persistence: ArtifactPersistence | None = None
+if _kernel_id and _persistence_enabled:
+    persistence = ArtifactPersistence(_persistence_path, _kernel_id)
+
+artifact_store = ArtifactStore(persistence=persistence)
+
+# Parse recovery mode
+try:
+    _recovery_mode = RecoveryMode(_recovery_mode_str)
+except ValueError:
+    _recovery_mode = RecoveryMode.LAZY
+
+_recovery_status: dict[str, Any] = {
+    "mode": _recovery_mode.value,
+    "recovered_artifacts": [],
+    "status": "pending",
+}
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
 
 
 class ExecuteRequest(BaseModel):
@@ -30,6 +64,50 @@ class ExecuteResponse(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+
+
+class CleanupRequest(BaseModel):
+    max_age_hours: int = 24
+
+
+# ---------------------------------------------------------------------------
+# Startup: automatic recovery via lifespan
+# ---------------------------------------------------------------------------
+
+
+def _run_recovery() -> None:
+    global _recovery_status
+
+    if persistence is None:
+        _recovery_status["status"] = "disabled"
+        return
+
+    if _recovery_mode == RecoveryMode.EAGER:
+        recovered = artifact_store.recover_all()
+        _recovery_status["recovered_artifacts"] = recovered
+        _recovery_status["status"] = "completed"
+        logger.info("Eager recovery loaded %d artifact(s)", len(recovered))
+    elif _recovery_mode == RecoveryMode.LAZY:
+        _recovery_status["status"] = "ready"
+        logger.info("Lazy recovery mode: artifacts will be loaded on first access")
+    elif _recovery_mode == RecoveryMode.NONE:
+        persistence.clear()
+        _recovery_status["status"] = "cleared"
+        logger.info("Recovery mode NONE: cleared all persisted artifacts")
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _run_recovery()
+    yield
+
+
+app = FastAPI(title="FlowFile Kernel Runtime", lifespan=_lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Existing endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.post("/execute", response_model=ExecuteResponse)
@@ -97,9 +175,91 @@ async def clear_artifacts():
 
 @app.get("/artifacts")
 async def list_artifacts():
-    return artifact_store.list_all()
+    return artifact_store.list_available()
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "artifact_count": len(artifact_store.list_all())}
+    available = artifact_store.list_available()
+    persistence_info = {}
+    if persistence is not None:
+        persistence_info = {
+            "persistence_enabled": True,
+            "persisted_count": sum(
+                1 for v in available.values() if v.get("persisted")
+            ),
+        }
+    else:
+        persistence_info = {"persistence_enabled": False}
+
+    return {
+        "status": "healthy",
+        "artifact_count": len(available),
+        **persistence_info,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Recovery & persistence endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/recover")
+async def recover():
+    """Manually trigger artifact recovery from disk."""
+    if persistence is None:
+        return {"status": "disabled", "recovered_artifacts": []}
+
+    recovered = artifact_store.recover_all()
+    _recovery_status["recovered_artifacts"] = list(
+        set(_recovery_status["recovered_artifacts"]) | set(recovered)
+    )
+    _recovery_status["status"] = "completed"
+    return {"status": "completed", "recovered_artifacts": recovered}
+
+
+@app.get("/recovery-status")
+async def recovery_status():
+    """Get recovery status information."""
+    return _recovery_status
+
+
+@app.post("/cleanup")
+async def cleanup(request: CleanupRequest):
+    """Clean up old persisted artifacts."""
+    if persistence is None:
+        return {"removed_artifacts": [], "remaining_count": 0}
+
+    removed = persistence.cleanup(max_age_hours=request.max_age_hours)
+
+    # Also remove cleaned-up artifacts from memory if they were loaded
+    for name in removed:
+        try:
+            artifact_store.delete(name)
+        except KeyError:
+            pass
+
+    remaining = persistence.list_persisted()
+    return {"removed_artifacts": removed, "remaining_count": len(remaining)}
+
+
+@app.get("/persistence")
+async def persistence_info():
+    """Get persistence statistics."""
+    if persistence is None:
+        return {
+            "enabled": False,
+            "kernel_id": _kernel_id,
+            "persistence_path": _persistence_path,
+            "mode": _recovery_mode.value,
+            "artifact_count": 0,
+            "total_disk_bytes": 0,
+            "artifacts": {},
+        }
+
+    stats = persistence.get_stats()
+    return {
+        "enabled": True,
+        "mode": _recovery_mode.value,
+        **stats,
+    }
