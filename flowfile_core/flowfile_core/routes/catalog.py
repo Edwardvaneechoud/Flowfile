@@ -7,6 +7,8 @@ Provides endpoints for:
 - Favorites and follows
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -78,6 +80,7 @@ def _enrich_flow(
         run_count=run_count,
         last_run_at=last_run.started_at if last_run else None,
         last_run_success=last_run.success if last_run else None,
+        file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
     )
 
 

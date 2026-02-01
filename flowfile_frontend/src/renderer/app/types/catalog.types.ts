@@ -50,6 +50,7 @@ export interface FlowRegistration {
   run_count: number;
   last_run_at: string | null;
   last_run_success: boolean | null;
+  file_exists: boolean;
 }
 
 export interface FlowRegistrationCreate {

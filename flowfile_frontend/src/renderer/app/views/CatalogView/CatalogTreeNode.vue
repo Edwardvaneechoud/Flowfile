@@ -44,11 +44,16 @@
         v-for="flow in node.flows"
         :key="'f-' + flow.id"
         class="tree-flow"
-        :class="{ selected: selectedFlowId === flow.id }"
+        :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
         @click.stop="$emit('selectFlow', flow.id)"
       >
         <i class="fa-solid fa-diagram-project flow-icon"></i>
         <span class="flow-name">{{ flow.name }}</span>
+        <i
+          v-if="!flow.file_exists"
+          class="fa-solid fa-triangle-exclamation missing-icon"
+          title="Flow file not found on disk"
+        ></i>
         <div class="flow-actions" @click.stop>
           <button
             class="action-btn star-btn"
@@ -245,4 +250,13 @@ const totalFlows = computed(() => {
 
 .run-indicator.success { background: #22c55e; }
 .run-indicator.failure { background: #ef4444; }
+
+.tree-flow.file-missing { opacity: 0.55; }
+.tree-flow.file-missing .flow-icon { color: #f59e0b; }
+
+.missing-icon {
+  font-size: 11px;
+  color: #f59e0b;
+  flex-shrink: 0;
+}
 </style>

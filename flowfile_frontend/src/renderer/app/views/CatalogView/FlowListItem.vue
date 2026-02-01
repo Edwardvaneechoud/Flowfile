@@ -1,10 +1,18 @@
 <template>
-  <div class="flow-list-item" :class="{ selected }" @click="$emit('select')">
+  <div class="flow-list-item" :class="{ selected, 'file-missing': !flow.file_exists }" @click="$emit('select')">
     <div class="flow-main">
       <i class="fa-solid fa-diagram-project flow-icon"></i>
       <div class="flow-info">
-        <span class="flow-name">{{ flow.name }}</span>
-        <span class="flow-meta">{{ flow.run_count }} runs</span>
+        <div class="flow-name-row">
+          <span class="flow-name">{{ flow.name }}</span>
+          <i
+            v-if="!flow.file_exists"
+            class="fa-solid fa-triangle-exclamation missing-icon"
+            title="Flow file not found on disk"
+          ></i>
+        </div>
+        <span v-if="!flow.file_exists" class="flow-meta missing-text">File missing</span>
+        <span v-else class="flow-meta">{{ flow.run_count }} runs</span>
       </div>
     </div>
     <div class="flow-actions">
@@ -129,4 +137,21 @@ defineEmits<{
 
 .run-dot.success { background: #22c55e; }
 .run-dot.failure { background: #ef4444; }
+
+.flow-list-item.file-missing { opacity: 0.55; }
+.flow-list-item.file-missing .flow-icon { color: #f59e0b; }
+
+.flow-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.missing-icon {
+  font-size: 11px;
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.missing-text { color: #f59e0b; }
 </style>

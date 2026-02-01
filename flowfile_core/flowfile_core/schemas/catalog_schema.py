@@ -72,6 +72,7 @@ class FlowRegistrationOut(BaseModel):
     run_count: int = 0
     last_run_at: datetime | None = None
     last_run_success: bool | None = None
+    file_exists: bool = True
 
     model_config = {"from_attributes": True}
 

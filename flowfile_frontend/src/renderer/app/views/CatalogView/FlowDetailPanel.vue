@@ -26,6 +26,15 @@
       </div>
     </div>
 
+    <!-- File missing banner -->
+    <div v-if="!flow.file_exists" class="missing-banner">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <div>
+        <strong>Flow file not found</strong>
+        <p>The file <code>{{ flow.flow_path }}</code> no longer exists on disk. The flow cannot be opened or executed, but its run history is still available below.</p>
+      </div>
+    </div>
+
     <!-- Metadata Grid -->
     <div class="meta-grid">
       <div class="meta-card">
@@ -280,4 +289,45 @@ function formatDuration(seconds: number | null): string {
 
 .no-snapshot { color: var(--color-text-muted); }
 .empty-runs { color: var(--color-text-muted); font-size: var(--font-size-sm); padding: var(--spacing-4); text-align: center; }
+
+/* ========== Missing File Banner ========== */
+.missing-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-primary);
+}
+
+.missing-banner > i {
+  color: #f59e0b;
+  font-size: var(--font-size-lg);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.missing-banner strong {
+  font-size: var(--font-size-sm);
+  display: block;
+  margin-bottom: var(--spacing-1);
+}
+
+.missing-banner p {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.missing-banner code {
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: var(--border-radius-sm);
+}
 </style>
