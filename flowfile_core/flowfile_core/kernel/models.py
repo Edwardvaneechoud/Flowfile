@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ class KernelConfig(BaseModel):
     cpu_cores: float = 2.0
     memory_gb: float = 4.0
     gpu: bool = False
+    health_timeout: int = 120
 
 
 class KernelInfo(BaseModel):
@@ -31,14 +32,21 @@ class KernelInfo(BaseModel):
     memory_gb: float = 4.0
     cpu_cores: float = 2.0
     gpu: bool = False
-    created_at: datetime = Field(default_factory=datetime.now)
+    health_timeout: int = 120
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
+
+
+class DockerStatus(BaseModel):
+    available: bool
+    image_available: bool
+    error: str | None = None
 
 
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
-    input_paths: dict[str, str] = Field(default_factory=dict)
+    input_paths: dict[str, list[str]] = Field(default_factory=dict)
     output_dir: str = ""
 
 
@@ -46,6 +54,7 @@ class ExecuteResult(BaseModel):
     success: bool
     output_paths: list[str] = Field(default_factory=list)
     artifacts_published: list[str] = Field(default_factory=list)
+    artifacts_deleted: list[str] = Field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     error: str | None = None

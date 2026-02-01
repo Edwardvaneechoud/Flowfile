@@ -1363,16 +1363,15 @@ class FlowNode:
             else:
                 data = []
             schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
-            fl = self.get_resulting_data()
             has_example_data = self.results.example_data_generator is not None
 
             return TableExample(
                 node_id=self.node_id,
                 name=str(self.node_id),
                 number_of_records=999,
-                number_of_columns=fl.number_of_fields,
+                number_of_columns=len(schema),
                 table_schema=schema,
-                columns=fl.columns,
+                columns=[c.name for c in schema],
                 data=data,
                 has_example_data=has_example_data,
                 has_run_with_current_setup=self.node_stats.has_run_with_current_setup,

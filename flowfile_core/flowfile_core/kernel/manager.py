@@ -107,7 +107,7 @@ class KernelManager:
             containers = self._docker.containers.list(
                 filters={"name": "flowfile-kernel-", "status": "running"}
             )
-        except Exception as exc:
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Could not list running containers: %s", exc)
             return
 
@@ -175,6 +175,7 @@ class KernelManager:
             memory_gb=config.memory_gb,
             cpu_cores=config.cpu_cores,
             gpu=config.gpu,
+            health_timeout=config.health_timeout,
         )
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
@@ -203,10 +204,10 @@ class KernelManager:
             }
             container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
             kernel.container_id = container.id
-            await self._wait_for_healthy(kernel_id, timeout=_HEALTH_TIMEOUT)
+            await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
             logger.info("Kernel '%s' is idle (container %s)", kernel_id, container.short_id)
-        except Exception as exc:
+        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
@@ -291,6 +292,17 @@ class KernelManager:
             response = await client.post(url)
             response.raise_for_status()
 
+    def clear_artifacts_sync(self, kernel_id: str) -> None:
+        """Synchronous wrapper around clear_artifacts() for use from non-async code."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/clear"
+        with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+            response = client.post(url)
+            response.raise_for_status()
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
@@ -329,27 +341,23 @@ class KernelManager:
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
-        except Exception as exc:
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         url = f"http://localhost:{kernel.port}/health"
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
 
-        while asyncio.get_event_loop().time() < deadline:
+        while loop.time() < deadline:
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                     response = await client.get(url)
                     if response.status_code == 200:
                         return
-            except httpx.HTTPError:
-                # Catches all transient errors: ConnectError, ReadError,
-                # ConnectTimeout, RemoteProtocolError, etc.
-                pass
-            except Exception:
-                # Safety net for unexpected errors during startup polling
-                pass
+            except (httpx.HTTPError, OSError) as exc:
+                logger.debug("Health poll for kernel '%s' failed: %s", kernel_id, exc)
             await asyncio.sleep(_HEALTH_POLL_INTERVAL)
 
         raise TimeoutError(f"Kernel '{kernel_id}' did not become healthy within {timeout}s")
