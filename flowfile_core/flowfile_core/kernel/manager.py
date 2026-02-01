@@ -199,6 +199,10 @@ class KernelManager:
             )
             raise RuntimeError(kernel.error_message)
 
+        # Allocate a port if the kernel doesn't have one yet (e.g. restored from DB)
+        if kernel.port is None:
+            kernel.port = self._allocate_port()
+
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
