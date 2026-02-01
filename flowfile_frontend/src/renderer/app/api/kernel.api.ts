@@ -69,6 +69,18 @@ export class KernelApi {
     }
   }
 
+  static async getArtifacts(kernelId: string): Promise<Record<string, any>> {
+    try {
+      const response = await axios.get<Record<string, any>>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/artifacts`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to get artifacts:", error);
+      return {};
+    }
+  }
+
   static async getDockerStatus(): Promise<DockerStatus> {
     try {
       const response = await axios.get<DockerStatus>(`${API_BASE_URL}/docker-status`);
