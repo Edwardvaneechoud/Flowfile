@@ -29,4 +29,5 @@ export interface KernelInfo {
   gpu: boolean;
   created_at: string;
   error_message: string | null;
+  kernel_version: string | null;
 }

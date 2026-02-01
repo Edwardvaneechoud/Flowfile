@@ -35,6 +35,7 @@ class KernelInfo(BaseModel):
     health_timeout: int = 120
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
+    kernel_version: str | None = None
 
 
 class DockerStatus(BaseModel):
