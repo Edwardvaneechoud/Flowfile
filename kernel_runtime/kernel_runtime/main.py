@@ -21,6 +21,10 @@ class ExecuteRequest(BaseModel):
     output_dir: str = ""
 
 
+class ClearNodeArtifactsRequest(BaseModel):
+    node_ids: list[int]
+
+
 class ExecuteResponse(BaseModel):
     success: bool
     output_paths: list[str] = []
@@ -95,9 +99,22 @@ async def clear_artifacts():
     return {"status": "cleared"}
 
 
+@app.post("/clear_node_artifacts")
+async def clear_node_artifacts(request: ClearNodeArtifactsRequest):
+    """Clear only artifacts published by the specified node IDs."""
+    removed = artifact_store.clear_by_node_ids(set(request.node_ids))
+    return {"status": "cleared", "removed": removed}
+
+
 @app.get("/artifacts")
 async def list_artifacts():
     return artifact_store.list_all()
+
+
+@app.get("/artifacts/node/{node_id}")
+async def list_node_artifacts(node_id: int):
+    """List artifacts published by a specific node."""
+    return artifact_store.list_by_node_id(node_id)
 
 
 @app.get("/health")

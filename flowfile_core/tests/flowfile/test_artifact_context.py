@@ -277,6 +277,79 @@ class TestArtifactContextClearing:
 
 
 # ---------------------------------------------------------------------------
+# ArtifactContext — Selective node clearing
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextClearNodes:
+    def test_clear_nodes_removes_only_target(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k1", ["encoder"])
+        ctx.clear_nodes({1})
+        assert ctx.get_published_by_node(1) == []
+        assert len(ctx.get_published_by_node(2)) == 1
+        assert ctx.get_kernel_artifacts("k1") == {"encoder": ctx.get_published_by_node(2)[0]}
+
+    def test_clear_nodes_preserves_other_node_metadata(self):
+        """Clearing node 2 should leave node 1's artifacts intact."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k1", ["scaler"])
+        ctx.clear_nodes({2})
+        published_1 = ctx.get_published_by_node(1)
+        assert len(published_1) == 1
+        assert published_1[0].name == "model"
+        ka = ctx.get_kernel_artifacts("k1")
+        assert "model" in ka
+        assert "scaler" not in ka
+
+    def test_clear_nodes_empty_set(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.clear_nodes(set())
+        assert len(ctx.get_published_by_node(1)) == 1
+
+    def test_clear_nodes_nonexistent(self):
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.clear_nodes({99})  # Should not raise
+        assert len(ctx.get_published_by_node(1)) == 1
+
+    def test_clear_nodes_allows_re_record(self):
+        """After clearing, the node can re-record new artifacts."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.clear_nodes({1})
+        ctx.record_published(1, "k1", ["model_v2"])
+        published = ctx.get_published_by_node(1)
+        assert len(published) == 1
+        assert published[0].name == "model_v2"
+
+    def test_clear_nodes_updates_publisher_index(self):
+        """Publisher index should be cleaned up when a node is cleared."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.clear_nodes({1})
+        # After clearing, the artifact should not show up as available
+        avail = ctx.compute_available(node_id=2, kernel_id="k1", upstream_node_ids=[1])
+        assert avail == {}
+
+    def test_clear_nodes_preserves_upstream_for_downstream(self):
+        """Simulates debug mode: node 1 is skipped (not cleared),
+        node 2 is re-running (cleared). Node 3 should still see node 1's artifact."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k1", ["predictions"])
+        # Clear only node 2 (it will re-run)
+        ctx.clear_nodes({2})
+        # Node 3 should still see "model" from node 1
+        avail = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
+        assert "model" in avail
+        assert "predictions" not in avail
+
+
+# ---------------------------------------------------------------------------
 # ArtifactContext — Queries
 # ---------------------------------------------------------------------------
 

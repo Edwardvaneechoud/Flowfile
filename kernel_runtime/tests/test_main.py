@@ -453,6 +453,120 @@ class TestArtifactEndpoints:
         assert "v2" in resp_read.json()["stdout"]
 
 
+class TestClearNodeArtifactsEndpoint:
+    def test_clear_node_artifacts_selective(self, client: TestClient):
+        """Only artifacts from specified node IDs should be removed."""
+        # Publish artifacts from two different nodes
+        client.post(
+            "/execute",
+            json={
+                "node_id": 40,
+                "code": 'flowfile.publish_artifact("model", {"v": 1})',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 41,
+                "code": 'flowfile.publish_artifact("scaler", {"v": 2})',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+        # Clear only node 40's artifacts
+        resp = client.post("/clear_node_artifacts", json={"node_ids": [40]})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "cleared"
+        assert "model" in data["removed"]
+
+        # "scaler" from node 41 should still exist
+        artifacts = client.get("/artifacts").json()
+        assert "model" not in artifacts
+        assert "scaler" in artifacts
+
+    def test_clear_node_artifacts_empty_list(self, client: TestClient):
+        """Passing empty list should not remove anything."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 42,
+                "code": 'flowfile.publish_artifact("keep_me", 42)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        resp = client.post("/clear_node_artifacts", json={"node_ids": []})
+        assert resp.status_code == 200
+        assert resp.json()["removed"] == []
+        assert "keep_me" in client.get("/artifacts").json()
+
+    def test_clear_node_artifacts_allows_republish(self, client: TestClient):
+        """After clearing, the same artifact name can be re-published."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 43,
+                "code": 'flowfile.publish_artifact("reuse", "v1")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post("/clear_node_artifacts", json={"node_ids": [43]})
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 43,
+                "code": 'flowfile.publish_artifact("reuse", "v2")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp.json()["success"] is True
+
+
+class TestNodeArtifactsEndpoint:
+    def test_list_node_artifacts(self, client: TestClient):
+        """Should return only artifacts for the specified node."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 50,
+                "code": (
+                    'flowfile.publish_artifact("a", 1)\n'
+                    'flowfile.publish_artifact("b", 2)\n'
+                ),
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 51,
+                "code": 'flowfile.publish_artifact("c", 3)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+        resp = client.get("/artifacts/node/50")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"a", "b"}
+
+        resp2 = client.get("/artifacts/node/51")
+        assert set(resp2.json().keys()) == {"c"}
+
+    def test_list_node_artifacts_empty(self, client: TestClient):
+        resp = client.get("/artifacts/node/999")
+        assert resp.status_code == 200
+        assert resp.json() == {}
+
+
 class TestContextCleanup:
     def test_context_cleared_after_success(self, client: TestClient):
         """After a successful /execute, the flowfile context should be cleared."""

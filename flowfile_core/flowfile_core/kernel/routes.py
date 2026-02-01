@@ -3,7 +3,15 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from flowfile_core.auth.jwt import get_current_active_user
-from flowfile_core.kernel.models import DockerStatus, ExecuteRequest, ExecuteResult, KernelConfig, KernelInfo
+from flowfile_core.kernel.models import (
+    ClearNodeArtifactsRequest,
+    ClearNodeArtifactsResult,
+    DockerStatus,
+    ExecuteRequest,
+    ExecuteResult,
+    KernelConfig,
+    KernelInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +174,43 @@ async def clear_artifacts(kernel_id: str, current_user=Depends(get_current_activ
         return {"status": "cleared", "kernel_id": kernel_id}
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{kernel_id}/clear_node_artifacts", response_model=ClearNodeArtifactsResult)
+async def clear_node_artifacts(
+    kernel_id: str,
+    request: ClearNodeArtifactsRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Clear only artifacts published by specific node IDs."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.clear_node_artifacts(kernel_id, request.node_ids)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{kernel_id}/artifacts/node/{node_id}")
+async def get_node_artifacts(
+    kernel_id: str,
+    node_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Get artifacts published by a specific node."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    if kernel.state.value not in ("idle", "executing"):
+        raise HTTPException(status_code=400, detail=f"Kernel '{kernel_id}' is not running")
+    try:
+        return await manager.get_node_artifacts(kernel_id, node_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

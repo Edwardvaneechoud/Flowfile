@@ -106,6 +106,62 @@ class TestDelete:
         assert set(store.list_all().keys()) == {"keep"}
 
 
+class TestClearByNodeIds:
+    def test_clear_by_node_ids_removes_only_target(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1)
+        store.publish("b", 2, node_id=2)
+        store.publish("c", 3, node_id=1)
+        removed = store.clear_by_node_ids({1})
+        assert sorted(removed) == ["a", "c"]
+        assert "b" in store.list_all()
+        assert "a" not in store.list_all()
+        assert "c" not in store.list_all()
+
+    def test_clear_by_node_ids_empty_set(self, store: ArtifactStore):
+        store.publish("x", 1, node_id=1)
+        removed = store.clear_by_node_ids(set())
+        assert removed == []
+        assert "x" in store.list_all()
+
+    def test_clear_by_node_ids_nonexistent(self, store: ArtifactStore):
+        store.publish("x", 1, node_id=1)
+        removed = store.clear_by_node_ids({99})
+        assert removed == []
+        assert "x" in store.list_all()
+
+    def test_clear_by_node_ids_multiple(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1)
+        store.publish("b", 2, node_id=2)
+        store.publish("c", 3, node_id=3)
+        removed = store.clear_by_node_ids({1, 3})
+        assert sorted(removed) == ["a", "c"]
+        assert set(store.list_all().keys()) == {"b"}
+
+    def test_clear_allows_republish(self, store: ArtifactStore):
+        """After clearing a node's artifacts, re-publishing with the same name works."""
+        store.publish("model", {"v": 1}, node_id=5)
+        store.clear_by_node_ids({5})
+        store.publish("model", {"v": 2}, node_id=5)
+        assert store.get("model") == {"v": 2}
+
+
+class TestListByNodeId:
+    def test_list_by_node_id(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1)
+        store.publish("b", 2, node_id=2)
+        store.publish("c", 3, node_id=1)
+        listing = store.list_by_node_id(1)
+        assert set(listing.keys()) == {"a", "c"}
+
+    def test_list_by_node_id_empty(self, store: ArtifactStore):
+        assert store.list_by_node_id(99) == {}
+
+    def test_list_by_node_id_excludes_object(self, store: ArtifactStore):
+        store.publish("x", {"secret": "data"}, node_id=1)
+        listing = store.list_by_node_id(1)
+        assert "object" not in listing["x"]
+
+
 class TestThreadSafety:
     def test_concurrent_publishes(self, store: ArtifactStore):
         errors = []

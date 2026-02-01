@@ -1,5 +1,7 @@
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
+    ClearNodeArtifactsRequest,
+    ClearNodeArtifactsResult,
     DockerStatus,
     ExecuteRequest,
     ExecuteResult,
@@ -11,6 +13,8 @@ from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
+    "ClearNodeArtifactsRequest",
+    "ClearNodeArtifactsResult",
     "DockerStatus",
     "KernelConfig",
     "KernelInfo",

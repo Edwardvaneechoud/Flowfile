@@ -52,3 +52,27 @@ class ArtifactStore:
     def clear(self) -> None:
         with self._lock:
             self._artifacts.clear()
+
+    def clear_by_node_ids(self, node_ids: set[int]) -> list[str]:
+        """Remove all artifacts published by the given *node_ids*.
+
+        Returns the names of deleted artifacts.
+        """
+        with self._lock:
+            to_remove = [
+                name
+                for name, meta in self._artifacts.items()
+                if meta["node_id"] in node_ids
+            ]
+            for name in to_remove:
+                del self._artifacts[name]
+            return to_remove
+
+    def list_by_node_id(self, node_id: int) -> dict[str, dict[str, Any]]:
+        """Return metadata for artifacts published by *node_id*."""
+        with self._lock:
+            return {
+                name: {k: v for k, v in meta.items() if k != "object"}
+                for name, meta in self._artifacts.items()
+                if meta["node_id"] == node_id
+            }

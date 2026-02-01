@@ -2422,6 +2422,49 @@ class FlowGraph:
                     kernel_ids.add(kid)
         return kernel_ids
 
+    def _compute_rerun_python_script_node_ids(
+        self, plan_skip_ids: set[str | int],
+    ) -> set[int]:
+        """Return node IDs for ``python_script`` nodes that will re-execute.
+
+        A python_script node will re-execute (and thus needs its old
+        artifacts cleared) when:
+
+        * It is NOT in the execution-plan skip set, **and**
+        * Its execution state indicates it has NOT already run with the
+          current setup (i.e. its cache is stale or it never ran).
+        """
+        rerun: set[int] = set()
+        for node in self.nodes:
+            if node.node_type != "python_script":
+                continue
+            if node.node_id in plan_skip_ids:
+                continue
+            if not node._execution_state.has_run_with_current_setup:
+                rerun.add(node.node_id)
+        return rerun
+
+    def _group_rerun_nodes_by_kernel(
+        self, rerun_node_ids: set[int],
+    ) -> dict[str, set[int]]:
+        """Group *rerun_node_ids* by their kernel ID.
+
+        Returns a mapping ``kernel_id → {node_id, …}``.
+        """
+        kernel_nodes: dict[str, set[int]] = {}
+        for node in self.nodes:
+            if node.node_id not in rerun_node_ids:
+                continue
+            if node.node_type == "python_script" and node.setting_input is not None:
+                kid = getattr(
+                    getattr(node.setting_input, "python_script_input", None),
+                    "kernel_id",
+                    None,
+                )
+                if kid:
+                    kernel_nodes.setdefault(kid, set()).add(node.node_id)
+        return kernel_nodes
+
     def _execute_single_node(
         self,
         node: FlowNode,
@@ -2497,21 +2540,41 @@ class FlowGraph:
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
-            # Clear artifact tracking for a fresh run.
-            # Snapshot first so we can restore state for cached (skipped) nodes.
-            _prev_artifact_states = self.artifact_context.snapshot_node_states()
-            self.artifact_context.clear_all()
-            for kid in self._get_required_kernel_ids():
-                self.artifact_context.clear_kernel(kid)
-                try:
-                    from flowfile_core.kernel import get_kernel_manager
-                    manager = get_kernel_manager()
-                    manager.clear_artifacts_sync(kid)
-                except Exception:
-                    logger.debug("Could not clear kernel artifacts for '%s'", kid)
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
+
+            # Selectively clear artifacts only for nodes that will re-run.
+            # Nodes that are up-to-date keep their artifacts in both the
+            # metadata tracker AND the kernel's in-memory store so that
+            # downstream nodes can still read them.
+            plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
+            rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
+
+            # Also purge stale metadata for nodes not in this graph
+            # (e.g. injected externally or left over from removed nodes).
+            graph_node_ids = set(self._node_db.keys())
+            stale_node_ids = {
+                nid for nid in self.artifact_context._node_states
+                if nid not in graph_node_ids
+            }
+            nodes_to_clear = rerun_node_ids | stale_node_ids
+            if nodes_to_clear:
+                self.artifact_context.clear_nodes(nodes_to_clear)
+
+            if rerun_node_ids:
+                # Clear the actual kernel-side artifacts for re-running nodes
+                kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
+                for kid, node_ids_for_kernel in kernel_node_map.items():
+                    try:
+                        from flowfile_core.kernel import get_kernel_manager
+                        manager = get_kernel_manager()
+                        manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel))
+                    except Exception:
+                        logger.debug(
+                            "Could not clear node artifacts for kernel '%s', nodes %s",
+                            kid, sorted(node_ids_for_kernel),
+                        )
 
             self.latest_run_info = self.create_initial_run_information(
                 execution_plan.node_count, "full_run"
@@ -2522,7 +2585,7 @@ class FlowGraph:
             performance_mode = self.flow_settings.execution_mode == "Performance"
 
             run_info_lock = threading.Lock()
-            skip_node_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
+            skip_node_ids: set[str | int] = plan_skip_ids
 
             for stage in execution_plan.stages:
                 if self.flow_settings.is_canceled:
@@ -2566,18 +2629,6 @@ class FlowGraph:
                     if not node_result.success:
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
-
-            # Restore artifact state for graph nodes that were cached (skipped).
-            # Their _func didn't re-execute, so record_published was never
-            # called — replay their state from the pre-clear snapshot.
-            # Only restore nodes that actually belong to this graph to avoid
-            # resurrecting stale entries injected outside the graph.
-            graph_node_ids = set(self._node_db.keys())
-            for nid, prev_state in _prev_artifact_states.items():
-                if (nid in graph_node_ids
-                        and nid not in self.artifact_context._node_states
-                        and prev_state.published):
-                    self.artifact_context.restore_node_state(nid, prev_state)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
