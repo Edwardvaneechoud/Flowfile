@@ -39,8 +39,8 @@ server_instance = None
 async def shutdown_handler(app: FastAPI):
     """Handles the graceful startup and shutdown of the FastAPI application.
 
-    This context manager ensures that resources, such as log files, are cleaned
-    up properly when the application is terminated.
+    This context manager ensures that resources, such as log files and kernel
+    containers, are cleaned up properly when the application is terminated.
     """
     print("Starting core application...")
     try:
@@ -48,8 +48,20 @@ async def shutdown_handler(app: FastAPI):
     finally:
         print("Shutting down core application...")
         print("Cleaning up core service resources...")
+        _shutdown_kernels()
         clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
+
+
+def _shutdown_kernels():
+    """Stop all running kernel containers during shutdown."""
+    try:
+        from flowfile_core.kernel import get_kernel_manager
+
+        manager = get_kernel_manager()
+        manager.shutdown_all()
+    except Exception as exc:
+        print(f"Error shutting down kernels: {exc}")
 
 
 # Initialize FastAPI with metadata
