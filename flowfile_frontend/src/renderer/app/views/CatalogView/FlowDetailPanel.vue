@@ -8,6 +8,14 @@
       </div>
       <div class="header-actions">
         <button
+          v-if="flow.file_exists"
+          class="action-btn-primary"
+          @click="$emit('openFlow', flow.flow_path)"
+        >
+          <i class="fa-solid fa-up-right-from-square"></i>
+          Open in Designer
+        </button>
+        <button
           class="action-btn-lg"
           :class="{ active: flow.is_favorite }"
           @click="$emit('toggleFavorite', flow.id)"
@@ -110,6 +118,7 @@ defineEmits<{
   viewRun: [runId: number];
   toggleFavorite: [flowId: number];
   toggleFollow: [flowId: number];
+  openFlow: [flowPath: string];
 }>();
 
 const statusClass = computed(() => {
@@ -191,6 +200,23 @@ function formatDuration(seconds: number | null): string {
 
 .action-btn-lg:hover { border-color: var(--color-primary); color: var(--color-primary); }
 .action-btn-lg.active { color: var(--color-primary); border-color: var(--color-primary); }
+
+.action-btn-primary {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.action-btn-primary:hover { opacity: 0.9; }
 
 /* ========== Meta Grid ========== */
 .meta-grid {

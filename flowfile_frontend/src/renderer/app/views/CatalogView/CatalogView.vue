@@ -113,6 +113,7 @@
           :run="catalogStore.selectedRunDetail"
           @close="catalogStore.selectedRunId = null; catalogStore.selectedRunDetail = null"
           @open-snapshot="openRunSnapshot($event)"
+          @view-flow="navigateToFlow($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -122,6 +123,7 @@
           @view-run="catalogStore.loadRunDetail($event)"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
+          @open-flow="openFlowInDesigner($event)"
         />
         <!-- Stats overview -->
         <StatsPanel v-else :stats="catalogStore.stats" />
@@ -199,6 +201,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
+import { FlowApi } from "../../api/flow.api";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
@@ -296,6 +299,22 @@ async function openRunSnapshot(runId: number) {
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to open flow snapshot");
   }
+}
+
+async function openFlowInDesigner(flowPath: string) {
+  try {
+    await FlowApi.importFlow(flowPath);
+    router.push({ name: "designer" });
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to open flow");
+  }
+}
+
+function navigateToFlow(registrationId: number) {
+  catalogStore.selectedRunId = null;
+  catalogStore.selectedRunDetail = null;
+  catalogStore.selectFlow(registrationId);
+  catalogStore.setActiveTab("catalog");
 }
 
 async function createNamespace() {

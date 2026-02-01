@@ -11,7 +11,15 @@
     <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Flow</span>
-        <span class="meta-value">{{ run.flow_name }}</span>
+        <span
+          v-if="run.registration_id"
+          class="meta-value flow-link"
+          @click="$emit('viewFlow', run.registration_id)"
+        >
+          {{ run.flow_name }}
+          <i class="fa-solid fa-arrow-right flow-link-icon"></i>
+        </span>
+        <span v-else class="meta-value">{{ run.flow_name }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Status</span>
@@ -92,6 +100,7 @@ const props = defineProps<{
 defineEmits<{
   close: [];
   openSnapshot: [runId: number];
+  viewFlow: [registrationId: number];
 }>();
 
 interface NodeResultData {
@@ -209,6 +218,22 @@ function formatDuration(seconds: number | null): string {
 .text-success { color: #22c55e; }
 .text-danger { color: #ef4444; }
 .text-pending { color: #eab308; }
+
+.flow-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  transition: opacity var(--transition-fast);
+}
+
+.flow-link:hover { opacity: 0.8; }
+
+.flow-link-icon {
+  font-size: 10px;
+  opacity: 0.6;
+}
 
 /* Section */
 .section {
