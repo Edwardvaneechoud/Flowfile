@@ -64,10 +64,16 @@
 
     <!-- Flow Version Snapshot -->
     <div v-if="run.flow_snapshot" class="section">
-      <h3>
-        <i class="fa-solid fa-code-branch"></i>
-        Flow Version at Run Time
-      </h3>
+      <div class="snapshot-header">
+        <h3>
+          <i class="fa-solid fa-code-branch"></i>
+          Flow Version at Run Time
+        </h3>
+        <button class="open-snapshot-btn" @click="$emit('openSnapshot', run.id)">
+          <i class="fa-solid fa-up-right-from-square"></i>
+          Open this version
+        </button>
+      </div>
       <div class="snapshot-viewer">
         <pre class="snapshot-code">{{ formattedSnapshot }}</pre>
       </div>
@@ -83,7 +89,10 @@ const props = defineProps<{
   run: FlowRunDetail;
 }>();
 
-defineEmits<{ close: [] }>();
+defineEmits<{
+  close: [];
+  openSnapshot: [runId: number];
+}>();
 
 interface NodeResultData {
   node_id: number;
@@ -262,6 +271,35 @@ function formatDuration(seconds: number | null): string {
 .status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
 .status-badge.failure { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
 .status-badge.pending { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+
+/* Snapshot Header */
+.snapshot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-3);
+}
+
+.snapshot-header h3 {
+  margin: 0;
+}
+
+.open-snapshot-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.open-snapshot-btn:hover { opacity: 0.9; }
 
 /* Snapshot Viewer */
 .snapshot-viewer {

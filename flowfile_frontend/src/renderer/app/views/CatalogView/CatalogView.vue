@@ -112,6 +112,7 @@
           v-if="catalogStore.selectedRunDetail"
           :run="catalogStore.selectedRunDetail"
           @close="catalogStore.selectedRunId = null; catalogStore.selectedRunDetail = null"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -155,11 +156,29 @@
 
     <!-- Register Flow Modal -->
     <div v-if="showRegisterFlow" class="modal-overlay" @click.self="showRegisterFlow = false">
-      <div class="modal-card">
+      <div class="modal-card modal-card-lg">
         <h3>Register Flow</h3>
         <input v-model="newFlowName" class="input-field" placeholder="Flow name" />
-        <input v-model="newFlowPath" class="input-field" placeholder="Flow file path (.yaml)" />
         <input v-model="newFlowDesc" class="input-field" placeholder="Description (optional)" />
+        <div class="file-browser-section">
+          <label class="field-label">Flow file</label>
+          <div v-if="newFlowPath" class="selected-file-badge">
+            <i class="fa-solid fa-file"></i>
+            <span>{{ newFlowPath }}</span>
+            <button class="clear-file-btn" @click="newFlowPath = ''" title="Clear">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div class="file-browser-container">
+            <FileBrowser
+              :allowed-file-types="['yaml', 'yml', 'flowfile']"
+              mode="open"
+              context="flows"
+              :is-visible="showRegisterFlow"
+              @file-selected="handleFlowFileSelected"
+            />
+          </div>
+        </div>
         <div class="modal-actions">
           <button class="btn-secondary" @click="showRegisterFlow = false">Cancel</button>
           <button
@@ -177,6 +196,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
@@ -185,7 +205,10 @@ import FlowDetailPanel from "./FlowDetailPanel.vue";
 import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
+import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
 import type { CatalogTab } from "../../types";
+
+const router = useRouter();
 
 const catalogStore = useCatalogStore();
 
@@ -246,12 +269,33 @@ function openCreateSchema(parentId: number) {
   showCreateNamespace.value = true;
 }
 
+// Default namespace ID (loaded once on mount)
+const defaultNamespaceId = ref<number | null>(null);
+
 function openRegisterFlow(namespaceId: number) {
   registerFlowNamespaceId.value = namespaceId;
   newFlowName.value = "";
   newFlowPath.value = "";
   newFlowDesc.value = "";
   showRegisterFlow.value = true;
+}
+
+function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
+  newFlowPath.value = fileInfo.path;
+  if (!newFlowName.value.trim()) {
+    // Auto-fill name from filename (without extension)
+    const baseName = fileInfo.name.replace(/\.(yaml|yml|flowfile)$/i, "");
+    newFlowName.value = baseName;
+  }
+}
+
+async function openRunSnapshot(runId: number) {
+  try {
+    const flowId = await CatalogApi.openRunSnapshot(runId);
+    router.push({ name: "designer" });
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to open flow snapshot");
+  }
 }
 
 async function createNamespace() {
@@ -266,7 +310,7 @@ async function createNamespace() {
     createSchemaParentId.value = null;
     newNamespaceName.value = "";
     newNamespaceDesc.value = "";
-    await catalogStore.loadTree();
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to create namespace");
   }
@@ -275,24 +319,30 @@ async function createNamespace() {
 async function registerFlow() {
   if (!newFlowName.value.trim() || !newFlowPath.value.trim()) return;
   try {
+    const nsId = registerFlowNamespaceId.value ?? defaultNamespaceId.value;
     await CatalogApi.registerFlow({
       name: newFlowName.value.trim(),
       flow_path: newFlowPath.value.trim(),
       description: newFlowDesc.value.trim() || null,
-      namespace_id: registerFlowNamespaceId.value,
+      namespace_id: nsId,
     });
     showRegisterFlow.value = false;
     newFlowName.value = "";
     newFlowPath.value = "";
     newFlowDesc.value = "";
-    await Promise.all([catalogStore.loadTree(), catalogStore.loadAllFlows()]);
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadAllFlows(), catalogStore.loadStats()]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to register flow");
   }
 }
 
-onMounted(() => {
-  catalogStore.initialize();
+onMounted(async () => {
+  await catalogStore.initialize();
+  try {
+    defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
+  } catch {
+    // Not critical — leave null
+  }
 });
 </script>
 
@@ -478,6 +528,12 @@ onMounted(() => {
   box-shadow: var(--shadow-lg);
 }
 
+.modal-card-lg {
+  width: 700px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
 .modal-card h3 {
   margin: 0 0 var(--spacing-4) 0;
   font-size: var(--font-size-lg);
@@ -506,5 +562,68 @@ onMounted(() => {
   justify-content: flex-end;
   gap: var(--spacing-2);
   margin-top: var(--spacing-2);
+}
+
+/* ========== File Browser in Register Modal ========== */
+.file-browser-section {
+  margin-bottom: var(--spacing-3);
+}
+
+.field-label {
+  display: block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--spacing-2);
+}
+
+.selected-file-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: var(--border-radius-md);
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+}
+
+.selected-file-badge span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+}
+
+.clear-file-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  font-size: 10px;
+}
+
+.clear-file-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-hover);
+}
+
+.file-browser-container {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  height: 350px;
+  overflow: hidden;
 }
 </style>

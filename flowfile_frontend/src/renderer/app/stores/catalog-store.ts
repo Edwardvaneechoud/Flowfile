@@ -123,7 +123,7 @@ export const useCatalogStore = defineStore("catalog", {
           await CatalogApi.addFavorite(flowId);
         }
         flow.is_favorite = !flow.is_favorite;
-        await this.loadFavorites();
+        await Promise.all([this.loadFavorites(), this.loadStats(), this.loadTree()]);
       } catch (e: any) {
         this.error = e?.message ?? "Failed to toggle favorite";
       }
@@ -139,7 +139,7 @@ export const useCatalogStore = defineStore("catalog", {
           await CatalogApi.addFollow(flowId);
         }
         flow.is_following = !flow.is_following;
-        await this.loadFollowing();
+        await Promise.all([this.loadFollowing(), this.loadTree()]);
       } catch (e: any) {
         this.error = e?.message ?? "Failed to toggle follow";
       }

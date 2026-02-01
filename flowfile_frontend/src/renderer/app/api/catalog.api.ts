@@ -119,6 +119,20 @@ export class CatalogApi {
     return response.data;
   }
 
+  // ====== Default Namespace ======
+
+  static async getDefaultNamespaceId(): Promise<number | null> {
+    const response = await axios.get<number | null>("/catalog/default-namespace-id");
+    return response.data;
+  }
+
+  // ====== Open Snapshot ======
+
+  static async openRunSnapshot(runId: number): Promise<number> {
+    const response = await axios.post<{ flow_id: number }>(`/catalog/runs/${runId}/open`);
+    return response.data.flow_id;
+  }
+
   // ====== Stats ======
 
   static async getStats(): Promise<CatalogStats> {

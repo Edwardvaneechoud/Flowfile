@@ -244,6 +244,27 @@ def get_namespace_tree(
 
 
 # ---------------------------------------------------------------------------
+# Default namespace helper
+# ---------------------------------------------------------------------------
+
+
+@router.get("/default-namespace-id")
+def get_default_namespace_id(
+    db: Session = Depends(get_db),
+):
+    """Return the ID of the default 'user_flows' schema under 'General'."""
+    general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+    if general is None:
+        return None
+    user_flows = db.query(CatalogNamespace).filter_by(
+        name="user_flows", parent_id=general.id
+    ).first()
+    if user_flows is None:
+        return None
+    return user_flows.id
+
+
+# ---------------------------------------------------------------------------
 # Flow Registration CRUD
 # ---------------------------------------------------------------------------
 
@@ -399,6 +420,52 @@ def get_run_detail(
         flow_snapshot=run.flow_snapshot,
         node_results_json=run.node_results_json,
     )
+
+
+# ---------------------------------------------------------------------------
+# Open Run Snapshot in Designer
+# ---------------------------------------------------------------------------
+
+
+@router.post("/runs/{run_id}/open")
+def open_run_snapshot(
+    run_id: int,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Write the run's flow snapshot to a temp file and import it into the designer."""
+    import json
+    from pathlib import Path
+
+    from shared.storage_config import storage
+
+    from flowfile_core.flowfile import flow_file_handler
+
+    run = db.query(FlowRun).get(run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    if not run.flow_snapshot:
+        raise HTTPException(422, "No flow snapshot available for this run")
+
+    # Determine file extension based on content
+    snapshot_data = run.flow_snapshot
+    try:
+        json.loads(snapshot_data)
+        suffix = ".json"
+    except (json.JSONDecodeError, TypeError):
+        suffix = ".yaml"
+
+    # Write to the flows temp directory (safe location for import)
+    temp_dir = storage.temp_directory_for_flows
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_filename = f"run_{run_id}_snapshot{suffix}"
+    snapshot_path = temp_dir / snapshot_filename
+
+    snapshot_path.write_text(snapshot_data, encoding="utf-8")
+
+    user_id = current_user.id if current_user else None
+    flow_id = flow_file_handler.import_flow(Path(snapshot_path), user_id=user_id)
+    return {"flow_id": flow_id}
 
 
 # ---------------------------------------------------------------------------
