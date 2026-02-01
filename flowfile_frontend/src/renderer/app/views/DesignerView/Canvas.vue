@@ -1,19 +1,8 @@
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  markRaw,
-  onMounted,
-  onUnmounted,
-  defineExpose,
-  nextTick,
-  defineEmits,
-  watch,
-} from "vue";
+import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits, watch } from "vue";
 import {
   VueFlow,
   NodeTypesObject,
-  EdgeTypesObject,
   NodeComponent,
   Node,
   useVueFlow,
@@ -22,7 +11,6 @@ import {
 import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "../../components/nodes/NodeWrapper.vue";
-import ArtifactEdgeComponent from "../../components/edges/ArtifactEdge.vue";
 import useDragAndDrop from "./useDnD";
 import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
@@ -46,7 +34,6 @@ import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
-import ArtifactToggle from "../../components/canvas/ArtifactToggle.vue";
 import {
   NodeCopyInput,
   NodeCopyValue,
@@ -63,38 +50,13 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
 const rawCustomNode = markRaw(CustomNode);
-const rawArtifactEdge = markRaw(ArtifactEdgeComponent);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
 };
-const edgeTypes: EdgeTypesObject = {
-  artifact: rawArtifactEdge as any,
-};
 const nodes = ref<Node[]>([]);
 const edges = ref([]);
-
-// Computed artifact edges derived from flow store
-const artifactEdges = computed(() => {
-  if (!flowStore.showArtifactEdges) return [];
-  return flowStore.artifactData.edges.map((ae, idx) => ({
-    id: `artifact-${ae.source}-${ae.target}-${ae.artifact_name}-${idx}`,
-    source: String(ae.source),
-    target: String(ae.target),
-    type: "artifact",
-    selectable: false,
-    deletable: false,
-    data: {
-      artifact_name: ae.artifact_name,
-      artifact_type: ae.artifact_type,
-      kernel_id: ae.kernel_id,
-    },
-  }));
-});
-
-// Combine data edges and artifact edges
-const allEdges = computed(() => [...edges.value, ...artifactEdges.value]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
@@ -291,10 +253,6 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
   let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
-      // Skip artifact edges — they are virtual and not managed by the backend
-      if (edgeChange.id && String(edgeChange.id).startsWith("artifact-")) {
-        continue;
-      }
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
     }
@@ -606,9 +564,8 @@ defineExpose({
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"
-        :edges="allEdges"
+        :edges="edges"
         :node-types="nodeTypes"
-        :edge-types="edgeTypes"
         class="custom-node-flow"
         :connection-mode="ConnectionMode.Strict"
         :default-viewport="{ zoom: 1 }"
@@ -636,7 +593,6 @@ defineExpose({
         @action="handleContextMenuAction"
       />
       <UndoRedoControls @refresh-flow="loadFlow" />
-      <ArtifactToggle />
     </main>
     <draggable-item
       id="dataActions"

@@ -33,7 +33,6 @@ export const useFlowStore = defineStore("flow", {
       historyState: { ...defaultHistoryState } as HistoryState,
       // Artifact visualization data
       artifactData: { ...defaultArtifactData } as FlowArtifactData,
-      showArtifactEdges: true,
     };
   },
 
@@ -43,8 +42,6 @@ export const useFlowStore = defineStore("flow", {
     canRedo: (state) => state.historyState.can_redo,
     undoDescription: (state) => state.historyState.undo_description,
     redoDescription: (state) => state.historyState.redo_description,
-    hasArtifacts: (state) =>
-      Object.keys(state.artifactData.nodes).length > 0 || state.artifactData.edges.length > 0,
   },
 
   actions: {
@@ -91,10 +88,6 @@ export const useFlowStore = defineStore("flow", {
 
     getNodeArtifactSummary(nodeId: number): NodeArtifactSummary | null {
       return this.artifactData.nodes[String(nodeId)] ?? null;
-    },
-
-    toggleArtifactEdges() {
-      this.showArtifactEdges = !this.showArtifactEdges;
     },
   },
 });
