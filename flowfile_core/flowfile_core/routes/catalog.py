@@ -439,7 +439,7 @@ def open_run_snapshot(
 
     from shared.storage_config import storage
 
-    from flowfile_core.flowfile import flow_file_handler
+    from flowfile_core import flow_file_handler
 
     run = db.query(FlowRun).get(run_id)
     if run is None:
