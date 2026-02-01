@@ -254,16 +254,17 @@ const loadArtifacts = async () => {
       }),
     );
 
-    // All kernel artifacts are "available" to this node
-    availableArtifacts.value = allArtifacts;
-
-    // Published artifacts are those where node_id matches current node
+    // Split artifacts: "available" = published by other nodes, "published" = by this node
     const currentNodeId = nodePythonScript.value?.node_id;
     if (currentNodeId != null) {
+      availableArtifacts.value = allArtifacts.filter(
+        (a) => a.node_id !== currentNodeId,
+      );
       publishedArtifacts.value = allArtifacts.filter(
         (a) => a.node_id === currentNodeId,
       );
     } else {
+      availableArtifacts.value = allArtifacts;
       publishedArtifacts.value = [];
     }
   } catch {
