@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type { NamespaceTree } from "../../types";
 
 const props = defineProps<{
@@ -92,8 +92,19 @@ defineEmits<{
   createSchema: [parentId: number];
 }>();
 
+function containsFlow(node: NamespaceTree, flowId: number): boolean {
+  if (node.flows.some(f => f.id === flowId)) return true;
+  return node.children.some(child => containsFlow(child, flowId));
+}
+
 const expanded = ref(true);
 const toggle = () => { expanded.value = !expanded.value; };
+
+watch(() => props.selectedFlowId, (flowId) => {
+  if (flowId !== null && containsFlow(props.node, flowId)) {
+    expanded.value = true;
+  }
+});
 
 const totalFlows = computed(() => {
   let count = props.node.flows.length;
