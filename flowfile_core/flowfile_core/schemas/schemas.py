@@ -28,6 +28,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "unpivot": input_schema.NodeUnpivot,
     "text_to_rows": input_schema.NodeTextToRows,
     "graph_solver": input_schema.NodeGraphSolver,
+    "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
     "join": input_schema.NodeJoin,
     "cross_join": input_schema.NodeCrossJoin,
