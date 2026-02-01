@@ -155,6 +155,23 @@ class ArtifactStore:
 
             return result
 
+    def clear_for_node(self, node_id: int) -> list[str]:
+        """Clear only in-memory artifacts owned by a specific node.
+
+        Returns the list of artifact names that were removed.
+        Persisted artifacts on disk are preserved for crash recovery.
+        """
+        with self._lock:
+            to_remove = [
+                name
+                for name, meta in self._artifacts.items()
+                if meta.get("node_id") == node_id
+            ]
+            for name in to_remove:
+                del self._artifacts[name]
+                self._lazy_loaded.discard(name)
+            return to_remove
+
     def clear(self) -> None:
         """Clear all in-memory artifacts. Persisted artifacts on disk are preserved."""
         with self._lock:

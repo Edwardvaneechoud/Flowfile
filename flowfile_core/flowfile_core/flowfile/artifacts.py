@@ -124,6 +124,31 @@ class ArtifactContext:
         )
         return refs
 
+    def begin_node_execution(self, node_id: int, kernel_id: str) -> None:
+        """Reset a node's published artifact state for a kernel before re-execution.
+
+        Call this when a node is about to execute so that stale published refs
+        (e.g. restored from a snapshot) are removed before new artifacts are
+        recorded.  This prevents duplicate entries in ``published`` when a node
+        re-executes after its state was restored from a previous run.
+        """
+        state = self._node_states.get(node_id)
+        if state is None:
+            return
+
+        old_refs = [r for r in state.published if r.kernel_id == kernel_id]
+        for old_ref in old_refs:
+            kernel_map = self._kernel_artifacts.get(kernel_id, {})
+            kernel_map.pop(old_ref.name, None)
+            key = (kernel_id, old_ref.name)
+            pub_ids = self._publisher_index.get(key)
+            if pub_ids:
+                pub_ids.discard(node_id)
+                if not pub_ids:
+                    self._publisher_index.pop(key, None)
+
+        state.published = [r for r in state.published if r.kernel_id != kernel_id]
+
     def record_consumed(self, node_id: int, artifact_names: list[str]) -> None:
         """Record that *node_id* consumed (read) the given artifact names."""
         state = self._get_or_create_state(node_id)

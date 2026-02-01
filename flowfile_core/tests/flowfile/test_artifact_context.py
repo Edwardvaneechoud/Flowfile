@@ -277,6 +277,95 @@ class TestArtifactContextClearing:
 
 
 # ---------------------------------------------------------------------------
+# ArtifactContext — begin_node_execution
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextBeginNodeExecution:
+    def test_clears_published_for_kernel(self):
+        """begin_node_execution removes published refs for that node+kernel."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model", "scaler"])
+        ctx.begin_node_execution(1, "k1")
+        assert ctx.get_published_by_node(1) == []
+
+    def test_preserves_other_kernel_refs(self):
+        """Published refs on other kernels are preserved."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(1, "k2", ["encoder"])
+        ctx.begin_node_execution(1, "k1")
+        published = ctx.get_published_by_node(1)
+        names = [r.name for r in published]
+        assert "model" not in names
+        assert "encoder" in names
+
+    def test_removes_from_kernel_index(self):
+        """Kernel index should no longer have the cleared artifacts."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.begin_node_execution(1, "k1")
+        assert ctx.get_kernel_artifacts("k1") == {}
+
+    def test_removes_from_publisher_index(self):
+        """Publisher reverse index should be cleaned up."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.begin_node_execution(1, "k1")
+        assert ("k1", "model") not in ctx._publisher_index
+
+    def test_noop_for_unknown_node(self):
+        """Should not raise for a node with no state."""
+        ctx = ArtifactContext()
+        ctx.begin_node_execution(999, "k1")  # Should not raise
+
+    def test_allows_fresh_record_published(self):
+        """After begin_node_execution, record_published should work cleanly."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.begin_node_execution(1, "k1")
+        ctx.record_published(1, "k1", ["model_v2"])
+        published = ctx.get_published_by_node(1)
+        names = [r.name for r in published]
+        assert names == ["model_v2"]
+
+    def test_snapshot_restore_then_begin_execution(self):
+        """Simulates the full re-run flow: snapshot, clear, restore, begin execution."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["linear_model"])
+        ctx.record_published(2, "k1", ["predictions"])
+
+        # Snapshot and clear (like run_graph does)
+        snapshot = ctx.snapshot_node_states()
+        ctx.clear_all()
+
+        # Restore all states (new behavior)
+        for nid, state in snapshot.items():
+            if state.published:
+                ctx.restore_node_state(nid, state)
+
+        # Node 1 is cached (skipped) - its state remains
+        # Node 2 re-executes - clear its metadata first
+        ctx.begin_node_execution(2, "k1")
+
+        # Node 1's artifacts should still be visible
+        assert len(ctx.get_published_by_node(1)) == 1
+        assert ctx.get_published_by_node(1)[0].name == "linear_model"
+
+        # Node 2's old artifacts should be cleared
+        assert ctx.get_published_by_node(2) == []
+
+        # Node 2 publishes new artifacts
+        ctx.record_published(2, "k1", ["predictions_v2"])
+        assert ctx.get_published_by_node(2)[0].name == "predictions_v2"
+
+        # Downstream node 3 should see both
+        avail = ctx.compute_available(node_id=3, kernel_id="k1", upstream_node_ids=[1, 2])
+        assert "linear_model" in avail
+        assert "predictions_v2" in avail
+
+
+# ---------------------------------------------------------------------------
 # ArtifactContext — Queries
 # ---------------------------------------------------------------------------
 

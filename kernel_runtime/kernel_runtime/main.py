@@ -120,6 +120,16 @@ async def execute(request: ExecuteRequest):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
+    # Clear artifacts previously published by this node so it starts fresh.
+    # Artifacts from other nodes remain untouched — critical for cached nodes
+    # whose artifacts must survive across re-runs.
+    cleared = artifact_store.clear_for_node(request.node_id)
+    if cleared:
+        logger.info(
+            "Cleared %d artifact(s) for node %d before execution: %s",
+            len(cleared), request.node_id, cleared,
+        )
+
     artifacts_before = set(artifact_store.list_all().keys())
 
     try:

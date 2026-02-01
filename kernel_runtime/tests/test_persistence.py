@@ -234,6 +234,55 @@ class TestPersistentStoreLazyLoad:
             persistent_store.get("nonexistent")
 
 
+class TestPersistentStoreClearForNode:
+    def test_clear_for_node_removes_only_that_nodes_artifacts(self, persistent_store: ArtifactStore):
+        persistent_store.publish("model", {"w": 1}, node_id=1)
+        persistent_store.publish("encoder", {"classes": ["a"]}, node_id=2)
+
+        removed = persistent_store.clear_for_node(1)
+        assert removed == ["model"]
+
+        # Node 2's artifact still in memory
+        assert persistent_store.get("encoder") == {"classes": ["a"]}
+        # Node 1's artifact removed from in-memory store
+        assert "model" not in persistent_store.list_all()
+        # It can still be lazy-loaded from disk (expected behavior for crash recovery)
+        assert persistent_store.get("model") == {"w": 1}
+
+    def test_clear_for_node_preserves_disk(self, persistent_store: ArtifactStore, persistence: ArtifactPersistence):
+        persistent_store.publish("model", {"w": 1}, node_id=1)
+        persistent_store.clear_for_node(1)
+
+        # Removed from memory
+        assert persistent_store.list_all() == {}
+        # Still on disk
+        assert "model" in persistence.list_persisted()
+
+    def test_clear_for_node_empty_when_no_artifacts(self, persistent_store: ArtifactStore):
+        removed = persistent_store.clear_for_node(999)
+        assert removed == []
+
+    def test_clear_for_node_allows_republish(self, persistent_store: ArtifactStore):
+        """After clearing a node's artifacts, the node can publish again."""
+        persistent_store.publish("model", {"v": 1}, node_id=1)
+        persistent_store.clear_for_node(1)
+        persistent_store.publish("model", {"v": 2}, node_id=1)
+        assert persistent_store.get("model") == {"v": 2}
+
+    def test_clear_for_node_clears_lazy_loaded(self, persistent_store: ArtifactStore):
+        """Lazy-loaded artifacts are also cleared by clear_for_node."""
+        persistent_store.publish("model", {"w": 1}, node_id=1)
+        persistent_store.clear()
+
+        # Lazy load
+        persistent_store.get("model")
+        # Now clear for node_id that matches the persisted metadata
+        removed = persistent_store.clear_for_node(1)
+        # The lazy-loaded artifact had node_id from metadata, but we check
+        # persisted metadata stored during publish. Let's verify it's cleared.
+        assert "model" in removed or persistent_store.list_all() == {}
+
+
 class TestPersistentStoreClear:
     def test_clear_preserves_disk(self, persistent_store: ArtifactStore, persistence: ArtifactPersistence):
         persistent_store.publish("model", {"w": 1}, node_id=1)
@@ -420,6 +469,98 @@ class TestPersistenceEndpoint:
         data = resp.json()
         assert data["enabled"] is False
         assert data["artifact_count"] == 0
+
+
+class TestExecuteAutoClearing:
+    """Verify that /execute clears only the executing node's artifacts."""
+
+    def test_execute_clears_own_artifacts_before_run(self, client):
+        """Node re-execution should clear its own previous artifacts."""
+        # Publish an artifact as node 1
+        resp = client.post("/execute", json={
+            "node_id": 1,
+            "code": "flowfile.publish_artifact('model', {'v': 1})",
+        })
+        assert resp.json()["success"] is True
+        assert "model" in resp.json()["artifacts_published"]
+
+        # Execute node 1 again — it should start with its artifacts cleared
+        # so re-publishing the same name works
+        resp = client.post("/execute", json={
+            "node_id": 1,
+            "code": "flowfile.publish_artifact('model', {'v': 2})",
+        })
+        assert resp.json()["success"] is True
+        assert "model" in resp.json()["artifacts_published"]
+
+    def test_execute_preserves_other_nodes_artifacts(self, client):
+        """Executing node 2 should NOT clear node 1's artifacts."""
+        # Node 1 publishes
+        resp = client.post("/execute", json={
+            "node_id": 1,
+            "code": "flowfile.publish_artifact('model', {'v': 1})",
+        })
+        assert resp.json()["success"] is True
+
+        # Node 2 executes — should be able to read node 1's artifact
+        resp = client.post("/execute", json={
+            "node_id": 2,
+            "code": "val = flowfile.read_artifact('model')\nassert val == {'v': 1}",
+        })
+        assert resp.json()["success"] is True
+
+    def test_cached_node_artifact_survives_rerun(self, client):
+        """Simulates the cached-node scenario: node 1 publishes, node 2 reads.
+        On re-run, node 1 is skipped, node 2 re-executes and should still find
+        node 1's artifact."""
+        # First run: node 1 publishes
+        client.post("/execute", json={
+            "node_id": 1,
+            "code": "flowfile.publish_artifact('linear_model', {'weights': [0.5]})",
+        })
+
+        # Second run: node 1 is skipped (nothing happens to it)
+        # Node 2 executes and should find node 1's artifact
+        resp = client.post("/execute", json={
+            "node_id": 2,
+            "code": "m = flowfile.read_artifact('linear_model')\nassert m == {'weights': [0.5]}",
+        })
+        assert resp.json()["success"] is True, resp.json().get("error")
+
+
+class TestDeltaTrackingWithClearForNode:
+    """Verify that per-node clearing works correctly with delta tracking."""
+
+    def test_reexecution_reports_artifacts_as_new(self, persistent_store: ArtifactStore):
+        """When a node re-executes after clear_for_node, published artifacts
+        appear in the delta."""
+        persistent_store.publish("model", {"v": 1}, node_id=1)
+
+        # Simulate re-execution: clear only node 1, take snapshot, publish
+        persistent_store.clear_for_node(1)
+        before = set(persistent_store.list_all().keys())
+
+        persistent_store.publish("model", {"v": 2}, node_id=1)
+
+        after = set(persistent_store.list_all().keys())
+        new = sorted(after - before)
+        assert new == ["model"]
+
+    def test_other_node_artifacts_excluded_from_delta(self, persistent_store: ArtifactStore):
+        """Artifacts from other nodes should not appear in delta tracking."""
+        persistent_store.publish("encoder", {"classes": ["a"]}, node_id=2)
+        persistent_store.publish("model", {"v": 1}, node_id=1)
+
+        # Clear only node 1
+        persistent_store.clear_for_node(1)
+        before = set(persistent_store.list_all().keys())
+        # encoder from node 2 is in list_all (explicitly published)
+        assert "encoder" in before
+
+        persistent_store.publish("model", {"v": 2}, node_id=1)
+        after = set(persistent_store.list_all().keys())
+        new = sorted(after - before)
+        assert new == ["model"]
 
 
 class TestHealthWithPersistence:

@@ -1136,6 +1136,12 @@ class FlowGraph:
             node_id = node_python_script.node_id
             flow_id = self.flow_id
 
+            # Reset this node's artifact metadata so stale refs from a
+            # previous run (restored from snapshot) are removed before we
+            # record new artifacts.  The kernel side mirrors this via
+            # clear_for_node() inside /execute.
+            self.artifact_context.begin_node_execution(node_id, kernel_id)
+
             # Compute available artifacts before execution
             upstream_ids = self._get_upstream_node_ids(node_id)
             self.artifact_context.compute_available(
@@ -2497,18 +2503,20 @@ class FlowGraph:
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
-            # Clear artifact tracking for a fresh run.
-            # Snapshot first so we can restore state for cached (skipped) nodes.
+            # Clear artifact tracking for a fresh run and immediately restore
+            # previous state so cached (skipped) nodes' artifacts remain visible
+            # to downstream nodes.  Each executing node will reset its own state
+            # via begin_node_execution() before recording new artifacts.
+            #
+            # We no longer blanket-clear kernel memory here.  Instead the kernel's
+            # /execute endpoint clears only the executing node's artifacts
+            # (clear_for_node), preserving artifacts from cached nodes.
             _prev_artifact_states = self.artifact_context.snapshot_node_states()
             self.artifact_context.clear_all()
-            for kid in self._get_required_kernel_ids():
-                self.artifact_context.clear_kernel(kid)
-                try:
-                    from flowfile_core.kernel import get_kernel_manager
-                    manager = get_kernel_manager()
-                    manager.clear_artifacts_sync(kid)
-                except Exception:
-                    logger.debug("Could not clear kernel artifacts for '%s'", kid)
+            graph_node_ids = set(self._node_db.keys())
+            for nid, prev_state in _prev_artifact_states.items():
+                if nid in graph_node_ids and prev_state.published:
+                    self.artifact_context.restore_node_state(nid, prev_state)
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
@@ -2566,18 +2574,6 @@ class FlowGraph:
                     if not node_result.success:
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
-
-            # Restore artifact state for graph nodes that were cached (skipped).
-            # Their _func didn't re-execute, so record_published was never
-            # called — replay their state from the pre-clear snapshot.
-            # Only restore nodes that actually belong to this graph to avoid
-            # resurrecting stale entries injected outside the graph.
-            graph_node_ids = set(self._node_db.keys())
-            for nid, prev_state in _prev_artifact_states.items():
-                if (nid in graph_node_ids
-                        and nid not in self.artifact_context._node_states
-                        and prev_state.published):
-                    self.artifact_context.restore_node_state(nid, prev_state)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
