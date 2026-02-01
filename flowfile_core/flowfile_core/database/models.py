@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
@@ -88,3 +88,16 @@ class CloudStoragePermission(Base):
     can_write = Column(Boolean, default=False)
     can_delete = Column(Boolean, default=False)
     can_list = Column(Boolean, default=True)
+
+
+class Kernel(Base):
+    __tablename__ = "kernels"
+
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    packages = Column(Text, default="[]")  # JSON-serialized list of package names
+    cpu_cores = Column(Float, default=2.0)
+    memory_gb = Column(Float, default=4.0)
+    gpu = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)

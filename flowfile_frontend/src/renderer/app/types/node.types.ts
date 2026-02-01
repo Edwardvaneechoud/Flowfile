@@ -521,6 +521,15 @@ export interface PolarsCodeInput {
 }
 
 // ============================================================================
+// Python Script Types
+// ============================================================================
+
+export interface PythonScriptInput {
+  code: string;
+  kernel_id: string | null;
+}
+
+// ============================================================================
 // Union Types
 // ============================================================================
 
@@ -745,6 +754,10 @@ export interface NodeSample extends NodeBase {
 
 export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
+}
+
+export interface NodePythonScript extends NodeMultiInput {
+  python_script_input: PythonScriptInput;
 }
 
 export interface NodeUnique extends NodeSingleInput {
