@@ -19,6 +19,8 @@ class ExecuteRequest(BaseModel):
     code: str
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
+    flow_id: int = 0
+    log_callback_url: str = ""
 
 
 class ExecuteResponse(BaseModel):
@@ -50,6 +52,8 @@ async def execute(request: ExecuteRequest):
             input_paths=request.input_paths,
             output_dir=output_dir,
             artifact_store=artifact_store,
+            flow_id=request.flow_id,
+            log_callback_url=request.log_callback_url,
         )
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):

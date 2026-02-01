@@ -216,6 +216,7 @@ class KernelManager:
                 "environment": {"KERNEL_PACKAGES": packages_str},
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
+                "extra_hosts": {"host.docker.internal": "host-gateway"},
             }
             container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
             kernel.container_id = container.id

@@ -48,6 +48,8 @@ class ExecuteRequest(BaseModel):
     code: str
     input_paths: dict[str, list[str]] = Field(default_factory=dict)
     output_dir: str = ""
+    flow_id: int = 0
+    log_callback_url: str = ""
 
 
 class ExecuteResult(BaseModel):
