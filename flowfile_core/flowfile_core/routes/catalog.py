@@ -598,7 +598,7 @@ def get_catalog_stats(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    total_ns = db.query(CatalogNamespace).count()
+    total_ns = db.query(CatalogNamespace).filter_by(level=0).count()
     total_flows = db.query(FlowRegistration).count()
     total_runs = db.query(FlowRun).count()
     total_favs = db.query(FlowFavorite).filter_by(user_id=current_user.id).count()
