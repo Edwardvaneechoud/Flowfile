@@ -188,6 +188,17 @@ class KernelManager:
         if kernel.state == KernelState.IDLE:
             return kernel
 
+        # Verify the kernel image exists before attempting to start
+        try:
+            self._docker.images.get(_KERNEL_IMAGE)
+        except docker.errors.ImageNotFound:
+            kernel.state = KernelState.ERROR
+            kernel.error_message = (
+                f"Docker image '{_KERNEL_IMAGE}' not found. "
+                "Please build or pull the kernel image before starting a kernel."
+            )
+            raise RuntimeError(kernel.error_message)
+
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
