@@ -173,7 +173,7 @@ let kernelPollTimer: ReturnType<typeof setInterval> | null = null;
 interface ArtifactInfo {
   name: string;
   type_name: string;
-  source_node_id?: number;
+  node_id?: number;
 }
 
 const availableArtifacts = ref<ArtifactInfo[]>([]);
@@ -245,22 +245,23 @@ const loadArtifacts = async () => {
   try {
     const response = await KernelApi.getArtifacts(kernelId);
     // The kernel /artifacts endpoint returns a dict of artifact name -> metadata
+    // Each entry has: type_name, module, node_id, created_at, size_bytes
     const allArtifacts: ArtifactInfo[] = Object.entries(response).map(
       ([name, meta]: [string, any]) => ({
         name,
         type_name: meta?.type_name ?? "",
-        source_node_id: meta?.source_node_id,
+        node_id: meta?.node_id,
       }),
     );
 
     // All kernel artifacts are "available" to this node
     availableArtifacts.value = allArtifacts;
 
-    // Published artifacts are those where source_node_id matches current node
+    // Published artifacts are those where node_id matches current node
     const currentNodeId = nodePythonScript.value?.node_id;
     if (currentNodeId != null) {
       publishedArtifacts.value = allArtifacts.filter(
-        (a) => a.source_node_id === currentNodeId,
+        (a) => a.node_id === currentNodeId,
       );
     } else {
       publishedArtifacts.value = [];
