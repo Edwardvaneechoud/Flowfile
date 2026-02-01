@@ -126,7 +126,12 @@
           @open-flow="openFlowInDesigner($event)"
         />
         <!-- Stats overview -->
-        <StatsPanel v-else :stats="catalogStore.stats" />
+        <StatsPanel
+          v-else
+          :stats="catalogStore.stats"
+          @view-run="catalogStore.loadRunDetail($event)"
+          @view-flow="navigateToFlow($event)"
+        />
       </div>
     </div>
 

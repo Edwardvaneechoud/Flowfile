@@ -37,7 +37,12 @@
     <div v-if="stats && stats.recent_runs.length > 0" class="section">
       <h3>Recent Runs</h3>
       <div class="recent-list">
-        <div v-for="run in stats.recent_runs" :key="run.id" class="recent-item">
+        <div
+          v-for="run in stats.recent_runs"
+          :key="run.id"
+          class="recent-item clickable"
+          @click="$emit('viewRun', run.id)"
+        >
           <span class="status-dot" :class="run.success ? 'success' : (run.success === false ? 'failure' : 'pending')"></span>
           <span class="recent-name">{{ run.flow_name }}</span>
           <span class="recent-time">{{ formatDate(run.started_at) }}</span>
@@ -50,7 +55,12 @@
     <div v-if="stats && stats.favorite_flows.length > 0" class="section">
       <h3>Favorite Flows</h3>
       <div class="fav-list">
-        <div v-for="flow in stats.favorite_flows" :key="flow.id" class="fav-item">
+        <div
+          v-for="flow in stats.favorite_flows"
+          :key="flow.id"
+          class="fav-item clickable"
+          @click="$emit('viewFlow', flow.id)"
+        >
           <i class="fa-solid fa-star fav-icon"></i>
           <span class="fav-name">{{ flow.name }}</span>
           <span class="fav-runs">{{ flow.run_count }} runs</span>
@@ -86,6 +96,11 @@ import type { CatalogStats } from "../../types";
 
 defineProps<{
   stats: CatalogStats | null;
+}>();
+
+defineEmits<{
+  viewRun: [runId: number];
+  viewFlow: [flowId: number];
 }>();
 
 function formatDate(dateStr: string): string {
@@ -177,6 +192,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 .recent-item:hover { background: var(--color-background-hover); }
+.clickable { cursor: pointer; }
 
 .status-dot {
   width: 8px; height: 8px;
