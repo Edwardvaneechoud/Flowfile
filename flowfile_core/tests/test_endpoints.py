@@ -1109,6 +1109,45 @@ def test_flow_run_status():
 # simulate Docker mode.
 # =============================================================================
 
+def test_directory_contents_in_electron_mode():
+    """Test that directory_contents allows browsing any directory in Electron mode."""
+    # Default mode is electron, so this should work for any readable directory
+    response = client.get("/files/directory_contents/",
+                          params={'directory': '/tmp', 'include_hidden': False})
+    assert response.status_code == 200, 'Should be able to browse /tmp in Electron mode'
+    assert isinstance(response.json(), list), 'Should return a list of file info'
+
+
+def test_directory_contents_blocked_outside_sandbox(monkeypatch):
+    """Test that directory_contents blocks access outside sandbox in non-Electron mode."""
+    from flowfile_core.configs import settings
+    monkeypatch.setattr(settings, 'is_electron_mode', lambda: False)
+    # /etc is outside the user_data_directory sandbox
+    response = client.get("/files/directory_contents/",
+                          params={'directory': '/etc', 'include_hidden': False})
+    assert response.status_code == 403, 'Path outside sandbox should be blocked in non-Electron mode'
+    assert 'Access denied' in response.json()['detail'], 'Should return access denied message'
+
+
+def test_directory_contents_allowed_inside_sandbox(monkeypatch):
+    """Test that directory_contents allows access inside sandbox in non-Electron mode."""
+    from flowfile_core.configs import settings
+    monkeypatch.setattr(settings, 'is_electron_mode', lambda: False)
+    # user_data_directory itself should be accessible
+    response = client.get("/files/directory_contents/",
+                          params={'directory': str(storage.user_data_directory),
+                                  'include_hidden': False})
+    assert response.status_code == 200, 'Sandbox root should be accessible'
+    assert isinstance(response.json(), list), 'Should return a list of file info'
+
+
+def test_directory_contents_invalid_directory():
+    """Test that directory_contents returns 404 for non-existent directory."""
+    response = client.get("/files/directory_contents/",
+                          params={'directory': '/nonexistent_dir_12345', 'include_hidden': False})
+    assert response.status_code == 404, 'Non-existent directory should return 404'
+
+
 def test_get_local_files_path_traversal_blocked():
     """Test that get_local_files blocks access to directories outside sandbox."""
     # Attempt to access /etc directory (should be blocked)

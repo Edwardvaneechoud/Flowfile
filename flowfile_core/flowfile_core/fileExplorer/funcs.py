@@ -103,11 +103,12 @@ class SecureFileExplorer:
         # Set initial current path
         initial_path = Path(start_path).expanduser().resolve()
 
-        # If sandbox is set and initial path is outside it, use sandbox root
+        # If sandbox is set and initial path is outside it, raise an error
+        # (never silently fall back, as that causes frontend/backend desync)
         if self.sandbox_root and not self._is_path_safe(initial_path):
-            self.current_path = self.sandbox_root
-        else:
-            self.current_path = initial_path
+            raise PermissionError(f"Access denied: path is outside the allowed directory")
+
+        self.current_path = initial_path
 
     def _is_path_safe(self, path: Path) -> bool:
         """Check if a path is within the sandbox root.

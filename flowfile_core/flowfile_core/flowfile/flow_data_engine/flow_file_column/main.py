@@ -208,6 +208,10 @@ class FlowfileColumn:
             "Uint16",
             "Uint32",
             "Uint64",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
         ):
             return "numeric"
         elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):

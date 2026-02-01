@@ -333,10 +333,22 @@ const loadCurrentDirectory = async () => {
 };
 
 /**
- * Navigate to a specific directory path
+ * Navigate to a specific directory path.
+ * On failure, stays at the current directory and shows a warning instead of an error state.
  */
 const navigateToPath = async (directoryPath: string) => {
+  const previousPath = currentPath.value;
+  const previousFiles = [...files.value];
   await loadDirectoryContents(directoryPath);
+  if (error.value) {
+    // Navigation failed — revert to previous state so the user stays where they were
+    currentPath.value = previousPath;
+    files.value = previousFiles;
+    fileBrowserStore.setCurrentPath(props.context, previousPath);
+    error.value = null;
+    ElMessage.warning("Cannot navigate to this directory");
+    return;
+  }
   searchTerm.value = "";
   selectedFile.value = null;
 };
