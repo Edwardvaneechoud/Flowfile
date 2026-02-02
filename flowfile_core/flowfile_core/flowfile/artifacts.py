@@ -137,8 +137,10 @@ class ArtifactContext:
     ) -> None:
         """Record that *node_id* deleted the given artifacts from *kernel_id*.
 
-        Removes the artifacts from the kernel index and from published
-        lists of the publishing nodes (looked up via reverse index).
+        Removes the artifacts from the kernel index so they are no longer
+        available to downstream nodes.  The original publisher's
+        ``state.published`` list is **not** modified — it serves as a
+        permanent record of what the node produced.
         """
         state = self._get_or_create_state(node_id)
         state.deleted.extend(artifact_names)
@@ -146,17 +148,9 @@ class ArtifactContext:
         kernel_map = self._kernel_artifacts.get(kernel_id, {})
         for name in artifact_names:
             kernel_map.pop(name, None)
-
-            # Use the reverse index to update only the affected nodes
+            # Clean up the reverse index entry but leave published intact
             key = (kernel_id, name)
-            publisher_ids = self._publisher_index.pop(key, set())
-            for pid in publisher_ids:
-                ns = self._node_states.get(pid)
-                if ns is not None:
-                    ns.published = [
-                        r for r in ns.published
-                        if not (r.kernel_id == kernel_id and r.name == name)
-                    ]
+            self._publisher_index.pop(key, None)
 
         logger.debug(
             "Node %s deleted %d artifact(s) on kernel '%s': %s",
@@ -179,19 +173,28 @@ class ArtifactContext:
         """Compute which artifacts are available to *node_id*.
 
         An artifact is available if it was published by an upstream node
-        (direct or transitive) that used the **same** ``kernel_id``.
+        (direct or transitive) that used the **same** ``kernel_id`` and
+        has **not** been deleted by any upstream node.
 
         The result is stored on the node's :class:`NodeArtifactState` and
         also returned.
         """
         available: dict[str, ArtifactRef] = {}
+        deleted_upstream: set[str] = set()
+
         for uid in upstream_node_ids:
             upstream_state = self._node_states.get(uid)
             if upstream_state is None:
                 continue
+            # Collect artifacts deleted by upstream nodes
+            deleted_upstream.update(upstream_state.deleted)
             for ref in upstream_state.published:
                 if ref.kernel_id == kernel_id:
                     available[ref.name] = ref
+
+        # Remove artifacts that were deleted by any upstream node
+        for name in deleted_upstream:
+            available.pop(name, None)
 
         state = self._get_or_create_state(node_id)
         state.available = available
@@ -240,8 +243,8 @@ class ArtifactContext:
     def clear_kernel(self, kernel_id: str) -> None:
         """Remove tracking for a specific kernel.
 
-        Also removes the corresponding published refs from node states
-        and cleans up the reverse index.
+        Clears the kernel index and availability maps.  The ``published``
+        lists on node states are preserved as historical records.
         """
         # Clean reverse index entries for this kernel
         keys_to_remove = [k for k in self._publisher_index if k[0] == kernel_id]
@@ -250,7 +253,6 @@ class ArtifactContext:
 
         self._kernel_artifacts.pop(kernel_id, None)
         for state in self._node_states.values():
-            state.published = [r for r in state.published if r.kernel_id != kernel_id]
             state.available = {
                 k: v for k, v in state.available.items() if v.kernel_id != kernel_id
             }
@@ -358,14 +360,15 @@ class ArtifactContext:
         return edges
 
     def get_node_summaries(self) -> dict[str, dict[str, Any]]:
-        """Return per-node artifact summary for badge display.
+        """Return per-node artifact summary for badge/tab display.
 
         Returns a dict keyed by str(node_id) with:
-            published_count, consumed_count, published, consumed, kernel_id
+            published_count, consumed_count, deleted_count,
+            published, consumed, deleted, kernel_id
         """
         summaries: dict[str, dict[str, Any]] = {}
         for nid, state in self._node_states.items():
-            if not state.published and not state.consumed:
+            if not state.published and not state.consumed and not state.deleted:
                 continue
             kernel_id = ""
             if state.published:
@@ -373,6 +376,7 @@ class ArtifactContext:
             summaries[str(nid)] = {
                 "published_count": len(state.published),
                 "consumed_count": len(state.consumed),
+                "deleted_count": len(state.deleted),
                 "published": [
                     {
                         "name": r.name,
@@ -393,6 +397,7 @@ class ArtifactContext:
                     }
                     for name in state.consumed
                 ],
+                "deleted": list(state.deleted),
                 "kernel_id": kernel_id,
             }
         return summaries

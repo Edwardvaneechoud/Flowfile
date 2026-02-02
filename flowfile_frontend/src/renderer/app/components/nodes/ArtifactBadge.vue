@@ -78,6 +78,38 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="summary.deleted_count > 0"
+      class="artifact-badge artifact-badge-delete"
+      @mouseenter="showDeleteTooltip = true"
+      @mouseleave="showDeleteTooltip = false"
+    >
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M18 6L6 18" />
+        <path d="M6 6l12 12" />
+      </svg>
+      <span class="badge-count">{{ summary.deleted_count }}</span>
+      <div v-if="showDeleteTooltip" class="artifact-tooltip">
+        <div class="tooltip-header">Deleted Artifacts</div>
+        <div
+          v-for="name in summary.deleted"
+          :key="name"
+          class="tooltip-item"
+        >
+          <span class="tooltip-name">{{ name }}</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -92,6 +124,7 @@ const props = defineProps<{
 const flowStore = useFlowStore();
 const showPublishTooltip = ref(false);
 const showConsumeTooltip = ref(false);
+const showDeleteTooltip = ref(false);
 
 const summary = computed(() => flowStore.getNodeArtifactSummary(props.nodeId));
 </script>
@@ -132,6 +165,12 @@ const summary = computed(() => flowStore.getNodeArtifactSummary(props.nodeId));
   background-color: rgba(16, 185, 129, 0.15);
   color: #10b981;
   border-color: rgba(16, 185, 129, 0.3);
+}
+
+.artifact-badge-delete {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 .badge-count {

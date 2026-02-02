@@ -149,8 +149,10 @@ export interface ArtifactConsumed {
 export interface NodeArtifactSummary {
   published_count: number;
   consumed_count: number;
+  deleted_count: number;
   published: ArtifactPublished[];
   consumed: ArtifactConsumed[];
+  deleted: string[];
   kernel_id: string;
 }
 

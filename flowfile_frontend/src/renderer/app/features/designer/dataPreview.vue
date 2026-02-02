@@ -21,14 +21,14 @@
         @click="activeTab = 'artifacts'"
       >
         Artifacts
-        <span class="tab-badge">{{
-          nodeArtifacts.published_count + nodeArtifacts.consumed_count
+        <span class="dp-tab-badge">{{
+          nodeArtifacts.published_count + nodeArtifacts.consumed_count + nodeArtifacts.deleted_count
         }}</span>
       </button>
     </div>
 
     <!-- Data Tab Content -->
-    <div v-show="activeTab === 'data'" class="tab-content">
+    <div v-show="activeTab === 'data'" class="dp-tab-content">
       <!-- Button for when there is sample data, but the sample data is outdated -->
       <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
         <p>
@@ -65,7 +65,7 @@
     </div>
 
     <!-- Artifacts Tab Content -->
-    <div v-if="activeTab === 'artifacts' && nodeArtifacts" class="tab-content artifacts-panel">
+    <div v-if="activeTab === 'artifacts' && nodeArtifacts" class="dp-tab-content artifacts-panel">
       <div v-if="nodeArtifacts.kernel_id" class="artifact-section-meta">
         Kernel: <code>{{ nodeArtifacts.kernel_id }}</code>
       </div>
@@ -110,8 +110,24 @@
         </table>
       </div>
 
+      <div v-if="nodeArtifacts.deleted.length > 0" class="artifact-section">
+        <div class="artifact-section-header">Deleted</div>
+        <table class="artifact-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="name in nodeArtifacts.deleted" :key="name">
+              <td class="artifact-name artifact-deleted">{{ name }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div
-        v-if="nodeArtifacts.published.length === 0 && nodeArtifacts.consumed.length === 0"
+        v-if="nodeArtifacts.published.length === 0 && nodeArtifacts.consumed.length === 0 && nodeArtifacts.deleted.length === 0"
         class="artifact-empty"
       >
         No artifacts recorded for this node.
@@ -657,7 +673,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   border-bottom-color: var(--color-accent, #6366f1);
 }
 
-.tab-badge {
+.dp-tab-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -671,7 +687,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   color: #6366f1;
 }
 
-.tab-content {
+.dp-tab-content {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -742,6 +758,12 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 .artifact-module {
   font-size: 11px;
   color: var(--color-text-secondary);
+}
+
+.artifact-deleted {
+  text-decoration: line-through;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
 }
 
 .artifact-empty {
