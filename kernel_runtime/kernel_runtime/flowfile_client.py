@@ -138,6 +138,221 @@ def list_artifacts() -> dict:
     return store.list_all(flow_id=flow_id)
 
 
+# ===== Global Artifact APIs =====
+
+# Core API URL for global artifact operations
+CORE_URL = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+
+
+def publish_global(
+    name: str,
+    obj: Any,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    namespace_id: int | None = None,
+    format: str | None = None,
+) -> int:
+    """Persist a Python object to the global artifact store.
+
+    The object is serialized and stored so it can be retrieved later in any
+    flow or session via ``get_global()``.
+
+    Args:
+        name: Name for the artifact (used for lookup).
+        obj: Any serializable Python object.
+        description: Optional human-readable description.
+        tags: Optional list of tags for searching/filtering.
+        namespace_id: Optional catalog namespace ID. Defaults to None (global).
+        format: Serialization format override ("parquet", "joblib", "pickle").
+            Auto-detected from the object type if not specified.
+
+    Returns:
+        The artifact ID.
+
+    Example::
+
+        artifact_id = flowfile.publish_global(
+            "my_model",
+            trained_model,
+            description="Random Forest v2",
+            tags=["ml", "production"],
+        )
+    """
+    from kernel_runtime.serialization import detect_format, serialize_to_file, serialize_to_bytes
+
+    fmt = format or detect_format(obj)
+    python_type = f"{type(obj).__module__}.{type(obj).__name__}"
+    python_module = type(obj).__module__
+
+    # Get lineage context if available
+    ctx = _context.get({})
+    flow_id = ctx.get("flow_id")
+    node_id = ctx.get("node_id")
+
+    # 1. Request upload target from Core
+    resp = httpx.post(
+        f"{CORE_URL}/artifacts/prepare-upload",
+        json={
+            "name": name,
+            "serialization_format": fmt,
+            "description": description,
+            "tags": tags or [],
+            "namespace_id": namespace_id,
+            "source_flow_id": flow_id,
+            "source_node_id": node_id,
+            "python_type": python_type,
+            "python_module": python_module,
+        },
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    target = resp.json()
+
+    # 2. Serialize and write directly to storage
+    if target["method"] == "file":
+        sha256 = serialize_to_file(obj, target["path"], fmt)
+        size_bytes = os.path.getsize(target["path"])
+    else:
+        blob, sha256 = serialize_to_bytes(obj, fmt)
+        size_bytes = len(blob)
+        upload_resp = httpx.put(
+            target["path"],
+            content=blob,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=600.0,
+        )
+        upload_resp.raise_for_status()
+
+    # 3. Finalize with Core
+    resp = httpx.post(
+        f"{CORE_URL}/artifacts/finalize",
+        json={
+            "artifact_id": target["artifact_id"],
+            "storage_key": target["storage_key"],
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+        },
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+
+    return target["artifact_id"]
+
+
+def get_global(
+    name: str,
+    version: int | None = None,
+    namespace_id: int | None = None,
+) -> Any:
+    """Retrieve a Python object from the global artifact store.
+
+    Args:
+        name: Name of the artifact.
+        version: Specific version number. Latest version if not specified.
+        namespace_id: Optional catalog namespace ID.
+
+    Returns:
+        The deserialized Python object.
+
+    Raises:
+        KeyError: If the artifact is not found.
+
+    Example::
+
+        model = flowfile.get_global("my_model")
+        model_v1 = flowfile.get_global("my_model", version=1)
+    """
+    from kernel_runtime.serialization import deserialize_from_file, deserialize_from_bytes
+
+    params: dict[str, Any] = {}
+    if version is not None:
+        params["version"] = version
+    if namespace_id is not None:
+        params["namespace_id"] = namespace_id
+
+    resp = httpx.get(
+        f"{CORE_URL}/artifacts/by-name/{name}",
+        params=params,
+        timeout=30.0,
+    )
+    if resp.status_code == 404:
+        raise KeyError(f"Artifact '{name}' not found")
+    resp.raise_for_status()
+
+    meta = resp.json()
+    download = meta["download_source"]
+    fmt = meta["serialization_format"]
+
+    if download["method"] == "file":
+        obj = deserialize_from_file(download["path"], fmt)
+    else:
+        download_resp = httpx.get(download["path"], timeout=600.0)
+        download_resp.raise_for_status()
+        obj = deserialize_from_bytes(download_resp.content, fmt)
+
+    return obj
+
+
+def list_global_artifacts(
+    namespace_id: int | None = None,
+    tags: list[str] | None = None,
+) -> list[dict]:
+    """List available global artifacts.
+
+    Args:
+        namespace_id: Filter by namespace.
+        tags: Filter by tags.
+
+    Returns:
+        List of artifact metadata dicts.
+    """
+    params: dict[str, Any] = {}
+    if namespace_id is not None:
+        params["namespace_id"] = namespace_id
+    if tags:
+        params["tags"] = tags
+
+    resp = httpx.get(f"{CORE_URL}/artifacts/", params=params, timeout=30.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_global_artifact(
+    name: str,
+    version: int | None = None,
+    namespace_id: int | None = None,
+) -> None:
+    """Delete a global artifact.
+
+    Args:
+        name: Name of the artifact.
+        version: Specific version to delete. If not specified, deletes the latest.
+        namespace_id: Optional catalog namespace ID.
+
+    Raises:
+        KeyError: If the artifact is not found.
+    """
+    params: dict[str, Any] = {}
+    if version is not None:
+        params["version"] = version
+    if namespace_id is not None:
+        params["namespace_id"] = namespace_id
+
+    resp = httpx.get(
+        f"{CORE_URL}/artifacts/by-name/{name}",
+        params=params,
+        timeout=30.0,
+    )
+    if resp.status_code == 404:
+        raise KeyError(f"Artifact '{name}' not found")
+    resp.raise_for_status()
+
+    artifact_id = resp.json()["id"]
+
+    resp = httpx.delete(f"{CORE_URL}/artifacts/{artifact_id}", timeout=30.0)
+    resp.raise_for_status()
+
+
 # ===== Logging APIs =====
 
 def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> None:

@@ -123,6 +123,19 @@ class FlowfileStorage:
             return self.base_directory / "outputs"
 
     @property
+    def shared_directory(self) -> Path:
+        """Shared directory accessible by both Core and kernels."""
+        if _is_docker_mode():
+            return Path(os.environ.get("FLOWFILE_SHARED_DIR", "/shared"))
+        else:
+            return self.base_directory / "shared"
+
+    @property
+    def global_artifacts_directory(self) -> Path:
+        """Permanent storage for global artifacts (internal)."""
+        return self.base_directory / "global_artifacts"
+
+    @property
     def database_directory(self) -> Path:
         """Directory for local database files (internal)."""
         return self.base_directory / "database"
@@ -152,6 +165,8 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.shared_directory,
+            self.global_artifacts_directory,
         ]
 
         # User-accessible directories (location depends on environment)
