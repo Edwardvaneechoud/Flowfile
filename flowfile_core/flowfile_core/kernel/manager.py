@@ -6,6 +6,7 @@ import time
 import docker
 import httpx
 
+from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.kernel.models import (
     ClearNodeArtifactsResult,
     ExecuteRequest,
@@ -234,7 +235,7 @@ class KernelManager:
 
         return kernel
 
-    def start_kernel_sync(self, kernel_id: str) -> KernelInfo:
+    def start_kernel_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
         """Synchronous version of start_kernel() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state == KernelState.IDLE:
@@ -248,6 +249,8 @@ class KernelManager:
                 f"Docker image '{_KERNEL_IMAGE}' not found. "
                 "Please build or pull the kernel image before starting a kernel."
             )
+            flow_logger.error(f"Docker image '{_KERNEL_IMAGE}' not found. "
+                              "Please build or pull the kernel image before starting a kernel.") if flow_logger else None
             raise RuntimeError(kernel.error_message)
 
         if kernel.port is None:
@@ -272,14 +275,14 @@ class KernelManager:
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
-            logger.info("Kernel '%s' is idle (container %s)", kernel_id, container.short_id)
+            flow_logger.info(f"Kernel  {kernel_id} is idle (container {container.short_id})") if flow_logger else None
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
-            logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
+            logger.error(f"Failed to start kernel {kernel_id}:{exc}") if flow_logger else None
             self._cleanup_container(kernel_id)
             raise
-
+        flow_logger.info(f"Kernel  {kernel_id} started (container {container.short_id})") if flow_logger else None
         return kernel
 
     async def stop_kernel(self, kernel_id: str) -> None:
