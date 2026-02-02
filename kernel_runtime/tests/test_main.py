@@ -404,6 +404,46 @@ class TestArtifactEndpoints:
         resp_list = client.get("/artifacts")
         assert "temp" not in resp_list.json()
 
+    def test_same_node_reexecution_clears_own_artifacts(self, client: TestClient):
+        """Re-executing the same node auto-clears its previous artifacts."""
+        resp1 = client.post(
+            "/execute",
+            json={
+                "node_id": 24,
+                "code": 'flowfile.publish_artifact("model", "v1")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp1.json()["success"] is True
+        assert "model" in resp1.json()["artifacts_published"]
+
+        # Same node re-executes — should NOT fail with "already exists"
+        resp2 = client.post(
+            "/execute",
+            json={
+                "node_id": 24,
+                "code": 'flowfile.publish_artifact("model", "v2")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp2.json()["success"] is True
+        assert "model" in resp2.json()["artifacts_published"]
+
+        # Verify we get v2
+        resp3 = client.post(
+            "/execute",
+            json={
+                "node_id": 99,
+                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp3.json()["success"] is True
+        assert "v2" in resp3.json()["stdout"]
+
     def test_delete_then_republish_via_execute(self, client: TestClient):
         """After deleting, a new artifact with the same name can be published."""
         client.post(

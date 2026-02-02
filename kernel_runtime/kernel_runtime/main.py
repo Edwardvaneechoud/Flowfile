@@ -48,6 +48,10 @@ async def execute(request: ExecuteRequest):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
+    # Clear any artifacts this node previously published so re-execution
+    # doesn't fail with "already exists".
+    artifact_store.clear_by_node_ids({request.node_id})
+
     artifacts_before = set(artifact_store.list_all().keys())
 
     try:
