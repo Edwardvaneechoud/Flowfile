@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
@@ -101,3 +102,90 @@ class Kernel(Base):
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+# ==================== Flow Catalog Models ====================
+
+
+class CatalogNamespace(Base):
+    """Unity Catalog-style hierarchical namespace: catalog -> schema -> (flows live here).
+
+    level 0 = catalog, level 1 = schema. Flows are registered under a schema
+    via FlowRegistration.namespace_id.
+    """
+    __tablename__ = "catalog_namespaces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    parent_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
+    level = Column(Integer, nullable=False, default=0)  # 0=catalog, 1=schema
+    description = Column(Text, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("name", "parent_id", name="uq_namespace_name_parent"),
+    )
+
+
+class FlowRegistration(Base):
+    """Persistent registry entry for a flow. Links a flow file path to catalog metadata."""
+    __tablename__ = "flow_registrations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    flow_path = Column(String, nullable=False)
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class FlowRun(Base):
+    """Persistent record of every flow execution, with a snapshot of the flow version."""
+    __tablename__ = "flow_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    flow_name = Column(String, nullable=False)
+    flow_path = Column(String, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    success = Column(Boolean, nullable=True)
+    nodes_completed = Column(Integer, default=0)
+    number_of_nodes = Column(Integer, default=0)
+    duration_seconds = Column(Float, nullable=True)
+    run_type = Column(String, nullable=False, default="full_run")
+    # YAML snapshot of the flow definition at run time
+    flow_snapshot = Column(Text, nullable=True)
+    # JSON-serialised node step results
+    node_results_json = Column(Text, nullable=True)
+
+
+class FlowFavorite(Base):
+    """Allows a user to bookmark/favorite a registered flow."""
+    __tablename__ = "flow_favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "registration_id", name="uq_user_favorite"),
+    )
+
+
+class FlowFollow(Base):
+    """Allows a user to follow/subscribe to a registered flow for updates."""
+    __tablename__ = "flow_follows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),
+    )

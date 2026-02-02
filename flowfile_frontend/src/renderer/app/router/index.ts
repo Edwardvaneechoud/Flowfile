@@ -66,6 +66,10 @@ const routes: Array<RouteRecordRaw> = [
         path: "kernelManager",
         component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
       },
+        name: "catalog",
+        path: "catalog",
+        component: () => import("../views/CatalogView/CatalogView.vue"),
+      },
       {
         name: "nodeDesigner",
         path: "nodeDesigner",
