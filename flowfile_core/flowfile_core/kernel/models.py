@@ -53,6 +53,18 @@ class ExecuteRequest(BaseModel):
     log_callback_url: str = ""
 
 
+class ClearNodeArtifactsRequest(BaseModel):
+    """Request to selectively clear artifacts owned by specific node IDs."""
+    node_ids: list[int]
+    flow_id: int | None = None
+
+
+class ClearNodeArtifactsResult(BaseModel):
+    """Result of a selective artifact clear operation."""
+    status: str = "cleared"
+    removed: list[str] = Field(default_factory=list)
+
+
 class ExecuteResult(BaseModel):
     success: bool
     output_paths: list[str] = Field(default_factory=list)

@@ -116,22 +116,26 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
 def publish_artifact(name: str, obj: Any) -> None:
     store: ArtifactStore = _get_context_value("artifact_store")
     node_id: int = _get_context_value("node_id")
-    store.publish(name, obj, node_id)
+    flow_id: int = _get_context_value("flow_id")
+    store.publish(name, obj, node_id, flow_id=flow_id)
 
 
 def read_artifact(name: str) -> Any:
     store: ArtifactStore = _get_context_value("artifact_store")
-    return store.get(name)
+    flow_id: int = _get_context_value("flow_id")
+    return store.get(name, flow_id=flow_id)
 
 
 def delete_artifact(name: str) -> None:
     store: ArtifactStore = _get_context_value("artifact_store")
-    store.delete(name)
+    flow_id: int = _get_context_value("flow_id")
+    store.delete(name, flow_id=flow_id)
 
 
 def list_artifacts() -> dict:
     store: ArtifactStore = _get_context_value("artifact_store")
-    return store.list_all()
+    flow_id: int = _get_context_value("flow_id")
+    return store.list_all(flow_id=flow_id)
 
 
 # ===== Logging APIs =====
