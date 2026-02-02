@@ -1,0 +1,141 @@
+"""Pydantic schemas for the Flow Catalog system.
+
+Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
+run history, favorites and follows.
+"""
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+# ==================== Namespace Schemas ====================
+
+
+class NamespaceCreate(BaseModel):
+    name: str
+    parent_id: int | None = None
+    description: str | None = None
+
+
+class NamespaceUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class NamespaceOut(BaseModel):
+    id: int
+    name: str
+    parent_id: int | None = None
+    level: int
+    description: str | None = None
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NamespaceTree(NamespaceOut):
+    """Recursive tree node – children are nested schemas of the same hierarchy."""
+    children: list["NamespaceTree"] = Field(default_factory=list)
+    flows: list["FlowRegistrationOut"] = Field(default_factory=list)
+
+
+# ==================== Flow Registration Schemas ====================
+
+
+class FlowRegistrationCreate(BaseModel):
+    name: str
+    description: str | None = None
+    flow_path: str
+    namespace_id: int | None = None
+
+
+class FlowRegistrationUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+
+
+class FlowRegistrationOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    flow_path: str
+    namespace_id: int | None = None
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+    is_favorite: bool = False
+    is_following: bool = False
+    run_count: int = 0
+    last_run_at: datetime | None = None
+    last_run_success: bool | None = None
+    file_exists: bool = True
+
+    model_config = {"from_attributes": True}
+
+
+# ==================== Flow Run Schemas ====================
+
+
+class FlowRunOut(BaseModel):
+    id: int
+    registration_id: int | None = None
+    flow_name: str
+    flow_path: str | None = None
+    user_id: int
+    started_at: datetime
+    ended_at: datetime | None = None
+    success: bool | None = None
+    nodes_completed: int = 0
+    number_of_nodes: int = 0
+    duration_seconds: float | None = None
+    run_type: str = "full_run"
+    has_snapshot: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class FlowRunDetail(FlowRunOut):
+    """Extended run detail that includes the YAML flow snapshot and node results."""
+    flow_snapshot: str | None = None
+    node_results_json: str | None = None
+
+
+# ==================== Favorite / Follow Schemas ====================
+
+
+class FavoriteOut(BaseModel):
+    id: int
+    user_id: int
+    registration_id: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FollowOut(BaseModel):
+    id: int
+    user_id: int
+    registration_id: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ==================== Catalog Overview ====================
+
+
+class CatalogStats(BaseModel):
+    total_namespaces: int = 0
+    total_flows: int = 0
+    total_runs: int = 0
+    total_favorites: int = 0
+    recent_runs: list[FlowRunOut] = Field(default_factory=list)
+    favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
+
+
+# Rebuild forward-referenced models
+NamespaceTree.model_rebuild()

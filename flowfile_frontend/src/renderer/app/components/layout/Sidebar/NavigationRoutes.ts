@@ -22,6 +22,13 @@ export default {
       },
     },
     {
+      name: "catalog",
+      displayName: "menu.catalog",
+      meta: {
+        icon: "fa-solid fa-folder-tree",
+      },
+    },
+    {
       name: "documentation",
       displayName: "menu.documentation",
       meta: {
