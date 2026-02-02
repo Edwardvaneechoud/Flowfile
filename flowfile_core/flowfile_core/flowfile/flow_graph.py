@@ -22,6 +22,7 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.settings import SERVER_PORT
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -65,6 +66,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
@@ -1123,8 +1125,6 @@ class FlowGraph:
         """Adds a node that executes Python code on a kernel container."""
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
-            from flowfile_core.configs.settings import SERVER_PORT
-            from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
             code = node_python_script.python_script_input.code
@@ -1175,7 +1175,7 @@ class FlowGraph:
                 flow_id=flow_id,
                 log_callback_url=log_callback_url,
             )
-            result = manager.execute_sync(kernel_id, request)
+            result = manager.execute_sync(kernel_id, request, self.flow_logger)
 
             # Forward captured stdout/stderr to the flow logger
             if result.stdout:
@@ -2582,7 +2582,6 @@ class FlowGraph:
                 kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
                 for kid, node_ids_for_kernel in kernel_node_map.items():
                     try:
-                        from flowfile_core.kernel import get_kernel_manager
                         manager = get_kernel_manager()
                         manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel), flow_id=self.flow_id)
                     except Exception:

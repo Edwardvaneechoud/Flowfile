@@ -334,11 +334,12 @@ class KernelManager:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
 
-    def execute_sync(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
+    def execute_sync(self, kernel_id: str, request: ExecuteRequest,
+                     flow_logger: FlowLogger | None = None) -> ExecuteResult:
         """Synchronous wrapper around execute() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            self._ensure_running_sync(kernel_id)
+            self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
         kernel.state = KernelState.EXECUTING
         try:
@@ -466,7 +467,7 @@ class KernelManager:
             await self._wait_for_healthy(kernel_id)
             kernel.state = KernelState.IDLE
 
-    def _ensure_running_sync(self, kernel_id: str) -> None:
+    def _ensure_running_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> None:
         """Synchronous version of _ensure_running."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
