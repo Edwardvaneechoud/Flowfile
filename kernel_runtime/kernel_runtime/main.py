@@ -1,14 +1,17 @@
 import contextlib
 import io
+import json
 import os
 import time
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.serialization import detect_format, get_serializer
 
 app = FastAPI(title="FlowFile Kernel Runtime", version=__version__)
 artifact_store = ArtifactStore()
@@ -135,3 +138,193 @@ async def list_node_artifacts(
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": __version__, "artifact_count": len(artifact_store.list_all())}
+
+
+# ---------------------------------------------------------------------------
+# Global Artifact Registry bridge
+# ---------------------------------------------------------------------------
+# These endpoints let user code running inside the kernel call
+# ``flowfile.publish_global()`` and ``flowfile.get_global()``.
+# The kernel serializes/deserializes the Python object locally, then
+# streams the blob to/from the Core API over HTTP.
+# ---------------------------------------------------------------------------
+
+# Core API base URL — the Docker container reaches the host via this address.
+_CORE_URL = os.environ.get(
+    "FLOWFILE_CORE_URL",
+    f"http://host.docker.internal:{os.environ.get('FLOWFILE_CORE_PORT', '63578')}",
+)
+
+
+class PublishGlobalRequest(BaseModel):
+    """Request body for the kernel-side ``/publish_global`` endpoint."""
+    artifact_name: str
+    name: str
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    namespace_id: int | None = None
+    serialization_format: str | None = None  # auto-detect if omitted
+    flow_id: int = 0
+
+
+class PublishGlobalResponse(BaseModel):
+    success: bool
+    artifact_id: int | None = None
+    error: str | None = None
+
+
+class GetGlobalRequest(BaseModel):
+    """Request body for the kernel-side ``/get_global`` endpoint."""
+    name: str
+    namespace_id: int | None = None
+    version: int | None = None
+
+
+class GetGlobalResponse(BaseModel):
+    success: bool
+    artifact_name: str | None = None
+    error: str | None = None
+
+
+@app.post("/publish_global", response_model=PublishGlobalResponse)
+async def publish_global(request: PublishGlobalRequest):
+    """Serialize a transient artifact and upload it to the Core catalog.
+
+    Steps:
+    1. Retrieve the Python object from the local ArtifactStore.
+    2. Serialize with the chosen (or auto-detected) format.
+    3. POST the blob + metadata to ``Core /artifacts/publish``.
+    """
+    try:
+        obj = artifact_store.get(request.artifact_name, flow_id=request.flow_id)
+    except KeyError:
+        return PublishGlobalResponse(
+            success=False,
+            error=f"Transient artifact '{request.artifact_name}' not found in this kernel",
+        )
+
+    # Serialization
+    fmt = request.serialization_format or detect_format(obj)
+    serializer = get_serializer(fmt)
+    try:
+        blob = serializer.dumps(obj)
+    except Exception as exc:
+        return PublishGlobalResponse(
+            success=False,
+            error=f"Serialization failed ({fmt}): {exc}",
+        )
+
+    type_name = type(obj).__name__
+    module_name = type(obj).__module__ or ""
+    filename = f"{request.name}{serializer.file_extension}"
+
+    # Retrieve auth token from execution context (if available)
+    ctx = flowfile_client._context.get({})
+    auth_token = ctx.get("auth_token", "")
+
+    headers = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    # Upload to Core
+    try:
+        with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+            resp = client.post(
+                f"{_CORE_URL}/artifacts/publish",
+                files={"file": (filename, io.BytesIO(blob), "application/octet-stream")},
+                data={
+                    "name": request.name,
+                    "python_type": type_name,
+                    "python_module": module_name,
+                    "serialization_format": fmt,
+                    "description": request.description or "",
+                    "tags": json.dumps(request.tags),
+                    "namespace_id": str(request.namespace_id) if request.namespace_id is not None else "",
+                    "source_flow_id": str(request.flow_id) if request.flow_id else "",
+                    "source_node_id": str(ctx.get("node_id", "")),
+                    "source_kernel_id": ctx.get("kernel_id", ""),
+                },
+                headers=headers,
+            )
+        if resp.status_code == 201:
+            body = resp.json()
+            return PublishGlobalResponse(success=True, artifact_id=body.get("id"))
+        return PublishGlobalResponse(
+            success=False,
+            error=f"Core returned {resp.status_code}: {resp.text[:500]}",
+        )
+    except Exception as exc:
+        return PublishGlobalResponse(success=False, error=f"Upload to Core failed: {exc}")
+
+
+@app.post("/get_global", response_model=GetGlobalResponse)
+async def get_global(request: GetGlobalRequest):
+    """Download a global artifact from the Core catalog, deserialize it, and
+    store it in the local transient ArtifactStore so user code can access it
+    via ``flowfile.read_artifact()``.
+
+    Steps:
+    1. Resolve the artifact metadata via ``Core GET /artifacts/by-name/{name}``.
+    2. Download the blob from ``Core GET /artifacts/{id}/download``.
+    3. Deserialize using the recorded format.
+    4. Store in the local ArtifactStore.
+    """
+    ctx = flowfile_client._context.get({})
+    auth_token = ctx.get("auth_token", "")
+    flow_id = ctx.get("flow_id", 0)
+    node_id = ctx.get("node_id", 0)
+
+    headers = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+            # 1. Resolve metadata
+            params = {}
+            if request.namespace_id is not None:
+                params["namespace_id"] = request.namespace_id
+            if request.version is not None:
+                params["version"] = request.version
+
+            meta_resp = client.get(
+                f"{_CORE_URL}/artifacts/by-name/{request.name}",
+                params=params,
+                headers=headers,
+            )
+            if meta_resp.status_code != 200:
+                return GetGlobalResponse(
+                    success=False,
+                    error=f"Artifact '{request.name}' not found in catalog (HTTP {meta_resp.status_code})",
+                )
+
+            meta = meta_resp.json()
+            artifact_id = meta["id"]
+            fmt = meta["serialization_format"]
+
+            # 2. Download blob
+            dl_resp = client.get(
+                f"{_CORE_URL}/artifacts/{artifact_id}/download",
+                headers=headers,
+            )
+            if dl_resp.status_code != 200:
+                return GetGlobalResponse(
+                    success=False,
+                    error=f"Failed to download artifact blob (HTTP {dl_resp.status_code})",
+                )
+
+            # 3. Deserialize
+            serializer = get_serializer(fmt)
+            obj = serializer.loads(dl_resp.content)
+
+            # 4. Store in local artifact store (overwrite if exists)
+            try:
+                artifact_store.delete(request.name, flow_id=flow_id)
+            except KeyError:
+                pass
+            artifact_store.publish(request.name, obj, node_id=node_id, flow_id=flow_id)
+
+            return GetGlobalResponse(success=True, artifact_name=request.name)
+
+    except Exception as exc:
+        return GetGlobalResponse(success=False, error=f"get_global failed: {exc}")

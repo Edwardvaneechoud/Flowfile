@@ -189,3 +189,53 @@ class FlowFollow(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),
     )
+
+
+# ==================== Global Artifact Registry ====================
+
+
+class GlobalArtifact(Base):
+    """Persisted Python object promoted from a Kernel's transient artifact store
+    into the global catalog.
+
+    The blob (serialized bytes) lives on the storage backend, referenced by
+    ``storage_key``.  This table only holds metadata so the catalog can be
+    queried, searched, and browsed without touching the blob.
+    """
+    __tablename__ = "global_artifacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+
+    # Catalog placement (re-uses the existing namespace hierarchy)
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
+
+    # Provenance
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    source_flow_id = Column(Integer, nullable=True)
+    source_node_id = Column(Integer, nullable=True)
+    source_kernel_id = Column(String, nullable=True)
+
+    # Python type introspection
+    python_type = Column(String, nullable=False)       # e.g. "RandomForestClassifier"
+    python_module = Column(String, nullable=False)      # e.g. "sklearn.ensemble._forest"
+
+    # Serialization
+    serialization_format = Column(String, nullable=False)  # "pickle", "joblib", "parquet"
+    storage_key = Column(String, nullable=False, unique=True)
+    size_bytes = Column(Integer, nullable=False, default=0)
+    sha256 = Column(String, nullable=True)
+
+    # User-facing metadata
+    description = Column(Text, nullable=True)
+    tags = Column(Text, nullable=True)  # JSON-serialized list of strings
+
+    # Version tracking — same name can have multiple versions
+    version = Column(Integer, nullable=False, default=1)
+
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("name", "namespace_id", "version", name="uq_artifact_name_ns_version"),
+    )

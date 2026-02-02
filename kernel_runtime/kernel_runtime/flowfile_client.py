@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextvars
+import io
+import json
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -9,6 +11,7 @@ import httpx
 import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.serialization import detect_format, get_serializer
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
@@ -189,3 +192,205 @@ def log_warning(message: str) -> None:
 def log_error(message: str) -> None:
     """Convenience wrapper: ``flowfile.log(message, level="ERROR")``."""
     log(message, level="ERROR")
+
+
+# ===== Global Artifact Registry APIs =====
+
+# The kernel container reaches the Core via this URL.
+_CORE_URL = os.environ.get(
+    "FLOWFILE_CORE_URL",
+    f"http://host.docker.internal:{os.environ.get('FLOWFILE_CORE_PORT', '63578')}",
+)
+
+
+def publish_global(
+    name: str,
+    obj: Any = None,
+    *,
+    artifact_name: str | None = None,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    namespace_id: int | None = None,
+    serialization_format: str | None = None,
+) -> int:
+    """Persist a Python object to the FlowFile Global Artifact Catalog.
+
+    The object is serialized inside the kernel, uploaded to the Core API,
+    and stored with full metadata so it can be discovered and loaded by
+    any other flow or user.
+
+    Args:
+        name: The catalog name for this artifact (e.g. ``"my_model"``).
+        obj: The Python object to persist.  If ``None``, the transient
+            artifact named *artifact_name* (or *name*) is used instead.
+        artifact_name: Name of a transient artifact already in the local
+            store.  Defaults to *name*.  Only used when *obj* is ``None``.
+        description: Optional human-readable description.
+        tags: Optional list of string tags for filtering.
+        namespace_id: Catalog namespace to file this artifact under.
+        serialization_format: Force a serialization format (``"pickle"``,
+            ``"joblib"``, ``"parquet"``).  Auto-detected when omitted.
+
+    Returns:
+        The integer ``artifact_id`` assigned by the catalog.
+
+    Raises:
+        RuntimeError: If the upload fails.
+
+    Example::
+
+        import flowfile
+
+        model = train_my_model(data)
+        flowfile.publish_artifact("model", model)
+
+        # Promote the transient artifact to the global catalog:
+        artifact_id = flowfile.publish_global("my_model", model)
+
+        # Or promote an existing transient artifact by name:
+        flowfile.publish_artifact("model", model)
+        artifact_id = flowfile.publish_global("my_model", artifact_name="model")
+    """
+    store: ArtifactStore = _get_context_value("artifact_store")
+    flow_id: int = _get_context_value("flow_id")
+    node_id: int = _get_context_value("node_id")
+
+    # Resolve the object
+    if obj is None:
+        src_name = artifact_name or name
+        obj = store.get(src_name, flow_id=flow_id)
+
+    # Serialize
+    fmt = serialization_format or detect_format(obj)
+    serializer = get_serializer(fmt)
+    blob = serializer.dumps(obj)
+
+    type_name = type(obj).__name__
+    module_name = type(obj).__module__ or ""
+    filename = f"{name}{serializer.file_extension}"
+
+    ctx = _context.get({})
+    auth_token = ctx.get("auth_token", "")
+
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+        resp = client.post(
+            f"{_CORE_URL}/artifacts/publish",
+            files={"file": (filename, io.BytesIO(blob), "application/octet-stream")},
+            data={
+                "name": name,
+                "python_type": type_name,
+                "python_module": module_name,
+                "serialization_format": fmt,
+                "description": description or "",
+                "tags": json.dumps(tags or []),
+                "namespace_id": str(namespace_id) if namespace_id is not None else "",
+                "source_flow_id": str(flow_id) if flow_id else "",
+                "source_node_id": str(node_id),
+                "source_kernel_id": ctx.get("kernel_id", ""),
+            },
+            headers=headers,
+        )
+
+    if resp.status_code == 201:
+        body = resp.json()
+        log(f"Published global artifact '{name}' (id={body['id']}, format={fmt}, "
+            f"size={len(blob)} bytes)")
+        return body["id"]
+
+    raise RuntimeError(
+        f"publish_global failed (HTTP {resp.status_code}): {resp.text[:500]}"
+    )
+
+
+def get_global(
+    name: str,
+    *,
+    namespace_id: int | None = None,
+    version: int | None = None,
+) -> Any:
+    """Load a Python object from the FlowFile Global Artifact Catalog.
+
+    Downloads the blob from the Core, deserializes it, and places it in
+    the local transient artifact store so subsequent
+    ``flowfile.read_artifact(name)`` calls can access it without
+    re-downloading.
+
+    Args:
+        name: Catalog name of the artifact.
+        namespace_id: Limit lookup to a specific namespace.
+        version: Load a specific version.  Latest if omitted.
+
+    Returns:
+        The deserialized Python object.
+
+    Raises:
+        RuntimeError: If the artifact is not found or download fails.
+
+    Example::
+
+        import flowfile
+
+        model = flowfile.get_global("my_model")
+        predictions = model.predict(new_data)
+    """
+    store: ArtifactStore = _get_context_value("artifact_store")
+    flow_id: int = _get_context_value("flow_id")
+    node_id: int = _get_context_value("node_id")
+
+    ctx = _context.get({})
+    auth_token = ctx.get("auth_token", "")
+
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+        # 1. Resolve metadata
+        params: dict[str, Any] = {}
+        if namespace_id is not None:
+            params["namespace_id"] = namespace_id
+        if version is not None:
+            params["version"] = version
+
+        meta_resp = client.get(
+            f"{_CORE_URL}/artifacts/by-name/{name}",
+            params=params,
+            headers=headers,
+        )
+        if meta_resp.status_code != 200:
+            raise RuntimeError(
+                f"Global artifact '{name}' not found (HTTP {meta_resp.status_code})"
+            )
+
+        meta = meta_resp.json()
+        artifact_id = meta["id"]
+        fmt = meta["serialization_format"]
+
+        # 2. Download blob
+        dl_resp = client.get(
+            f"{_CORE_URL}/artifacts/{artifact_id}/download",
+            headers=headers,
+        )
+        if dl_resp.status_code != 200:
+            raise RuntimeError(
+                f"Failed to download artifact blob (HTTP {dl_resp.status_code})"
+            )
+
+    # 3. Deserialize
+    serializer = get_serializer(fmt)
+    obj = serializer.loads(dl_resp.content)
+
+    # 4. Place in local store for read_artifact() access
+    try:
+        store.delete(name, flow_id=flow_id)
+    except KeyError:
+        pass
+    store.publish(name, obj, node_id=node_id, flow_id=flow_id)
+
+    log(f"Loaded global artifact '{name}' (id={artifact_id}, format={fmt}, "
+        f"size={len(dl_resp.content)} bytes)")
+    return obj

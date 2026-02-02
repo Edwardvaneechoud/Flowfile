@@ -123,6 +123,11 @@ class FlowfileStorage:
             return self.base_directory / "outputs"
 
     @property
+    def global_artifacts_directory(self) -> Path:
+        """Directory for persisted global artifact blobs (internal)."""
+        return self.base_directory / "global_artifacts"
+
+    @property
     def database_directory(self) -> Path:
         """Directory for local database files (internal)."""
         return self.base_directory / "database"
@@ -152,6 +157,7 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.global_artifacts_directory,
         ]
 
         # User-accessible directories (location depends on environment)
