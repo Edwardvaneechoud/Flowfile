@@ -453,6 +453,65 @@ class TestArtifactEndpoints:
         assert "v2" in resp_read.json()["stdout"]
 
 
+class TestPersistenceEndpoints:
+    """Tests for recovery/persistence/cleanup endpoints (no persistence enabled in tests)."""
+
+    def test_recover_no_persistence(self, client: TestClient):
+        resp = client.post("/recover")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "recovery_complete"
+        assert data["artifacts"] == {}
+
+    def test_recovery_status_no_persistence(self, client: TestClient):
+        resp = client.get("/recovery-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["persistence_enabled"] is False
+        assert data["recovery_mode"] == "lazy"
+
+    def test_cleanup_no_persistence(self, client: TestClient):
+        resp = client.post("/cleanup", json={"artifact_names": ["test"]})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "cleanup_complete"
+        assert data["deleted"] == []
+
+    def test_persistence_info_no_persistence(self, client: TestClient):
+        resp = client.get("/persistence")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["persistence_enabled"] is False
+        assert data["disk_usage_bytes"] == 0
+        assert data["total_artifacts"] == 0
+
+    def test_persistence_info_with_in_memory_artifacts(self, client: TestClient):
+        """Artifacts published without persistence show as memory-only."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 40,
+                "code": 'flowfile.publish_artifact("mem_only", 42)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        resp = client.get("/persistence")
+        data = resp.json()
+        assert data["total_artifacts"] == 1
+        assert data["memory_only_count"] == 1
+        assert data["persisted_count"] == 0
+        assert "mem_only" in data["artifacts"]
+        assert data["artifacts"]["mem_only"]["in_memory"] is True
+        assert data["artifacts"]["mem_only"]["persisted"] is False
+
+    def test_health_no_persistence_key(self, client: TestClient):
+        """Health endpoint omits persistence key when not enabled."""
+        resp = client.get("/health")
+        data = resp.json()
+        assert "persistence" not in data
+
+
 class TestContextCleanup:
     def test_context_cleared_after_success(self, client: TestClient):
         """After a successful /execute, the flowfile context should be cleared."""

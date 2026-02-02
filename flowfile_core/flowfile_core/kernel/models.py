@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +11,12 @@ class KernelState(str, Enum):
     IDLE = "idle"
     EXECUTING = "executing"
     ERROR = "error"
+
+
+class RecoveryMode(str, Enum):
+    LAZY = "lazy"
+    EAGER = "eager"
+    NONE = "none"
 
 
 class KernelConfig(BaseModel):
@@ -62,3 +69,8 @@ class ExecuteResult(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+
+
+class CleanupRequest(BaseModel):
+    max_age_hours: float | None = None
+    artifact_names: list[str] | None = None

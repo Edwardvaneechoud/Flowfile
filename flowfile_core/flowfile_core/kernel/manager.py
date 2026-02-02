@@ -213,7 +213,13 @@ class KernelManager:
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {"KERNEL_PACKAGES": packages_str},
+                "environment": {
+                    "KERNEL_PACKAGES": packages_str,
+                    "KERNEL_ID": kernel_id,
+                    "PERSISTENCE_ENABLED": "true",
+                    "PERSISTENCE_PATH": "/shared/artifacts",
+                    "RECOVERY_MODE": "lazy",
+                },
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},
@@ -318,6 +324,69 @@ class KernelManager:
         with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
             response = client.post(url)
             response.raise_for_status()
+
+    # ------------------------------------------------------------------
+    # Persistence & recovery
+    # ------------------------------------------------------------------
+
+    async def recover_artifacts(self, kernel_id: str) -> dict:
+        """Trigger manual recovery of all persisted artifacts in the kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/recover"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            response = await client.post(url)
+            response.raise_for_status()
+            return response.json()
+
+    async def recovery_status(self, kernel_id: str) -> dict:
+        """Get recovery status for a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/recovery-status"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+
+    async def cleanup_artifacts(
+        self,
+        kernel_id: str,
+        max_age_hours: float | None = None,
+        artifact_names: list[str] | None = None,
+    ) -> dict:
+        """Clean up persisted artifacts in a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/cleanup"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+            response = await client.post(
+                url,
+                json={
+                    "max_age_hours": max_age_hours,
+                    "artifact_names": artifact_names,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def persistence_info(self, kernel_id: str) -> dict:
+        """Get persistence information for a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/persistence"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
 
     # ------------------------------------------------------------------
     # Queries

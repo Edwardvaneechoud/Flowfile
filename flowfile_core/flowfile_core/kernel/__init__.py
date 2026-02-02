@@ -1,22 +1,26 @@
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
+    CleanupRequest,
     DockerStatus,
     ExecuteRequest,
     ExecuteResult,
     KernelConfig,
     KernelInfo,
     KernelState,
+    RecoveryMode,
 )
 from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
+    "CleanupRequest",
     "DockerStatus",
     "KernelConfig",
     "KernelInfo",
     "KernelState",
     "ExecuteRequest",
     "ExecuteResult",
+    "RecoveryMode",
     "router",
     "get_kernel_manager",
 ]
