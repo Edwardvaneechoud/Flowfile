@@ -1145,3 +1145,413 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+
+# ---------------------------------------------------------------------------
+# Tests — debug mode artifact persistence
+# ---------------------------------------------------------------------------
+
+
+class TestDebugModeArtifactPersistence:
+    """Integration tests verifying that artifacts survive re-runs in debug
+    (Development) mode when the producing node is skipped (up-to-date) but
+    a downstream consumer node needs to re-execute.
+
+    This reproduces the exact scenario from the bug report:
+      1. First run: Node 2 publishes 'linear_model', Node 3 reads it — OK.
+      2. User changes Node 3's code.
+      3. Second run: Node 2 is up-to-date → skipped, Node 3 re-runs →
+         must still be able to read 'linear_model' from kernel memory.
+    """
+
+    def test_artifact_survives_when_producer_skipped(
+        self, kernel_manager: tuple[KernelManager, str],
+    ):
+        """Core scenario: producer skipped, consumer re-runs, artifact accessible."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data
+            data = [
+                {"x1": 1.0, "x2": 2.0, "y": 5.0},
+                {"x1": 2.0, "x2": 3.0, "y": 8.0},
+                {"x1": 3.0, "x2": 4.0, "y": 11.0},
+                {"x1": 4.0, "x2": 5.0, "y": 14.0},
+            ]
+            node_promise_1 = input_schema.NodePromise(
+                flow_id=1, node_id=1, node_type="manual_input",
+            )
+            graph.add_node_promise(node_promise_1)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: train model and publish as artifact
+            node_promise_2 = input_schema.NodePromise(
+                flow_id=1, node_id=2, node_type="python_script",
+            )
+            graph.add_node_promise(node_promise_2)
+            train_code = """
+import numpy as np
+import polars as pl
+
+df = flowfile.read_input().collect()
+X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
+y_vals = df["y"].to_numpy()
+coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]
+flowfile.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=train_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(1, 2),
+            )
+
+            # Node 3: read model artifact and produce predictions
+            node_promise_3 = input_schema.NodePromise(
+                flow_id=1, node_id=3, node_type="python_script",
+            )
+            graph.add_node_promise(node_promise_3)
+            apply_code_v1 = """
+import numpy as np
+import polars as pl
+
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = np.array(model["coefficients"])
+X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
+predictions = X @ coeffs
+result = df.with_columns(pl.Series("predicted_y", predictions))
+flowfile.publish_output(result)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=apply_code_v1, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(2, 3),
+            )
+
+            # ---- First run: everything executes ----
+            run_info_1 = graph.run_graph()
+            _handle_run_info(run_info_1)
+
+            # Verify artifact was published and predictions were produced
+            published = graph.artifact_context.get_published_by_node(2)
+            assert any(r.name == "linear_model" for r in published)
+            node_3_df = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "predicted_y" in node_3_df.columns
+
+            # ---- Change Node 3's code (simulates user editing the consumer) ----
+            # The new code still reads the same artifact but adds an extra column.
+            apply_code_v2 = """
+import numpy as np
+import polars as pl
+
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = np.array(model["coefficients"])
+X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
+predictions = X @ coeffs
+residuals = df["y"].to_numpy() - predictions
+result = df.with_columns(
+    pl.Series("predicted_y", predictions),
+    pl.Series("residual", residuals),
+)
+flowfile.publish_output(result)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=apply_code_v2, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Verify the execution state before second run:
+            # Node 2 (producer) should still be up-to-date
+            node_2 = graph.get_node(2)
+            assert node_2._execution_state.has_run_with_current_setup, (
+                "Producer node should be up-to-date (will be skipped)"
+            )
+            # Node 3 (consumer) should need re-execution
+            node_3 = graph.get_node(3)
+            assert not node_3._execution_state.has_run_with_current_setup, (
+                "Consumer node should be invalidated (will re-run)"
+            )
+
+            # ---- Second run: Node 2 is skipped, Node 3 re-runs ----
+            # This is the critical test: Node 3 must still be able to
+            # read "linear_model" from kernel memory even though Node 2
+            # did not re-execute.
+            run_info_2 = graph.run_graph()
+            _handle_run_info(run_info_2)
+
+            # Verify the producer's artifact metadata is still tracked
+            published_after = graph.artifact_context.get_published_by_node(2)
+            assert any(r.name == "linear_model" for r in published_after), (
+                "Producer's artifact metadata should be preserved when skipped"
+            )
+
+            # Verify the consumer ran with the new code (has residual column)
+            node_3_df_v2 = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "predicted_y" in node_3_df_v2.columns
+            assert "residual" in node_3_df_v2.columns, (
+                "Consumer should have run with updated code"
+            )
+            # Residuals should be near-zero for this perfect linear fit
+            for r in node_3_df_v2["residual"].to_list():
+                assert abs(r) < 0.01
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_multiple_artifacts_survive_selective_clear(
+        self, kernel_manager: tuple[KernelManager, str],
+    ):
+        """Multiple artifacts from a skipped producer survive when only
+        the consumer is re-run."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data
+            data = [{"val": 10}, {"val": 20}, {"val": 30}]
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: publish two artifacts (model + scaler)
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
+            )
+            producer_code = """
+df = flowfile.read_input()
+flowfile.publish_artifact("model", {"type": "linear", "coeff": 2.0})
+flowfile.publish_artifact("scaler", {"mean": 20.0, "std": 10.0})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=producer_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(1, 2),
+            )
+
+            # Node 3: read both artifacts
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
+            )
+            consumer_code_v1 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("model")
+scaler = flowfile.read_artifact("scaler")
+result = df.with_columns(
+    (pl.col("val") * model["coeff"]).alias("scaled"),
+)
+flowfile.publish_output(result)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v1, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(2, 3),
+            )
+
+            # First run
+            _handle_run_info(graph.run_graph())
+
+            # Change the consumer's code — also use the scaler now
+            consumer_code_v2 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("model")
+scaler = flowfile.read_artifact("scaler")
+normalized = (pl.col("val") - scaler["mean"]) / scaler["std"]
+result = df.with_columns(
+    (pl.col("val") * model["coeff"]).alias("scaled"),
+    normalized.alias("normalized"),
+)
+flowfile.publish_output(result)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v2, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Second run — producer skipped, consumer re-runs
+            _handle_run_info(graph.run_graph())
+
+            # Both artifacts should still be accessible
+            published = graph.artifact_context.get_published_by_node(2)
+            names = {r.name for r in published}
+            assert "model" in names
+            assert "scaler" in names
+
+            # Consumer should have the new column
+            df_out = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "scaled" in df_out.columns
+            assert "normalized" in df_out.columns
+
+        finally:
+            _kernel_mod._manager = _prev
+
+    def test_rerun_producer_clears_old_artifacts(
+        self, kernel_manager: tuple[KernelManager, str],
+    ):
+        """When the producer itself is changed and re-runs, its old
+        artifacts are properly cleared before re-execution."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input
+            data = [{"val": 1}]
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: publish artifact v1
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
+            )
+            code_v1 = """
+df = flowfile.read_input()
+flowfile.publish_artifact("model", {"version": 1})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_v1, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(1, 2),
+            )
+
+            # Node 3: read artifact
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
+            )
+            consumer_code = """
+df = flowfile.read_input()
+model = flowfile.read_artifact("model")
+print(f"model version: {model['version']}")
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(2, 3),
+            )
+
+            # First run
+            _handle_run_info(graph.run_graph())
+
+            published = graph.artifact_context.get_published_by_node(2)
+            assert any(r.name == "model" for r in published)
+
+            # Change the PRODUCER (Node 2) — publish v2 of the artifact
+            code_v2 = """
+df = flowfile.read_input()
+flowfile.publish_artifact("model", {"version": 2})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code_v2, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Both Node 2 and Node 3 should need re-execution
+            # (Node 3 because its upstream changed via evaluate_nodes)
+            assert not graph.get_node(2)._execution_state.has_run_with_current_setup
+            assert not graph.get_node(3)._execution_state.has_run_with_current_setup
+
+            # Second run — both re-execute; old "model" must be cleared
+            # before Node 2 re-publishes, otherwise publish would fail
+            # with "already exists".
+            _handle_run_info(graph.run_graph())
+
+            # Artifact should be the new version
+            published_v2 = graph.artifact_context.get_published_by_node(2)
+            assert any(r.name == "model" for r in published_v2)
+
+        finally:
+            _kernel_mod._manager = _prev
