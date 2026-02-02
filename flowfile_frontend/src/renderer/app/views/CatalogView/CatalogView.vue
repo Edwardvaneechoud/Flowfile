@@ -316,6 +316,7 @@ async function openFlowInDesigner(flowPath: string) {
 }
 
 function navigateToFlow(registrationId: number) {
+  console.log("[Catalog] navigateToFlow:", registrationId);
   catalogStore.selectedRunId = null;
   catalogStore.selectedRunDetail = null;
   catalogStore.selectFlow(registrationId);

@@ -101,7 +101,9 @@ const expanded = ref(true);
 const toggle = () => { expanded.value = !expanded.value; };
 
 watch(() => props.selectedFlowId, (flowId) => {
-  if (flowId !== null && containsFlow(props.node, flowId)) {
+  const found = flowId !== null && containsFlow(props.node, flowId);
+  console.log(`[Catalog] TreeNode "${props.node.name}" watch selectedFlowId:`, flowId, "| contains:", found, "| expanded:", expanded.value);
+  if (found) {
     expanded.value = true;
   }
 });

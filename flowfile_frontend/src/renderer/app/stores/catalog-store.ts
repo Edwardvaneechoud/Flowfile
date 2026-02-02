@@ -146,15 +146,19 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     selectFlow(flowId: number | null) {
+      console.log("[Catalog] selectFlow called with flowId:", flowId);
       this.selectedFlowId = flowId;
       this.selectedRunId = null;
       this.selectedRunDetail = null;
+      const match = flowId !== null ? this.allFlows.find((f) => f.id === flowId) : null;
+      console.log("[Catalog] selectedFlow resolved to:", match?.name ?? null, "| allFlows count:", this.allFlows.length);
       if (flowId !== null) {
         this.loadRuns(flowId);
       }
     },
 
     setActiveTab(tab: CatalogTab) {
+      console.log("[Catalog] setActiveTab:", tab);
       this.activeTab = tab;
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
