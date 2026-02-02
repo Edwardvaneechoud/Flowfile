@@ -5,7 +5,12 @@
         <h4 class="kernel-card__name">{{ kernel.name }}</h4>
         <KernelStatusBadge :state="kernel.state" />
       </div>
-      <p class="kernel-card__id">{{ kernel.id }}</p>
+      <div class="kernel-card__meta">
+        <p class="kernel-card__id">{{ kernel.id }}</p>
+        <span v-if="kernel.kernel_version" class="kernel-card__version" title="Kernel runtime version">
+          v{{ kernel.kernel_version }}
+        </span>
+      </div>
     </div>
 
     <div class="kernel-card__body">
@@ -133,11 +138,27 @@ const displayedPackages = computed(() => props.kernel.packages.slice(0, maxPacka
   white-space: nowrap;
 }
 
+.kernel-card__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
 .kernel-card__id {
   font-size: var(--font-size-2xs);
   color: var(--color-text-muted);
   font-family: var(--font-family-mono);
   margin: 0;
+}
+
+.kernel-card__version {
+  font-size: var(--font-size-2xs);
+  color: var(--color-accent);
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-medium);
+  background-color: var(--color-accent-subtle);
+  padding: 0 var(--spacing-1);
+  border-radius: var(--border-radius-sm);
 }
 
 .kernel-card__body {

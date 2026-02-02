@@ -7,10 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from kernel_runtime import flowfile_client
+from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_store import ArtifactStore
 
-app = FastAPI(title="FlowFile Kernel Runtime")
+app = FastAPI(title="FlowFile Kernel Runtime", version=__version__)
 artifact_store = ArtifactStore()
 
 
@@ -19,6 +19,8 @@ class ExecuteRequest(BaseModel):
     code: str
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
+    flow_id: int = 0
+    log_callback_url: str = ""
 
 
 class ExecuteResponse(BaseModel):
@@ -50,6 +52,8 @@ async def execute(request: ExecuteRequest):
             input_paths=request.input_paths,
             output_dir=output_dir,
             artifact_store=artifact_store,
+            flow_id=request.flow_id,
+            log_callback_url=request.log_callback_url,
         )
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
@@ -102,4 +106,4 @@ async def list_artifacts():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "artifact_count": len(artifact_store.list_all())}
+    return {"status": "healthy", "version": __version__, "artifact_count": len(artifact_store.list_all())}
