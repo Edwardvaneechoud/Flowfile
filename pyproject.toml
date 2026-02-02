@@ -60,6 +60,7 @@ tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
 pl-fuzzy-frame-match = ">=0.4.0"
 pyyaml = "^6.0.3"
+cloudpickle = "^3.0.0"
 
 
 [tool.poetry.scripts]

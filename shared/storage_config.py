@@ -133,6 +133,11 @@ class FlowfileStorage:
         return self.base_directory / "logs"
 
     @property
+    def artifacts_directory(self) -> Path:
+        """Directory for persisted artifacts (internal, shared between core and worker)."""
+        return self.base_directory / "artifacts"
+
+    @property
     def temp_directory(self) -> Path:
         """Directory for temporary files (internal)."""
         return self.base_directory / "temp"
@@ -152,6 +157,7 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.artifacts_directory,
         ]
 
         # User-accessible directories (location depends on environment)
