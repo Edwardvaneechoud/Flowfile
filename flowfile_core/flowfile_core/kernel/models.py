@@ -56,6 +56,7 @@ class ExecuteRequest(BaseModel):
 class ClearNodeArtifactsRequest(BaseModel):
     """Request to selectively clear artifacts owned by specific node IDs."""
     node_ids: list[int]
+    flow_id: int | None = None
 
 
 class ClearNodeArtifactsResult(BaseModel):

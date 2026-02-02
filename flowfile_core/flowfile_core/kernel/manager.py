@@ -320,27 +320,37 @@ class KernelManager:
             response = client.post(url)
             response.raise_for_status()
 
-    async def clear_node_artifacts(self, kernel_id: str, node_ids: list[int]) -> ClearNodeArtifactsResult:
+    async def clear_node_artifacts(
+        self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+    ) -> ClearNodeArtifactsResult:
         """Clear only artifacts published by the given node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"http://localhost:{kernel.port}/clear_node_artifacts"
+        payload: dict = {"node_ids": node_ids}
+        if flow_id is not None:
+            payload["flow_id"] = flow_id
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(url, json={"node_ids": node_ids})
+            response = await client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
 
-    def clear_node_artifacts_sync(self, kernel_id: str, node_ids: list[int]) -> ClearNodeArtifactsResult:
+    def clear_node_artifacts_sync(
+        self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+    ) -> ClearNodeArtifactsResult:
         """Synchronous wrapper for clearing artifacts by node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"http://localhost:{kernel.port}/clear_node_artifacts"
+        payload: dict = {"node_ids": node_ids}
+        if flow_id is not None:
+            payload["flow_id"] = flow_id
         with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
-            response = client.post(url, json={"node_ids": node_ids})
+            response = client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
 

@@ -162,6 +162,75 @@ class TestListByNodeId:
         assert "object" not in listing["x"]
 
 
+class TestFlowIsolation:
+    """Artifacts with the same name in different flows are independent."""
+
+    def test_same_name_different_flows(self, store: ArtifactStore):
+        store.publish("model", "flow1_model", node_id=1, flow_id=1)
+        store.publish("model", "flow2_model", node_id=2, flow_id=2)
+        assert store.get("model", flow_id=1) == "flow1_model"
+        assert store.get("model", flow_id=2) == "flow2_model"
+
+    def test_delete_scoped_to_flow(self, store: ArtifactStore):
+        store.publish("model", "v1", node_id=1, flow_id=1)
+        store.publish("model", "v2", node_id=2, flow_id=2)
+        store.delete("model", flow_id=1)
+        # flow 2's artifact is untouched
+        assert store.get("model", flow_id=2) == "v2"
+        with pytest.raises(KeyError):
+            store.get("model", flow_id=1)
+
+    def test_list_all_filtered_by_flow(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1, flow_id=1)
+        store.publish("b", 2, node_id=2, flow_id=2)
+        store.publish("c", 3, node_id=1, flow_id=1)
+        assert set(store.list_all(flow_id=1).keys()) == {"a", "c"}
+        assert set(store.list_all(flow_id=2).keys()) == {"b"}
+
+    def test_list_all_unfiltered_returns_everything(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1, flow_id=1)
+        store.publish("b", 2, node_id=2, flow_id=2)
+        assert set(store.list_all().keys()) == {"a", "b"}
+
+    def test_clear_scoped_to_flow(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1, flow_id=1)
+        store.publish("b", 2, node_id=2, flow_id=2)
+        store.clear(flow_id=1)
+        with pytest.raises(KeyError):
+            store.get("a", flow_id=1)
+        assert store.get("b", flow_id=2) == 2
+
+    def test_clear_all_clears_every_flow(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=1, flow_id=1)
+        store.publish("b", 2, node_id=2, flow_id=2)
+        store.clear()
+        assert store.list_all() == {}
+
+    def test_clear_by_node_ids_scoped_to_flow(self, store: ArtifactStore):
+        """Same node_id in different flows — only the targeted flow is cleared."""
+        store.publish("model", "f1", node_id=5, flow_id=1)
+        store.publish("model", "f2", node_id=5, flow_id=2)
+        removed = store.clear_by_node_ids({5}, flow_id=1)
+        assert removed == ["model"]
+        # flow 2's artifact survives
+        assert store.get("model", flow_id=2) == "f2"
+        with pytest.raises(KeyError):
+            store.get("model", flow_id=1)
+
+    def test_list_by_node_id_scoped_to_flow(self, store: ArtifactStore):
+        store.publish("a", 1, node_id=5, flow_id=1)
+        store.publish("b", 2, node_id=5, flow_id=2)
+        assert set(store.list_by_node_id(5, flow_id=1).keys()) == {"a"}
+        assert set(store.list_by_node_id(5, flow_id=2).keys()) == {"b"}
+        # Unfiltered returns both
+        assert set(store.list_by_node_id(5).keys()) == {"a", "b"}
+
+    def test_metadata_includes_flow_id(self, store: ArtifactStore):
+        store.publish("item", 42, node_id=1, flow_id=7)
+        meta = store.list_all(flow_id=7)["item"]
+        assert meta["flow_id"] == 7
+
+
 class TestThreadSafety:
     def test_concurrent_publishes(self, store: ArtifactStore):
         errors = []

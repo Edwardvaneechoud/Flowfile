@@ -190,7 +190,7 @@ async def clear_node_artifacts(
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
-        return await manager.clear_node_artifacts(kernel_id, request.node_ids)
+        return await manager.clear_node_artifacts(kernel_id, request.node_ids, flow_id=request.flow_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
