@@ -205,6 +205,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
@@ -219,6 +220,7 @@ import type { CatalogTab } from "../../types";
 const router = useRouter();
 
 const catalogStore = useCatalogStore();
+const flowStore = useFlowStore();
 
 const tabs = computed(() => [
   {
@@ -299,7 +301,8 @@ function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
 
 async function openRunSnapshot(runId: number) {
   try {
-    await CatalogApi.openRunSnapshot(runId);
+    const flowId = await CatalogApi.openRunSnapshot(runId);
+    flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to open flow snapshot");
@@ -308,7 +311,8 @@ async function openRunSnapshot(runId: number) {
 
 async function openFlowInDesigner(flowPath: string) {
   try {
-    await FlowApi.importFlow(flowPath);
+    const flowId = await FlowApi.importFlow(flowPath);
+    flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to open flow");
