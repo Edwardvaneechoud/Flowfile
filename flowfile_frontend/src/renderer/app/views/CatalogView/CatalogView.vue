@@ -76,7 +76,7 @@
         <div v-else-if="catalogStore.activeTab === 'following'" class="list-container">
           <div v-if="catalogStore.following.length === 0" class="empty-state">
             <p>No followed flows.</p>
-            <p class="muted">Follow flows to get notified about new runs.</p>
+            <p class="muted">Follow flows you want to keep track of.</p>
           </div>
           <FlowListItem
             v-for="flow in catalogStore.following"
@@ -299,7 +299,7 @@ function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
 
 async function openRunSnapshot(runId: number) {
   try {
-    const flowId = await CatalogApi.openRunSnapshot(runId);
+    await CatalogApi.openRunSnapshot(runId);
     router.push({ name: "designer" });
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to open flow snapshot");

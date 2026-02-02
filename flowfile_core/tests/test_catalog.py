@@ -390,3 +390,119 @@ class TestDefaultNamespace:
                 .all()
             )
             assert len(generals) == 1
+
+
+# ---------------------------------------------------------------------------
+# Auto-registration tests
+# ---------------------------------------------------------------------------
+
+
+class TestAutoRegisterFlow:
+    """Tests for _auto_register_flow which registers flows in the default namespace."""
+
+    @staticmethod
+    def _ensure_default_namespace():
+        from flowfile_core.database.init_db import init_db
+        init_db()
+
+    @staticmethod
+    def _get_local_user_id() -> int:
+        with get_db_context() as db:
+            from flowfile_core.database.models import User
+            user = db.query(User).filter_by(username="local_user").first()
+            assert user is not None
+            return user.id
+
+    def test_registers_flow_in_default_namespace(self):
+        """A new flow path is registered under General > user_flows."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        _auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(
+                flow_path="/tmp/auto_reg_test.yaml"
+            ).first()
+            assert reg is not None
+            assert reg.name == "auto_flow"
+            assert reg.owner_id == user_id
+            ns = db.query(CatalogNamespace).get(reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "user_flows"
+
+    def test_skips_duplicate_flow_path(self):
+        """Calling twice with the same flow_path should not create a duplicate."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        _auto_register_flow("/tmp/dup_auto.yaml", "first", user_id)
+        _auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
+
+        with get_db_context() as db:
+            regs = db.query(FlowRegistration).filter_by(
+                flow_path="/tmp/dup_auto.yaml"
+            ).all()
+            assert len(regs) == 1
+            assert regs[0].name == "first"
+
+    def test_skips_when_user_id_is_none(self):
+        """Should return early without creating anything when user_id is None."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        self._ensure_default_namespace()
+
+        _auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(
+                flow_path="/tmp/no_user.yaml"
+            ).first()
+            assert reg is None
+
+    def test_skips_when_flow_path_is_none(self):
+        """Should return early without creating anything when flow_path is None."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        _auto_register_flow(None, "no_path", user_id)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(name="no_path").first()
+            assert reg is None
+
+    def test_skips_when_no_default_namespace(self):
+        """Should silently do nothing when the default namespace doesn't exist."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        user_id = self._get_local_user_id()
+
+        _auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(
+                flow_path="/tmp/no_ns.yaml"
+            ).first()
+            assert reg is None
+
+    def test_uses_filename_stem_when_name_is_empty(self):
+        """When name is falsy, should fall back to the filename stem."""
+        from flowfile_core.routes.routes import _auto_register_flow
+
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        _auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(
+                flow_path="/tmp/my_pipeline.yaml"
+            ).first()
+            assert reg is not None
+            assert reg.name == "my_pipeline"
