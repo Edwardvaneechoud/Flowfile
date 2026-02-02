@@ -370,11 +370,11 @@ class TestDefaultNamespace:
 
         # Verify it points to user_flows under General
         with get_db_context() as db:
-            ns = db.query(CatalogNamespace).get(ns_id)
+            ns = db.get(CatalogNamespace, ns_id)
             assert ns is not None
             assert ns.name == "user_flows"
             assert ns.level == 1
-            parent = db.query(CatalogNamespace).get(ns.parent_id)
+            parent = db.get(CatalogNamespace, ns.parent_id)
             assert parent is not None
             assert parent.name == "General"
 
@@ -424,7 +424,7 @@ class TestAutoRegisterFlow:
             assert reg is not None
             assert reg.name == "auto_flow"
             assert reg.owner_id == user_id
-            ns = db.query(CatalogNamespace).get(reg.namespace_id)
+            ns = db.get(CatalogNamespace, reg.namespace_id)
             assert ns is not None
             assert ns.name == "user_flows"
 

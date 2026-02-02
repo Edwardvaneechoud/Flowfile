@@ -116,7 +116,7 @@ def create_namespace(
     """Create a catalog (level 0) or schema (level 1) namespace."""
     level = 0
     if body.parent_id is not None:
-        parent = db.query(CatalogNamespace).get(body.parent_id)
+        parent = db.get(CatalogNamespace, body.parent_id)
         if parent is None:
             raise HTTPException(404, "Parent namespace not found")
         if parent.level >= 1:
@@ -150,7 +150,7 @@ def update_namespace(
     body: NamespaceUpdate,
     db: Session = Depends(get_db),
 ):
-    ns = db.query(CatalogNamespace).get(namespace_id)
+    ns = db.get(CatalogNamespace, namespace_id)
     if ns is None:
         raise HTTPException(404, "Namespace not found")
     if body.name is not None:
@@ -167,7 +167,7 @@ def delete_namespace(
     namespace_id: int,
     db: Session = Depends(get_db),
 ):
-    ns = db.query(CatalogNamespace).get(namespace_id)
+    ns = db.get(CatalogNamespace, namespace_id)
     if ns is None:
         raise HTTPException(404, "Namespace not found")
     # Prevent deletion if children or flows exist
@@ -293,7 +293,7 @@ def register_flow(
     db: Session = Depends(get_db),
 ):
     if body.namespace_id is not None:
-        ns = db.query(CatalogNamespace).get(body.namespace_id)
+        ns = db.get(CatalogNamespace, body.namespace_id)
         if ns is None:
             raise HTTPException(404, "Namespace not found")
     flow = FlowRegistration(
@@ -315,7 +315,7 @@ def get_flow(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    flow = db.query(FlowRegistration).get(flow_id)
+    flow = db.get(FlowRegistration, flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     return _enrich_flow(flow, db, current_user.id)
@@ -328,7 +328,7 @@ def update_flow(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    flow = db.query(FlowRegistration).get(flow_id)
+    flow = db.get(FlowRegistration, flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     if body.name is not None:
@@ -347,7 +347,7 @@ def delete_flow(
     flow_id: int,
     db: Session = Depends(get_db),
 ):
-    flow = db.query(FlowRegistration).get(flow_id)
+    flow = db.get(FlowRegistration, flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     # Clean up related records
@@ -404,7 +404,7 @@ def get_run_detail(
     db: Session = Depends(get_db),
 ):
     """Get a single run including the YAML snapshot of the flow version that ran."""
-    run = db.query(FlowRun).get(run_id)
+    run = db.get(FlowRun, run_id)
     if run is None:
         raise HTTPException(404, "Run not found")
     return FlowRunDetail(
@@ -438,7 +438,7 @@ def open_run_snapshot(
     db: Session = Depends(get_db),
 ):
     """Write the run's flow snapshot to a temp file and import it into the designer."""
-    run = db.query(FlowRun).get(run_id)
+    run = db.get(FlowRun, run_id)
     if run is None:
         raise HTTPException(404, "Run not found")
     if not run.flow_snapshot:
@@ -483,7 +483,7 @@ def list_favorites(
     )
     result = []
     for fav in favs:
-        flow = db.query(FlowRegistration).get(fav.registration_id)
+        flow = db.get(FlowRegistration, fav.registration_id)
         if flow:
             result.append(_enrich_flow(flow, db, current_user.id))
     return result
@@ -495,7 +495,7 @@ def add_favorite(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    flow = db.query(FlowRegistration).get(flow_id)
+    flow = db.get(FlowRegistration, flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     existing = db.query(FlowFavorite).filter_by(
@@ -543,7 +543,7 @@ def list_following(
     )
     result = []
     for follow in follows:
-        flow = db.query(FlowRegistration).get(follow.registration_id)
+        flow = db.get(FlowRegistration, follow.registration_id)
         if flow:
             result.append(_enrich_flow(flow, db, current_user.id))
     return result
@@ -555,7 +555,7 @@ def add_follow(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    flow = db.query(FlowRegistration).get(flow_id)
+    flow = db.get(FlowRegistration, flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     existing = db.query(FlowFollow).filter_by(
@@ -629,7 +629,7 @@ def get_catalog_stats(
     ]
     fav_flows = []
     for fid in fav_ids:
-        flow = db.query(FlowRegistration).get(fid)
+        flow = db.get(FlowRegistration, fid)
         if flow:
             fav_flows.append(_enrich_flow(flow, db, current_user.id))
     return CatalogStats(
