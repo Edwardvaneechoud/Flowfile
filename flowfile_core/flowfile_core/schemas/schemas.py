@@ -175,13 +175,15 @@ class RawLogInput(BaseModel):
     Attributes:
         flowfile_flow_id (int): The ID of the flow that generated the log.
         log_message (str): The content of the log message.
-        log_type (Literal["INFO", "ERROR"]): The type of log.
+        log_type (Literal["INFO", "WARNING", "ERROR"]): The type of log.
+        node_id (int | None): Optional node ID to attribute the log to.
         extra (Optional[dict]): Extra context data for the log.
     """
 
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None
 
 

@@ -404,6 +404,46 @@ class TestArtifactEndpoints:
         resp_list = client.get("/artifacts")
         assert "temp" not in resp_list.json()
 
+    def test_same_node_reexecution_clears_own_artifacts(self, client: TestClient):
+        """Re-executing the same node auto-clears its previous artifacts."""
+        resp1 = client.post(
+            "/execute",
+            json={
+                "node_id": 24,
+                "code": 'flowfile.publish_artifact("model", "v1")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp1.json()["success"] is True
+        assert "model" in resp1.json()["artifacts_published"]
+
+        # Same node re-executes — should NOT fail with "already exists"
+        resp2 = client.post(
+            "/execute",
+            json={
+                "node_id": 24,
+                "code": 'flowfile.publish_artifact("model", "v2")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp2.json()["success"] is True
+        assert "model" in resp2.json()["artifacts_published"]
+
+        # Verify we get v2
+        resp3 = client.post(
+            "/execute",
+            json={
+                "node_id": 99,
+                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp3.json()["success"] is True
+        assert "v2" in resp3.json()["stdout"]
+
     def test_delete_then_republish_via_execute(self, client: TestClient):
         """After deleting, a new artifact with the same name can be published."""
         client.post(
@@ -451,6 +491,120 @@ class TestArtifactEndpoints:
         )
         assert resp_read.json()["success"] is True
         assert "v2" in resp_read.json()["stdout"]
+
+
+class TestClearNodeArtifactsEndpoint:
+    def test_clear_node_artifacts_selective(self, client: TestClient):
+        """Only artifacts from specified node IDs should be removed."""
+        # Publish artifacts from two different nodes
+        client.post(
+            "/execute",
+            json={
+                "node_id": 40,
+                "code": 'flowfile.publish_artifact("model", {"v": 1})',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 41,
+                "code": 'flowfile.publish_artifact("scaler", {"v": 2})',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+        # Clear only node 40's artifacts
+        resp = client.post("/clear_node_artifacts", json={"node_ids": [40]})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "cleared"
+        assert "model" in data["removed"]
+
+        # "scaler" from node 41 should still exist
+        artifacts = client.get("/artifacts").json()
+        assert "model" not in artifacts
+        assert "scaler" in artifacts
+
+    def test_clear_node_artifacts_empty_list(self, client: TestClient):
+        """Passing empty list should not remove anything."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 42,
+                "code": 'flowfile.publish_artifact("keep_me", 42)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        resp = client.post("/clear_node_artifacts", json={"node_ids": []})
+        assert resp.status_code == 200
+        assert resp.json()["removed"] == []
+        assert "keep_me" in client.get("/artifacts").json()
+
+    def test_clear_node_artifacts_allows_republish(self, client: TestClient):
+        """After clearing, the same artifact name can be re-published."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 43,
+                "code": 'flowfile.publish_artifact("reuse", "v1")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post("/clear_node_artifacts", json={"node_ids": [43]})
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 43,
+                "code": 'flowfile.publish_artifact("reuse", "v2")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        assert resp.json()["success"] is True
+
+
+class TestNodeArtifactsEndpoint:
+    def test_list_node_artifacts(self, client: TestClient):
+        """Should return only artifacts for the specified node."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 50,
+                "code": (
+                    'flowfile.publish_artifact("a", 1)\n'
+                    'flowfile.publish_artifact("b", 2)\n'
+                ),
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 51,
+                "code": 'flowfile.publish_artifact("c", 3)',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+        resp = client.get("/artifacts/node/50")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"a", "b"}
+
+        resp2 = client.get("/artifacts/node/51")
+        assert set(resp2.json().keys()) == {"c"}
+
+    def test_list_node_artifacts_empty(self, client: TestClient):
+        resp = client.get("/artifacts/node/999")
+        assert resp.status_code == 200
+        assert resp.json() == {}
 
 
 class TestContextCleanup:
@@ -501,3 +655,206 @@ class TestContextCleanup:
         data = resp.json()
         assert data["success"] is True
         assert "still works" in data["stdout"]
+
+
+class TestFlowIsolation:
+    """Artifacts published by different flows don't interfere with each other."""
+
+    def test_same_artifact_name_different_flows(self, client: TestClient):
+        """Two flows can each publish an artifact called 'model' independently."""
+        resp1 = client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": 'flowfile.publish_artifact("model", "flow1_model")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+        assert resp1.json()["success"] is True
+
+        resp2 = client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": 'flowfile.publish_artifact("model", "flow2_model")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+        assert resp2.json()["success"] is True
+
+        # Each flow reads its own artifact
+        resp_read1 = client.post(
+            "/execute",
+            json={
+                "node_id": 99,
+                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+        assert resp_read1.json()["success"] is True
+        assert "flow1_model" in resp_read1.json()["stdout"]
+
+        resp_read2 = client.post(
+            "/execute",
+            json={
+                "node_id": 99,
+                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+        assert resp_read2.json()["success"] is True
+        assert "flow2_model" in resp_read2.json()["stdout"]
+
+    def test_flow_cannot_read_other_flows_artifact(self, client: TestClient):
+        """Flow 1 publishes 'secret'; flow 2 should not see it."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": 'flowfile.publish_artifact("secret", "hidden")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 2,
+                "code": 'flowfile.read_artifact("secret")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is False
+        assert "not found" in data["error"]
+
+    def test_reexecution_only_clears_own_flow(self, client: TestClient):
+        """Re-executing a node in flow 1 doesn't clear flow 2's artifacts."""
+        # Flow 1, node 5 publishes "model"
+        client.post(
+            "/execute",
+            json={
+                "node_id": 5,
+                "code": 'flowfile.publish_artifact("model", "f1v1")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+        # Flow 2, node 5 publishes "model"
+        client.post(
+            "/execute",
+            json={
+                "node_id": 5,
+                "code": 'flowfile.publish_artifact("model", "f2v1")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+
+        # Re-execute node 5 in flow 1 — auto-clear only affects flow 1
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 5,
+                "code": 'flowfile.publish_artifact("model", "f1v2")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+        assert resp.json()["success"] is True
+
+        # Flow 2's artifact should be untouched
+        resp_f2 = client.post(
+            "/execute",
+            json={
+                "node_id": 99,
+                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+        assert resp_f2.json()["success"] is True
+        assert "f2v1" in resp_f2.json()["stdout"]
+
+    def test_list_artifacts_filtered_by_flow(self, client: TestClient):
+        """GET /artifacts?flow_id=X returns only that flow's artifacts."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": 'flowfile.publish_artifact("a", 1)',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 10,
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 2,
+                "code": 'flowfile.publish_artifact("b", 2)',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 20,
+            },
+        )
+
+        resp10 = client.get("/artifacts", params={"flow_id": 10})
+        assert set(resp10.json().keys()) == {"a"}
+
+        resp20 = client.get("/artifacts", params={"flow_id": 20})
+        assert set(resp20.json().keys()) == {"b"}
+
+        # No filter returns both
+        resp_all = client.get("/artifacts")
+        assert set(resp_all.json().keys()) == {"a", "b"}
+
+    def test_clear_node_artifacts_scoped_to_flow(self, client: TestClient):
+        """POST /clear_node_artifacts with flow_id only clears that flow."""
+        client.post(
+            "/execute",
+            json={
+                "node_id": 5,
+                "code": 'flowfile.publish_artifact("model", "f1")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 1,
+            },
+        )
+        client.post(
+            "/execute",
+            json={
+                "node_id": 5,
+                "code": 'flowfile.publish_artifact("model", "f2")',
+                "input_paths": {},
+                "output_dir": "",
+                "flow_id": 2,
+            },
+        )
+
+        resp = client.post(
+            "/clear_node_artifacts",
+            json={"node_ids": [5], "flow_id": 1},
+        )
+        assert resp.json()["status"] == "cleared"
+        assert "model" in resp.json()["removed"]
+
+        # Flow 2's artifact survives
+        artifacts_f2 = client.get("/artifacts", params={"flow_id": 2}).json()
+        assert "model" in artifacts_f2

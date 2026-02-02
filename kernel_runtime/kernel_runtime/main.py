@@ -4,13 +4,13 @@ import os
 import time
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
-from kernel_runtime import flowfile_client
+from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_store import ArtifactStore
 
-app = FastAPI(title="FlowFile Kernel Runtime")
+app = FastAPI(title="FlowFile Kernel Runtime", version=__version__)
 artifact_store = ArtifactStore()
 
 
@@ -19,6 +19,13 @@ class ExecuteRequest(BaseModel):
     code: str
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
+    flow_id: int = 0
+    log_callback_url: str = ""
+
+
+class ClearNodeArtifactsRequest(BaseModel):
+    node_ids: list[int]
+    flow_id: int | None = None
 
 
 class ExecuteResponse(BaseModel):
@@ -42,7 +49,11 @@ async def execute(request: ExecuteRequest):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    artifacts_before = set(artifact_store.list_all().keys())
+    # Clear any artifacts this node previously published so re-execution
+    # doesn't fail with "already exists".
+    artifact_store.clear_by_node_ids({request.node_id}, flow_id=request.flow_id)
+
+    artifacts_before = set(artifact_store.list_all(flow_id=request.flow_id).keys())
 
     try:
         flowfile_client._set_context(
@@ -50,6 +61,8 @@ async def execute(request: ExecuteRequest):
             input_paths=request.input_paths,
             output_dir=output_dir,
             artifact_store=artifact_store,
+            flow_id=request.flow_id,
+            log_callback_url=request.log_callback_url,
         )
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
@@ -62,7 +75,7 @@ async def execute(request: ExecuteRequest):
                 str(p) for p in sorted(Path(output_dir).glob("*.parquet"))
             ]
 
-        artifacts_after = set(artifact_store.list_all().keys())
+        artifacts_after = set(artifact_store.list_all(flow_id=request.flow_id).keys())
         new_artifacts = sorted(artifacts_after - artifacts_before)
         deleted_artifacts = sorted(artifacts_before - artifacts_after)
 
@@ -90,16 +103,35 @@ async def execute(request: ExecuteRequest):
 
 
 @app.post("/clear")
-async def clear_artifacts():
-    artifact_store.clear()
+async def clear_artifacts(flow_id: int | None = Query(default=None)):
+    """Clear all artifacts, or only those belonging to a specific flow."""
+    artifact_store.clear(flow_id=flow_id)
     return {"status": "cleared"}
 
 
+@app.post("/clear_node_artifacts")
+async def clear_node_artifacts(request: ClearNodeArtifactsRequest):
+    """Clear only artifacts published by the specified node IDs."""
+    removed = artifact_store.clear_by_node_ids(
+        set(request.node_ids), flow_id=request.flow_id,
+    )
+    return {"status": "cleared", "removed": removed}
+
+
 @app.get("/artifacts")
-async def list_artifacts():
-    return artifact_store.list_all()
+async def list_artifacts(flow_id: int | None = Query(default=None)):
+    """List all artifacts, optionally filtered by flow_id."""
+    return artifact_store.list_all(flow_id=flow_id)
+
+
+@app.get("/artifacts/node/{node_id}")
+async def list_node_artifacts(
+    node_id: int, flow_id: int | None = Query(default=None),
+):
+    """List artifacts published by a specific node."""
+    return artifact_store.list_by_node_id(node_id, flow_id=flow_id)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "artifact_count": len(artifact_store.list_all())}
+    return {"status": "healthy", "version": __version__, "artifact_count": len(artifact_store.list_all())}

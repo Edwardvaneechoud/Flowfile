@@ -261,6 +261,37 @@ class ArtifactContext:
         self._kernel_artifacts.clear()
         self._publisher_index.clear()
 
+    def clear_nodes(self, node_ids: set[int]) -> None:
+        """Remove tracking data only for the specified *node_ids*.
+
+        Artifacts published by these nodes are removed from kernel
+        indices and publisher indices.  States for other nodes are
+        left untouched so their artifact metadata is preserved.
+        """
+        for nid in node_ids:
+            state = self._node_states.pop(nid, None)
+            if state is None:
+                continue
+            for ref in state.published:
+                # Remove from the kernel artifact index
+                kernel_map = self._kernel_artifacts.get(ref.kernel_id)
+                if kernel_map is not None:
+                    # Only remove if this ref is still the current entry
+                    existing = kernel_map.get(ref.name)
+                    if existing is not None and existing.source_node_id == nid:
+                        del kernel_map[ref.name]
+                # Remove from the reverse publisher index
+                key = (ref.kernel_id, ref.name)
+                pub_set = self._publisher_index.get(key)
+                if pub_set is not None:
+                    pub_set.discard(nid)
+                    if not pub_set:
+                        del self._publisher_index[key]
+
+        logger.debug(
+            "Cleared artifact metadata for node(s): %s", sorted(node_ids)
+        )
+
     def snapshot_node_states(self) -> dict[int, NodeArtifactState]:
         """Return a shallow copy of the current per-node states.
 

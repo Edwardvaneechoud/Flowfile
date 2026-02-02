@@ -3,13 +3,19 @@ from __future__ import annotations
 import contextvars
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import httpx
 import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
+
+# Reusable HTTP client for log callbacks (created per execution context)
+_log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar(
+    "flowfile_log_client", default=None
+)
 
 
 def _set_context(
@@ -17,16 +23,32 @@ def _set_context(
     input_paths: dict[str, list[str]],
     output_dir: str,
     artifact_store: ArtifactStore,
+    flow_id: int = 0,
+    log_callback_url: str = "",
 ) -> None:
     _context.set({
         "node_id": node_id,
         "input_paths": input_paths,
         "output_dir": output_dir,
         "artifact_store": artifact_store,
+        "flow_id": flow_id,
+        "log_callback_url": log_callback_url,
     })
+    # Create a reusable HTTP client for log callbacks
+    if log_callback_url:
+        _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
+    else:
+        _log_client.set(None)
 
 
 def _clear_context() -> None:
+    client = _log_client.get(None)
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+        _log_client.set(None)
     _context.set({})
 
 
@@ -94,19 +116,76 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
 def publish_artifact(name: str, obj: Any) -> None:
     store: ArtifactStore = _get_context_value("artifact_store")
     node_id: int = _get_context_value("node_id")
-    store.publish(name, obj, node_id)
+    flow_id: int = _get_context_value("flow_id")
+    store.publish(name, obj, node_id, flow_id=flow_id)
 
 
 def read_artifact(name: str) -> Any:
     store: ArtifactStore = _get_context_value("artifact_store")
-    return store.get(name)
+    flow_id: int = _get_context_value("flow_id")
+    return store.get(name, flow_id=flow_id)
 
 
 def delete_artifact(name: str) -> None:
     store: ArtifactStore = _get_context_value("artifact_store")
-    store.delete(name)
+    flow_id: int = _get_context_value("flow_id")
+    store.delete(name, flow_id=flow_id)
 
 
 def list_artifacts() -> dict:
     store: ArtifactStore = _get_context_value("artifact_store")
-    return store.list_all()
+    flow_id: int = _get_context_value("flow_id")
+    return store.list_all(flow_id=flow_id)
+
+
+# ===== Logging APIs =====
+
+def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> None:
+    """Send a log message to the FlowFile log viewer.
+
+    The message appears in the frontend log stream in real time.
+
+    Args:
+        message: The log message text.
+        level: Log severity — ``"INFO"`` (default), ``"WARNING"``, or ``"ERROR"``.
+    """
+    flow_id: int = _get_context_value("flow_id")
+    node_id: int = _get_context_value("node_id")
+    callback_url: str = _get_context_value("log_callback_url")
+    if not callback_url:
+        # No callback configured — fall back to printing so the message
+        # still shows up in captured stdout.
+        print(f"[{level}] {message}")  # noqa: T201
+        return
+
+    client = _log_client.get(None)
+    if client is None:
+        print(f"[{level}] {message}")  # noqa: T201
+        return
+
+    payload = {
+        "flowfile_flow_id": flow_id,
+        "node_id": node_id,
+        "log_message": message,
+        "log_type": level,
+    }
+    try:
+        client.post(callback_url, json=payload)
+    except Exception:
+        # Best-effort — don't let logging failures break user code.
+        pass
+
+
+def log_info(message: str) -> None:
+    """Convenience wrapper: ``flowfile.log(message, level="INFO")``."""
+    log(message, level="INFO")
+
+
+def log_warning(message: str) -> None:
+    """Convenience wrapper: ``flowfile.log(message, level="WARNING")``."""
+    log(message, level="WARNING")
+
+
+def log_error(message: str) -> None:
+    """Convenience wrapper: ``flowfile.log(message, level="ERROR")``."""
+    log(message, level="ERROR")
