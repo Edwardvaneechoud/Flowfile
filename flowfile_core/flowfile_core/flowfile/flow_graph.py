@@ -2583,7 +2583,7 @@ class FlowGraph:
                 for kid, node_ids_for_kernel in kernel_node_map.items():
                     try:
                         manager = get_kernel_manager()
-                        manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel), flow_id=self.flow_id)
+                        manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel), flow_id=self.flow_id, flow_logger=self.flow_logger)
                     except Exception:
                         logger.debug(
                             "Could not clear node artifacts for kernel '%s', nodes %s",

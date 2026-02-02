@@ -392,11 +392,12 @@ class KernelManager:
 
     def clear_node_artifacts_sync(
         self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+        flow_logger: FlowLogger | None = None,
     ) -> ClearNodeArtifactsResult:
         """Synchronous wrapper for clearing artifacts by node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            self._ensure_running_sync(kernel_id)
+            self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
         url = f"http://localhost:{kernel.port}/clear_node_artifacts"
         payload: dict = {"node_ids": node_ids}
