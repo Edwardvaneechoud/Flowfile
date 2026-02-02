@@ -8,6 +8,7 @@ the logic for creating, reading, updating, and deleting these resources.
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 from pathlib import Path
@@ -26,7 +27,8 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.database.connection import get_db
+from flowfile_core.database.connection import get_db, get_db_context
+from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowRun
 
 # File handling
 from flowfile_core.fileExplorer.funcs import (
@@ -64,6 +66,35 @@ def get_node_model(setting_name_ref: str):
         if ref_name.lower() == setting_name_ref:
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
+
+
+def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
+    """Register a flow in the default catalog namespace (General > user_flows) if it exists."""
+    if user_id is None or flow_path is None:
+        return
+    try:
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            if general is None:
+                return
+            user_flows = db.query(CatalogNamespace).filter_by(
+                name="user_flows", parent_id=general.id
+            ).first()
+            if user_flows is None:
+                return
+            existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+            if existing:
+                return
+            reg = FlowRegistration(
+                name=name or Path(flow_path).stem,
+                flow_path=flow_path,
+                namespace_id=user_flows.id,
+                owner_id=user_id,
+            )
+            db.add(reg)
+            db.commit()
+    except Exception:
+        logger.debug("Auto-registration in default namespace failed (non-critical)", exc_info=True)
 
 
 @router.post("/upload/")
@@ -206,8 +237,66 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
                                  "node_id": node_id}, status_code=status.HTTP_200_OK)
 
 
+def _run_and_track(flow, user_id: int | None):
+    """Wrapper that runs a flow and persists the run record to the database."""
+    run_info = flow.run_graph()
+    if run_info is None:
+        return
+
+    # Persist run record
+    try:
+        # Build snapshot
+        try:
+            snapshot_data = flow.get_flowfile_data()
+            snapshot_yaml = snapshot_data.model_dump_json()
+        except Exception:
+            snapshot_yaml = None
+
+        # Serialise node results
+        try:
+            node_results = json.dumps(
+                [nr.model_dump(mode="json") for nr in (run_info.node_step_result or [])],
+            )
+        except Exception:
+            node_results = None
+
+        duration = None
+        if run_info.start_time and run_info.end_time:
+            duration = (run_info.end_time - run_info.start_time).total_seconds()
+
+        with get_db_context() as db:
+            # Try to find a matching registration for this flow path
+            reg_id = None
+            flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+            if flow_path:
+                reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+                if reg:
+                    reg_id = reg.id
+
+            db_run = FlowRun(
+                registration_id=reg_id,
+                flow_name=flow.flow_settings.name or flow.__name__,
+                flow_path=flow_path,
+                user_id=user_id if user_id is not None else 0,
+                started_at=run_info.start_time,
+                ended_at=run_info.end_time,
+                success=run_info.success,
+                nodes_completed=run_info.nodes_completed,
+                number_of_nodes=run_info.number_of_nodes,
+                duration_seconds=duration,
+                run_type=run_info.run_type,
+                flow_snapshot=snapshot_yaml,
+                node_results_json=node_results,
+            )
+            db.add(db_run)
+            db.commit()
+    except Exception as exc:
+        logger.warning(f"Failed to persist flow run record: {exc}")
+
+
 @router.post('/flow/run/', tags=['editor'])
-async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONResponse:
+async def run_flow(flow_id: int, background_tasks: BackgroundTasks,
+                   current_user=Depends(get_current_active_user)) -> JSONResponse:
     """Executes a flow in a background task.
 
     Args:
@@ -220,10 +309,11 @@ async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONRespo
     logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
     lock = get_flow_run_lock(flow_id)
+    user_id = current_user.id if current_user else None
     async with lock:
         if flow.flow_settings.is_running:
             raise HTTPException(422, 'Flow is already running')
-        background_tasks.add_task(flow.run_graph)
+        background_tasks.add_task(_run_and_track, flow, user_id)
     return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
@@ -569,7 +659,11 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
     user_id = current_user.id if current_user else None
-    return flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
+    flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow and flow.flow_settings:
+        _auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+    return flow_id
 
 
 @router.post("/editor/close_flow/", tags=["editor"])
@@ -860,7 +954,11 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
     user_id = current_user.id if current_user else None
-    return flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
+    flow_id = flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow and flow.flow_settings:
+        _auto_register_flow(validated_path, flow.flow_settings.name, user_id)
+    return flow_id
 
 
 @router.get('/save_flow', tags=['editor'])

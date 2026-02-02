@@ -125,11 +125,52 @@ def create_docker_admin_user(db: Session):
     return True
 
 
+def create_default_catalog_namespace(db: Session):
+    """Create the default 'General' catalog with a 'user_flows' schema if they don't exist."""
+    local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
+    if not local_user:
+        return
+
+    general = (
+        db.query(db_models.CatalogNamespace)
+        .filter_by(name="General", parent_id=None)
+        .first()
+    )
+    if not general:
+        general = db_models.CatalogNamespace(
+            name="General",
+            parent_id=None,
+            level=0,
+            description="Default catalog",
+            owner_id=local_user.id,
+        )
+        db.add(general)
+        db.commit()
+        db.refresh(general)
+
+    user_flows = (
+        db.query(db_models.CatalogNamespace)
+        .filter_by(name="user_flows", parent_id=general.id)
+        .first()
+    )
+    if not user_flows:
+        user_flows = db_models.CatalogNamespace(
+            name="user_flows",
+            parent_id=general.id,
+            level=1,
+            description="Default schema for user flows",
+            owner_id=local_user.id,
+        )
+        db.add(user_flows)
+        db.commit()
+
+
 def init_db():
     db = SessionLocal()
     try:
         create_default_local_user(db)
         create_docker_admin_user(db)
+        create_default_catalog_namespace(db)
     finally:
         db.close()
 
