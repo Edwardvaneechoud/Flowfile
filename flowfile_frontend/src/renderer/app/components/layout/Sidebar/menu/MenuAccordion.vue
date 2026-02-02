@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { INavigationRoute } from "../NavigationRoutes";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
@@ -63,7 +63,7 @@ const props = withDefaults(
   },
 );
 
-const activeIndex = ref(route.name);
+const activeIndex = computed(() => route.name as string);
 
 const accordionValue = ref<boolean[]>([]);
 onMounted(() => {
