@@ -9,13 +9,16 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.init_db import init_db
 from flowfile_core.database.models import (
     CatalogNamespace,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    User,
 )
+from flowfile_core.routes.routes import _auto_register_flow
 
 
 # ---------------------------------------------------------------------------
@@ -359,8 +362,6 @@ class TestStats:
 class TestDefaultNamespace:
     def test_default_namespace_after_init(self):
         """After init_db the General > user_flows namespace should exist."""
-        from flowfile_core.database.init_db import init_db
-
         init_db()
         resp = client.get("/catalog/default-namespace-id")
         assert resp.status_code == 200
@@ -379,8 +380,6 @@ class TestDefaultNamespace:
 
     def test_default_namespace_idempotent(self):
         """Calling init_db twice should not duplicate the default namespace."""
-        from flowfile_core.database.init_db import init_db
-
         init_db()
         init_db()
         with get_db_context() as db:
@@ -402,21 +401,17 @@ class TestAutoRegisterFlow:
 
     @staticmethod
     def _ensure_default_namespace():
-        from flowfile_core.database.init_db import init_db
         init_db()
 
     @staticmethod
     def _get_local_user_id() -> int:
         with get_db_context() as db:
-            from flowfile_core.database.models import User
             user = db.query(User).filter_by(username="local_user").first()
             assert user is not None
             return user.id
 
     def test_registers_flow_in_default_namespace(self):
         """A new flow path is registered under General > user_flows."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
@@ -435,8 +430,6 @@ class TestAutoRegisterFlow:
 
     def test_skips_duplicate_flow_path(self):
         """Calling twice with the same flow_path should not create a duplicate."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
@@ -452,8 +445,6 @@ class TestAutoRegisterFlow:
 
     def test_skips_when_user_id_is_none(self):
         """Should return early without creating anything when user_id is None."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         self._ensure_default_namespace()
 
         _auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
@@ -466,8 +457,6 @@ class TestAutoRegisterFlow:
 
     def test_skips_when_flow_path_is_none(self):
         """Should return early without creating anything when flow_path is None."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
@@ -479,8 +468,6 @@ class TestAutoRegisterFlow:
 
     def test_skips_when_no_default_namespace(self):
         """Should silently do nothing when the default namespace doesn't exist."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         user_id = self._get_local_user_id()
 
         _auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
@@ -493,8 +480,6 @@ class TestAutoRegisterFlow:
 
     def test_uses_filename_stem_when_name_is_empty(self):
         """When name is falsy, should fall back to the filename stem."""
-        from flowfile_core.routes.routes import _auto_register_flow
-
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 

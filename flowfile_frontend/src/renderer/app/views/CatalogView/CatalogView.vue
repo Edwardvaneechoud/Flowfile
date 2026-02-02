@@ -320,7 +320,6 @@ async function openFlowInDesigner(flowPath: string) {
 }
 
 function navigateToFlow(registrationId: number) {
-  console.log("[Catalog] navigateToFlow:", registrationId);
   catalogStore.selectedRunId = null;
   catalogStore.selectedRunDetail = null;
   catalogStore.selectFlow(registrationId);
@@ -366,9 +365,7 @@ async function registerFlow() {
 }
 
 onMounted(async () => {
-  console.log("[Catalog] CatalogView mounted");
   await catalogStore.initialize();
-  console.log("[Catalog] CatalogView initialized — allFlows:", catalogStore.allFlows.length, "tree:", catalogStore.tree.length);
   try {
     defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
   } catch {

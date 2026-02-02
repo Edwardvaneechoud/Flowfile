@@ -45,7 +45,7 @@
         :key="'f-' + flow.id"
         class="tree-flow"
         :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
-        @click.stop="console.log('[Catalog] TreeNode flow clicked:', flow.id, flow.name); $emit('selectFlow', flow.id)"
+        @click.stop="$emit('selectFlow', flow.id)"
       >
         <i class="fa-solid fa-diagram-project flow-icon"></i>
         <span class="flow-name">{{ flow.name }}</span>
@@ -101,9 +101,7 @@ const expanded = ref(true);
 const toggle = () => { expanded.value = !expanded.value; };
 
 watch(() => props.selectedFlowId, (flowId) => {
-  const found = flowId !== null && containsFlow(props.node, flowId);
-  console.log(`[Catalog] TreeNode "${props.node.name}" watch selectedFlowId:`, flowId, "| contains:", found, "| expanded:", expanded.value);
-  if (found) {
+  if (flowId !== null && containsFlow(props.node, flowId)) {
     expanded.value = true;
   }
 });
