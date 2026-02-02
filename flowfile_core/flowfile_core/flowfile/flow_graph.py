@@ -1123,6 +1123,7 @@ class FlowGraph:
         """Adds a node that executes Python code on a kernel container."""
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.configs.settings import SERVER_PORT
             from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
@@ -1135,6 +1136,7 @@ class FlowGraph:
 
             node_id = node_python_script.node_id
             flow_id = self.flow_id
+            node_logger = self.flow_logger.get_node_logger(node_id)
 
             # Compute available artifacts before execution
             upstream_ids = self._get_upstream_node_ids(node_id)
@@ -1161,14 +1163,27 @@ class FlowGraph:
                 main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
             input_paths["main"] = main_paths
 
+            # Build the callback URL so the kernel can stream logs in real time
+            log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+
             # Execute on kernel (synchronous — no async boundary issues)
             request = ExecuteRequest(
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
                 output_dir=f"/shared/{flow_id}/{node_id}/outputs",
+                flow_id=flow_id,
+                log_callback_url=log_callback_url,
             )
             result = manager.execute_sync(kernel_id, request)
+
+            # Forward captured stdout/stderr to the flow logger
+            if result.stdout:
+                for line in result.stdout.strip().splitlines():
+                    node_logger.info(f"[stdout] {line}")
+            if result.stderr:
+                for line in result.stderr.strip().splitlines():
+                    node_logger.warning(f"[stderr] {line}")
 
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")

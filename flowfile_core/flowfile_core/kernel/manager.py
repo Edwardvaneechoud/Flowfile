@@ -217,6 +217,7 @@ class KernelManager:
                 "environment": {"KERNEL_PACKAGES": packages_str},
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
+                "extra_hosts": {"host.docker.internal": "host-gateway"},
             }
             container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
             kernel.container_id = container.id
@@ -407,6 +408,8 @@ class KernelManager:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                     response = await client.get(url)
                     if response.status_code == 200:
+                        data = response.json()
+                        kernel.kernel_version = data.get("version")
                         return
             except (httpx.HTTPError, OSError) as exc:
                 logger.debug("Health poll for kernel '%s' failed: %s", kernel_id, exc)
