@@ -1,5 +1,5 @@
 import axios from "../services/axios.config";
-import type { DockerStatus, KernelConfig, KernelInfo } from "../types";
+import type { DockerStatus, KernelConfig, KernelInfo, PersistenceInfo } from "../types";
 
 const API_BASE_URL = "/kernels";
 
@@ -79,6 +79,45 @@ export class KernelApi {
       console.error("API Error: Failed to get artifacts:", error);
       return {};
     }
+  }
+
+  static async getPersistenceInfo(kernelId: string): Promise<PersistenceInfo> {
+    try {
+      const response = await axios.get<PersistenceInfo>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/persistence`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to get persistence info:", error);
+      return {
+        persistence_enabled: false,
+        total_artifacts: 0,
+        persisted_count: 0,
+        memory_only_count: 0,
+        disk_usage_bytes: 0,
+        artifacts: {},
+      };
+    }
+  }
+
+  static async recoverArtifacts(
+    kernelId: string,
+  ): Promise<{ status: string; artifacts: Record<string, string> }> {
+    const response = await axios.post<{ status: string; artifacts: Record<string, string> }>(
+      `${API_BASE_URL}/${encodeURIComponent(kernelId)}/recover`,
+    );
+    return response.data;
+  }
+
+  static async cleanupArtifacts(
+    kernelId: string,
+    artifactNames: string[],
+  ): Promise<{ status: string; deleted: string[] }> {
+    const response = await axios.post<{ status: string; deleted: string[] }>(
+      `${API_BASE_URL}/${encodeURIComponent(kernelId)}/cleanup`,
+      { artifact_names: artifactNames },
+    );
+    return response.data;
   }
 
   static async getDockerStatus(): Promise<DockerStatus> {

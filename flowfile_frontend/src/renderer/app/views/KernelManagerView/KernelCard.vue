@@ -40,6 +40,12 @@
       </div>
       <div v-else class="kernel-card__no-packages">No extra packages</div>
 
+      <KernelArtifacts
+        v-if="kernel.state === 'idle' || kernel.state === 'executing'"
+        :kernel-id="kernel.id"
+        :kernel-state="kernel.state"
+      />
+
       <div v-if="kernel.state === 'error' && kernel.error_message" class="kernel-card__error">
         <i class="fa-solid fa-triangle-exclamation"></i>
         <span>{{ kernel.error_message }}</span>
@@ -78,6 +84,7 @@
 import { computed } from "vue";
 import type { KernelInfo } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
+import KernelArtifacts from "./KernelArtifacts.vue";
 
 const props = defineProps<{
   kernel: KernelInfo;

@@ -31,3 +31,23 @@ export interface KernelInfo {
   error_message: string | null;
   kernel_version: string | null;
 }
+
+export interface ArtifactPersistenceStatus {
+  name: string;
+  node_id: number;
+  type_name: string;
+  persisted: boolean;
+  in_memory: boolean;
+  loaded: boolean;
+  size_on_disk?: number;
+  persisted_at?: string;
+}
+
+export interface PersistenceInfo {
+  persistence_enabled: boolean;
+  total_artifacts: number;
+  persisted_count: number;
+  memory_only_count: number;
+  disk_usage_bytes: number;
+  artifacts: Record<string, ArtifactPersistenceStatus>;
+}
