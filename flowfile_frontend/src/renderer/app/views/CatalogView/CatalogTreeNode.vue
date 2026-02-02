@@ -45,7 +45,7 @@
         :key="'f-' + flow.id"
         class="tree-flow"
         :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
-        @click.stop="$emit('selectFlow', flow.id)"
+        @click.stop="console.log('[Catalog] TreeNode flow clicked:', flow.id, flow.name); $emit('selectFlow', flow.id)"
       >
         <i class="fa-solid fa-diagram-project flow-icon"></i>
         <span class="flow-name">{{ flow.name }}</span>

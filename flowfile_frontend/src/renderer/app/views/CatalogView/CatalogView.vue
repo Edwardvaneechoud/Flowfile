@@ -362,7 +362,9 @@ async function registerFlow() {
 }
 
 onMounted(async () => {
+  console.log("[Catalog] CatalogView mounted");
   await catalogStore.initialize();
+  console.log("[Catalog] CatalogView initialized — allFlows:", catalogStore.allFlows.length, "tree:", catalogStore.tree.length);
   try {
     defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
   } catch {
