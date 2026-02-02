@@ -6,12 +6,16 @@ import docker
 import httpx
 
 from flowfile_core.kernel.models import (
+    ArtifactPersistenceInfo,
+    CleanupRequest,
+    CleanupResult,
     ClearNodeArtifactsResult,
     ExecuteRequest,
     ExecuteResult,
     KernelConfig,
     KernelInfo,
     KernelState,
+    RecoveryStatus,
 )
 from shared.storage_config import storage
 
@@ -214,7 +218,13 @@ class KernelManager:
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {"KERNEL_PACKAGES": packages_str},
+                "environment": {
+                    "KERNEL_PACKAGES": packages_str,
+                    "KERNEL_ID": kernel_id,
+                    "PERSISTENCE_ENABLED": "true",
+                    "PERSISTENCE_PATH": "/shared/artifacts",
+                    "RECOVERY_MODE": "lazy",
+                },
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},
@@ -365,6 +375,58 @@ class KernelManager:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
+
+    # ------------------------------------------------------------------
+    # Artifact Persistence & Recovery
+    # ------------------------------------------------------------------
+
+    async def recover_artifacts(self, kernel_id: str) -> RecoveryStatus:
+        """Trigger manual artifact recovery on a running kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/recover"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            response = await client.post(url)
+            response.raise_for_status()
+            return RecoveryStatus(**response.json())
+
+    async def get_recovery_status(self, kernel_id: str) -> RecoveryStatus:
+        """Get the current recovery status of a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/recovery-status"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return RecoveryStatus(**response.json())
+
+    async def cleanup_artifacts(self, kernel_id: str, request: CleanupRequest) -> CleanupResult:
+        """Clean up old persisted artifacts on a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/cleanup"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+            response = await client.post(url, json=request.model_dump())
+            response.raise_for_status()
+            return CleanupResult(**response.json())
+
+    async def get_persistence_info(self, kernel_id: str) -> ArtifactPersistenceInfo:
+        """Get persistence configuration and stats for a kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"http://localhost:{kernel.port}/persistence"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return ArtifactPersistenceInfo(**response.json())
 
     # ------------------------------------------------------------------
     # Queries

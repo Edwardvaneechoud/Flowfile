@@ -1,18 +1,106 @@
 import contextlib
 import io
+import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kernel_runtime import __version__, flowfile_client
+from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
 
-app = FastAPI(title="FlowFile Kernel Runtime", version=__version__)
+logger = logging.getLogger(__name__)
+
 artifact_store = ArtifactStore()
 
+# ---------------------------------------------------------------------------
+# Persistence setup (driven by environment variables)
+# ---------------------------------------------------------------------------
+_persistence: ArtifactPersistence | None = None
+_recovery_mode = RecoveryMode.LAZY
+_recovery_status: dict = {"status": "pending", "recovered": [], "errors": []}
+
+PERSISTENCE_ENABLED = os.environ.get("PERSISTENCE_ENABLED", "true").lower() in ("1", "true", "yes")
+PERSISTENCE_PATH = os.environ.get("PERSISTENCE_PATH", "/shared/artifacts")
+KERNEL_ID = os.environ.get("KERNEL_ID", "default")
+RECOVERY_MODE_ENV = os.environ.get("RECOVERY_MODE", "lazy").lower()
+
+
+def _setup_persistence() -> None:
+    global _persistence, _recovery_mode, _recovery_status
+
+    if not PERSISTENCE_ENABLED:
+        _recovery_status = {"status": "disabled", "recovered": [], "errors": []}
+        logger.info("Artifact persistence is disabled")
+        return
+
+    base_path = Path(PERSISTENCE_PATH) / KERNEL_ID
+    _persistence = ArtifactPersistence(base_path)
+    artifact_store.enable_persistence(_persistence)
+
+    try:
+        _recovery_mode = RecoveryMode(RECOVERY_MODE_ENV)
+    except ValueError:
+        _recovery_mode = RecoveryMode.LAZY
+
+    if _recovery_mode == RecoveryMode.EAGER:
+        _recovery_status = {"status": "recovering", "recovered": [], "errors": []}
+        try:
+            recovered = artifact_store.recover_all()
+            _recovery_status = {
+                "status": "completed",
+                "mode": "eager",
+                "recovered": recovered,
+                "errors": [],
+            }
+            logger.info("Eager recovery complete: %d artifacts restored", len(recovered))
+        except Exception as exc:
+            _recovery_status = {
+                "status": "error",
+                "mode": "eager",
+                "recovered": [],
+                "errors": [str(exc)],
+            }
+            logger.error("Eager recovery failed: %s", exc)
+
+    elif _recovery_mode == RecoveryMode.LAZY:
+        count = artifact_store.build_lazy_index()
+        _recovery_status = {
+            "status": "completed",
+            "mode": "lazy",
+            "indexed": count,
+            "recovered": [],
+            "errors": [],
+        }
+        logger.info("Lazy recovery index built: %d artifacts available on disk", count)
+
+    elif _recovery_mode == RecoveryMode.NONE:
+        _persistence.clear()
+        _recovery_status = {
+            "status": "completed",
+            "mode": "none",
+            "recovered": [],
+            "errors": [],
+        }
+        logger.info("Recovery mode=none: cleared all persisted artifacts")
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _setup_persistence()
+    yield
+
+
+app = FastAPI(title="FlowFile Kernel Runtime", version=__version__, lifespan=_lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
 
 class ExecuteRequest(BaseModel):
     node_id: int
@@ -38,6 +126,18 @@ class ExecuteResponse(BaseModel):
     error: str | None = None
     execution_time_ms: float = 0.0
 
+
+class CleanupRequest(BaseModel):
+    max_age_hours: float | None = None
+    artifact_names: list[dict] | None = Field(
+        default=None,
+        description='List of {"flow_id": int, "name": str} pairs to delete',
+    )
+
+
+# ---------------------------------------------------------------------------
+# Existing endpoints
+# ---------------------------------------------------------------------------
 
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(request: ExecuteRequest):
@@ -132,6 +232,112 @@ async def list_node_artifacts(
     return artifact_store.list_by_node_id(node_id, flow_id=flow_id)
 
 
+# ---------------------------------------------------------------------------
+# Persistence & Recovery endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/recover")
+async def recover_artifacts():
+    """Trigger manual artifact recovery from disk."""
+    global _recovery_status
+
+    if _persistence is None:
+        return {"status": "disabled", "message": "Persistence is not enabled"}
+
+    _recovery_status = {"status": "recovering", "recovered": [], "errors": []}
+    try:
+        recovered = artifact_store.recover_all()
+        _recovery_status = {
+            "status": "completed",
+            "mode": "manual",
+            "recovered": recovered,
+            "errors": [],
+        }
+        return _recovery_status
+    except Exception as exc:
+        _recovery_status = {
+            "status": "error",
+            "mode": "manual",
+            "recovered": [],
+            "errors": [str(exc)],
+        }
+        return _recovery_status
+
+
+@app.get("/recovery-status")
+async def recovery_status():
+    """Return the current recovery status."""
+    return _recovery_status
+
+
+@app.post("/cleanup")
+async def cleanup_artifacts(request: CleanupRequest):
+    """Clean up old or specific persisted artifacts."""
+    if _persistence is None:
+        return {"status": "disabled", "removed_count": 0}
+
+    names = None
+    if request.artifact_names:
+        names = [(item["flow_id"], item["name"]) for item in request.artifact_names]
+
+    removed_count = _persistence.cleanup(
+        max_age_hours=request.max_age_hours,
+        names=names,
+    )
+    # Rebuild lazy index after cleanup
+    artifact_store.build_lazy_index()
+    return {"status": "cleaned", "removed_count": removed_count}
+
+
+@app.get("/persistence")
+async def persistence_info():
+    """Return persistence configuration and stats."""
+    if _persistence is None:
+        return {
+            "enabled": False,
+            "recovery_mode": _recovery_mode.value,
+            "persisted_count": 0,
+            "disk_usage_bytes": 0,
+        }
+
+    persisted = _persistence.list_persisted()
+    in_memory = artifact_store.list_all()
+
+    # Build per-artifact status
+    artifact_status = {}
+    for (fid, name), meta in persisted.items():
+        artifact_status[name] = {
+            "flow_id": fid,
+            "persisted": True,
+            "in_memory": name in in_memory and in_memory[name].get("in_memory", True) is not False,
+        }
+    for name, meta in in_memory.items():
+        if name not in artifact_status:
+            artifact_status[name] = {
+                "flow_id": meta.get("flow_id", 0),
+                "persisted": meta.get("persisted", False),
+                "in_memory": True,
+            }
+
+    return {
+        "enabled": True,
+        "recovery_mode": _recovery_mode.value,
+        "kernel_id": KERNEL_ID,
+        "persistence_path": str(Path(PERSISTENCE_PATH) / KERNEL_ID),
+        "persisted_count": len(persisted),
+        "in_memory_count": len([a for a in in_memory.values() if a.get("in_memory", True) is not False]),
+        "disk_usage_bytes": _persistence.disk_usage_bytes(),
+        "artifacts": artifact_status,
+    }
+
+
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": __version__, "artifact_count": len(artifact_store.list_all())}
+    persistence_status = "enabled" if _persistence is not None else "disabled"
+    return {
+        "status": "healthy",
+        "version": __version__,
+        "artifact_count": len(artifact_store.list_all()),
+        "persistence": persistence_status,
+        "recovery_mode": _recovery_mode.value,
+    }

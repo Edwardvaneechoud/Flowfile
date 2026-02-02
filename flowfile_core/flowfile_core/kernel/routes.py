@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.kernel.models import (
+    ArtifactPersistenceInfo,
+    CleanupRequest,
+    CleanupResult,
     ClearNodeArtifactsRequest,
     ClearNodeArtifactsResult,
     DockerStatus,
@@ -11,6 +14,7 @@ from flowfile_core.kernel.models import (
     ExecuteResult,
     KernelConfig,
     KernelInfo,
+    RecoveryStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -214,3 +218,71 @@ async def get_node_artifacts(
         return await manager.get_node_artifacts(kernel_id, node_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Artifact Persistence & Recovery endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/{kernel_id}/recover", response_model=RecoveryStatus)
+async def recover_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Trigger manual artifact recovery from persisted storage."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.recover_artifacts(kernel_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{kernel_id}/recovery-status", response_model=RecoveryStatus)
+async def get_recovery_status(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Get the current artifact recovery status."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.get_recovery_status(kernel_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{kernel_id}/cleanup", response_model=CleanupResult)
+async def cleanup_artifacts(
+    kernel_id: str,
+    request: CleanupRequest,
+    current_user=Depends(get_current_active_user),
+):
+    """Clean up old persisted artifacts."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.cleanup_artifacts(kernel_id, request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{kernel_id}/persistence", response_model=ArtifactPersistenceInfo)
+async def get_persistence_info(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Get persistence configuration and stats for a kernel."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.get_persistence_info(kernel_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

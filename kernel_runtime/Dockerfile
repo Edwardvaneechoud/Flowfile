@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir \
     polars>=1.0.0 pyarrow>=14.0.0 numpy>=1.24.0 \
-    fastapi>=0.115.0 uvicorn>=0.32.0 httpx>=0.24.0
+    fastapi>=0.115.0 uvicorn>=0.32.0 httpx>=0.24.0 \
+    cloudpickle>=3.0.0
 
 COPY kernel_runtime /app/kernel_runtime
 COPY entrypoint.sh /app/entrypoint.sh

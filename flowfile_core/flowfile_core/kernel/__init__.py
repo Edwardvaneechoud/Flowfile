@@ -1,5 +1,8 @@
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
+    ArtifactPersistenceInfo,
+    CleanupRequest,
+    CleanupResult,
     ClearNodeArtifactsRequest,
     ClearNodeArtifactsResult,
     DockerStatus,
@@ -8,11 +11,16 @@ from flowfile_core.kernel.models import (
     KernelConfig,
     KernelInfo,
     KernelState,
+    RecoveryMode,
+    RecoveryStatus,
 )
 from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
+    "ArtifactPersistenceInfo",
+    "CleanupRequest",
+    "CleanupResult",
     "ClearNodeArtifactsRequest",
     "ClearNodeArtifactsResult",
     "DockerStatus",
@@ -21,6 +29,8 @@ __all__ = [
     "KernelState",
     "ExecuteRequest",
     "ExecuteResult",
+    "RecoveryMode",
+    "RecoveryStatus",
     "router",
     "get_kernel_manager",
 ]
