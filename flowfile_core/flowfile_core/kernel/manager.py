@@ -279,7 +279,7 @@ class KernelManager:
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
-            logger.error(f"Failed to start kernel {kernel_id}:{exc}") if flow_logger else None
+            flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
             self._cleanup_container(kernel_id)
             raise
         flow_logger.info(f"Kernel  {kernel_id} started (container {container.short_id})") if flow_logger else None
@@ -473,13 +473,13 @@ class KernelManager:
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             return
         if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
-            logger.info(
-                "Kernel '%s' is %s, attempting automatic restart...",
-                kernel_id, kernel.state.value,
-            )
+            msg = f"Kernel '{kernel_id}' is {kernel.state.value}, attempting automatic restart..."
+            logger.info(msg)
+            if flow_logger:
+                flow_logger.info(msg)
             self._cleanup_container(kernel_id)
             kernel.container_id = None
-            self.start_kernel_sync(kernel_id)
+            self.start_kernel_sync(kernel_id, flow_logger=flow_logger)
             return
         # STARTING — wait for it to finish
         if kernel.state == KernelState.STARTING:
