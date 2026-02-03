@@ -282,3 +282,25 @@ def kernel_manager():
             yield ctx
     except Exception as exc:
         pytest.skip(f"Kernel container could not be started: {exc}")
+
+
+@pytest.fixture
+def cleanup_global_artifacts():
+    """Clean up global artifacts before and after each test.
+
+    Use this fixture explicitly in tests that need artifact cleanup.
+    """
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import GlobalArtifact
+
+    def _cleanup():
+        try:
+            with get_db_context() as db:
+                db.query(GlobalArtifact).delete()
+                db.commit()
+        except Exception:
+            pass  # Table may not exist yet
+
+    _cleanup()
+    yield
+    _cleanup()
