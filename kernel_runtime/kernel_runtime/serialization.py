@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,67 @@ JOBLIB_MODULES = {
     "lightgbm",
     "catboost",
 }
+
+
+class UnpickleableObjectError(TypeError):
+    """Raised when an object cannot be serialized for global artifact storage."""
+
+    pass
+
+
+def check_pickleable(obj: Any) -> None:
+    """Verify that an object can be pickled.
+
+    This check is performed before attempting to publish an object to the
+    global artifact store, providing a clear error message if the object
+    cannot be serialized.
+
+    Args:
+        obj: Python object to check.
+
+    Raises:
+        UnpickleableObjectError: If the object cannot be pickled, with a
+            helpful message explaining why and how to fix it.
+
+    Common reasons for unpickleable objects:
+    - Lambda functions or nested functions
+    - Classes defined inside functions (local classes)
+    - Objects with open file handles or network connections
+    - Objects containing ctypes or other C extensions
+    """
+    try:
+        # Use pickle.dumps to test pickleability without writing to disk
+        # Use protocol 5 (same as actual serialization)
+        pickle.dumps(obj, protocol=5)
+    except (pickle.PicklingError, TypeError, AttributeError) as e:
+        obj_type = f"{type(obj).__module__}.{type(obj).__name__}"
+
+        # Provide specific guidance based on error type
+        if "local object" in str(e) or "local class" in str(e).lower():
+            hint = (
+                "Classes defined inside functions cannot be pickled. "
+                "Move the class definition to module level."
+            )
+        elif "lambda" in str(e).lower():
+            hint = (
+                "Lambda functions cannot be pickled. "
+                "Define a regular function instead."
+            )
+        elif "file" in str(e).lower() or "socket" in str(e).lower():
+            hint = (
+                "Objects with open file handles or network connections cannot be pickled. "
+                "Close resources before publishing or extract the data you need."
+            )
+        else:
+            hint = (
+                "Ensure the object and all its attributes are pickleable. "
+                "Check for lambdas, local classes, or open resources."
+            )
+
+        raise UnpickleableObjectError(
+            f"Cannot publish object of type '{obj_type}' to global artifact store: {e}\n\n"
+            f"Hint: {hint}"
+        ) from e
 
 
 def detect_format(obj: Any) -> str:

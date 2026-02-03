@@ -176,7 +176,10 @@ def publish_global(
         The artifact ID (database ID).
 
     Raises:
-        RuntimeError: If flowfile context is not initialized.
+        UnpickleableObjectError: If the object cannot be serialized. Common causes:
+            - Lambda functions or nested functions
+            - Classes defined inside functions (local classes)
+            - Objects with open file handles or network connections
         httpx.HTTPStatusError: If API calls fail.
 
     Example:
@@ -190,11 +193,21 @@ def publish_global(
         ...     tags=["ml", "classification"],
         ... )
     """
-    from kernel_runtime.serialization import detect_format, serialize_to_file, serialize_to_bytes
+    from kernel_runtime.serialization import (
+        check_pickleable,
+        detect_format,
+        serialize_to_file,
+        serialize_to_bytes,
+    )
 
     format = format or detect_format(obj)
     python_type = f"{type(obj).__module__}.{type(obj).__name__}"
     python_module = type(obj).__module__
+
+    # Validate that the object can be serialized before making API calls
+    # This provides a clear error message upfront rather than failing during serialization
+    if format in ("pickle", "joblib"):
+        check_pickleable(obj)
 
     # Get context for lineage tracking
     try:

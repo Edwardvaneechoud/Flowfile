@@ -200,6 +200,34 @@ class TestPublishGlobal:
 
         assert "CustomClass" in prepare_json["python_type"]
 
+    def test_publish_unpickleable_local_class_raises_error(self, mock_httpx_client):
+        """Should raise UnpickleableObjectError for local classes."""
+        from kernel_runtime.serialization import UnpickleableObjectError
+
+        class LocalClass:
+            pass
+
+        obj = LocalClass()
+
+        with pytest.raises(UnpickleableObjectError) as exc_info:
+            publish_global("local_class", obj)
+
+        # Should have helpful error message
+        assert "Cannot publish object" in str(exc_info.value)
+        assert "LocalClass" in str(exc_info.value)
+        assert "Move the class definition to module level" in str(exc_info.value)
+
+    def test_publish_unpickleable_lambda_raises_error(self, mock_httpx_client):
+        """Should raise UnpickleableObjectError for lambda functions."""
+        from kernel_runtime.serialization import UnpickleableObjectError
+
+        obj = lambda x: x + 1
+
+        with pytest.raises(UnpickleableObjectError) as exc_info:
+            publish_global("lambda_func", obj)
+
+        assert "Cannot publish object" in str(exc_info.value)
+
 
 # ---------------------------------------------------------------------------
 # get_global Tests

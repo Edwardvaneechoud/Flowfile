@@ -413,3 +413,75 @@ class TestEdgeCases:
         result = deserialize_from_file(str(path), "pickle")
 
         assert result == obj
+
+
+# ---------------------------------------------------------------------------
+# Pickleability Check Tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckPickleable:
+    """Tests for check_pickleable validation function."""
+
+    def test_check_pickleable_dict_passes(self):
+        """Pickleable objects should pass validation."""
+        from kernel_runtime.serialization import check_pickleable
+
+        # Should not raise
+        check_pickleable({"key": "value"})
+        check_pickleable([1, 2, 3])
+        check_pickleable("string")
+        check_pickleable(42)
+
+    def test_check_pickleable_local_class_raises(self):
+        """Local classes should raise UnpickleableObjectError."""
+        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+
+        class LocalClass:
+            pass
+
+        obj = LocalClass()
+
+        with pytest.raises(UnpickleableObjectError) as exc_info:
+            check_pickleable(obj)
+
+        assert "LocalClass" in str(exc_info.value)
+        assert "Move the class definition to module level" in str(exc_info.value)
+
+    def test_check_pickleable_lambda_raises(self):
+        """Lambda functions should raise UnpickleableObjectError."""
+        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+
+        obj = lambda x: x + 1
+
+        with pytest.raises(UnpickleableObjectError) as exc_info:
+            check_pickleable(obj)
+
+        assert "Cannot publish object" in str(exc_info.value)
+
+    def test_check_pickleable_nested_unpickleable_raises(self):
+        """Objects containing unpickleable items should raise."""
+        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+
+        # Dict containing a lambda
+        obj = {"func": lambda x: x}
+
+        with pytest.raises(UnpickleableObjectError):
+            check_pickleable(obj)
+
+    def test_error_message_includes_type_info(self):
+        """Error message should include object type information."""
+        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+
+        class MyLocalClass:
+            pass
+
+        obj = MyLocalClass()
+
+        with pytest.raises(UnpickleableObjectError) as exc_info:
+            check_pickleable(obj)
+
+        # Should include the class name in the error
+        assert "MyLocalClass" in str(exc_info.value)
+        # Should include the module path
+        assert "test_serialization" in str(exc_info.value)
