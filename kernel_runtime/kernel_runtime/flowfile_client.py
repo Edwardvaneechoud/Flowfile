@@ -147,6 +147,18 @@ _CORE_URL = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:635
 _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 
 
+def _get_internal_auth_headers() -> dict[str, str]:
+    """Get authentication headers for Core API calls.
+
+    Returns headers with X-Internal-Token for service-to-service authentication.
+    The token is shared between Core and Kernel via FLOWFILE_INTERNAL_TOKEN env var.
+    """
+    token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+    if token:
+        return {"X-Internal-Token": token}
+    return {}
+
+
 def publish_global(
     name: str,
     obj: Any,
@@ -222,7 +234,8 @@ def publish_global(
     kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
 
     # 1. Request upload target from Core
-    with httpx.Client(timeout=30.0) as client:
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.post(
             f"{_CORE_URL}/artifacts/prepare-upload",
             json={
@@ -306,7 +319,8 @@ def get_global(
     if namespace_id is not None:
         params["namespace_id"] = namespace_id
 
-    with httpx.Client(timeout=30.0) as client:
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.get(
             f"{_CORE_URL}/artifacts/by-name/{name}",
             params=params,
@@ -357,7 +371,8 @@ def list_global_artifacts(
     if tags:
         params["tags"] = tags
 
-    with httpx.Client(timeout=30.0) as client:
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.get(f"{_CORE_URL}/artifacts/", params=params)
         resp.raise_for_status()
         return resp.json()
@@ -384,7 +399,8 @@ def delete_global_artifact(
         >>> flowfile.delete_global_artifact("my_model")  # delete all versions
         >>> flowfile.delete_global_artifact("my_model", version=1)  # delete v1 only
     """
-    with httpx.Client(timeout=30.0) as client:
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         if version is not None:
             # Delete specific version - need to get artifact ID first
             params = {"version": version}

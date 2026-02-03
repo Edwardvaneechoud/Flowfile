@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
+import shutil
 
 
 @dataclass
@@ -163,10 +164,16 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
                 f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
             )
 
-        # Move to permanent location atomically
+        # Move to permanent location
+        # Use rename for atomicity when on same filesystem, fall back to
+        # shutil.move for cross-filesystem moves (e.g., Docker with multiple volumes)
         final_path = self.permanent / storage_key
         final_path.parent.mkdir(parents=True, exist_ok=True)
-        staging_path.rename(final_path)
+        try:
+            staging_path.rename(final_path)
+        except OSError:
+            # Cross-filesystem move - not atomic but handles different mounts
+            shutil.move(str(staging_path), str(final_path))
 
         return final_path.stat().st_size
 

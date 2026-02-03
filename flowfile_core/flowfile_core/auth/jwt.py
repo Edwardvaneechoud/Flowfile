@@ -4,7 +4,7 @@ import os
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -21,6 +21,31 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
+
+# Internal service authentication
+# This token is shared between Core and Kernel for service-to-service auth
+_internal_token: str | None = None
+
+
+def get_internal_token() -> str:
+    """Get or generate the internal service token.
+
+    This token is used for kernel → Core communication and is shared
+    via environment variable FLOWFILE_INTERNAL_TOKEN.
+    """
+    global _internal_token
+    if _internal_token is None:
+        _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+        if not _internal_token:
+            # Auto-generate if not set (useful for development/testing)
+            _internal_token = secrets.token_hex(32)
+            os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+    return _internal_token
+
+
+def verify_internal_token(token: str) -> bool:
+    """Verify an internal service token."""
+    return secrets.compare_digest(token, get_internal_token())
 
 
 def get_jwt_secret():
@@ -212,3 +237,77 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
             detail="Admin privileges required"
         )
     return current_user
+
+
+async def get_user_or_internal_service(
+    token: str = Depends(oauth2_scheme),
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> User:
+    """Auth dependency that accepts either JWT or internal service token.
+
+    Used for endpoints that need to be accessible from both:
+    - External clients (using JWT authentication)
+    - Internal services like kernel (using X-Internal-Token header)
+
+    For internal service auth, returns a synthetic "service" user with
+    owner_id=1 (system user).
+    """
+    # First, try internal service token
+    if x_internal_token and verify_internal_token(x_internal_token):
+        # Return synthetic service user
+        return User(
+            username="_internal_service",
+            id=1,  # System user ID for ownership tracking
+            disabled=False,
+            is_admin=False,
+            must_change_password=False,
+        )
+
+    # Fall back to JWT auth
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if not token:
+        raise credentials_exception
+
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        if token_data.username == "local_user":
+            return User(
+                username="local_user",
+                id=1,
+                disabled=False,
+                is_admin=True,
+                must_change_password=False,
+            )
+        raise credentials_exception
+
+    user = db.query(db_models.User).filter(
+        db_models.User.username == token_data.username
+    ).first()
+    if user is None:
+        raise credentials_exception
+    if user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+
+    return User(
+        username=user.username,
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        disabled=user.disabled,
+        is_admin=user.is_admin,
+        must_change_password=user.must_change_password,
+    )

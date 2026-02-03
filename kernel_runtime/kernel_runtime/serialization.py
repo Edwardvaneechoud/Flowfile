@@ -35,12 +35,53 @@ class UnpickleableObjectError(TypeError):
     pass
 
 
+# Size threshold for pre-check (100MB) - skip full serialization for large objects
+_CHECK_PICKLEABLE_SIZE_THRESHOLD = 100 * 1024 * 1024
+
+
+def _make_unpickleable_error(obj: Any, original_error: Exception) -> UnpickleableObjectError:
+    """Create an UnpickleableObjectError with helpful hints."""
+    obj_type = f"{type(obj).__module__}.{type(obj).__name__}"
+    error_str = str(original_error).lower()
+
+    # Provide specific guidance based on error type
+    if "local object" in error_str or "local class" in error_str:
+        hint = (
+            "Classes defined inside functions cannot be pickled. "
+            "Move the class definition to module level."
+        )
+    elif "lambda" in error_str:
+        hint = (
+            "Lambda functions cannot be pickled. "
+            "Define a regular function instead."
+        )
+    elif "file" in error_str or "socket" in error_str:
+        hint = (
+            "Objects with open file handles or network connections cannot be pickled. "
+            "Close resources before publishing or extract the data you need."
+        )
+    else:
+        hint = (
+            "Ensure the object and all its attributes are pickleable. "
+            "Check for lambdas, local classes, or open resources."
+        )
+
+    return UnpickleableObjectError(
+        f"Cannot publish object of type '{obj_type}' to global artifact store: {original_error}\n\n"
+        f"Hint: {hint}"
+    )
+
+
 def check_pickleable(obj: Any) -> None:
     """Verify that an object can be pickled.
 
     This check is performed before attempting to publish an object to the
     global artifact store, providing a clear error message if the object
     cannot be serialized.
+
+    For large objects (estimated >100MB), this function skips the pre-check
+    to avoid double-serialization overhead. In that case, errors will be
+    caught and translated during actual serialization.
 
     Args:
         obj: Python object to check.
@@ -55,39 +96,32 @@ def check_pickleable(obj: Any) -> None:
     - Objects with open file handles or network connections
     - Objects containing ctypes or other C extensions
     """
+    # Try to estimate size - skip pre-check for large objects to avoid
+    # double-serialization overhead (error will be caught during actual serialization)
+    try:
+        import sys
+        estimated_size = sys.getsizeof(obj)
+        # For containers, getsizeof only returns shallow size, so we use a heuristic
+        # If it has __len__ and is large, skip the check
+        if hasattr(obj, "__len__"):
+            try:
+                length = len(obj)
+                # Rough heuristic: if many elements, likely large
+                if length > 10000:
+                    return  # Skip pre-check for large collections
+            except TypeError:
+                pass
+        if estimated_size > _CHECK_PICKLEABLE_SIZE_THRESHOLD:
+            return  # Skip pre-check for obviously large objects
+    except (TypeError, OverflowError):
+        pass  # Can't estimate size, proceed with check
+
     try:
         # Use pickle.dumps to test pickleability without writing to disk
         # Use protocol 5 (same as actual serialization)
         pickle.dumps(obj, protocol=5)
     except (pickle.PicklingError, TypeError, AttributeError) as e:
-        obj_type = f"{type(obj).__module__}.{type(obj).__name__}"
-
-        # Provide specific guidance based on error type
-        if "local object" in str(e) or "local class" in str(e).lower():
-            hint = (
-                "Classes defined inside functions cannot be pickled. "
-                "Move the class definition to module level."
-            )
-        elif "lambda" in str(e).lower():
-            hint = (
-                "Lambda functions cannot be pickled. "
-                "Define a regular function instead."
-            )
-        elif "file" in str(e).lower() or "socket" in str(e).lower():
-            hint = (
-                "Objects with open file handles or network connections cannot be pickled. "
-                "Close resources before publishing or extract the data you need."
-            )
-        else:
-            hint = (
-                "Ensure the object and all its attributes are pickleable. "
-                "Check for lambdas, local classes, or open resources."
-            )
-
-        raise UnpickleableObjectError(
-            f"Cannot publish object of type '{obj_type}' to global artifact store: {e}\n\n"
-            f"Hint: {hint}"
-        ) from e
+        raise _make_unpickleable_error(obj, e) from e
 
 
 def detect_format(obj: Any) -> str:
@@ -285,6 +319,9 @@ def _serialize_joblib(obj: Any, path: Path) -> None:
 
 def _serialize_pickle(obj: Any, path: Path) -> None:
     """Serialize object using pickle protocol 5."""
-    import pickle
-    with open(path, "wb") as f:
-        pickle.dump(obj, f, protocol=5)
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(obj, f, protocol=5)
+    except (pickle.PicklingError, TypeError, AttributeError) as e:
+        # Translate to UnpickleableObjectError with helpful message
+        raise _make_unpickleable_error(obj, e) from e

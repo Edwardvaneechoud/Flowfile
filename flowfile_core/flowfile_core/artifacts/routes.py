@@ -23,7 +23,7 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.artifacts.service import ArtifactService
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.artifact_schema import (
     ArtifactDeleteResponse,
@@ -67,12 +67,13 @@ def get_artifact_service(db: Session = Depends(get_db)) -> ArtifactService:
     summary="Prepare artifact upload",
     description=(
         "Step 1 of upload: Create pending artifact record and return upload target. "
-        "Kernel writes blob directly to storage, then calls /finalize."
+        "Kernel writes blob directly to storage, then calls /finalize. "
+        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
     ),
 )
-def prepare_upload(
+async def prepare_upload(
     body: PrepareUploadRequest,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Initiate an artifact upload."""
@@ -236,11 +237,14 @@ def get_artifact_by_id(
     "/{artifact_id}",
     response_model=ArtifactDeleteResponse,
     summary="Delete artifact",
-    description="Delete a specific artifact version (soft delete in DB, hard delete blob).",
+    description=(
+        "Delete a specific artifact version (soft delete in DB, hard delete blob). "
+        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
+    ),
 )
-def delete_artifact(
+async def delete_artifact(
     artifact_id: int,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Delete a specific artifact version."""
@@ -259,12 +263,15 @@ def delete_artifact(
     "/by-name/{name}",
     response_model=ArtifactDeleteResponse,
     summary="Delete all versions of artifact",
-    description="Delete all versions of an artifact by name.",
+    description=(
+        "Delete all versions of an artifact by name. "
+        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
+    ),
 )
-def delete_artifact_by_name(
+async def delete_artifact_by_name(
     name: str,
     namespace_id: int | None = Query(None, description="Namespace filter"),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_user_or_internal_service),
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Delete all versions of an artifact."""

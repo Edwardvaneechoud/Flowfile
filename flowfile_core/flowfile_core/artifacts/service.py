@@ -9,9 +9,12 @@ raises ``HTTPException`` — only domain-specific exceptions from
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from flowfile_core.artifacts.exceptions import (
     ArtifactNotActiveError,
@@ -81,10 +84,11 @@ class ArtifactService:
                 raise NamespaceNotFoundError(request.namespace_id)
 
         # Determine next version for this artifact name + namespace
+        # Only count "active" versions to avoid gaps from failed/pending uploads
         latest = (
             self.db.query(GlobalArtifact)
             .filter_by(name=request.name, namespace_id=request.namespace_id)
-            .filter(GlobalArtifact.status != "deleted")
+            .filter(GlobalArtifact.status == "active")
             .order_by(GlobalArtifact.version.desc())
             .first()
         )
@@ -335,11 +339,6 @@ class ArtifactService:
                 GlobalArtifact.python_type.contains(python_type_contains)
             )
 
-        # Tag filtering using JSON contains
-        if tags:
-            for tag in tags:
-                query = query.filter(GlobalArtifact.tags.contains(f'"{tag}"'))
-
         # Order by name and version, most recent versions first
         artifacts = (
             query.order_by(
@@ -350,6 +349,22 @@ class ArtifactService:
             .limit(limit)
             .all()
         )
+
+        # Tag filtering - parse JSON and do exact matching to avoid false positives
+        # (e.g., searching for "ml" matching "html" with substring search)
+        if tags:
+            filtered = []
+            required_tags = set(tags)
+            for artifact in artifacts:
+                if artifact.tags:
+                    try:
+                        artifact_tags = set(json.loads(artifact.tags))
+                        if required_tags.issubset(artifact_tags):
+                            filtered.append(artifact)
+                    except (json.JSONDecodeError, TypeError):
+                        # Invalid JSON - skip this artifact
+                        pass
+            artifacts = filtered
 
         return [self._artifact_to_list_item(a) for a in artifacts]
 
@@ -400,8 +415,13 @@ class ArtifactService:
         if artifact.storage_key:
             try:
                 self.storage.delete(artifact.storage_key)
-            except Exception:
-                pass  # Best effort - continue with soft delete
+            except Exception as exc:
+                logger.warning(
+                    "Failed to delete blob for artifact %s (storage_key=%s): %s",
+                    artifact_id,
+                    artifact.storage_key,
+                    exc,
+                )
 
         # Soft delete in DB
         artifact.status = "deleted"
@@ -441,8 +461,14 @@ class ArtifactService:
             if artifact.storage_key:
                 try:
                     self.storage.delete(artifact.storage_key)
-                except Exception:
-                    pass  # Best effort
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to delete blob for artifact %s v%s (storage_key=%s): %s",
+                        name,
+                        artifact.version,
+                        artifact.storage_key,
+                        exc,
+                    )
             artifact.status = "deleted"
             count += 1
 
@@ -467,8 +493,13 @@ class ArtifactService:
                     method=source.method,
                     path=source.path,
                 )
-            except Exception:
-                pass  # Best effort
+            except Exception as exc:
+                logger.warning(
+                    "Failed to prepare download for artifact %s (storage_key=%s): %s",
+                    artifact.id,
+                    artifact.storage_key,
+                    exc,
+                )
 
         return ArtifactOut(
             id=artifact.id,

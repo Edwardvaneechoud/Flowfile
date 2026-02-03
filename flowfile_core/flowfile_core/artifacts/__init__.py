@@ -9,6 +9,7 @@ Public interface:
 """
 
 import os
+import threading
 from typing import TYPE_CHECKING
 
 from .exceptions import (
@@ -26,8 +27,9 @@ from .service import ArtifactService
 if TYPE_CHECKING:
     from shared.artifact_storage import ArtifactStorageBackend
 
-# Module-level singleton for storage backend
+# Module-level singleton for storage backend (thread-safe)
 _backend: "ArtifactStorageBackend | None" = None
+_backend_lock = threading.Lock()
 
 
 def get_storage_backend() -> "ArtifactStorageBackend":
@@ -42,10 +44,22 @@ def get_storage_backend() -> "ArtifactStorageBackend":
     - FLOWFILE_S3_PREFIX: Key prefix (default: "global_artifacts/")
     - FLOWFILE_S3_REGION: AWS region (default: "us-east-1")
     - FLOWFILE_S3_ENDPOINT_URL: Custom endpoint for MinIO, etc. (optional)
+
+    Thread-safe: Uses double-checked locking to ensure only one instance
+    is created even under concurrent access.
     """
     global _backend
 
-    if _backend is None:
+    # Fast path - already initialized
+    if _backend is not None:
+        return _backend
+
+    # Slow path - initialize with lock
+    with _backend_lock:
+        # Double-check after acquiring lock
+        if _backend is not None:
+            return _backend
+
         backend_type = os.environ.get("FLOWFILE_ARTIFACT_STORAGE", "filesystem")
 
         if backend_type == "s3":
@@ -78,7 +92,8 @@ def get_storage_backend() -> "ArtifactStorageBackend":
 def reset_storage_backend() -> None:
     """Reset the storage backend singleton (for testing)."""
     global _backend
-    _backend = None
+    with _backend_lock:
+        _backend = None
 
 
 __all__ = [
