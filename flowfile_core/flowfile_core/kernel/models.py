@@ -12,6 +12,12 @@ class KernelState(str, Enum):
     ERROR = "error"
 
 
+class RecoveryMode(str, Enum):
+    LAZY = "lazy"
+    EAGER = "eager"
+    CLEAR = "clear"  # Clears all persisted artifacts on startup (destructive)
+
+
 class KernelConfig(BaseModel):
     id: str
     name: str
@@ -20,6 +26,9 @@ class KernelConfig(BaseModel):
     memory_gb: float = 4.0
     gpu: bool = False
     health_timeout: int = 120
+    # Persistence configuration
+    persistence_enabled: bool = True
+    recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
 class KernelInfo(BaseModel):
@@ -36,6 +45,9 @@ class KernelInfo(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
     kernel_version: str | None = None
+    # Persistence configuration
+    persistence_enabled: bool = True
+    recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
 class DockerStatus(BaseModel):
@@ -79,11 +91,6 @@ class ExecuteResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Artifact Persistence & Recovery models
 # ---------------------------------------------------------------------------
-
-class RecoveryMode(str, Enum):
-    LAZY = "lazy"
-    EAGER = "eager"
-    CLEAR = "clear"  # Clears all persisted artifacts on startup (destructive)
 
 
 class RecoveryStatus(BaseModel):

@@ -273,7 +273,8 @@ class ArtifactStore:
             if key in self._artifacts:
                 return self._artifacts[key]["object"]
             # Check if it's in lazy index before attempting load
-            if key not in self._lazy_index:
+            in_lazy_index = key in self._lazy_index
+            if not in_lazy_index:
                 raise KeyError(f"Artifact '{name}' not found")
 
         # Attempt lazy load from disk (releases global lock during I/O)
@@ -282,7 +283,11 @@ class ArtifactStore:
                 if key in self._artifacts:
                     return self._artifacts[key]["object"]
 
-        raise KeyError(f"Artifact '{name}' not found")
+        # If we get here, the artifact was in lazy_index but failed to load
+        raise KeyError(
+            f"Artifact '{name}' exists on disk but failed to load. "
+            "Check logs for details."
+        )
 
     def list_all(self, flow_id: int | None = None) -> dict[str, dict[str, Any]]:
         """Return metadata for all artifacts, optionally filtered by *flow_id*.

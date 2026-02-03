@@ -378,3 +378,44 @@ class TestKernelStartupEnvironment:
             assert environment["PERSISTENCE_ENABLED"] == "true"
             assert environment["PERSISTENCE_PATH"] == "/shared/artifacts"
             assert environment["RECOVERY_MODE"] == "lazy"
+
+    def test_start_kernel_uses_per_kernel_persistence_config(self):
+        """Persistence env vars should be taken from kernel config, not hardcoded."""
+        from flowfile_core.kernel.models import KernelConfig, KernelState
+
+        with patch("flowfile_core.kernel.manager.docker") as mock_docker:
+            from flowfile_core.kernel.manager import KernelManager
+
+            with patch.object(KernelManager, "_restore_kernels_from_db"):
+                with patch.object(KernelManager, "_reclaim_running_containers"):
+                    manager = KernelManager(shared_volume_path="/tmp/test")
+
+            # Create a kernel with custom persistence settings
+            config = KernelConfig(
+                id="custom-persist",
+                name="Custom Persistence",
+                persistence_enabled=False,
+                recovery_mode=RecoveryMode.EAGER,
+            )
+            _run(manager.create_kernel(config, user_id=1))
+
+            # Verify the kernel info has the persistence settings
+            kernel = manager._kernels["custom-persist"]
+            assert kernel.persistence_enabled is False
+            assert kernel.recovery_mode == RecoveryMode.EAGER
+
+            # Mock Docker and start the kernel
+            mock_docker.from_env.return_value.images.get.return_value = MagicMock()
+            mock_container = MagicMock()
+            mock_container.id = "fake-id"
+            mock_docker.from_env.return_value.containers.run.return_value = mock_container
+
+            with patch.object(manager, "_wait_for_healthy", new_callable=AsyncMock):
+                _run(manager.start_kernel("custom-persist"))
+
+            # Verify containers.run received custom persistence settings
+            call_args = mock_docker.from_env.return_value.containers.run.call_args
+            environment = call_args[1]["environment"]
+
+            assert environment["PERSISTENCE_ENABLED"] == "false"
+            assert environment["RECOVERY_MODE"] == "eager"

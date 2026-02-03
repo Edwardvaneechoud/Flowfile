@@ -183,6 +183,8 @@ class KernelManager:
             cpu_cores=config.cpu_cores,
             gpu=config.gpu,
             health_timeout=config.health_timeout,
+            persistence_enabled=config.persistence_enabled,
+            recovery_mode=config.recovery_mode,
         )
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
@@ -223,9 +225,9 @@ class KernelManager:
                 "environment": {
                     "KERNEL_PACKAGES": packages_str,
                     "KERNEL_ID": kernel_id,
-                    "PERSISTENCE_ENABLED": "true",
+                    "PERSISTENCE_ENABLED": "true" if kernel.persistence_enabled else "false",
                     "PERSISTENCE_PATH": "/shared/artifacts",
-                    "RECOVERY_MODE": "lazy",
+                    "RECOVERY_MODE": kernel.recovery_mode.value,
                 },
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
@@ -276,7 +278,13 @@ class KernelManager:
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {"KERNEL_PACKAGES": packages_str},
+                "environment": {
+                    "KERNEL_PACKAGES": packages_str,
+                    "KERNEL_ID": kernel_id,
+                    "PERSISTENCE_ENABLED": "true" if kernel.persistence_enabled else "false",
+                    "PERSISTENCE_PATH": "/shared/artifacts",
+                    "RECOVERY_MODE": kernel.recovery_mode.value,
+                },
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},
