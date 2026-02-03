@@ -58,7 +58,10 @@ class CatalogService:
     def _enrich_flow_registration(
         self, flow: FlowRegistration, user_id: int
     ) -> FlowRegistrationOut:
-        """Attach favourite/follow flags and run stats to a registration."""
+        """Attach favourite/follow flags and run stats to a single registration.
+
+        Note: For bulk operations, prefer ``_bulk_enrich_flows`` to avoid N+1 queries.
+        """
         is_fav = self.repo.get_favorite(user_id, flow.id) is not None
         is_follow = self.repo.get_follow(user_id, flow.id) is not None
         run_count = self.repo.count_run_for_flow(flow.id)
@@ -79,6 +82,47 @@ class CatalogService:
             last_run_success=last_run.success if last_run else None,
             file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
         )
+
+    def _bulk_enrich_flows(
+        self, flows: list[FlowRegistration], user_id: int
+    ) -> list[FlowRegistrationOut]:
+        """Enrich multiple flows with favourites, follows, and run stats in bulk.
+
+        Uses 3 queries total instead of 4×N, dramatically improving performance
+        when listing many flows.
+        """
+        if not flows:
+            return []
+
+        flow_ids = [f.id for f in flows]
+
+        # Bulk fetch all enrichment data (3 queries total)
+        fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
+        follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
+        run_stats = self.repo.bulk_get_run_stats(flow_ids)
+
+        result: list[FlowRegistrationOut] = []
+        for flow in flows:
+            run_count, last_run = run_stats.get(flow.id, (0, None))
+            result.append(
+                FlowRegistrationOut(
+                    id=flow.id,
+                    name=flow.name,
+                    description=flow.description,
+                    flow_path=flow.flow_path,
+                    namespace_id=flow.namespace_id,
+                    owner_id=flow.owner_id,
+                    created_at=flow.created_at,
+                    updated_at=flow.updated_at,
+                    is_favorite=flow.id in fav_ids,
+                    is_following=flow.id in follow_ids,
+                    run_count=run_count,
+                    last_run_at=last_run.started_at if last_run else None,
+                    last_run_success=last_run.success if last_run else None,
+                    file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+                )
+            )
+        return result
 
     @staticmethod
     def _run_to_out(run: FlowRun) -> FlowRunOut:
@@ -203,17 +247,38 @@ class CatalogService:
         return self.repo.list_namespaces(parent_id)
 
     def get_namespace_tree(self, user_id: int) -> list[NamespaceTree]:
-        """Build the full catalog tree with flows nested under schemas."""
+        """Build the full catalog tree with flows nested under schemas.
+
+        Uses bulk enrichment to avoid N+1 queries when there are many flows.
+        """
         catalogs = self.repo.list_root_namespaces()
+
+        # Collect all flows first, then bulk-enrich them
+        all_flows: list[FlowRegistration] = []
+        namespace_flow_map: dict[int, list[FlowRegistration]] = {}
+
+        for cat in catalogs:
+            cat_flows = self.repo.list_flows(namespace_id=cat.id)
+            namespace_flow_map[cat.id] = cat_flows
+            all_flows.extend(cat_flows)
+
+            for schema in self.repo.list_child_namespaces(cat.id):
+                schema_flows = self.repo.list_flows(namespace_id=schema.id)
+                namespace_flow_map[schema.id] = schema_flows
+                all_flows.extend(schema_flows)
+
+        # Bulk enrich all flows at once
+        enriched = self._bulk_enrich_flows(all_flows, user_id)
+        enriched_map = {e.id: e for e in enriched}
+
+        # Build tree structure
         result: list[NamespaceTree] = []
         for cat in catalogs:
             schemas = self.repo.list_child_namespaces(cat.id)
             children: list[NamespaceTree] = []
             for schema in schemas:
-                flows = self.repo.list_flows(namespace_id=schema.id)
-                flow_outs = [
-                    self._enrich_flow_registration(f, user_id) for f in flows
-                ]
+                schema_flows = namespace_flow_map.get(schema.id, [])
+                flow_outs = [enriched_map[f.id] for f in schema_flows if f.id in enriched_map]
                 children.append(
                     NamespaceTree(
                         id=schema.id,
@@ -228,11 +293,8 @@ class CatalogService:
                         flows=flow_outs,
                     )
                 )
-            # Also include flows directly under catalog
-            root_flows = self.repo.list_flows(namespace_id=cat.id)
-            root_flow_outs = [
-                self._enrich_flow_registration(f, user_id) for f in root_flows
-            ]
+            cat_flows = namespace_flow_map.get(cat.id, [])
+            root_flow_outs = [enriched_map[f.id] for f in cat_flows if f.id in enriched_map]
             result.append(
                 NamespaceTree(
                     id=cat.id,
@@ -348,9 +410,12 @@ class CatalogService:
     def list_flows(
         self, user_id: int, namespace_id: int | None = None
     ) -> list[FlowRegistrationOut]:
-        """List flows, optionally filtered by namespace, enriched with user context."""
+        """List flows, optionally filtered by namespace, enriched with user context.
+
+        Uses bulk enrichment to avoid N+1 queries.
+        """
         flows = self.repo.list_flows(namespace_id=namespace_id)
-        return [self._enrich_flow_registration(f, user_id) for f in flows]
+        return self._bulk_enrich_flows(flows, user_id)
 
     # ------------------------------------------------------------------ #
     # Run operations
@@ -512,14 +577,17 @@ class CatalogService:
         self.repo.remove_favorite(user_id, registration_id)
 
     def list_favorites(self, user_id: int) -> list[FlowRegistrationOut]:
-        """List all flows the user has favourited, enriched."""
+        """List all flows the user has favourited, enriched.
+
+        Uses bulk enrichment to avoid N+1 queries.
+        """
         favs = self.repo.list_favorites(user_id)
-        result: list[FlowRegistrationOut] = []
+        flows: list[FlowRegistration] = []
         for fav in favs:
             flow = self.repo.get_flow(fav.registration_id)
             if flow is not None:
-                result.append(self._enrich_flow_registration(flow, user_id))
-        return result
+                flows.append(flow)
+        return self._bulk_enrich_flows(flows, user_id)
 
     # ------------------------------------------------------------------ #
     # Follows
@@ -556,21 +624,27 @@ class CatalogService:
         self.repo.remove_follow(user_id, registration_id)
 
     def list_following(self, user_id: int) -> list[FlowRegistrationOut]:
-        """List all flows the user is following, enriched."""
+        """List all flows the user is following, enriched.
+
+        Uses bulk enrichment to avoid N+1 queries.
+        """
         follows = self.repo.list_follows(user_id)
-        result: list[FlowRegistrationOut] = []
+        flows: list[FlowRegistration] = []
         for follow in follows:
             flow = self.repo.get_flow(follow.registration_id)
             if flow is not None:
-                result.append(self._enrich_flow_registration(flow, user_id))
-        return result
+                flows.append(flow)
+        return self._bulk_enrich_flows(flows, user_id)
 
     # ------------------------------------------------------------------ #
     # Dashboard / Stats
     # ------------------------------------------------------------------ #
 
     def get_catalog_stats(self, user_id: int) -> CatalogStats:
-        """Return an overview of the catalog for the dashboard."""
+        """Return an overview of the catalog for the dashboard.
+
+        Uses bulk enrichment for favourite flows to avoid N+1 queries.
+        """
         total_ns = self.repo.count_catalog_namespaces()
         total_flows = self.repo.count_all_flows()
         total_runs = self.repo.count_runs()
@@ -579,12 +653,14 @@ class CatalogService:
         recent_runs = self.repo.list_runs(limit=10, offset=0)
         recent_out = [self._run_to_out(r) for r in recent_runs]
 
+        # Bulk enrich favourite flows
         favs = self.repo.list_favorites(user_id)
-        fav_flows: list[FlowRegistrationOut] = []
+        flows: list[FlowRegistration] = []
         for fav in favs:
             flow = self.repo.get_flow(fav.registration_id)
             if flow is not None:
-                fav_flows.append(self._enrich_flow_registration(flow, user_id))
+                flows.append(flow)
+        fav_flows = self._bulk_enrich_flows(flows, user_id)
 
         return CatalogStats(
             total_namespaces=total_ns,

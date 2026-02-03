@@ -131,6 +131,20 @@ class CatalogRepository(Protocol):
 
     def count_all_flows(self) -> int: ...
 
+    # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
+
+    def bulk_get_favorite_flow_ids(
+        self, user_id: int, flow_ids: list[int]
+    ) -> set[int]: ...
+
+    def bulk_get_follow_flow_ids(
+        self, user_id: int, flow_ids: list[int]
+    ) -> set[int]: ...
+
+    def bulk_get_run_stats(
+        self, flow_ids: list[int]
+    ) -> dict[int, tuple[int, FlowRun | None]]: ...
+
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy implementation
@@ -403,3 +417,88 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_flows(self) -> int:
         return self._db.query(FlowRegistration).count()
+
+    # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
+
+    def bulk_get_favorite_flow_ids(
+        self, user_id: int, flow_ids: list[int]
+    ) -> set[int]:
+        """Return the subset of flow_ids that the user has favourited."""
+        if not flow_ids:
+            return set()
+        rows = (
+            self._db.query(FlowFavorite.registration_id)
+            .filter(
+                FlowFavorite.user_id == user_id,
+                FlowFavorite.registration_id.in_(flow_ids),
+            )
+            .all()
+        )
+        return {r[0] for r in rows}
+
+    def bulk_get_follow_flow_ids(
+        self, user_id: int, flow_ids: list[int]
+    ) -> set[int]:
+        """Return the subset of flow_ids that the user is following."""
+        if not flow_ids:
+            return set()
+        rows = (
+            self._db.query(FlowFollow.registration_id)
+            .filter(
+                FlowFollow.user_id == user_id,
+                FlowFollow.registration_id.in_(flow_ids),
+            )
+            .all()
+        )
+        return {r[0] for r in rows}
+
+    def bulk_get_run_stats(
+        self, flow_ids: list[int]
+    ) -> dict[int, tuple[int, FlowRun | None]]:
+        """Return run_count and last_run for each flow_id in one query batch.
+
+        Returns a dict: flow_id -> (run_count, last_run_or_none)
+        """
+        if not flow_ids:
+            return {}
+
+        from sqlalchemy import func
+
+        # Query 1: counts per registration_id
+        count_rows = (
+            self._db.query(
+                FlowRun.registration_id,
+                func.count(FlowRun.id).label("cnt"),
+            )
+            .filter(FlowRun.registration_id.in_(flow_ids))
+            .group_by(FlowRun.registration_id)
+            .all()
+        )
+        counts = {r[0]: r[1] for r in count_rows}
+
+        # Query 2: last run per registration_id using a subquery for max started_at
+        subq = (
+            self._db.query(
+                FlowRun.registration_id,
+                func.max(FlowRun.started_at).label("max_started"),
+            )
+            .filter(FlowRun.registration_id.in_(flow_ids))
+            .group_by(FlowRun.registration_id)
+            .subquery()
+        )
+        last_runs_rows = (
+            self._db.query(FlowRun)
+            .join(
+                subq,
+                (FlowRun.registration_id == subq.c.registration_id)
+                & (FlowRun.started_at == subq.c.max_started),
+            )
+            .all()
+        )
+        last_runs = {r.registration_id: r for r in last_runs_rows}
+
+        # Build result dict
+        result: dict[int, tuple[int, FlowRun | None]] = {}
+        for fid in flow_ids:
+            result[fid] = (counts.get(fid, 0), last_runs.get(fid))
+        return result
