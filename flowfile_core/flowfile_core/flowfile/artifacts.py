@@ -174,27 +174,29 @@ class ArtifactContext:
 
         An artifact is available if it was published by an upstream node
         (direct or transitive) that used the **same** ``kernel_id`` and
-        has **not** been deleted by any upstream node.
+        has **not** been deleted by a later upstream node.
+
+        Upstream nodes are processed in topological order.  For each node,
+        deletions are applied first, then publications — so a later node
+        can delete-then-republish an artifact and the new version will be
+        available downstream.
 
         The result is stored on the node's :class:`NodeArtifactState` and
         also returned.
         """
         available: dict[str, ArtifactRef] = {}
-        deleted_upstream: set[str] = set()
 
         for uid in upstream_node_ids:
             upstream_state = self._node_states.get(uid)
             if upstream_state is None:
                 continue
-            # Collect artifacts deleted by upstream nodes
-            deleted_upstream.update(upstream_state.deleted)
+            # First, remove artifacts deleted by this upstream node
+            for name in upstream_state.deleted:
+                available.pop(name, None)
+            # Then, add artifacts published by this upstream node
             for ref in upstream_state.published:
                 if ref.kernel_id == kernel_id:
                     available[ref.name] = ref
-
-        # Remove artifacts that were deleted by any upstream node
-        for name in deleted_upstream:
-            available.pop(name, None)
 
         state = self._get_or_create_state(node_id)
         state.available = available
