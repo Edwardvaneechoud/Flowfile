@@ -176,17 +176,19 @@ class ArtifactContext:
         (direct or transitive) that used the **same** ``kernel_id`` and
         has **not** been deleted by a later upstream node.
 
-        Upstream nodes are processed in topological order.  For each node,
-        deletions are applied first, then publications — so a later node
-        can delete-then-republish an artifact and the new version will be
-        available downstream.
+        Upstream nodes are processed in topological order (sorted by node ID).
+        For each node, deletions are applied first, then publications — so
+        a later node can delete-then-republish an artifact and the new
+        version will be available downstream.
 
         The result is stored on the node's :class:`NodeArtifactState` and
         also returned.
         """
         available: dict[str, ArtifactRef] = {}
 
-        for uid in upstream_node_ids:
+        # Sort by node ID to ensure topological processing order
+        # (FlowGraph._get_upstream_node_ids returns BFS order which is reversed)
+        for uid in sorted(upstream_node_ids):
             upstream_state = self._node_states.get(uid)
             if upstream_state is None:
                 continue
