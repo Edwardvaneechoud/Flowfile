@@ -32,12 +32,29 @@ logger = logging.getLogger(__name__)
 class RecoveryMode(str, Enum):
     LAZY = "lazy"
     EAGER = "eager"
-    NONE = "none"
+    CLEAR = "clear"  # Clears all persisted artifacts on startup
+
+    @classmethod
+    def _missing_(cls, value: object) -> "RecoveryMode | None":
+        """Handle 'none' as an alias for 'clear' for backwards compatibility."""
+        if isinstance(value, str) and value.lower() == "none":
+            logger.warning(
+                "RECOVERY_MODE='none' is deprecated, use 'clear' instead. "
+                "This will delete ALL persisted artifacts on startup."
+            )
+            return cls.CLEAR
+        return None
 
 
 def _safe_dirname(name: str) -> str:
-    """Convert an artifact name to a filesystem-safe directory name."""
-    return re.sub(r"[^\w\-.]", "_", name)
+    """Convert an artifact name to a filesystem-safe directory name.
+
+    Strips leading dots to prevent hidden directories.
+    """
+    # First replace unsafe characters
+    safe = re.sub(r"[^\w\-.]", "_", name)
+    # Strip leading dots to prevent hidden directories
+    return safe.lstrip(".")
 
 
 def _sha256(data: bytes) -> str:
@@ -74,8 +91,19 @@ class ArtifactPersistence:
     # Save / Load / Delete
     # ------------------------------------------------------------------
 
+    # Fields that should be persisted to meta.json (whitelist approach)
+    _PERSISTABLE_FIELDS = frozenset([
+        "name", "type_name", "module", "node_id", "flow_id",
+        "created_at", "size_bytes",
+    ])
+
     def save(self, name: str, obj: Any, metadata: dict[str, Any], flow_id: int = 0) -> None:
-        """Persist *obj* to disk alongside its *metadata*."""
+        """Persist *obj* to disk alongside its *metadata*.
+
+        Only JSON-serializable fields from ``_PERSISTABLE_FIELDS`` are written
+        to meta.json. This whitelist approach prevents accidentally persisting
+        non-serializable objects.
+        """
         artifact_dir = self._artifact_dir(flow_id, name)
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -85,8 +113,10 @@ class ArtifactPersistence:
         data_path = self._data_path(flow_id, name)
         data_path.write_bytes(data)
 
+        # Explicitly select only the fields we want to persist (whitelist)
         meta = {
-            k: v for k, v in metadata.items() if k != "object"
+            k: v for k, v in metadata.items()
+            if k in self._PERSISTABLE_FIELDS
         }
         meta["checksum"] = checksum
         meta["persisted_at"] = datetime.now(timezone.utc).isoformat()

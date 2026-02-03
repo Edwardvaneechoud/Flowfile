@@ -83,7 +83,7 @@ class ExecuteResult(BaseModel):
 class RecoveryMode(str, Enum):
     LAZY = "lazy"
     EAGER = "eager"
-    NONE = "none"
+    CLEAR = "clear"  # Clears all persisted artifacts on startup (destructive)
 
 
 class RecoveryStatus(BaseModel):
@@ -94,12 +94,18 @@ class RecoveryStatus(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class ArtifactIdentifier(BaseModel):
+    """Identifies a specific artifact by flow_id and name."""
+    flow_id: int
+    name: str
+
+
 class CleanupRequest(BaseModel):
     """Request to clean up old persisted artifacts."""
     max_age_hours: float | None = None
-    artifact_names: list[dict] | None = Field(
+    artifact_names: list[ArtifactIdentifier] | None = Field(
         default=None,
-        description='List of {"flow_id": int, "name": str} pairs to delete',
+        description="List of specific artifacts to delete",
     )
 
 

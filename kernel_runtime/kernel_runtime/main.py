@@ -85,15 +85,19 @@ def _setup_persistence() -> None:
         }
         logger.info("Lazy recovery index built: %d artifacts available on disk", count)
 
-    elif _recovery_mode == RecoveryMode.NONE:
+    elif _recovery_mode == RecoveryMode.CLEAR:
+        logger.warning(
+            "RECOVERY_MODE=clear: Deleting ALL persisted artifacts. "
+            "This is destructive and cannot be undone."
+        )
         _persistence.clear()
         _recovery_status = {
             "status": "completed",
-            "mode": "none",
+            "mode": "clear",
             "recovered": [],
             "errors": [],
         }
-        logger.info("Recovery mode=none: cleared all persisted artifacts")
+        logger.info("Recovery mode=clear: cleared all persisted artifacts")
 
 
 @contextlib.asynccontextmanager
@@ -134,11 +138,17 @@ class ExecuteResponse(BaseModel):
     execution_time_ms: float = 0.0
 
 
+class ArtifactIdentifier(BaseModel):
+    """Identifies a specific artifact by flow_id and name."""
+    flow_id: int
+    name: str
+
+
 class CleanupRequest(BaseModel):
     max_age_hours: float | None = None
-    artifact_names: list[dict] | None = Field(
+    artifact_names: list[ArtifactIdentifier] | None = Field(
         default=None,
-        description='List of {"flow_id": int, "name": str} pairs to delete',
+        description="List of specific artifacts to delete",
     )
 
 
@@ -285,7 +295,7 @@ async def cleanup_artifacts(request: CleanupRequest):
 
     names = None
     if request.artifact_names:
-        names = [(item["flow_id"], item["name"]) for item in request.artifact_names]
+        names = [(item.flow_id, item.name) for item in request.artifact_names]
 
     removed_count = _persistence.cleanup(
         max_age_hours=request.max_age_hours,

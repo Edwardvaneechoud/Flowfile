@@ -236,9 +236,13 @@ class TestRecoveryMode:
     def test_enum_values(self):
         assert RecoveryMode.LAZY == "lazy"
         assert RecoveryMode.EAGER == "eager"
-        assert RecoveryMode.NONE == "none"
+        assert RecoveryMode.CLEAR == "clear"
 
     def test_from_string(self):
         assert RecoveryMode("lazy") == RecoveryMode.LAZY
         assert RecoveryMode("eager") == RecoveryMode.EAGER
-        assert RecoveryMode("none") == RecoveryMode.NONE
+        assert RecoveryMode("clear") == RecoveryMode.CLEAR
+
+    def test_none_backwards_compatibility(self):
+        """'none' is accepted for backwards compatibility but maps to CLEAR."""
+        assert RecoveryMode("none") == RecoveryMode.CLEAR

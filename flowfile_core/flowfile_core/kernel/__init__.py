@@ -1,5 +1,6 @@
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
+    ArtifactIdentifier,
     ArtifactPersistenceInfo,
     CleanupRequest,
     CleanupResult,
@@ -18,6 +19,7 @@ from flowfile_core.kernel.routes import router
 
 __all__ = [
     "KernelManager",
+    "ArtifactIdentifier",
     "ArtifactPersistenceInfo",
     "CleanupRequest",
     "CleanupResult",

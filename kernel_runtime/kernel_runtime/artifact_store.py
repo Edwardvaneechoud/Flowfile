@@ -48,9 +48,29 @@ class ArtifactStore:
         # Only used in lazy-recovery mode.
         self._lazy_index: dict[tuple[int, str], dict[str, Any]] = {}
 
+        # Per-key locks for lazy loading to avoid blocking the global lock
+        # during potentially slow I/O operations.
+        self._loading_locks: dict[tuple[int, str], threading.Lock] = {}
+        self._loading_locks_lock = threading.Lock()  # protects _loading_locks dict
+
+        # Track keys currently being persisted to handle race conditions
+        self._persist_pending: set[tuple[int, str]] = set()
+
     # ------------------------------------------------------------------
     # Persistence integration
     # ------------------------------------------------------------------
+
+    def _get_loading_lock(self, key: tuple[int, str]) -> threading.Lock:
+        """Get or create a per-key lock for lazy loading."""
+        with self._loading_locks_lock:
+            if key not in self._loading_locks:
+                self._loading_locks[key] = threading.Lock()
+            return self._loading_locks[key]
+
+    def _cleanup_loading_lock(self, key: tuple[int, str]) -> None:
+        """Remove a per-key lock after loading is complete."""
+        with self._loading_locks_lock:
+            self._loading_locks.pop(key, None)
 
     def enable_persistence(self, persistence: Any) -> None:
         """Attach a persistence backend to this store.
@@ -114,33 +134,70 @@ class ArtifactStore:
     def _try_lazy_load(self, key: tuple[int, str]) -> bool:
         """Attempt to load an artifact from disk into memory (lazy mode).
 
-        Must be called **inside** ``self._lock``.  Returns True if
-        the artifact was loaded.
+        Uses a two-phase approach to avoid holding the global lock during
+        potentially slow I/O operations:
+        1. Under global lock: check if in lazy_index, grab metadata, release
+        2. Under per-key lock: do the actual disk I/O
+        3. Under global lock: store result in _artifacts
+
+        Returns True if the artifact was loaded.
         """
-        if self._persistence is None or key not in self._lazy_index:
+        if self._persistence is None:
             return False
 
-        flow_id, name = key
-        meta = self._lazy_index.pop(key)
-        try:
-            obj = self._persistence.load(name, flow_id=flow_id)
-            self._artifacts[key] = {
-                "object": obj,
-                "name": name,
-                "type_name": meta.get("type_name", type(obj).__name__),
-                "module": meta.get("module", type(obj).__module__),
-                "node_id": meta.get("node_id", -1),
-                "flow_id": flow_id,
-                "created_at": meta.get("created_at", datetime.now(timezone.utc).isoformat()),
-                "size_bytes": meta.get("size_bytes", sys.getsizeof(obj)),
-                "persisted": True,
-                "recovered": True,
-            }
+        # Phase 1: Check lazy index under global lock
+        with self._lock:
+            if key in self._artifacts:
+                return True  # Already loaded (maybe by another thread)
+            if key not in self._lazy_index:
+                return False
+            meta = self._lazy_index.get(key)
+            if meta is None:
+                return False
+
+        # Phase 2: Do I/O under per-key lock (not global lock)
+        loading_lock = self._get_loading_lock(key)
+        with loading_lock:
+            # Double-check after acquiring per-key lock
+            with self._lock:
+                if key in self._artifacts:
+                    self._cleanup_loading_lock(key)
+                    return True
+                if key not in self._lazy_index:
+                    self._cleanup_loading_lock(key)
+                    return False
+                meta = self._lazy_index.pop(key)
+
+            # Do the actual I/O outside any lock
+            flow_id, name = key
+            try:
+                obj = self._persistence.load(name, flow_id=flow_id)
+            except Exception as exc:
+                logger.warning("Failed to lazy-load artifact '%s' (flow_id=%d): %s", name, flow_id, exc)
+                # Put metadata back in lazy_index so we can retry
+                with self._lock:
+                    if key not in self._artifacts:
+                        self._lazy_index[key] = meta
+                self._cleanup_loading_lock(key)
+                return False
+
+            # Phase 3: Store result under global lock
+            with self._lock:
+                self._artifacts[key] = {
+                    "object": obj,
+                    "name": name,
+                    "type_name": meta.get("type_name", type(obj).__name__),
+                    "module": meta.get("module", type(obj).__module__),
+                    "node_id": meta.get("node_id", -1),
+                    "flow_id": flow_id,
+                    "created_at": meta.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "size_bytes": meta.get("size_bytes", sys.getsizeof(obj)),
+                    "persisted": True,
+                    "recovered": True,
+                }
             logger.info("Lazy-loaded artifact '%s' (flow_id=%d)", name, flow_id)
+            self._cleanup_loading_lock(key)
             return True
-        except Exception as exc:
-            logger.warning("Failed to lazy-load artifact '%s' (flow_id=%d): %s", name, flow_id, exc)
-            return False
 
     # ------------------------------------------------------------------
     # Core operations
@@ -165,23 +222,35 @@ class ArtifactStore:
                 "flow_id": flow_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "size_bytes": sys.getsizeof(obj),
-                "persisted": self._persistence is not None,
+                "persisted": False,  # Will be set True after successful persist
+                "persist_pending": self._persistence is not None,
             }
             self._artifacts[key] = metadata
 
             # Remove from lazy index if present (we now have it in memory)
             self._lazy_index.pop(key, None)
 
+            # Track that persistence is in progress
+            if self._persistence is not None:
+                self._persist_pending.add(key)
+
         # Persist to disk outside the lock (I/O can be slow)
         if self._persistence is not None:
             try:
                 self._persistence.save(name, obj, metadata, flow_id=flow_id)
+                # Mark as successfully persisted
+                with self._lock:
+                    if key in self._artifacts:
+                        self._artifacts[key]["persisted"] = True
+                        self._artifacts[key]["persist_pending"] = False
+                    self._persist_pending.discard(key)
             except Exception as exc:
                 logger.warning("Failed to persist artifact '%s': %s", name, exc)
-                # Update persisted flag
                 with self._lock:
                     if key in self._artifacts:
                         self._artifacts[key]["persisted"] = False
+                        self._artifacts[key]["persist_pending"] = False
+                    self._persist_pending.discard(key)
 
     def delete(self, name: str, flow_id: int = 0) -> None:
         key = (flow_id, name)
@@ -199,13 +268,21 @@ class ArtifactStore:
 
     def get(self, name: str, flow_id: int = 0) -> Any:
         key = (flow_id, name)
+        # First check in-memory (fast path)
         with self._lock:
             if key in self._artifacts:
                 return self._artifacts[key]["object"]
-            # Attempt lazy load from disk
-            if self._try_lazy_load(key):
-                return self._artifacts[key]["object"]
-            raise KeyError(f"Artifact '{name}' not found")
+            # Check if it's in lazy index before attempting load
+            if key not in self._lazy_index:
+                raise KeyError(f"Artifact '{name}' not found")
+
+        # Attempt lazy load from disk (releases global lock during I/O)
+        if self._try_lazy_load(key):
+            with self._lock:
+                if key in self._artifacts:
+                    return self._artifacts[key]["object"]
+
+        raise KeyError(f"Artifact '{name}' not found")
 
     def list_all(self, flow_id: int | None = None) -> dict[str, dict[str, Any]]:
         """Return metadata for all artifacts, optionally filtered by *flow_id*.
@@ -262,6 +339,11 @@ class ArtifactStore:
         When *flow_id* is provided, only artifacts in that flow are
         considered.  Returns the names of deleted artifacts.
         """
+        # Initialize before lock to ensure they're defined even if lock raises
+        to_remove: list[tuple[int, str]] = []
+        lazy_remove: list[tuple[int, str]] = []
+        removed_names: list[str] = []
+
         with self._lock:
             to_remove = [
                 key

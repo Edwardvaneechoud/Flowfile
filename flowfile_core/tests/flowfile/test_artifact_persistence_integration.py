@@ -68,12 +68,12 @@ class TestPersistenceModels:
     def test_recovery_mode_enum_values(self):
         assert RecoveryMode.LAZY == "lazy"
         assert RecoveryMode.EAGER == "eager"
-        assert RecoveryMode.NONE == "none"
+        assert RecoveryMode.CLEAR == "clear"
 
     def test_recovery_mode_from_string(self):
         assert RecoveryMode("lazy") == RecoveryMode.LAZY
         assert RecoveryMode("eager") == RecoveryMode.EAGER
-        assert RecoveryMode("none") == RecoveryMode.NONE
+        assert RecoveryMode("clear") == RecoveryMode.CLEAR
 
     def test_recovery_status_defaults(self):
         status = RecoveryStatus(status="pending")

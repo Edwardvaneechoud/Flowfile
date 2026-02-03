@@ -35,6 +35,8 @@ def _clear_global_state():
     # Detach persistence from artifact store
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
+    artifact_store._loading_locks.clear()
+    artifact_store._persist_pending.clear()
 
     yield
 
@@ -46,6 +48,8 @@ def _clear_global_state():
     main._persistence_path = "/shared/artifacts"
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
+    artifact_store._loading_locks.clear()
+    artifact_store._persist_pending.clear()
 
 
 @pytest.fixture()
