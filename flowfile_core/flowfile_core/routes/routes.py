@@ -69,22 +69,28 @@ def get_node_model(setting_name_ref: str):
 
 
 def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > user_flows) if it exists."""
+    """Register a flow in the default catalog namespace (General > user_flows) if it exists.
+
+    Failures are logged at info level since users may wonder why some flows
+    don't appear in the catalog.
+    """
     if user_id is None or flow_path is None:
         return
     try:
         with get_db_context() as db:
             general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
             if general is None:
+                logger.info("Auto-registration skipped: 'General' catalog namespace not found")
                 return
             user_flows = db.query(CatalogNamespace).filter_by(
                 name="user_flows", parent_id=general.id
             ).first()
             if user_flows is None:
+                logger.info("Auto-registration skipped: 'user_flows' schema not found under 'General'")
                 return
             existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
             if existing:
-                return
+                return  # Already registered, silent success
             reg = FlowRegistration(
                 name=name or Path(flow_path).stem,
                 flow_path=flow_path,
@@ -93,8 +99,9 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             )
             db.add(reg)
             db.commit()
+            logger.info(f"Auto-registered flow '{reg.name}' in default namespace")
     except Exception:
-        logger.debug("Auto-registration in default namespace failed (non-critical)", exc_info=True)
+        logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
 
 
 @router.post("/upload/")
@@ -238,27 +245,38 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
 
 
 def _run_and_track(flow, user_id: int | None):
-    """Wrapper that runs a flow and persists the run record to the database."""
+    """Wrapper that runs a flow and persists the run record to the database.
+
+    This runs in a BackgroundTask. If DB persistence fails, the run still
+    completed but won't appear in the run history. Failures are logged at
+    ERROR level so they're visible in logs.
+    """
+    flow_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
+
     run_info = flow.run_graph()
     if run_info is None:
+        logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
 
     # Persist run record
+    tracking_succeeded = False
     try:
-        # Build snapshot
+        # Build snapshot (non-critical if fails)
+        snapshot_yaml = None
         try:
             snapshot_data = flow.get_flowfile_data()
             snapshot_yaml = snapshot_data.model_dump_json()
-        except Exception:
-            snapshot_yaml = None
+        except Exception as snap_err:
+            logger.warning(f"Flow '{flow_name}': snapshot serialization failed: {snap_err}")
 
-        # Serialise node results
+        # Serialise node results (non-critical if fails)
+        node_results = None
         try:
             node_results = json.dumps(
                 [nr.model_dump(mode="json") for nr in (run_info.node_step_result or [])],
             )
-        except Exception:
-            node_results = None
+        except Exception as node_err:
+            logger.warning(f"Flow '{flow_name}': node results serialization failed: {node_err}")
 
         duration = None
         if run_info.start_time and run_info.end_time:
@@ -275,7 +293,7 @@ def _run_and_track(flow, user_id: int | None):
 
             db_run = FlowRun(
                 registration_id=reg_id,
-                flow_name=flow.flow_settings.name or flow.__name__,
+                flow_name=flow_name,
                 flow_path=flow_path,
                 user_id=user_id if user_id is not None else 0,
                 started_at=run_info.start_time,
@@ -290,8 +308,25 @@ def _run_and_track(flow, user_id: int | None):
             )
             db.add(db_run)
             db.commit()
+            tracking_succeeded = True
+            logger.info(
+                f"Flow '{flow_name}' run tracked: success={run_info.success}, "
+                f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}, "
+                f"duration={duration:.2f}s" if duration else f"duration=N/A"
+            )
     except Exception as exc:
-        logger.warning(f"Failed to persist flow run record: {exc}")
+        logger.error(
+            f"Failed to persist run record for flow '{flow_name}'. "
+            f"The flow {'succeeded' if run_info.success else 'failed'} but won't appear in run history. "
+            f"Error: {exc}",
+            exc_info=True,
+        )
+
+    if not tracking_succeeded:
+        logger.error(
+            f"Run tracking failed for flow '{flow_name}'. "
+            "Check database connectivity and FlowRun table schema."
+        )
 
 
 @router.post('/flow/run/', tags=['editor'])

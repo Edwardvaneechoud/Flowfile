@@ -2566,6 +2566,25 @@ class FlowGraph:
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
             rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
 
+            # Expand re-run set: if a re-running node previously deleted
+            # artifacts, the original producer nodes must also re-run so
+            # those artifacts are available again in the kernel store.
+            while True:
+                deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
+                    rerun_node_ids,
+                )
+                new_ids = deleted_producers - rerun_node_ids
+                if not new_ids:
+                    break
+                rerun_node_ids |= new_ids
+
+            # Force producer nodes (added due to artifact deletions) to
+            # actually re-execute by marking their execution state stale.
+            for nid in rerun_node_ids:
+                node = self.get_node(nid)
+                if node is not None and node._execution_state.has_run_with_current_setup:
+                    node._execution_state.has_run_with_current_setup = False
+
             # Also purge stale metadata for nodes not in this graph
             # (e.g. injected externally or left over from removed nodes).
             graph_node_ids = set(self._node_db.keys())
