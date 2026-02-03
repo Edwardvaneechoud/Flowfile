@@ -79,7 +79,6 @@ class TestGlobalArtifactsKernelRuntime:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 artifact_id = flowfile.publish_global("kernel_test_model", {"accuracy": 0.95, "type": "classifier"})
 print(f"Published artifact with ID: {artifact_id}")
 '''
@@ -105,7 +104,6 @@ print(f"Published artifact with ID: {artifact_id}")
 
         # Publish an artifact
         publish_code = '''
-import flowfile
 data = {"model_type": "random_forest", "n_estimators": 100, "accuracy": 0.92}
 artifact_id = flowfile.publish_global("rf_model_test", data)
 print(f"artifact_id={artifact_id}")
@@ -125,7 +123,6 @@ print(f"artifact_id={artifact_id}")
 
         # Retrieve it
         get_code = '''
-import flowfile
 retrieved = flowfile.get_global("rf_model_test")
 assert retrieved["model_type"] == "random_forest", f"Got {retrieved}"
 assert retrieved["n_estimators"] == 100
@@ -153,7 +150,6 @@ print("Roundtrip successful!")
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 artifact_id = flowfile.publish_global(
     "tagged_model",
     {"weights": [1.0, 2.0, 3.0]},
@@ -183,7 +179,6 @@ print(f"Published with tags, id={artifact_id}")
 
         # Publish two artifacts
         setup_code = '''
-import flowfile
 flowfile.publish_global("list_test_a", {"value": 1})
 flowfile.publish_global("list_test_b", {"value": 2})
 print("Published two artifacts")
@@ -203,7 +198,6 @@ print("Published two artifacts")
 
         # List artifacts
         list_code = '''
-import flowfile
 artifacts = flowfile.list_global_artifacts()
 names = [a["name"] for a in artifacts]
 assert "list_test_a" in names, f"list_test_a not found in {names}"
@@ -231,8 +225,6 @@ print(f"Found {len(artifacts)} artifacts")
 
         # Publish then delete
         code = '''
-import flowfile
-
 # Publish
 flowfile.publish_global("to_delete", {"temp": True})
 
@@ -271,7 +263,6 @@ except KeyError:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 try:
     flowfile.get_global("definitely_does_not_exist_12345")
     print("ERROR: Should have raised KeyError")
@@ -299,8 +290,6 @@ except KeyError as e:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
-
 # Publish v1
 id1 = flowfile.publish_global("versioned_model", {"version": 1})
 
@@ -374,7 +363,6 @@ class TestGlobalArtifactsFlowGraph:
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             )
             code = '''
-import flowfile
 df = flowfile.read_input()
 # Publish a global artifact (persists beyond flow run)
 flowfile.publish_global("flow_published_model", {"trained_on": "flow_data"})
@@ -400,7 +388,6 @@ flowfile.publish_output(df)
 
             # Verify the global artifact was published by retrieving it
             verify_code = '''
-import flowfile
 model = flowfile.get_global("flow_published_model")
 assert model["trained_on"] == "flow_data"
 print("Flow-published global artifact verified!")
@@ -451,7 +438,6 @@ print("Flow-published global artifact verified!")
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             )
             publish_code = '''
-import flowfile
 df = flowfile.read_input()
 # Publish global artifact in Flow 1
 flowfile.publish_global("cross_flow_artifact", {"source": "flow_1", "value": 42})
@@ -494,7 +480,6 @@ flowfile.publish_output(df)
                 input_schema.NodePromise(flow_id=2, node_id=2, node_type="python_script")
             )
             consume_code = '''
-import flowfile
 import polars as pl
 
 df = flowfile.read_input().collect()
@@ -552,7 +537,6 @@ class TestGlobalArtifactsComplexTypes:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 import numpy as np
 
 # Publish a numpy array
@@ -586,7 +570,6 @@ print("Numpy array roundtrip successful!")
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 import polars as pl
 
 # Publish a Polars DataFrame
@@ -625,8 +608,6 @@ print("Polars DataFrame roundtrip successful!")
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
-
 # Publish a complex nested structure
 config = {
     "model": {
@@ -674,8 +655,6 @@ print("Nested dict roundtrip successful!")
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
-
 class ModelWrapper:
     def __init__(self, name, weights):
         self.name = name
@@ -726,7 +705,6 @@ class TestGlobalArtifactsErrorHandling:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
 try:
     flowfile.delete_global_artifact("nonexistent_artifact_xyz")
     print("ERROR: Should have raised KeyError")
@@ -754,8 +732,6 @@ except KeyError as e:
         manager, kernel_id = kernel_manager
 
         code = '''
-import flowfile
-
 # Publish version 1
 flowfile.publish_global("versioned_test", {"v": 1})
 
