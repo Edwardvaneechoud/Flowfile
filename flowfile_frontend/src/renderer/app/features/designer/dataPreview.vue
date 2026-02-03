@@ -6,46 +6,141 @@
 
   <!-- Table Container -->
   <div v-show="!isLoading" class="table-container">
-    <!-- Button for when there is sample data, but the sample data is outdated -->
-    <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
-      <p>
-        Displayed data might be outdated.
-        <button class="refresh-link-button" @click="handleRefresh">Refresh now</button>
-      </p>
+    <!-- Tab Bar (only when artifacts exist for the node) -->
+    <div v-if="nodeArtifacts" class="preview-tabs">
       <button
-        class="dismiss-button"
-        aria-label="Dismiss notification"
-        @click="dismissOutdatedBanner"
+        class="preview-tab"
+        :class="{ active: activeTab === 'data' }"
+        @click="activeTab = 'data'"
       >
-        ×
+        Data
+      </button>
+      <button
+        class="preview-tab"
+        :class="{ active: activeTab === 'artifacts' }"
+        @click="activeTab = 'artifacts'"
+      >
+        Artifacts
+        <span class="dp-tab-badge">{{
+          nodeArtifacts.published_count + nodeArtifacts.consumed_count + nodeArtifacts.deleted_count
+        }}</span>
       </button>
     </div>
 
-    <!-- AG Grid -->
-    <ag-grid-vue
-      :default-col-def="defaultColDef"
-      :column-defs="columnDefs"
-      class="ag-theme-balham"
-      :row-data="rowData"
-      :style="{ width: '100%', height: gridHeightComputed }"
-      :overlay-no-rows-template="overlayNoRowsTemplate"
-      @grid-ready="onGridReady"
-    />
+    <!-- Data Tab Content -->
+    <div v-show="activeTab === 'data'" class="dp-tab-content">
+      <!-- Button for when there is sample data, but the sample data is outdated -->
+      <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
+        <p>
+          Displayed data might be outdated.
+          <button class="refresh-link-button" @click="handleRefresh">Refresh now</button>
+        </p>
+        <button
+          class="dismiss-button"
+          aria-label="Dismiss notification"
+          @click="dismissOutdatedBanner"
+        >
+          ×
+        </button>
+      </div>
 
-    <div v-if="showFetchButton" class="fetch-data-section">
-      <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
-      <button class="fetch-data-button" :disabled="nodeStore.isRunning" @click="handleFetchData">
-        <span v-if="!nodeStore.isRunning">Fetch Data</span>
-        <span v-else>Fetching...</span>
-      </button>
+      <!-- AG Grid -->
+      <ag-grid-vue
+        :default-col-def="defaultColDef"
+        :column-defs="columnDefs"
+        class="ag-theme-balham"
+        :row-data="rowData"
+        :style="{ width: '100%', height: gridHeightComputed }"
+        :overlay-no-rows-template="overlayNoRowsTemplate"
+        @grid-ready="onGridReady"
+      />
+
+      <div v-if="showFetchButton" class="fetch-data-section">
+        <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
+        <button class="fetch-data-button" :disabled="nodeStore.isRunning" @click="handleFetchData">
+          <span v-if="!nodeStore.isRunning">Fetch Data</span>
+          <span v-else>Fetching...</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Artifacts Tab Content -->
+    <div v-if="activeTab === 'artifacts' && nodeArtifacts" class="dp-tab-content artifacts-panel">
+      <div v-if="nodeArtifacts.kernel_id" class="artifact-section-meta">
+        Kernel: <code>{{ nodeArtifacts.kernel_id }}</code>
+      </div>
+
+      <div v-if="nodeArtifacts.published.length > 0" class="artifact-section">
+        <div class="artifact-section-header">Published</div>
+        <table class="artifact-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Module</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="art in nodeArtifacts.published" :key="art.name">
+              <td class="artifact-name">{{ art.name }}</td>
+              <td>{{ art.type_name || "-" }}</td>
+              <td class="artifact-module">{{ art.module || "-" }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="nodeArtifacts.consumed.length > 0" class="artifact-section">
+        <div class="artifact-section-header">Consumed</div>
+        <table class="artifact-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Source Node</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="art in nodeArtifacts.consumed" :key="art.name">
+              <td class="artifact-name">{{ art.name }}</td>
+              <td>{{ art.type_name || "-" }}</td>
+              <td>{{ art.source_node_id != null ? `Node ${art.source_node_id}` : "-" }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="nodeArtifacts.deleted.length > 0" class="artifact-section">
+        <div class="artifact-section-header">Deleted</div>
+        <table class="artifact-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="name in nodeArtifacts.deleted" :key="name">
+              <td class="artifact-name artifact-deleted">{{ name }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div
+        v-if="nodeArtifacts.published.length === 0 && nodeArtifacts.consumed.length === 0 && nodeArtifacts.deleted.length === 0"
+        class="artifact-empty"
+      >
+        No artifacts recorded for this node.
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
+import { useFlowStore } from "../../stores/flow-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
 import { AgGridVue } from "@ag-grid-community/vue3";
 import { GridApi } from "@ag-grid-community/core";
@@ -57,6 +152,8 @@ import "@ag-grid-community/styles/ag-theme-balham.css";
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
 const isLoading = ref(false);
+const activeTab = ref<"data" | "artifacts">("data");
+const flowStore = useFlowStore();
 const gridHeight = ref("");
 const rowData = ref<Record<string, any>[] | Record<string, never>>([]);
 const showTable = ref(false);
@@ -109,6 +206,20 @@ const overlayNoRowsTemplate = computed(() => {
   // Return undefined to use AG-Grid's default "No Rows To Show" message
   return undefined;
 });
+
+// Artifact data for the currently selected node
+const nodeArtifacts = computed(() => {
+  if (currentNodeId.value == null) return null;
+  return flowStore.getNodeArtifactSummary(currentNodeId.value);
+});
+
+// Reset to data tab when the selected node changes
+watch(
+  () => currentNodeId.value,
+  () => {
+    activeTab.value = "data";
+  },
+);
 
 const defaultColDef = {
   editable: true,
@@ -523,5 +634,142 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   --ag-secondary-foreground-color: var(--color-text-secondary);
   --ag-row-hover-color: var(--color-background-hover);
   --ag-selected-row-background-color: var(--color-background-selected);
+}
+
+/* ============================================================
+   Tab Bar & Artifacts Panel
+   ============================================================ */
+
+.preview-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+  flex-shrink: 0;
+}
+
+.preview-tab {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.preview-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-hover);
+}
+
+.preview-tab.active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent, #6366f1);
+}
+
+.dp-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+}
+
+.dp-tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.artifacts-panel {
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+
+.artifact-section-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+}
+
+.artifact-section-meta code {
+  background: var(--color-background-tertiary, var(--color-background-secondary));
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.artifact-section {
+  margin-bottom: 16px;
+}
+
+.artifact-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.artifact-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.artifact-table th {
+  text-align: left;
+  padding: 4px 8px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: 11px;
+}
+
+.artifact-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--color-border-light, var(--color-border-primary));
+  color: var(--color-text-primary);
+}
+
+.artifact-table tbody tr:hover {
+  background: var(--color-background-hover);
+}
+
+.artifact-name {
+  font-weight: 500;
+}
+
+.artifact-module {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.artifact-deleted {
+  text-decoration: line-through;
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
+.artifact-empty {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
 }
 </style>

@@ -194,14 +194,19 @@ class TestArtifactContextDeletion:
         ctx.record_deleted(2, "k1", ["model"])
         assert ctx.get_kernel_artifacts("k1") == {}
 
-    def test_record_deleted_removes_from_published_lists(self):
+    def test_record_deleted_preserves_publisher_published_list(self):
+        """Deletion does NOT remove from publisher's published list (historical record)."""
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model", "scaler"])
         ctx.record_deleted(2, "k1", ["model"])
+        # Publisher's published list is preserved as historical record
         published = ctx.get_published_by_node(1)
         names = [r.name for r in published]
-        assert "model" not in names
+        assert "model" in names  # Still there as historical record
         assert "scaler" in names
+        # The deleting node has it tracked in its deleted list
+        state = ctx._node_states[2]
+        assert "model" in state.deleted
 
     def test_record_deleted_tracks_on_node_state(self):
         ctx = ArtifactContext()
@@ -245,15 +250,19 @@ class TestArtifactContextClearing:
         assert ctx.get_kernel_artifacts("k1") == {}
         assert "encoder" in ctx.get_kernel_artifacts("k2")
 
-    def test_clear_kernel_removes_from_node_states(self):
+    def test_clear_kernel_preserves_published_lists(self):
+        """clear_kernel removes from kernel index but preserves published (historical record)."""
         ctx = ArtifactContext()
         ctx.record_published(1, "k1", ["model"])
         ctx.record_published(1, "k2", ["encoder"])
         ctx.clear_kernel("k1")
+        # Published list is preserved as historical record
         published = ctx.get_published_by_node(1)
         names = [r.name for r in published]
-        assert "model" not in names
+        assert "model" in names  # Still there as historical record
         assert "encoder" in names
+        # But the kernel index is cleared
+        assert ctx.get_kernel_artifacts("k1") == {}
 
     def test_clear_kernel_removes_from_available(self):
         ctx = ArtifactContext()
