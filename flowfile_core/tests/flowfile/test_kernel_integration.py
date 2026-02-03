@@ -1555,3 +1555,118 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+    def test_deleted_artifact_producer_reruns_on_consumer_change(
+        self, kernel_manager: tuple[KernelManager, str],
+    ):
+        """When a consumer that deleted an artifact is re-run, the
+        producer must also re-run so the artifact is available again."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data
+            data = [{"x1": 1, "x2": 2, "y": 5}, {"x1": 3, "x2": 4, "y": 11}]
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: publish artifact
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
+            )
+            producer_code = """
+df = flowfile.read_input()
+flowfile.publish_artifact("linear_model", {"coefficients": [1.0, 2.0, 3.0]})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=producer_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(1, 2),
+            )
+
+            # Node 3: read artifact, use it, then delete it
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
+            )
+            consumer_code_v1 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = model["coefficients"]
+result = df.with_columns(pl.lit(coeffs[0]).alias("c0"))
+flowfile.publish_output(result)
+flowfile.delete_artifact("linear_model")
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v1, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(2, 3),
+            )
+
+            # First run — everything works
+            _handle_run_info(graph.run_graph())
+
+            # Verify node 3 produced output
+            df_out = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "c0" in df_out.columns
+
+            # Change the consumer's code (node 3) — still deletes the artifact
+            consumer_code_v2 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = model["coefficients"]
+result = df.with_columns(
+    pl.lit(coeffs[0]).alias("c0"),
+    pl.lit(coeffs[1]).alias("c1"),
+)
+flowfile.publish_output(result)
+flowfile.delete_artifact("linear_model")
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v2, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Second run — consumer re-runs; producer must also re-run
+            # because the artifact was deleted on the first run.
+            _handle_run_info(graph.run_graph())
+
+            # Consumer should have the new columns
+            df_out2 = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "c0" in df_out2.columns
+            assert "c1" in df_out2.columns
+
+        finally:
+            _kernel_mod._manager = _prev

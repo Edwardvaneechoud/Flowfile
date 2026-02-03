@@ -417,3 +417,64 @@ class TestArtifactContextSerialization:
         # Should not raise
         serialised = json.dumps(d)
         assert isinstance(serialised, str)
+
+
+# ---------------------------------------------------------------------------
+# ArtifactContext — Deletion origin tracking
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextDeletionOrigins:
+    def test_get_producer_nodes_for_deletions_basic(self):
+        """Deleting an artifact tracks the original publisher."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        producers = ctx.get_producer_nodes_for_deletions({2})
+        assert producers == {1}
+
+    def test_get_producer_nodes_for_deletions_no_deletions(self):
+        """Nodes without deletions return an empty set."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        producers = ctx.get_producer_nodes_for_deletions({1})
+        assert producers == set()
+
+    def test_get_producer_nodes_for_deletions_multiple_artifacts(self):
+        """Deleting multiple artifacts from different producers."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k1", ["scaler"])
+        ctx.record_deleted(3, "k1", ["model", "scaler"])
+        producers = ctx.get_producer_nodes_for_deletions({3})
+        assert producers == {1, 2}
+
+    def test_clear_nodes_removes_deletion_origins(self):
+        """Clearing a deleter node also clears its deletion origins."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        ctx.clear_nodes({2})
+        producers = ctx.get_producer_nodes_for_deletions({2})
+        assert producers == set()
+
+    def test_clear_all_removes_deletion_origins(self):
+        """clear_all removes all deletion origin tracking."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_deleted(2, "k1", ["model"])
+        ctx.clear_all()
+        producers = ctx.get_producer_nodes_for_deletions({2})
+        assert producers == set()
+
+    def test_clear_kernel_removes_deletion_origins(self):
+        """clear_kernel removes deletion origins for that kernel only."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", ["model"])
+        ctx.record_published(2, "k2", ["encoder"])
+        ctx.record_deleted(3, "k1", ["model"])
+        ctx.record_deleted(3, "k2", ["encoder"])
+        ctx.clear_kernel("k1")
+        producers = ctx.get_producer_nodes_for_deletions({3})
+        # Only the k2 producer should remain
+        assert producers == {2}
