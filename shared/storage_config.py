@@ -16,6 +16,8 @@ DirectoryOptions = Literal[
     "cache_directory",
     "flows_directory",
     "user_defined_nodes_directory",
+    "global_artifacts_directory",
+    "artifact_staging_directory",
 ]
 
 
@@ -142,6 +144,34 @@ class FlowfileStorage:
         """Directory for temporary files specific to flows (internal)."""
         return self.temp_directory / "flows"
 
+    @property
+    def shared_directory(self) -> Path:
+        """Directory shared between core and kernel containers.
+
+        In Docker mode, this maps to /shared inside containers.
+        In local mode, this is ~/.flowfile/shared on the host.
+        """
+        if _is_docker_mode():
+            return Path(os.environ.get("FLOWFILE_SHARED_DIR", "/shared"))
+        else:
+            return self.base_directory / "shared"
+
+    @property
+    def global_artifacts_directory(self) -> Path:
+        """Directory for permanent storage of global artifacts."""
+        if _is_docker_mode():
+            return self.user_data_directory / "global_artifacts"
+        else:
+            return self.base_directory / "global_artifacts"
+
+    @property
+    def artifact_staging_directory(self) -> Path:
+        """Directory for staging artifact uploads before finalization.
+
+        Kernel writes here during upload, then Core moves to permanent storage.
+        """
+        return self.shared_directory / "artifact_staging"
+
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
         # Internal directories (always created in base_directory)
@@ -152,6 +182,8 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.shared_directory,
+            self.artifact_staging_directory,
         ]
 
         # User-accessible directories (location depends on environment)
@@ -161,6 +193,7 @@ class FlowfileStorage:
             self.outputs_directory,
             self.user_defined_nodes_directory,
             self.user_defined_nodes_icons,
+            self.global_artifacts_directory,
         ]
 
         for directory in internal_directories + user_directories:
@@ -268,3 +301,18 @@ def get_logs_directory() -> str:
 def get_system_logs_directory() -> str:
     """Get system logs directory path as string."""
     return str(storage.system_logs_directory)
+
+
+def get_shared_directory() -> str:
+    """Get shared directory path as string."""
+    return str(storage.shared_directory)
+
+
+def get_global_artifacts_directory() -> str:
+    """Get global artifacts directory path as string."""
+    return str(storage.global_artifacts_directory)
+
+
+def get_artifact_staging_directory() -> str:
+    """Get artifact staging directory path as string."""
+    return str(storage.artifact_staging_directory)

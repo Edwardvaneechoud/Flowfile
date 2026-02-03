@@ -1,0 +1,510 @@
+"""Business-logic layer for the Global Artifacts system.
+
+``ArtifactService`` encapsulates all domain rules (validation, versioning,
+storage management) and delegates persistence to SQLAlchemy. It never
+raises ``HTTPException`` — only domain-specific exceptions from
+``artifacts.exceptions``.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+from sqlalchemy.orm import Session
+
+from flowfile_core.artifacts.exceptions import (
+    ArtifactNotActiveError,
+    ArtifactNotFoundError,
+    ArtifactUploadError,
+    NamespaceNotFoundError,
+    StorageError,
+)
+from flowfile_core.database.models import CatalogNamespace, GlobalArtifact
+from flowfile_core.schemas.artifact_schema import (
+    ArtifactListItem,
+    ArtifactOut,
+    ArtifactVersionInfo,
+    ArtifactWithVersions,
+    DownloadSource,
+    FinalizeUploadResponse,
+    PrepareUploadRequest,
+    PrepareUploadResponse,
+)
+
+if TYPE_CHECKING:
+    from shared.artifact_storage import ArtifactStorageBackend
+
+
+class ArtifactService:
+    """Coordinates all artifact business logic.
+
+    Parameters
+    ----------
+    db:
+        SQLAlchemy database session.
+    storage:
+        Storage backend for blob operations.
+    """
+
+    def __init__(self, db: Session, storage: "ArtifactStorageBackend") -> None:
+        self.db = db
+        self.storage = storage
+
+    # ------------------------------------------------------------------ #
+    # Upload workflow
+    # ------------------------------------------------------------------ #
+
+    def prepare_upload(
+        self,
+        request: PrepareUploadRequest,
+        owner_id: int,
+    ) -> PrepareUploadResponse:
+        """Create pending artifact record and return upload target.
+
+        Step 1 of upload: Kernel calls this to get where to write the blob.
+
+        Args:
+            request: Upload request with artifact metadata.
+            owner_id: User ID of the artifact owner.
+
+        Returns:
+            PrepareUploadResponse with upload target information.
+
+        Raises:
+            NamespaceNotFoundError: If specified namespace doesn't exist.
+        """
+        # Validate namespace if specified
+        if request.namespace_id is not None:
+            ns = self.db.get(CatalogNamespace, request.namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(request.namespace_id)
+
+        # Determine next version for this artifact name + namespace
+        latest = (
+            self.db.query(GlobalArtifact)
+            .filter_by(name=request.name, namespace_id=request.namespace_id)
+            .filter(GlobalArtifact.status != "deleted")
+            .order_by(GlobalArtifact.version.desc())
+            .first()
+        )
+        next_version = (latest.version + 1) if latest else 1
+
+        # Create pending artifact record
+        artifact = GlobalArtifact(
+            name=request.name,
+            namespace_id=request.namespace_id,
+            version=next_version,
+            status="pending",
+            owner_id=owner_id,
+            source_flow_id=request.source_flow_id,
+            source_node_id=request.source_node_id,
+            source_kernel_id=request.source_kernel_id,
+            python_type=request.python_type,
+            python_module=request.python_module,
+            serialization_format=request.serialization_format,
+            description=request.description,
+            tags=json.dumps(request.tags) if request.tags else "[]",
+        )
+        self.db.add(artifact)
+        self.db.commit()
+        self.db.refresh(artifact)
+
+        # Get upload target from storage backend
+        ext_map = {
+            "parquet": ".parquet",
+            "joblib": ".joblib",
+            "pickle": ".pkl",
+        }
+        ext = ext_map.get(request.serialization_format, ".bin")
+        filename = f"{request.name}{ext}"
+
+        target = self.storage.prepare_upload(artifact.id, filename)
+
+        return PrepareUploadResponse(
+            artifact_id=artifact.id,
+            version=next_version,
+            method=target.method,
+            path=target.path,
+            storage_key=target.storage_key,
+        )
+
+    def finalize_upload(
+        self,
+        artifact_id: int,
+        storage_key: str,
+        sha256: str,
+        size_bytes: int,
+    ) -> FinalizeUploadResponse:
+        """Verify blob and activate artifact.
+
+        Step 2 of upload: Kernel calls this after writing blob to storage.
+
+        Args:
+            artifact_id: Database ID of the artifact.
+            storage_key: Storage key from prepare_upload response.
+            sha256: SHA-256 hash of the uploaded blob.
+            size_bytes: Size of the uploaded blob in bytes.
+
+        Returns:
+            FinalizeUploadResponse confirming activation.
+
+        Raises:
+            ArtifactNotFoundError: If artifact doesn't exist.
+            ArtifactNotActiveError: If artifact is not in pending state.
+            ArtifactUploadError: If blob verification fails.
+        """
+        artifact = self.db.get(GlobalArtifact, artifact_id)
+        if not artifact:
+            raise ArtifactNotFoundError(artifact_id=artifact_id)
+
+        if artifact.status != "pending":
+            raise ArtifactNotActiveError(artifact_id, artifact.status)
+
+        # Verify and finalize storage
+        try:
+            verified_size = self.storage.finalize_upload(storage_key, sha256)
+        except FileNotFoundError:
+            artifact.status = "failed"
+            self.db.commit()
+            raise ArtifactUploadError(artifact_id, "Blob not found in storage")
+        except ValueError as e:
+            artifact.status = "failed"
+            self.db.commit()
+            raise ArtifactUploadError(artifact_id, str(e))
+
+        # Activate artifact
+        artifact.status = "active"
+        artifact.storage_key = storage_key
+        artifact.sha256 = sha256
+        artifact.size_bytes = verified_size
+        self.db.commit()
+
+        return FinalizeUploadResponse(
+            status="ok",
+            artifact_id=artifact.id,
+            version=artifact.version,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Retrieval
+    # ------------------------------------------------------------------ #
+
+    def get_artifact_by_name(
+        self,
+        name: str,
+        namespace_id: int | None = None,
+        version: int | None = None,
+    ) -> ArtifactOut:
+        """Lookup artifact by name with download source.
+
+        Args:
+            name: Artifact name.
+            namespace_id: Optional namespace filter.
+            version: Optional specific version (latest if not specified).
+
+        Returns:
+            ArtifactOut with full metadata and download source.
+
+        Raises:
+            ArtifactNotFoundError: If artifact doesn't exist.
+        """
+        query = self.db.query(GlobalArtifact).filter_by(
+            name=name,
+            namespace_id=namespace_id,
+            status="active",
+        )
+
+        if version is not None:
+            artifact = query.filter_by(version=version).first()
+        else:
+            artifact = query.order_by(GlobalArtifact.version.desc()).first()
+
+        if not artifact:
+            raise ArtifactNotFoundError(name=name, version=version)
+
+        return self._artifact_to_out(artifact, include_download=True)
+
+    def get_artifact_by_id(self, artifact_id: int) -> ArtifactOut:
+        """Lookup artifact by ID with download source.
+
+        Args:
+            artifact_id: Database ID of the artifact.
+
+        Returns:
+            ArtifactOut with full metadata and download source.
+
+        Raises:
+            ArtifactNotFoundError: If artifact doesn't exist.
+        """
+        artifact = self.db.get(GlobalArtifact, artifact_id)
+        if not artifact or artifact.status != "active":
+            raise ArtifactNotFoundError(artifact_id=artifact_id)
+
+        return self._artifact_to_out(artifact, include_download=True)
+
+    def get_artifact_with_versions(
+        self,
+        name: str,
+        namespace_id: int | None = None,
+    ) -> ArtifactWithVersions:
+        """Get artifact with list of all available versions.
+
+        Args:
+            name: Artifact name.
+            namespace_id: Optional namespace filter.
+
+        Returns:
+            ArtifactWithVersions with latest version and version list.
+
+        Raises:
+            ArtifactNotFoundError: If artifact doesn't exist.
+        """
+        # Get latest version
+        latest = (
+            self.db.query(GlobalArtifact)
+            .filter_by(name=name, namespace_id=namespace_id, status="active")
+            .order_by(GlobalArtifact.version.desc())
+            .first()
+        )
+
+        if not latest:
+            raise ArtifactNotFoundError(name=name)
+
+        # Get all versions
+        versions = (
+            self.db.query(GlobalArtifact)
+            .filter_by(name=name, namespace_id=namespace_id, status="active")
+            .order_by(GlobalArtifact.version.desc())
+            .all()
+        )
+
+        version_infos = [
+            ArtifactVersionInfo(
+                version=v.version,
+                id=v.id,
+                created_at=v.created_at,
+                size_bytes=v.size_bytes,
+                sha256=v.sha256,
+            )
+            for v in versions
+        ]
+
+        out = self._artifact_to_out(latest, include_download=True)
+        return ArtifactWithVersions(
+            **out.model_dump(),
+            all_versions=version_infos,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Listing
+    # ------------------------------------------------------------------ #
+
+    def list_artifacts(
+        self,
+        namespace_id: int | None = None,
+        tags: list[str] | None = None,
+        name_contains: str | None = None,
+        python_type_contains: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ArtifactListItem]:
+        """List artifacts with optional filtering.
+
+        Args:
+            namespace_id: Filter by namespace.
+            tags: Filter by tags (AND logic).
+            name_contains: Filter by name substring.
+            python_type_contains: Filter by Python type substring.
+            limit: Maximum results to return.
+            offset: Offset for pagination.
+
+        Returns:
+            List of ArtifactListItem objects.
+        """
+        query = self.db.query(GlobalArtifact).filter_by(status="active")
+
+        if namespace_id is not None:
+            query = query.filter_by(namespace_id=namespace_id)
+
+        if name_contains:
+            query = query.filter(GlobalArtifact.name.contains(name_contains))
+
+        if python_type_contains:
+            query = query.filter(
+                GlobalArtifact.python_type.contains(python_type_contains)
+            )
+
+        # Tag filtering using JSON contains
+        if tags:
+            for tag in tags:
+                query = query.filter(GlobalArtifact.tags.contains(f'"{tag}"'))
+
+        # Order by name and version, most recent versions first
+        artifacts = (
+            query.order_by(
+                GlobalArtifact.name,
+                GlobalArtifact.version.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return [self._artifact_to_list_item(a) for a in artifacts]
+
+    def list_artifact_names(
+        self,
+        namespace_id: int | None = None,
+    ) -> list[str]:
+        """List unique artifact names in a namespace.
+
+        Args:
+            namespace_id: Optional namespace filter.
+
+        Returns:
+            List of unique artifact names.
+        """
+        query = self.db.query(GlobalArtifact.name).filter_by(status="active")
+
+        if namespace_id is not None:
+            query = query.filter_by(namespace_id=namespace_id)
+
+        names = query.distinct().all()
+        return [n[0] for n in names]
+
+    # ------------------------------------------------------------------ #
+    # Deletion
+    # ------------------------------------------------------------------ #
+
+    def delete_artifact(
+        self,
+        artifact_id: int,
+    ) -> int:
+        """Delete a specific artifact version (soft delete in DB, hard delete blob).
+
+        Args:
+            artifact_id: Database ID of the artifact to delete.
+
+        Returns:
+            Number of versions deleted (always 1).
+
+        Raises:
+            ArtifactNotFoundError: If artifact doesn't exist.
+        """
+        artifact = self.db.get(GlobalArtifact, artifact_id)
+        if not artifact:
+            raise ArtifactNotFoundError(artifact_id=artifact_id)
+
+        # Delete blob from storage
+        if artifact.storage_key:
+            try:
+                self.storage.delete(artifact.storage_key)
+            except Exception:
+                pass  # Best effort - continue with soft delete
+
+        # Soft delete in DB
+        artifact.status = "deleted"
+        self.db.commit()
+
+        return 1
+
+    def delete_all_versions(
+        self,
+        name: str,
+        namespace_id: int | None = None,
+    ) -> int:
+        """Delete all versions of an artifact.
+
+        Args:
+            name: Artifact name.
+            namespace_id: Optional namespace filter.
+
+        Returns:
+            Number of versions deleted.
+
+        Raises:
+            ArtifactNotFoundError: If no artifacts found.
+        """
+        artifacts = (
+            self.db.query(GlobalArtifact)
+            .filter_by(name=name, namespace_id=namespace_id)
+            .filter(GlobalArtifact.status != "deleted")
+            .all()
+        )
+
+        if not artifacts:
+            raise ArtifactNotFoundError(name=name)
+
+        count = 0
+        for artifact in artifacts:
+            if artifact.storage_key:
+                try:
+                    self.storage.delete(artifact.storage_key)
+                except Exception:
+                    pass  # Best effort
+            artifact.status = "deleted"
+            count += 1
+
+        self.db.commit()
+        return count
+
+    # ------------------------------------------------------------------ #
+    # Private helpers
+    # ------------------------------------------------------------------ #
+
+    def _artifact_to_out(
+        self,
+        artifact: GlobalArtifact,
+        include_download: bool = False,
+    ) -> ArtifactOut:
+        """Convert database model to output schema."""
+        download_source = None
+        if include_download and artifact.storage_key:
+            try:
+                source = self.storage.prepare_download(artifact.storage_key)
+                download_source = DownloadSource(
+                    method=source.method,
+                    path=source.path,
+                )
+            except Exception:
+                pass  # Best effort
+
+        return ArtifactOut(
+            id=artifact.id,
+            name=artifact.name,
+            namespace_id=artifact.namespace_id,
+            version=artifact.version,
+            status=artifact.status,
+            owner_id=artifact.owner_id,
+            source_flow_id=artifact.source_flow_id,
+            source_node_id=artifact.source_node_id,
+            source_kernel_id=artifact.source_kernel_id,
+            python_type=artifact.python_type,
+            python_module=artifact.python_module,
+            serialization_format=artifact.serialization_format,
+            storage_key=artifact.storage_key,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.sha256,
+            description=artifact.description,
+            tags=json.loads(artifact.tags) if artifact.tags else [],
+            created_at=artifact.created_at,
+            updated_at=artifact.updated_at,
+            download_source=download_source,
+        )
+
+    def _artifact_to_list_item(self, artifact: GlobalArtifact) -> ArtifactListItem:
+        """Convert database model to list item schema."""
+        return ArtifactListItem(
+            id=artifact.id,
+            name=artifact.name,
+            namespace_id=artifact.namespace_id,
+            version=artifact.version,
+            status=artifact.status,
+            python_type=artifact.python_type,
+            serialization_format=artifact.serialization_format,
+            size_bytes=artifact.size_bytes,
+            created_at=artifact.created_at,
+            tags=json.loads(artifact.tags) if artifact.tags else [],
+            owner_id=artifact.owner_id,
+        )

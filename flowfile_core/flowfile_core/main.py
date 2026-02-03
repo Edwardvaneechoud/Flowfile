@@ -15,6 +15,7 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
@@ -97,6 +98,7 @@ app.add_middleware(
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
+app.include_router(artifacts_router)
 app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
