@@ -25,6 +25,47 @@ from kernel_runtime.serialization import (
 
 
 # ---------------------------------------------------------------------------
+# Helpers (must be defined before use in decorators)
+# ---------------------------------------------------------------------------
+
+
+def _has_polars() -> bool:
+    """Check if polars is installed."""
+    try:
+        import polars
+        return True
+    except ImportError:
+        return False
+
+
+def _has_pandas() -> bool:
+    """Check if pandas is installed."""
+    try:
+        import pandas
+        return True
+    except ImportError:
+        return False
+
+
+def _has_numpy() -> bool:
+    """Check if numpy is installed."""
+    try:
+        import numpy
+        return True
+    except ImportError:
+        return False
+
+
+def _has_sklearn() -> bool:
+    """Check if sklearn is installed."""
+    try:
+        import sklearn
+        return True
+    except ImportError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Format Detection Tests
 # ---------------------------------------------------------------------------
 
@@ -372,44 +413,3 @@ class TestEdgeCases:
         result = deserialize_from_file(str(path), "pickle")
 
         assert result == obj
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _has_polars() -> bool:
-    """Check if polars is installed."""
-    try:
-        import polars
-        return True
-    except ImportError:
-        return False
-
-
-def _has_pandas() -> bool:
-    """Check if pandas is installed."""
-    try:
-        import pandas
-        return True
-    except ImportError:
-        return False
-
-
-def _has_numpy() -> bool:
-    """Check if numpy is installed."""
-    try:
-        import numpy
-        return True
-    except ImportError:
-        return False
-
-
-def _has_sklearn() -> bool:
-    """Check if sklearn is installed."""
-    try:
-        import sklearn
-        return True
-    except ImportError:
-        return False
