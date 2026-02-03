@@ -20,6 +20,21 @@ class ArtifactStore:
     ``publish()`` and removed on ``delete()`` / ``clear()``.  In *lazy*
     recovery mode, ``get()`` transparently loads from disk when the
     artifact is not yet in memory.
+
+    .. note:: **Tech Debt / Future Improvement**
+
+       Currently stores the entire object in memory via ``self._artifacts``.
+       For very large artifacts (e.g., ML models >1GB), this causes memory
+       pressure and potential OOM. A future improvement would be to:
+
+       1. Implement a spill-to-disk mechanism (e.g., pickle to temp file when
+          size exceeds threshold, keep only metadata in memory).
+       2. Or integrate with an external object store (S3, MinIO) for truly
+          large artifacts, storing only a reference here.
+       3. For blob uploads, consider a streaming/chunked approach rather than
+          reading the entire file into memory before storage.
+
+       See: https://github.com/Edwardvaneechoud/Flowfile/issues/XXX (placeholder)
     """
 
     def __init__(self) -> None:

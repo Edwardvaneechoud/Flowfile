@@ -1555,3 +1555,275 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+    def test_deleted_artifact_producer_reruns_on_consumer_change(
+        self, kernel_manager: tuple[KernelManager, str],
+    ):
+        """When a consumer that deleted an artifact is re-run, the
+        producer must also re-run so the artifact is available again."""
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph()
+
+            # Node 1: input data
+            data = [{"x1": 1, "x2": 2, "y": 5}, {"x1": 3, "x2": 4, "y": 11}]
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"),
+            )
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1, node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: publish artifact
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
+            )
+            producer_code = """
+df = flowfile.read_input()
+flowfile.publish_artifact("linear_model", {"coefficients": [1.0, 2.0, 3.0]})
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=2, depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=producer_code, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(1, 2),
+            )
+
+            # Node 3: read artifact, use it, then delete it
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
+            )
+            consumer_code_v1 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = model["coefficients"]
+result = df.with_columns(pl.lit(coeffs[0]).alias("c0"))
+flowfile.publish_output(result)
+flowfile.delete_artifact("linear_model")
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v1, kernel_id=kernel_id,
+                    ),
+                )
+            )
+            add_connection(
+                graph,
+                input_schema.NodeConnection.create_from_simple_input(2, 3),
+            )
+
+            # First run — everything works
+            _handle_run_info(graph.run_graph())
+
+            # Verify node 3 produced output
+            df_out = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "c0" in df_out.columns
+
+            # Change the consumer's code (node 3) — still deletes the artifact
+            consumer_code_v2 = """
+import polars as pl
+df = flowfile.read_input().collect()
+model = flowfile.read_artifact("linear_model")
+coeffs = model["coefficients"]
+result = df.with_columns(
+    pl.lit(coeffs[0]).alias("c0"),
+    pl.lit(coeffs[1]).alias("c1"),
+)
+flowfile.publish_output(result)
+flowfile.delete_artifact("linear_model")
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1, node_id=3, depending_on_ids=[2],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=consumer_code_v2, kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            # Second run — consumer re-runs; producer must also re-run
+            # because the artifact was deleted on the first run.
+            _handle_run_info(graph.run_graph())
+
+            # Consumer should have the new columns
+            df_out2 = graph.get_node(3).get_resulting_data().data_frame.collect()
+            assert "c0" in df_out2.columns
+            assert "c1" in df_out2.columns
+
+        finally:
+            _kernel_mod._manager = _prev
+
+
+# ---------------------------------------------------------------------------
+# Tests — auto-restart stopped/errored kernels
+# ---------------------------------------------------------------------------
+
+
+class TestKernelAutoRestart:
+    """Tests verifying that stopped/errored kernels auto-restart on execution."""
+
+    def test_execute_sync_restarts_stopped_kernel(self, kernel_manager: tuple[KernelManager, str]):
+        """execute_sync auto-restarts a STOPPED kernel instead of raising."""
+        from flowfile_core.kernel.models import KernelState
+
+        manager, kernel_id = kernel_manager
+
+        # Stop the kernel
+        _run(manager.stop_kernel(kernel_id))
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.STOPPED
+
+        # execute_sync should auto-restart and succeed
+        result = manager.execute_sync(
+            kernel_id,
+            ExecuteRequest(
+                node_id=100,
+                code='print("restarted!")',
+                input_paths={},
+                output_dir="/shared/test_restart",
+            ),
+        )
+        assert result.success
+        assert "restarted!" in result.stdout
+
+        # Kernel should be IDLE again
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.IDLE
+
+    def test_execute_async_restarts_stopped_kernel(self, kernel_manager: tuple[KernelManager, str]):
+        """async execute() auto-restarts a STOPPED kernel instead of raising."""
+        from flowfile_core.kernel.models import KernelState
+
+        manager, kernel_id = kernel_manager
+
+        # Stop the kernel
+        _run(manager.stop_kernel(kernel_id))
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.STOPPED
+
+        # execute should auto-restart and succeed
+        result = _run(
+            manager.execute(
+                kernel_id,
+                ExecuteRequest(
+                    node_id=101,
+                    code='print("async restarted!")',
+                    input_paths={},
+                    output_dir="/shared/test_restart_async",
+                ),
+            )
+        )
+        assert result.success
+        assert "async restarted!" in result.stdout
+
+        # Kernel should be IDLE again
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.IDLE
+
+    def test_clear_node_artifacts_restarts_stopped_kernel(self, kernel_manager: tuple[KernelManager, str]):
+        """clear_node_artifacts_sync auto-restarts a STOPPED kernel."""
+        from flowfile_core.kernel.models import KernelState
+
+        manager, kernel_id = kernel_manager
+
+        # Stop the kernel
+        _run(manager.stop_kernel(kernel_id))
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.STOPPED
+
+        # clear_node_artifacts_sync should auto-restart and succeed
+        result = manager.clear_node_artifacts_sync(kernel_id, node_ids=[1, 2, 3])
+        assert result is not None
+
+        # Kernel should be IDLE again
+        kernel = _run(manager.get_kernel(kernel_id))
+        assert kernel.state == KernelState.IDLE
+
+    def test_python_script_node_with_stopped_kernel(self, kernel_manager: tuple[KernelManager, str]):
+        """python_script node execution auto-restarts a stopped kernel."""
+        from flowfile_core.kernel.models import KernelState
+
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            # Stop the kernel first
+            _run(manager.stop_kernel(kernel_id))
+            kernel = _run(manager.get_kernel(kernel_id))
+            assert kernel.state == KernelState.STOPPED
+
+            # Create a flow with a python_script node
+            graph = _create_graph()
+
+            data = [{"val": 42}]
+            node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            graph.add_node_promise(node_promise_2)
+
+            code = """
+df = flowfile.read_input()
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code,
+                        kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Run the graph — kernel should auto-restart
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            # Verify execution succeeded
+            result = graph.get_node(2).get_resulting_data()
+            assert result is not None
+            df = result.data_frame
+            if hasattr(df, "collect"):
+                df = df.collect()
+            assert len(df) == 1
+            assert df["val"].to_list() == [42]
+
+            # Kernel should be IDLE
+            kernel = _run(manager.get_kernel(kernel_id))
+            assert kernel.state == KernelState.IDLE
+
+        finally:
+            _kernel_mod._manager = _prev

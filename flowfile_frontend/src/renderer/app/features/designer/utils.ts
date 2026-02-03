@@ -26,6 +26,7 @@ const BUILTIN_ICONS = new Set([
   "output.png",
   "pivot.png",
   "polars_code.png",
+  "python_code.svg",
   "record_count.png",
   "record_id.png",
   "sample.png",

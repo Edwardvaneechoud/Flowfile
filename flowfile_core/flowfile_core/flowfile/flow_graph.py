@@ -22,11 +22,14 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.settings import SERVER_PORT
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
+from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
     get_local_database_connection,
 )
+from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
@@ -41,7 +44,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseWriter,
     ExternalDfFetcher,
 )
-from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.graph_tree.graph_tree import (
@@ -61,10 +63,10 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
-from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
@@ -1123,8 +1125,6 @@ class FlowGraph:
         """Adds a node that executes Python code on a kernel container."""
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
-            from flowfile_core.configs.settings import SERVER_PORT
-            from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
 
             kernel_id = node_python_script.python_script_input.kernel_id
             code = node_python_script.python_script_input.code
@@ -1175,7 +1175,7 @@ class FlowGraph:
                 flow_id=flow_id,
                 log_callback_url=log_callback_url,
             )
-            result = manager.execute_sync(kernel_id, request)
+            result = manager.execute_sync(kernel_id, request, self.flow_logger)
 
             # Forward captured stdout/stderr to the flow logger
             if result.stdout:
@@ -2566,6 +2566,25 @@ class FlowGraph:
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
             rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
 
+            # Expand re-run set: if a re-running node previously deleted
+            # artifacts, the original producer nodes must also re-run so
+            # those artifacts are available again in the kernel store.
+            while True:
+                deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
+                    rerun_node_ids,
+                )
+                new_ids = deleted_producers - rerun_node_ids
+                if not new_ids:
+                    break
+                rerun_node_ids |= new_ids
+
+            # Force producer nodes (added due to artifact deletions) to
+            # actually re-execute by marking their execution state stale.
+            for nid in rerun_node_ids:
+                node = self.get_node(nid)
+                if node is not None and node._execution_state.has_run_with_current_setup:
+                    node._execution_state.has_run_with_current_setup = False
+
             # Also purge stale metadata for nodes not in this graph
             # (e.g. injected externally or left over from removed nodes).
             graph_node_ids = set(self._node_db.keys())
@@ -2582,9 +2601,8 @@ class FlowGraph:
                 kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
                 for kid, node_ids_for_kernel in kernel_node_map.items():
                     try:
-                        from flowfile_core.kernel import get_kernel_manager
                         manager = get_kernel_manager()
-                        manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel), flow_id=self.flow_id)
+                        manager.clear_node_artifacts_sync(kid, list(node_ids_for_kernel), flow_id=self.flow_id, flow_logger=self.flow_logger)
                     except Exception:
                         logger.debug(
                             "Could not clear node artifacts for kernel '%s', nodes %s",
