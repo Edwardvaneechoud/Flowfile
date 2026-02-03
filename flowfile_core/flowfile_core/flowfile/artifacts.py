@@ -72,6 +72,11 @@ class ArtifactContext:
         # Reverse index: (kernel_id, artifact_name) → set of node_ids that
         # published it.  Avoids O(N) scan in record_deleted / clear_kernel.
         self._publisher_index: dict[tuple[str, str], set[int]] = {}
+        # Tracks which nodes produced the artifacts that were deleted by each
+        # node.  Used during re-execution to force producers to re-run when
+        # a consumer that deleted their artifacts needs to re-execute.
+        # Maps: deleter_node_id → [(kernel_id, artifact_name, publisher_node_id), …]
+        self._deletion_origins: dict[int, list[tuple[str, str, int]]] = {}
 
     # ------------------------------------------------------------------
     # Recording
@@ -150,7 +155,17 @@ class ArtifactContext:
             kernel_map.pop(name, None)
             # Clean up the reverse index entry but leave published intact
             key = (kernel_id, name)
-            self._publisher_index.pop(key, None)
+            publisher_ids = self._publisher_index.pop(key, set())
+
+            # Remember which nodes produced these artifacts so we can
+            # force them to re-run if this deleter node is re-executed.
+            for pid in publisher_ids:
+                self._deletion_origins.setdefault(node_id, []).append(
+                    (kernel_id, name, pid)
+                )
+            # NOTE: We do NOT remove from publisher's published list here.
+            # The published list serves as a permanent historical record
+            # for visualization (badges showing what the node produced).
 
         logger.debug(
             "Node %s deleted %d artifact(s) on kernel '%s': %s",
@@ -240,6 +255,21 @@ class ArtifactContext:
             result.update(kernel_map)
         return result
 
+    def get_producer_nodes_for_deletions(
+        self, deleter_node_ids: set[int],
+    ) -> set[int]:
+        """Return node IDs that produced artifacts deleted by *deleter_node_ids*.
+
+        When a consumer node that previously deleted artifacts needs to
+        re-execute, the original producer nodes must also re-run so the
+        artifacts are available again in the kernel's in-memory store.
+        """
+        producers: set[int] = set()
+        for nid in deleter_node_ids:
+            for _kernel_id, _name, pub_id in self._deletion_origins.get(nid, []):
+                producers.add(pub_id)
+        return producers
+
     # ------------------------------------------------------------------
     # Clearing
     # ------------------------------------------------------------------
@@ -255,6 +285,15 @@ class ArtifactContext:
         for k in keys_to_remove:
             del self._publisher_index[k]
 
+        # Clean deletion origin entries for this kernel
+        for nid in list(self._deletion_origins):
+            self._deletion_origins[nid] = [
+                entry for entry in self._deletion_origins[nid]
+                if entry[0] != kernel_id
+            ]
+            if not self._deletion_origins[nid]:
+                del self._deletion_origins[nid]
+
         self._kernel_artifacts.pop(kernel_id, None)
         for state in self._node_states.values():
             state.available = {
@@ -266,6 +305,7 @@ class ArtifactContext:
         self._node_states.clear()
         self._kernel_artifacts.clear()
         self._publisher_index.clear()
+        self._deletion_origins.clear()
 
     def clear_nodes(self, node_ids: set[int]) -> None:
         """Remove tracking data only for the specified *node_ids*.
@@ -275,6 +315,7 @@ class ArtifactContext:
         left untouched so their artifact metadata is preserved.
         """
         for nid in node_ids:
+            self._deletion_origins.pop(nid, None)
             state = self._node_states.pop(nid, None)
             if state is None:
                 continue
