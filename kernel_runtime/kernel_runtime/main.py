@@ -23,27 +23,34 @@ artifact_store = ArtifactStore()
 _persistence: ArtifactPersistence | None = None
 _recovery_mode = RecoveryMode.LAZY
 _recovery_status: dict = {"status": "pending", "recovered": [], "errors": []}
-
-PERSISTENCE_ENABLED = os.environ.get("PERSISTENCE_ENABLED", "true").lower() in ("1", "true", "yes")
-PERSISTENCE_PATH = os.environ.get("PERSISTENCE_PATH", "/shared/artifacts")
-KERNEL_ID = os.environ.get("KERNEL_ID", "default")
-RECOVERY_MODE_ENV = os.environ.get("RECOVERY_MODE", "lazy").lower()
+_kernel_id: str = "default"
+_persistence_path: str = "/shared/artifacts"
 
 
 def _setup_persistence() -> None:
-    global _persistence, _recovery_mode, _recovery_status
+    """Initialize persistence from environment variables.
 
-    if not PERSISTENCE_ENABLED:
+    Environment variables are read at call time (not import time) so tests
+    can set them before creating the TestClient.
+    """
+    global _persistence, _recovery_mode, _recovery_status, _kernel_id, _persistence_path
+
+    persistence_enabled = os.environ.get("PERSISTENCE_ENABLED", "true").lower() in ("1", "true", "yes")
+    _persistence_path = os.environ.get("PERSISTENCE_PATH", "/shared/artifacts")
+    _kernel_id = os.environ.get("KERNEL_ID", "default")
+    recovery_mode_env = os.environ.get("RECOVERY_MODE", "lazy").lower()
+
+    if not persistence_enabled:
         _recovery_status = {"status": "disabled", "recovered": [], "errors": []}
         logger.info("Artifact persistence is disabled")
         return
 
-    base_path = Path(PERSISTENCE_PATH) / KERNEL_ID
+    base_path = Path(_persistence_path) / _kernel_id
     _persistence = ArtifactPersistence(base_path)
     artifact_store.enable_persistence(_persistence)
 
     try:
-        _recovery_mode = RecoveryMode(RECOVERY_MODE_ENV)
+        _recovery_mode = RecoveryMode(recovery_mode_env)
     except ValueError:
         _recovery_mode = RecoveryMode.LAZY
 
@@ -322,8 +329,8 @@ async def persistence_info():
     return {
         "enabled": True,
         "recovery_mode": _recovery_mode.value,
-        "kernel_id": KERNEL_ID,
-        "persistence_path": str(Path(PERSISTENCE_PATH) / KERNEL_ID),
+        "kernel_id": _kernel_id,
+        "persistence_path": str(Path(_persistence_path) / _kernel_id),
         "persisted_count": len(persisted),
         "in_memory_count": len([a for a in in_memory.values() if a.get("in_memory", True) is not False]),
         "disk_usage_bytes": _persistence.disk_usage_bytes(),
