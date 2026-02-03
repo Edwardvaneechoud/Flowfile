@@ -28,18 +28,31 @@ _internal_token: str | None = None
 
 
 def get_internal_token() -> str:
-    """Get or generate the internal service token.
+    """Get the internal service token from environment.
 
-    This token is used for kernel → Core communication and is shared
-    via environment variable FLOWFILE_INTERNAL_TOKEN.
+    This token is used for kernel → Core communication and MUST be explicitly
+    set via environment variable FLOWFILE_INTERNAL_TOKEN in Docker/production
+    deployments, since Core and Kernel run in separate containers.
+
+    In Electron mode (single process), auto-generates if not set.
+
+    Raises:
+        ValueError: If FLOWFILE_INTERNAL_TOKEN is not set in Docker mode.
     """
     global _internal_token
     if _internal_token is None:
         _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
         if not _internal_token:
-            # Auto-generate if not set (useful for development/testing)
-            _internal_token = secrets.token_hex(32)
-            os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+            # Only auto-generate in Electron mode (single process)
+            if os.environ.get("FLOWFILE_MODE") == "electron":
+                _internal_token = secrets.token_hex(32)
+                os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+            else:
+                raise ValueError(
+                    "FLOWFILE_INTERNAL_TOKEN environment variable must be set in Docker mode. "
+                    "This token is used for kernel → Core authentication and must be shared "
+                    "between containers via docker-compose environment variables."
+                )
     return _internal_token
 
 
@@ -250,64 +263,30 @@ async def get_user_or_internal_service(
     - External clients (using JWT authentication)
     - Internal services like kernel (using X-Internal-Token header)
 
-    For internal service auth, returns a synthetic "service" user with
-    owner_id=1 (system user).
+    For internal service auth, returns a synthetic "service" user.
+    For JWT auth, delegates to get_current_user to avoid code duplication.
     """
     # First, try internal service token
-    if x_internal_token and verify_internal_token(x_internal_token):
-        # Return synthetic service user
-        return User(
-            username="_internal_service",
-            id=1,  # System user ID for ownership tracking
-            disabled=False,
-            is_admin=False,
-            must_change_password=False,
-        )
+    if x_internal_token:
+        try:
+            if verify_internal_token(x_internal_token):
+                # Return synthetic service user for artifact ownership
+                # The user ID is configurable via FLOWFILE_INTERNAL_SERVICE_USER_ID
+                # In production, ensure this user exists in the database
+                # Default is 1, which is typically the first/admin user
+                service_user_id = int(
+                    os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1")
+                )
+                return User(
+                    username="_internal_service",
+                    id=service_user_id,
+                    disabled=False,
+                    is_admin=False,
+                    must_change_password=False,
+                )
+        except ValueError:
+            # Token not configured or invalid user ID - fall through to JWT auth
+            pass
 
-    # Fall back to JWT auth
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    if not token:
-        raise credentials_exception
-
-    try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-
-    if os.environ.get("FLOWFILE_MODE") == "electron":
-        if token_data.username == "local_user":
-            return User(
-                username="local_user",
-                id=1,
-                disabled=False,
-                is_admin=True,
-                must_change_password=False,
-            )
-        raise credentials_exception
-
-    user = db.query(db_models.User).filter(
-        db_models.User.username == token_data.username
-    ).first()
-    if user is None:
-        raise credentials_exception
-    if user.disabled:
-        raise HTTPException(status_code=400, detail="Inactive user")
-
-    return User(
-        username=user.username,
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        disabled=user.disabled,
-        is_admin=user.is_admin,
-        must_change_password=user.must_change_password,
-    )
+    # Fall back to JWT auth - delegate to existing function
+    return await get_current_user(token=token, db=db)

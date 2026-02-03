@@ -12,6 +12,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -339,7 +340,22 @@ class ArtifactService:
                 GlobalArtifact.python_type.contains(python_type_contains)
             )
 
+        # Tag filtering using SQLite json_each for proper element matching
+        # This avoids false positives (e.g., "ml" matching "html") and
+        # applies filtering BEFORE pagination so limit/offset work correctly
+        if tags:
+            for tag in tags:
+                # Use EXISTS with json_each to check if tag is in the JSON array
+                # This works with SQLite's JSON1 extension
+                query = query.filter(
+                    text(
+                        "EXISTS (SELECT 1 FROM json_each(global_artifacts.tags) "
+                        "WHERE json_each.value = :tag)"
+                    ).bindparams(tag=tag)
+                )
+
         # Order by name and version, most recent versions first
+        # Pagination is applied AFTER all filtering
         artifacts = (
             query.order_by(
                 GlobalArtifact.name,
@@ -349,22 +365,6 @@ class ArtifactService:
             .limit(limit)
             .all()
         )
-
-        # Tag filtering - parse JSON and do exact matching to avoid false positives
-        # (e.g., searching for "ml" matching "html" with substring search)
-        if tags:
-            filtered = []
-            required_tags = set(tags)
-            for artifact in artifacts:
-                if artifact.tags:
-                    try:
-                        artifact_tags = set(json.loads(artifact.tags))
-                        if required_tags.issubset(artifact_tags):
-                            filtered.append(artifact)
-                    except (json.JSONDecodeError, TypeError):
-                        # Invalid JSON - skip this artifact
-                        pass
-            artifacts = filtered
 
         return [self._artifact_to_list_item(a) for a in artifacts]
 
