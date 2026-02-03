@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import socket
+import time
 
 import docker
 import httpx
 
+from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.kernel.models import (
     ClearNodeArtifactsResult,
     ExecuteRequest,
@@ -233,6 +235,56 @@ class KernelManager:
 
         return kernel
 
+    def start_kernel_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> KernelInfo:
+        """Synchronous version of start_kernel() for use from non-async code."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state == KernelState.IDLE:
+            return kernel
+
+        try:
+            self._docker.images.get(_KERNEL_IMAGE)
+        except docker.errors.ImageNotFound:
+            kernel.state = KernelState.ERROR
+            kernel.error_message = (
+                f"Docker image '{_KERNEL_IMAGE}' not found. "
+                "Please build or pull the kernel image before starting a kernel."
+            )
+            flow_logger.error(f"Docker image '{_KERNEL_IMAGE}' not found. "
+                              "Please build or pull the kernel image before starting a kernel.") if flow_logger else None
+            raise RuntimeError(kernel.error_message)
+
+        if kernel.port is None:
+            kernel.port = self._allocate_port()
+
+        kernel.state = KernelState.STARTING
+        kernel.error_message = None
+
+        try:
+            packages_str = " ".join(kernel.packages)
+            run_kwargs: dict = {
+                "detach": True,
+                "name": f"flowfile-kernel-{kernel_id}",
+                "ports": {"9999/tcp": kernel.port},
+                "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
+                "environment": {"KERNEL_PACKAGES": packages_str},
+                "mem_limit": f"{kernel.memory_gb}g",
+                "nano_cpus": int(kernel.cpu_cores * 1e9),
+                "extra_hosts": {"host.docker.internal": "host-gateway"},
+            }
+            container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
+            kernel.container_id = container.id
+            self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
+            kernel.state = KernelState.IDLE
+            flow_logger.info(f"Kernel  {kernel_id} is idle (container {container.short_id})") if flow_logger else None
+        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
+            kernel.state = KernelState.ERROR
+            kernel.error_message = str(exc)
+            flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
+            self._cleanup_container(kernel_id)
+            raise
+        flow_logger.info(f"Kernel  {kernel_id} started (container {container.short_id})") if flow_logger else None
+        return kernel
+
     async def stop_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         self._cleanup_container(kernel_id)
@@ -268,7 +320,7 @@ class KernelManager:
     async def execute(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            await self._ensure_running(kernel_id)
 
         kernel.state = KernelState.EXECUTING
         try:
@@ -282,11 +334,12 @@ class KernelManager:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
 
-    def execute_sync(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
+    def execute_sync(self, kernel_id: str, request: ExecuteRequest,
+                     flow_logger: FlowLogger | None = None) -> ExecuteResult:
         """Synchronous wrapper around execute() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
         kernel.state = KernelState.EXECUTING
         try:
@@ -302,7 +355,7 @@ class KernelManager:
     async def clear_artifacts(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            await self._ensure_running(kernel_id)
 
         url = f"http://localhost:{kernel.port}/clear"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
@@ -313,7 +366,7 @@ class KernelManager:
         """Synchronous wrapper around clear_artifacts() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            self._ensure_running_sync(kernel_id)
 
         url = f"http://localhost:{kernel.port}/clear"
         with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
@@ -326,7 +379,7 @@ class KernelManager:
         """Clear only artifacts published by the given node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            await self._ensure_running(kernel_id)
 
         url = f"http://localhost:{kernel.port}/clear_node_artifacts"
         payload: dict = {"node_ids": node_ids}
@@ -339,11 +392,12 @@ class KernelManager:
 
     def clear_node_artifacts_sync(
         self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+        flow_logger: FlowLogger | None = None,
     ) -> ClearNodeArtifactsResult:
         """Synchronous wrapper for clearing artifacts by node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
         url = f"http://localhost:{kernel.port}/clear_node_artifacts"
         payload: dict = {"node_ids": node_ids}
@@ -358,7 +412,7 @@ class KernelManager:
         """Get artifacts published by a specific node."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
-            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+            await self._ensure_running(kernel_id)
 
         url = f"http://localhost:{kernel.port}/artifacts/node/{node_id}"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
@@ -394,6 +448,46 @@ class KernelManager:
             raise KeyError(f"Kernel '{kernel_id}' not found")
         return kernel
 
+    async def _ensure_running(self, kernel_id: str) -> None:
+        """Restart the kernel if it is STOPPED or ERROR, then wait until IDLE."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
+            return
+        if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
+            logger.info(
+                "Kernel '%s' is %s, attempting automatic restart...",
+                kernel_id, kernel.state.value,
+            )
+            self._cleanup_container(kernel_id)
+            kernel.container_id = None
+            await self.start_kernel(kernel_id)
+            return
+        # STARTING — wait for it to finish
+        if kernel.state == KernelState.STARTING:
+            logger.info("Kernel '%s' is starting, waiting for it to become ready...", kernel_id)
+            await self._wait_for_healthy(kernel_id)
+            kernel.state = KernelState.IDLE
+
+    def _ensure_running_sync(self, kernel_id: str, flow_logger: FlowLogger | None = None) -> None:
+        """Synchronous version of _ensure_running."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
+            return
+        if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
+            msg = f"Kernel '{kernel_id}' is {kernel.state.value}, attempting automatic restart..."
+            logger.info(msg)
+            if flow_logger:
+                flow_logger.info(msg)
+            self._cleanup_container(kernel_id)
+            kernel.container_id = None
+            self.start_kernel_sync(kernel_id, flow_logger=flow_logger)
+            return
+        # STARTING — wait for it to finish
+        if kernel.state == KernelState.STARTING:
+            logger.info("Kernel '%s' is starting, waiting for it to become ready...", kernel_id)
+            self._wait_for_healthy_sync(kernel_id)
+            kernel.state = KernelState.IDLE
+
     def _cleanup_container(self, kernel_id: str) -> None:
         kernel = self._kernels.get(kernel_id)
         if kernel is None or kernel.container_id is None:
@@ -424,5 +518,25 @@ class KernelManager:
             except (httpx.HTTPError, OSError) as exc:
                 logger.debug("Health poll for kernel '%s' failed: %s", kernel_id, exc)
             await asyncio.sleep(_HEALTH_POLL_INTERVAL)
+
+        raise TimeoutError(f"Kernel '{kernel_id}' did not become healthy within {timeout}s")
+
+    def _wait_for_healthy_sync(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
+        """Synchronous version of _wait_for_healthy."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        url = f"http://localhost:{kernel.port}/health"
+        deadline = time.monotonic() + timeout
+
+        while time.monotonic() < deadline:
+            try:
+                with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
+                    response = client.get(url)
+                    if response.status_code == 200:
+                        data = response.json()
+                        kernel.kernel_version = data.get("version")
+                        return
+            except (httpx.HTTPError, OSError) as exc:
+                logger.debug("Health poll for kernel '%s' failed: %s", kernel_id, exc)
+            time.sleep(_HEALTH_POLL_INTERVAL)
 
         raise TimeoutError(f"Kernel '{kernel_id}' did not become healthy within {timeout}s")
