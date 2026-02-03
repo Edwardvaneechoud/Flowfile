@@ -112,6 +112,53 @@ def finalize_upload(
 
 
 # ---------------------------------------------------------------------------
+# Listing (placed before parameterized routes to avoid conflicts)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/",
+    response_model=list[ArtifactListItem],
+    summary="List artifacts",
+    description="List artifacts with optional filtering by namespace, tags, name, or type.",
+)
+def list_artifacts(
+    namespace_id: int | None = Query(None, description="Filter by namespace"),
+    tags: list[str] | None = Query(None, description="Filter by tags (AND logic)"),
+    name_contains: str | None = Query(None, description="Filter by name substring"),
+    python_type_contains: str | None = Query(
+        None, description="Filter by Python type substring"
+    ),
+    limit: int = Query(100, ge=1, le=500, description="Maximum results"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    service: ArtifactService = Depends(get_artifact_service),
+):
+    """List artifacts with optional filtering."""
+    return service.list_artifacts(
+        namespace_id=namespace_id,
+        tags=tags,
+        name_contains=name_contains,
+        python_type_contains=python_type_contains,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/names",
+    response_model=list[str],
+    summary="List artifact names",
+    description="List unique artifact names in a namespace.",
+)
+def list_artifact_names(
+    namespace_id: int | None = Query(None, description="Filter by namespace"),
+    service: ArtifactService = Depends(get_artifact_service),
+):
+    """List unique artifact names."""
+    return service.list_artifact_names(namespace_id=namespace_id)
+
+
+# ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------
 
@@ -178,53 +225,6 @@ def get_artifact_by_id(
         return service.get_artifact_by_id(artifact_id)
     except ArtifactNotFoundError:
         raise HTTPException(404, "Artifact not found")
-
-
-# ---------------------------------------------------------------------------
-# Listing
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/",
-    response_model=list[ArtifactListItem],
-    summary="List artifacts",
-    description="List artifacts with optional filtering by namespace, tags, name, or type.",
-)
-def list_artifacts(
-    namespace_id: int | None = Query(None, description="Filter by namespace"),
-    tags: list[str] | None = Query(None, description="Filter by tags (AND logic)"),
-    name_contains: str | None = Query(None, description="Filter by name substring"),
-    python_type_contains: str | None = Query(
-        None, description="Filter by Python type substring"
-    ),
-    limit: int = Query(100, ge=1, le=500, description="Maximum results"),
-    offset: int = Query(0, ge=0, description="Pagination offset"),
-    service: ArtifactService = Depends(get_artifact_service),
-):
-    """List artifacts with optional filtering."""
-    return service.list_artifacts(
-        namespace_id=namespace_id,
-        tags=tags,
-        name_contains=name_contains,
-        python_type_contains=python_type_contains,
-        limit=limit,
-        offset=offset,
-    )
-
-
-@router.get(
-    "/names",
-    response_model=list[str],
-    summary="List artifact names",
-    description="List unique artifact names in a namespace.",
-)
-def list_artifact_names(
-    namespace_id: int | None = Query(None, description="Filter by namespace"),
-    service: ArtifactService = Depends(get_artifact_service),
-):
-    """List unique artifact names."""
-    return service.list_artifact_names(namespace_id=namespace_id)
 
 
 # ---------------------------------------------------------------------------

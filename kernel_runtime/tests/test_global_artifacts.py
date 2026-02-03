@@ -163,8 +163,9 @@ class TestPublishGlobal:
         assert prepare_json["tags"] == ["ml", "production"]
         assert prepare_json["namespace_id"] == 5
 
-    @patch("kernel_runtime.flowfile_client.serialize_to_file")
-    def test_publish_stores_python_type(self, mock_serialize, mock_httpx_client, tmp_path):
+    @patch("kernel_runtime.flowfile_client.check_pickleable")
+    @patch("kernel_runtime.serialization.serialize_to_file")
+    def test_publish_stores_python_type(self, mock_serialize, mock_check, mock_httpx_client, tmp_path):
         """Should capture Python type information."""
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
