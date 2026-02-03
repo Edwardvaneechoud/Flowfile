@@ -27,6 +27,7 @@ import {
 } from "./backendInterface";
 import { FlowApi } from "../../api";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
+import FirstTimeWarningModal from "../../components/common/FirstTimeWarningModal.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import DataPreview from "../../features/designer/dataPreview.vue";
@@ -69,6 +70,7 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
+const pythonNodeWarningModal = ref<InstanceType<typeof FirstTimeWarningModal>>();
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -265,6 +267,21 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
 
 const handleDrop = async (event: DragEvent) => {
   if (!nodeStore.isRunning) {
+    // Check if this is a Python script node and show first-time warning
+    if (event.dataTransfer) {
+      try {
+        const rawData = event.dataTransfer.getData("application/vueflow");
+        if (rawData) {
+          const nodeData = JSON.parse(rawData);
+          if (nodeData.item === "python_script") {
+            pythonNodeWarningModal.value?.show();
+          }
+        }
+      } catch {
+        // Ignore parse errors, proceed with drop
+      }
+    }
+
     const response = await onDrop(event, flowStore.flowId);
     // Update history state from response
     if (response?.history) {
@@ -676,6 +693,25 @@ defineExpose({
       <CodeGenerator />
     </draggable-item>
     <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
+
+    <!-- First-time Python Node Warning Modal -->
+    <FirstTimeWarningModal
+      ref="pythonNodeWarningModal"
+      storage-key="flowfile_python_node_warning_shown"
+      title="Python Node Requirements"
+    >
+      <p>The Python node requires <strong>Docker</strong> to run Python code.</p>
+      <p>Before using this node:</p>
+      <ul>
+        <li>Make sure Docker is installed and running on your system</li>
+        <li>Create a kernel in the <strong>Kernel Manager</strong> to execute your Python code</li>
+        <li>Select the kernel in the node settings before running</li>
+      </ul>
+      <p>
+        You can access the Kernel Manager from the main menu or by clicking on the kernel selector
+        in the Python node.
+      </p>
+    </FirstTimeWarningModal>
   </div>
 </template>
 

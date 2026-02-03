@@ -96,15 +96,36 @@
         </div>
       </div>
     </div>
+
+    <!-- First-time Kernel Manager Warning Modal -->
+    <FirstTimeWarningModal
+      ref="kernelManagerWarningModal"
+      storage-key="flowfile_kernel_manager_warning_shown"
+      title="About Kernel Manager"
+    >
+      <p>
+        Kernels are <strong>Docker containers</strong> that execute Python code for your flows.
+      </p>
+      <p>Before creating kernels, make sure:</p>
+      <ul>
+        <li>Docker is installed and running on your system</li>
+        <li>
+          The <code>flowfile-kernel</code> Docker image is available (build it from the
+          kernel_runtime folder or pull from a registry)
+        </li>
+      </ul>
+      <p>Each kernel runs in an isolated container with its own Python environment and artifacts.</p>
+    </FirstTimeWarningModal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import type { KernelConfig } from "../../types";
 import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
 import KernelCard from "./KernelCard.vue";
+import FirstTimeWarningModal from "../../components/common/FirstTimeWarningModal.vue";
 
 const {
   kernels,
@@ -122,6 +143,14 @@ const {
 const showDeleteModal = ref(false);
 const deleteTarget = ref({ id: "", name: "" });
 const isDeleting = ref(false);
+
+// First-time warning modal
+const kernelManagerWarningModal = ref<InstanceType<typeof FirstTimeWarningModal>>();
+
+// Show first-time warning on mount
+onMounted(() => {
+  kernelManagerWarningModal.value?.show();
+});
 
 const handleCreate = async (config: KernelConfig) => {
   try {
