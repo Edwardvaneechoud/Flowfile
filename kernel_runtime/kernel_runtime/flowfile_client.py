@@ -111,6 +111,10 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
     if isinstance(df, pl.LazyFrame):
         df = df.collect()
     df.write_parquet(str(output_path))
+    # Ensure the file is fully flushed to disk before the host reads it
+    # This prevents "File must end with PAR1" errors from race conditions
+    with open(output_path, "rb") as f:
+        os.fsync(f.fileno())
 
 
 def publish_artifact(name: str, obj: Any) -> None:

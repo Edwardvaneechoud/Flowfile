@@ -1160,6 +1160,10 @@ class FlowGraph:
                 filename = f"main_{idx}.parquet"
                 local_path = os.path.join(input_dir, filename)
                 ft.data_frame.collect().write_parquet(local_path)
+                # Ensure the file is fully flushed to disk before the kernel reads it
+                # This prevents "File must end with PAR1" errors from race conditions
+                with open(local_path, "rb") as f:
+                    os.fsync(f.fileno())
                 main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
             input_paths["main"] = main_paths
 
