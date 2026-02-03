@@ -39,6 +39,8 @@ def _setup_persistence() -> None:
     _persistence_path = os.environ.get("PERSISTENCE_PATH", "/shared/artifacts")
     _kernel_id = os.environ.get("KERNEL_ID", "default")
     recovery_mode_env = os.environ.get("RECOVERY_MODE", "lazy").lower()
+    # Cleanup artifacts older than this many hours on startup (0 = disabled)
+    cleanup_age_hours = float(os.environ.get("PERSISTENCE_CLEANUP_HOURS", "24"))
 
     if not persistence_enabled:
         _recovery_status = {"status": "disabled", "recovered": [], "errors": []}
@@ -48,6 +50,18 @@ def _setup_persistence() -> None:
     base_path = Path(_persistence_path) / _kernel_id
     _persistence = ArtifactPersistence(base_path)
     artifact_store.enable_persistence(_persistence)
+
+    # Cleanup stale artifacts before recovery
+    if cleanup_age_hours > 0:
+        try:
+            removed = _persistence.cleanup(max_age_hours=cleanup_age_hours)
+            if removed > 0:
+                logger.info(
+                    "Startup cleanup: removed %d artifacts older than %.1f hours",
+                    removed, cleanup_age_hours
+                )
+        except Exception as exc:
+            logger.warning("Startup cleanup failed (continuing anyway): %s", exc)
 
     try:
         _recovery_mode = RecoveryMode(recovery_mode_env)
