@@ -163,9 +163,10 @@ class TestPublishGlobal:
         assert prepare_json["tags"] == ["ml", "production"]
         assert prepare_json["namespace_id"] == 5
 
+    @patch("kernel_runtime.flowfile_client.os.path.getsize")
     @patch("kernel_runtime.serialization.check_pickleable")
     @patch("kernel_runtime.serialization.serialize_to_file")
-    def test_publish_stores_python_type(self, mock_serialize, mock_check, mock_httpx_client, tmp_path):
+    def test_publish_stores_python_type(self, mock_serialize, mock_check, mock_getsize, mock_httpx_client, tmp_path):
         """Should capture Python type information."""
         mock_client = MagicMock()
         mock_httpx_client.return_value.__enter__.return_value = mock_client
@@ -187,6 +188,8 @@ class TestPublishGlobal:
 
         # Mock serialize_to_file to return a fake SHA256
         mock_serialize.return_value = "a" * 64
+        # Mock os.path.getsize since the file doesn't actually exist
+        mock_getsize.return_value = 1024
 
         (tmp_path).mkdir(parents=True, exist_ok=True)
 
