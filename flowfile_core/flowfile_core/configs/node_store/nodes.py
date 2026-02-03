@@ -292,7 +292,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             input=10,
             output=1,
             transform_type="narrow",
-            image="polars_code.png",
+            image="python_code.svg",
             node_group="transform",
             multi=True,
             can_be_start=True,
