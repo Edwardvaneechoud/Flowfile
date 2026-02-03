@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import contextvars
+import io
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -15,6 +17,11 @@ _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowf
 # Reusable HTTP client for log callbacks (created per execution context)
 _log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar(
     "flowfile_log_client", default=None
+)
+
+# Display outputs collector (reset at start of each execution)
+_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar(
+    "flowfile_displays", default=[]
 )
 
 
@@ -193,3 +200,113 @@ def log_warning(message: str) -> None:
 def log_error(message: str) -> None:
     """Convenience wrapper: ``flowfile.log(message, level="ERROR")``."""
     log(message, level="ERROR")
+
+
+# ===== Display APIs =====
+
+def _is_matplotlib_figure(obj: Any) -> bool:
+    """Check if obj is a matplotlib Figure (without requiring matplotlib)."""
+    try:
+        import matplotlib.figure
+        return isinstance(obj, matplotlib.figure.Figure)
+    except ImportError:
+        return False
+
+
+def _is_plotly_figure(obj: Any) -> bool:
+    """Check if obj is a plotly Figure (without requiring plotly)."""
+    try:
+        import plotly.graph_objects as go
+        return isinstance(obj, go.Figure)
+    except ImportError:
+        return False
+
+
+def _is_pil_image(obj: Any) -> bool:
+    """Check if obj is a PIL Image (without requiring PIL)."""
+    try:
+        from PIL import Image
+        return isinstance(obj, Image.Image)
+    except ImportError:
+        return False
+
+
+def _is_html_string(obj: Any) -> bool:
+    """Check if obj is a string that looks like HTML."""
+    if not isinstance(obj, str):
+        return False
+    return "<" in obj and ">" in obj
+
+
+def _reset_displays() -> None:
+    """Clear the display outputs list. Called at start of each execution."""
+    _displays.set([])
+
+
+def _get_displays() -> list[dict[str, str]]:
+    """Return the current list of display outputs."""
+    return _displays.get([])
+
+
+def display(obj: Any, title: str = "") -> None:
+    """Display a rich object in the output panel.
+
+    Supported object types:
+    - matplotlib.figure.Figure: Rendered as PNG image
+    - plotly.graph_objects.Figure: Rendered as interactive HTML
+    - PIL.Image.Image: Rendered as PNG image
+    - str containing HTML tags: Rendered as HTML
+    - Anything else: Converted to string and displayed as plain text
+
+    Args:
+        obj: The object to display.
+        title: Optional title for the display output.
+    """
+    displays = _displays.get([])
+
+    if _is_matplotlib_figure(obj):
+        # Render matplotlib figure to PNG
+        buf = io.BytesIO()
+        obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        buf.seek(0)
+        data = base64.b64encode(buf.read()).decode("utf-8")
+        displays.append({
+            "mime_type": "image/png",
+            "data": data,
+            "title": title,
+        })
+    elif _is_plotly_figure(obj):
+        # Render plotly figure to HTML
+        html = obj.to_html(include_plotlyjs="cdn", full_html=False)
+        displays.append({
+            "mime_type": "text/html",
+            "data": html,
+            "title": title,
+        })
+    elif _is_pil_image(obj):
+        # Render PIL image to PNG
+        buf = io.BytesIO()
+        obj.save(buf, format="PNG")
+        buf.seek(0)
+        data = base64.b64encode(buf.read()).decode("utf-8")
+        displays.append({
+            "mime_type": "image/png",
+            "data": data,
+            "title": title,
+        })
+    elif _is_html_string(obj):
+        # Store HTML string directly
+        displays.append({
+            "mime_type": "text/html",
+            "data": obj,
+            "title": title,
+        })
+    else:
+        # Fall back to plain text
+        displays.append({
+            "mime_type": "text/plain",
+            "data": str(obj),
+            "title": title,
+        })
+
+    _displays.set(displays)

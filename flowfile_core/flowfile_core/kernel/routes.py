@@ -138,6 +138,26 @@ async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Dep
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/{kernel_id}/execute_cell", response_model=ExecuteResult)
+async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Depends(get_current_active_user)):
+    """Execute a single notebook cell interactively.
+
+    Same as /execute but sets interactive=True to enable auto-display of the last expression.
+    """
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        # Force interactive mode for cell execution
+        request.interactive = True
+        return await manager.execute(kernel_id, request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/{kernel_id}/artifacts")
 async def get_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
     manager = _get_manager()

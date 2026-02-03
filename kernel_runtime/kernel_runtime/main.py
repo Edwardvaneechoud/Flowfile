@@ -1,3 +1,4 @@
+import ast
 import contextlib
 import io
 import os
@@ -14,6 +15,78 @@ app = FastAPI(title="FlowFile Kernel Runtime", version=__version__)
 artifact_store = ArtifactStore()
 
 
+# Matplotlib setup code to auto-capture plt.show() calls
+_MATPLOTLIB_SETUP = """\
+try:
+    import matplotlib as _mpl
+    _mpl.use('Agg')
+    import matplotlib.pyplot as _plt
+    _original_show = _plt.show
+    def _flowfile_show(*args, **kwargs):
+        import matplotlib.pyplot as __plt
+        for _fig_num in __plt.get_fignums():
+            flowfile.display(__plt.figure(_fig_num))
+        __plt.close('all')
+    _plt.show = _flowfile_show
+except ImportError:
+    pass
+"""
+
+
+def _maybe_wrap_last_expression(code: str) -> str:
+    """If the last statement is a bare expression, wrap it in flowfile.display().
+
+    This provides Jupyter-like behavior where the result of the last expression
+    is automatically displayed.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    if not tree.body:
+        return code
+    last = tree.body[-1]
+    if not isinstance(last, ast.Expr):
+        return code
+
+    # Don't wrap if the expression is None, a string literal, or already a call to display/print
+    if isinstance(last.value, ast.Constant) and last.value.value is None:
+        return code
+    if isinstance(last.value, ast.Call):
+        # Check if it's already a print or display call
+        func = last.value.func
+        if isinstance(func, ast.Name) and func.id in ("print", "display"):
+            return code
+        if isinstance(func, ast.Attribute) and func.attr in ("print", "display"):
+            return code
+
+    # Get the source text of the last expression
+    lines = code.split('\n')
+    last_line_start = last.lineno - 1
+    last_line_end = last.end_lineno  # 1-based, but slicing is exclusive so works
+    last_expr_lines = lines[last_line_start:last_line_end]
+    last_expr_text = '\n'.join(last_expr_lines)
+
+    # Handle column offsets for partial lines
+    if last.col_offset > 0 and len(last_expr_lines) == 1:
+        # Single line with offset - take from col_offset
+        last_expr_text = lines[last_line_start][last.col_offset:last.end_col_offset]
+    elif last.end_col_offset is not None and len(last_expr_lines) > 0:
+        # Multi-line - adjust first and last lines
+        first_line = lines[last_line_start][last.col_offset:]
+        if len(last_expr_lines) == 1:
+            last_expr_text = first_line[:last.end_col_offset - last.col_offset]
+        else:
+            middle_lines = lines[last_line_start + 1:last_line_end - 1]
+            final_line = lines[last_line_end - 1][:last.end_col_offset]
+            last_expr_text = '\n'.join([first_line] + middle_lines + [final_line])
+
+    prefix = '\n'.join(lines[:last_line_start])
+    if prefix:
+        prefix += '\n'
+    return prefix + f'flowfile.display({last_expr_text})\n'
+
+
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
@@ -21,6 +94,7 @@ class ExecuteRequest(BaseModel):
     output_dir: str = ""
     flow_id: int = 0
     log_callback_url: str = ""
+    interactive: bool = False  # When True, auto-display last expression
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -28,11 +102,19 @@ class ClearNodeArtifactsRequest(BaseModel):
     flow_id: int | None = None
 
 
+class DisplayOutput(BaseModel):
+    """A single display output from code execution."""
+    mime_type: str  # "image/png", "text/html", "text/plain"
+    data: str       # base64 for images, raw HTML for text/html, plain text otherwise
+    title: str = ""
+
+
 class ExecuteResponse(BaseModel):
     success: bool
     output_paths: list[str] = []
     artifacts_published: list[str] = []
     artifacts_deleted: list[str] = []
+    display_outputs: list[DisplayOutput] = []
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
@@ -65,8 +147,28 @@ async def execute(request: ExecuteRequest):
             log_callback_url=request.log_callback_url,
         )
 
+        # Reset display outputs for this execution
+        flowfile_client._reset_displays()
+
+        # Prepare execution namespace with flowfile module
+        exec_globals = {"flowfile": flowfile_client}
+
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-            exec(request.code, {"flowfile": flowfile_client})  # noqa: S102
+            # Execute matplotlib setup to patch plt.show()
+            exec(_MATPLOTLIB_SETUP, exec_globals)  # noqa: S102
+
+            # Prepare user code - optionally wrap last expression for interactive mode
+            user_code = request.code
+            if request.interactive:
+                user_code = _maybe_wrap_last_expression(user_code)
+
+            # Execute user code
+            exec(user_code, exec_globals)  # noqa: S102
+
+        # Collect display outputs
+        display_outputs = [
+            DisplayOutput(**d) for d in flowfile_client._get_displays()
+        ]
 
         # Collect output parquet files
         output_paths: list[str] = []
@@ -85,14 +187,20 @@ async def execute(request: ExecuteRequest):
             output_paths=output_paths,
             artifacts_published=new_artifacts,
             artifacts_deleted=deleted_artifacts,
+            display_outputs=display_outputs,
             stdout=stdout_buf.getvalue(),
             stderr=stderr_buf.getvalue(),
             execution_time_ms=elapsed,
         )
     except Exception as exc:
+        # Still collect any display outputs that were generated before the error
+        display_outputs = [
+            DisplayOutput(**d) for d in flowfile_client._get_displays()
+        ]
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,
+            display_outputs=display_outputs,
             stdout=stdout_buf.getvalue(),
             stderr=stderr_buf.getvalue(),
             error=f"{type(exc).__name__}: {exc}",

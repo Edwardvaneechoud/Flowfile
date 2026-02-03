@@ -29,6 +29,15 @@ export const flowfileCompletionVals = [
     apply: "publish_output(df)",
   },
 
+  // Display function
+  {
+    label: "display",
+    type: "function",
+    info: "Display a rich object (matplotlib figure, plotly figure, PIL image, HTML string) in the output panel.",
+    detail: "flowfile.display(obj, title?)",
+    apply: "display(obj)",
+  },
+
   // Artifact functions
   {
     label: "publish_artifact",
