@@ -4,6 +4,7 @@ import base64
 import contextvars
 import io
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -57,6 +58,7 @@ def _clear_context() -> None:
             pass
         _log_client.set(None)
     _context.set({})
+    _displays.set([])
 
 
 def _get_context_value(key: str) -> Any:
@@ -231,11 +233,19 @@ def _is_pil_image(obj: Any) -> bool:
         return False
 
 
+# Regex to detect HTML tags: <tag>, </tag>, <tag attr="val">, <br/>, etc.
+_HTML_TAG_RE = re.compile(r"<[a-zA-Z/][^>]*>")
+
+
 def _is_html_string(obj: Any) -> bool:
-    """Check if obj is a string that looks like HTML."""
+    """Check if obj is a string that looks like HTML.
+
+    Uses a regex to detect actual HTML tags like <b>, </div>, <br/>, etc.
+    This avoids false positives from strings like "x < 10 and y > 5".
+    """
     if not isinstance(obj, str):
         return False
-    return "<" in obj and ">" in obj
+    return bool(_HTML_TAG_RE.search(obj))
 
 
 def _reset_displays() -> None:
@@ -269,7 +279,7 @@ def display(obj: Any, title: str = "") -> None:
         buf = io.BytesIO()
         obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
         buf.seek(0)
-        data = base64.b64encode(buf.read()).decode("utf-8")
+        data = base64.b64encode(buf.read()).decode("ascii")
         displays.append({
             "mime_type": "image/png",
             "data": data,
@@ -288,7 +298,7 @@ def display(obj: Any, title: str = "") -> None:
         buf = io.BytesIO()
         obj.save(buf, format="PNG")
         buf.seek(0)
-        data = base64.b64encode(buf.read()).decode("utf-8")
+        data = base64.b64encode(buf.read()).decode("ascii")
         displays.append({
             "mime_type": "image/png",
             "data": data,

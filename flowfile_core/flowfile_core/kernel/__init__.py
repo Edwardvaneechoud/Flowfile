@@ -2,6 +2,7 @@ from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
     ClearNodeArtifactsRequest,
     ClearNodeArtifactsResult,
+    DisplayOutput,
     DockerStatus,
     ExecuteRequest,
     ExecuteResult,
@@ -15,6 +16,7 @@ __all__ = [
     "KernelManager",
     "ClearNodeArtifactsRequest",
     "ClearNodeArtifactsResult",
+    "DisplayOutput",
     "DockerStatus",
     "KernelConfig",
     "KernelInfo",

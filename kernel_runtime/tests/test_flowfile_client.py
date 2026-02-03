@@ -344,6 +344,8 @@ class TestDisplayTypeDetection:
     def test_is_html_string_false(self):
         assert flowfile_client._is_html_string("plain text") is False
         assert flowfile_client._is_html_string("just text with math: 5 < 10") is False  # only <
+        assert flowfile_client._is_html_string("x < 10 and y > 5") is False  # comparison, not HTML
+        assert flowfile_client._is_html_string("a < b > c") is False  # not actual HTML tags
         assert flowfile_client._is_html_string(123) is False
         assert flowfile_client._is_html_string(None) is False
 

@@ -60,28 +60,15 @@ def _maybe_wrap_last_expression(code: str) -> str:
         if isinstance(func, ast.Attribute) and func.attr in ("print", "display"):
             return code
 
-    # Get the source text of the last expression
+    # Use ast.get_source_segment for robust source extraction (Python 3.8+)
+    last_expr_text = ast.get_source_segment(code, last)
+    if last_expr_text is None:
+        # Fallback if get_source_segment fails
+        return code
+
+    # Build the new code with the last expression wrapped
     lines = code.split('\n')
-    last_line_start = last.lineno - 1
-    last_line_end = last.end_lineno  # 1-based, but slicing is exclusive so works
-    last_expr_lines = lines[last_line_start:last_line_end]
-    last_expr_text = '\n'.join(last_expr_lines)
-
-    # Handle column offsets for partial lines
-    if last.col_offset > 0 and len(last_expr_lines) == 1:
-        # Single line with offset - take from col_offset
-        last_expr_text = lines[last_line_start][last.col_offset:last.end_col_offset]
-    elif last.end_col_offset is not None and len(last_expr_lines) > 0:
-        # Multi-line - adjust first and last lines
-        first_line = lines[last_line_start][last.col_offset:]
-        if len(last_expr_lines) == 1:
-            last_expr_text = first_line[:last.end_col_offset - last.col_offset]
-        else:
-            middle_lines = lines[last_line_start + 1:last_line_end - 1]
-            final_line = lines[last_line_end - 1][:last.end_col_offset]
-            last_expr_text = '\n'.join([first_line] + middle_lines + [final_line])
-
-    prefix = '\n'.join(lines[:last_line_start])
+    prefix = '\n'.join(lines[:last.lineno - 1])
     if prefix:
         prefix += '\n'
     return prefix + f'flowfile.display({last_expr_text})\n'
