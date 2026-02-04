@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import io
-import pickle
 from pathlib import Path
 from typing import Any
+
+import cloudpickle
 
 # Modules that should use joblib for serialization
 JOBLIB_MODULES = {
@@ -117,10 +118,10 @@ def check_pickleable(obj: Any) -> None:
         pass  # Can't estimate size, proceed with check
 
     try:
-        # Use pickle.dumps to test pickleability without writing to disk
-        # Use protocol 5 (same as actual serialization)
-        pickle.dumps(obj, protocol=5)
-    except (pickle.PicklingError, TypeError, AttributeError) as e:
+        # Use cloudpickle.dumps to test pickleability without writing to disk
+        # cloudpickle can handle classes defined in exec() code
+        cloudpickle.dumps(obj)
+    except (TypeError, AttributeError) as e:
         raise _make_unpickleable_error(obj, e) from e
 
 
@@ -193,8 +194,7 @@ def serialize_to_bytes(obj: Any, format: str | None = None) -> tuple[bytes, str]
         import joblib
         joblib.dump(obj, buf)
     else:
-        import pickle
-        pickle.dump(obj, buf, protocol=5)
+        cloudpickle.dump(obj, buf)
 
     blob = buf.getvalue()
     sha256 = hashlib.sha256(blob).hexdigest()
@@ -219,7 +219,7 @@ def deserialize_from_file(path: str, format: str) -> Any:
         import joblib
         return joblib.load(path)
     else:
-        import pickle
+        import pickle  # cloudpickle files are compatible with standard pickle.load
         with open(path, "rb") as f:
             return pickle.load(f)
 
@@ -242,7 +242,7 @@ def deserialize_from_bytes(blob: bytes, format: str) -> Any:
         import joblib
         return joblib.load(buf)
     else:
-        import pickle
+        import pickle  # cloudpickle files are compatible with standard pickle.load
         return pickle.load(buf)
 
 
@@ -318,10 +318,13 @@ def _serialize_joblib(obj: Any, path: Path) -> None:
 
 
 def _serialize_pickle(obj: Any, path: Path) -> None:
-    """Serialize object using pickle protocol 5."""
+    """Serialize object using cloudpickle.
+
+    cloudpickle can handle classes defined in exec() code, unlike standard pickle.
+    """
     try:
         with open(path, "wb") as f:
-            pickle.dump(obj, f, protocol=5)
-    except (pickle.PicklingError, TypeError, AttributeError) as e:
+            cloudpickle.dump(obj, f)
+    except (TypeError, AttributeError) as e:
         # Translate to UnpickleableObjectError with helpful message
         raise _make_unpickleable_error(obj, e) from e
