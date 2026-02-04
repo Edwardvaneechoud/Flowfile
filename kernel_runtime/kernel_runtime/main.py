@@ -198,7 +198,15 @@ async def execute(request: ExecuteRequest):
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             # Provide __name__ and __builtins__ so classes defined in user code
-            # get __module__ = "__main__" instead of "builtins", enabling pickle to work
+            # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
+            # to serialize them correctly. Without this, classes get __module__ = "builtins"
+            # and cloudpickle/pickle cannot resolve them during deserialization.
+            #
+            # SECURITY NOTE: Adding __builtins__ exposes Python's builtin functions
+            # to user code. This is acceptable here because:
+            # 1. Kernel runs in an isolated Docker container
+            # 2. User code already has full Python execution capability
+            # 3. Network access is controlled by container configuration
             exec(request.code, {"flowfile": flowfile_client, "__builtins__": __builtins__, "__name__": "__main__"})  # noqa: S102
 
         # Collect output parquet files

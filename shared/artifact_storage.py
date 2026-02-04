@@ -270,8 +270,13 @@ class S3Storage(ArtifactStorageBackend):
     def finalize_upload(self, storage_key: str, expected_sha256: str) -> int:
         """Verify the upload exists in S3 and return its size.
 
-        Note: S3 doesn't store SHA-256 by default, so we trust the kernel's hash.
-        For production use, consider enabling S3 checksums or downloading to verify.
+        WARNING: This currently only checks existence, not integrity.
+        We trust the kernel's SHA-256 hash without verification.
+
+        TODO: For production integrity guarantees, either:
+        1. Use S3's ChecksumSHA256 feature (requires SDK support on upload)
+        2. Download the object and verify hash (adds latency/egress cost)
+        3. Use S3 Object Lock for immutability guarantees
         """
         s3_key = f"{self.prefix}{storage_key}"
 

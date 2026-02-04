@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING
 from .exceptions import (
     ArtifactError,
     ArtifactIntegrityError,
-    ArtifactNotActiveError,
+    ArtifactNotActiveError,  # Deprecated alias for ArtifactStateError
     ArtifactNotFoundError,
+    ArtifactStateError,
     ArtifactUploadError,
     NamespaceNotFoundError,
     StorageError,
@@ -89,11 +90,18 @@ def get_storage_backend() -> "ArtifactStorageBackend":
     return _backend
 
 
-def reset_storage_backend() -> None:
-    """Reset the storage backend singleton (for testing)."""
+def _reset_storage_backend() -> None:
+    """Reset the storage backend singleton.
+
+    Internal function for testing only - not part of public API.
+    """
     global _backend
     with _backend_lock:
         _backend = None
+
+
+# Backwards compatibility alias for tests that import reset_storage_backend
+reset_storage_backend = _reset_storage_backend
 
 
 __all__ = [
@@ -103,11 +111,11 @@ __all__ = [
     "router",
     # Factory
     "get_storage_backend",
-    "reset_storage_backend",
     # Exceptions
     "ArtifactError",
     "ArtifactNotFoundError",
-    "ArtifactNotActiveError",
+    "ArtifactStateError",
+    "ArtifactNotActiveError",  # Deprecated alias
     "ArtifactUploadError",
     "ArtifactIntegrityError",
     "StorageError",

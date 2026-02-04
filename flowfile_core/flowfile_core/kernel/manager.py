@@ -169,6 +169,32 @@ class KernelManager:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
+        """Build the environment dictionary for a kernel container.
+
+        This centralizes all environment variables passed to kernel containers,
+        including Core API connection, authentication, and persistence settings.
+        """
+        packages_str = " ".join(kernel.packages)
+        env = {"KERNEL_PACKAGES": packages_str}
+        # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
+        core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+        env["FLOWFILE_CORE_URL"] = core_url
+        # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
+        internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+        if internal_token:
+            env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+        # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
+        env["FLOWFILE_KERNEL_ID"] = kernel_id
+        # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
+        env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
+        # Persistence settings from kernel config
+        env["KERNEL_ID"] = kernel_id
+        env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
+        env["PERSISTENCE_PATH"] = "/shared/artifacts"
+        env["RECOVERY_MODE"] = kernel.recovery_mode.value
+        return env
+
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
         if config.id in self._kernels:
             raise ValueError(f"Kernel '{config.id}' already exists")
@@ -217,25 +243,7 @@ class KernelManager:
         kernel.error_message = None
 
         try:
-            packages_str = " ".join(kernel.packages)
-            # Build environment with Core URL and internal token for global artifacts
-            env = {"KERNEL_PACKAGES": packages_str}
-            # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
-            core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
-            env["FLOWFILE_CORE_URL"] = core_url
-            # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
-            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-            if internal_token:
-                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
-            # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
-            env["FLOWFILE_KERNEL_ID"] = kernel_id
-            # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
-            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
-            # Persistence settings from kernel config
-            env["KERNEL_ID"] = kernel_id
-            env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
-            env["PERSISTENCE_PATH"] = "/shared/artifacts"
-            env["RECOVERY_MODE"] = kernel.recovery_mode.value
+            env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",
@@ -285,25 +293,7 @@ class KernelManager:
         kernel.error_message = None
 
         try:
-            packages_str = " ".join(kernel.packages)
-            # Build environment with Core URL and internal token for global artifacts
-            env = {"KERNEL_PACKAGES": packages_str}
-            # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
-            core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
-            env["FLOWFILE_CORE_URL"] = core_url
-            # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
-            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-            if internal_token:
-                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
-            # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
-            env["FLOWFILE_KERNEL_ID"] = kernel_id
-            # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
-            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
-            # Persistence settings from kernel config
-            env["KERNEL_ID"] = kernel_id
-            env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
-            env["PERSISTENCE_PATH"] = "/shared/artifacts"
-            env["RECOVERY_MODE"] = kernel.recovery_mode.value
+            env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",

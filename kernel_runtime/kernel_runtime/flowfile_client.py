@@ -18,6 +18,9 @@ def _translate_host_path_to_container(host_path: str) -> str:
     Core API returns paths using the host's perspective, so we need to translate
     them for the kernel container.
 
+    Uses Path.relative_to() for robust path handling that accounts for
+    trailing slashes, normalization, and edge cases.
+
     Example:
         Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
         Container: /shared/artifact_staging/1_test.pkl
@@ -27,17 +30,19 @@ def _translate_host_path_to_container(host_path: str) -> str:
         # Not running in Docker or env var not set - use path as-is
         return host_path
 
-    # Replace host shared dir prefix with /shared
-    if host_path.startswith(host_shared_dir):
-        relative_path = host_path[len(host_shared_dir):]
-        # Handle both with and without trailing slash
-        if relative_path.startswith("/"):
-            return f"/shared{relative_path}"
-        else:
-            return f"/shared/{relative_path}"
+    try:
+        # Use pathlib for robust path handling
+        host_path_obj = Path(host_path).resolve()
+        host_shared_obj = Path(host_shared_dir).resolve()
 
-    # Path doesn't start with host shared dir - return as-is
-    return host_path
+        # Get the relative path from host shared dir
+        relative = host_path_obj.relative_to(host_shared_obj)
+        return str(Path("/shared") / relative)
+    except ValueError:
+        # Path is not relative to host_shared_dir - return as-is
+        # This can happen if paths are on different drives (Windows)
+        # or if the path doesn't actually start with the shared dir
+        return host_path
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
@@ -198,7 +203,7 @@ def publish_global(
     description: str | None = None,
     tags: list[str] | None = None,
     namespace_id: int | None = None,
-    format: str | None = None,
+    fmt: str | None = None,
 ) -> int:
     """Persist a Python object to the global artifact store.
 
@@ -214,8 +219,8 @@ def publish_global(
         description: Human-readable description of the artifact.
         tags: List of tags for categorization and search.
         namespace_id: Namespace (schema) ID. Defaults to user's default namespace.
-        format: Serialization format override ("parquet", "joblib", or "pickle").
-                Auto-detected from object type if not specified.
+        fmt: Serialization format override ("parquet", "joblib", or "pickle").
+             Auto-detected from object type if not specified.
 
     Returns:
         The artifact ID (database ID).
@@ -245,13 +250,13 @@ def publish_global(
         serialize_to_bytes,
     )
 
-    format = format or detect_format(obj)
+    serialization_format = fmt or detect_format(obj)
     python_type = f"{type(obj).__module__}.{type(obj).__name__}"
     python_module = type(obj).__module__
 
     # Validate that the object can be serialized before making API calls
     # This provides a clear error message upfront rather than failing during serialization
-    if format in ("pickle", "joblib"):
+    if serialization_format in ("pickle", "joblib"):
         check_pickleable(obj)
 
     # Get context for lineage tracking
@@ -273,7 +278,7 @@ def publish_global(
             f"{_CORE_URL}/artifacts/prepare-upload",
             json={
                 "name": name,
-                "serialization_format": format,
+                "serialization_format": serialization_format,
                 "description": description,
                 "tags": tags or [],
                 "namespace_id": namespace_id,
@@ -292,11 +297,11 @@ def publish_global(
             # Shared filesystem - write to staging path
             # Translate host path to container path if running in Docker
             staging_path = _translate_host_path_to_container(target["path"])
-            sha256 = serialize_to_file(obj, staging_path, format)
+            sha256 = serialize_to_file(obj, staging_path, serialization_format)
             size_bytes = os.path.getsize(staging_path)
         else:
             # S3 presigned URL - upload directly
-            blob, sha256 = serialize_to_bytes(obj, format)
+            blob, sha256 = serialize_to_bytes(obj, serialization_format)
             size_bytes = len(blob)
             upload_resp = client.put(
                 target["path"],

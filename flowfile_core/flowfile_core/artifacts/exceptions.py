@@ -34,13 +34,26 @@ class ArtifactNotFoundError(ArtifactError):
         super().__init__(detail)
 
 
-class ArtifactNotActiveError(ArtifactError):
-    """Raised when trying to access an artifact that is not in 'active' status."""
+class ArtifactStateError(ArtifactError):
+    """Raised when an artifact is not in the expected state for an operation.
 
-    def __init__(self, artifact_id: int, status: str):
+    Examples:
+    - Trying to finalize an artifact that is already 'active' (not 'pending')
+    - Trying to download a 'pending' or 'failed' artifact
+    """
+
+    def __init__(self, artifact_id: int, actual_status: str, expected_status: str = "pending"):
         self.artifact_id = artifact_id
-        self.status = status
-        super().__init__(f"Artifact {artifact_id} is not active (status={status})")
+        self.status = actual_status  # Keep for backwards compatibility
+        self.actual_status = actual_status
+        self.expected_status = expected_status
+        super().__init__(
+            f"Artifact {artifact_id} is in '{actual_status}' state, expected '{expected_status}'"
+        )
+
+
+# Backwards compatibility alias - TODO: Remove after deprecation period
+ArtifactNotActiveError = ArtifactStateError
 
 
 class ArtifactUploadError(ArtifactError):

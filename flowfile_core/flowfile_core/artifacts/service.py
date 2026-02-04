@@ -49,6 +49,13 @@ class ArtifactService:
         SQLAlchemy database session.
     storage:
         Storage backend for blob operations.
+
+    TODO: Add a periodic cleanup task or TTL-based reaper to mark old "pending"
+    artifacts as "failed". If a kernel crashes between prepare_upload and
+    finalize_upload, the DB row stays in "pending" forever. Consider:
+    - Background task that marks pending artifacts older than N minutes as failed
+    - Startup check that cleans up stale pending artifacts
+    - TTL column with automatic status transition
     """
 
     def __init__(self, db: Session, storage: "ArtifactStorageBackend") -> None:
@@ -343,6 +350,10 @@ class ArtifactService:
         # Tag filtering using SQLite json_each for proper element matching
         # This avoids false positives (e.g., "ml" matching "html") and
         # applies filtering BEFORE pagination so limit/offset work correctly
+        #
+        # WARNING: SQLite-specific SQL using json_each() function.
+        # For PostgreSQL, use: jsonb_array_elements_text(tags) or tags ? :tag
+        # This needs to be abstracted if multi-database support is required.
         if tags:
             for tag in tags:
                 # Use EXISTS with json_each to check if tag is in the JSON array
