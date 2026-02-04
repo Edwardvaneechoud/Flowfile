@@ -162,7 +162,15 @@ class FlowfileStorage:
 
     @property
     def global_artifacts_directory(self) -> Path:
-        """Directory for permanent storage of global artifacts."""
+        """Directory for permanent storage of global artifacts.
+
+        When FLOWFILE_SHARED_DIR is set (e.g., during tests), artifacts are stored
+        under the shared directory so kernel containers can access them.
+        """
+        # If FLOWFILE_SHARED_DIR is set, put artifacts under it for kernel access
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir) / "global_artifacts"
         if _is_docker_mode():
             return self.user_data_directory / "global_artifacts"
         else:
