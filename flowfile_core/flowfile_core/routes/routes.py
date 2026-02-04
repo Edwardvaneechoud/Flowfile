@@ -995,15 +995,21 @@ def prepare_node_inputs(flow_id: int, node_id: int):
           - input_paths: dict mapping input names to file paths
           - output_dir: path where outputs should be written
     """
+    from flowfile_core.kernel import get_kernel_manager
+
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
 
     # Get upstream node IDs (the nodes this node depends on)
     depending_on_ids = node.setting_input.depending_on_ids or []
 
+    # Get shared volume path from kernel manager
+    manager = get_kernel_manager()
+    shared_base = manager.shared_volume_path
+
     # Prepare directories
-    input_dir = os.path.join(storage.shared_dir, str(flow_id), str(node_id), "inputs")
-    output_dir = os.path.join(storage.shared_dir, str(flow_id), str(node_id), "outputs")
+    input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
+    output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
     os.makedirs(input_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
