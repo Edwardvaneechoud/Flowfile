@@ -188,8 +188,27 @@ def managed_kernel(
     core_started_by_us = False
     original_token = None
     original_core_url = None
+    original_shared_dir = None
 
-    # 1 — Optionally start Core API server and set up auth
+    # 1 — Create temp shared volume FIRST (needed for storage config)
+    shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
+
+    # Configure storage to use this shared directory (must be done before Core starts)
+    # This ensures Core and kernel use the same paths for artifact staging
+    original_shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+    os.environ["FLOWFILE_SHARED_DIR"] = shared_dir
+    logger.info("Set FLOWFILE_SHARED_DIR=%s for artifact staging", shared_dir)
+
+    # Reset storage singletons so they pick up the new path
+    from shared.storage_config import FlowfileStorage
+    import shared.storage_config as storage_module
+    storage_module.storage = FlowfileStorage()
+
+    # Reset artifact storage backend singleton
+    from flowfile_core.artifacts import reset_storage_backend
+    reset_storage_backend()
+
+    # 2 — Optionally start Core API server and set up auth
     if start_core:
         # Save original values to restore later
         original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
@@ -206,15 +225,12 @@ def managed_kernel(
             raise RuntimeError("Could not start Core API server for integration tests")
         core_started_by_us = True
 
-    # 2 — Build image
+    # 3 — Build image
     if not _build_kernel_image():
         raise RuntimeError("Could not build flowfile-kernel Docker image")
 
-    # 3 — Ensure stale container is removed
+    # 4 — Ensure stale container is removed
     _remove_container(container_name)
-
-    # 4 — Temp shared volume
-    shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
 
     manager = KernelManager(shared_volume_path=shared_dir)
 
@@ -255,7 +271,19 @@ def managed_kernel(
         if core_started_by_us:
             _stop_core_server()
 
-        # Restore original environment (only if we modified it)
+        # Restore original environment
+        if original_shared_dir is not None:
+            os.environ["FLOWFILE_SHARED_DIR"] = original_shared_dir
+        else:
+            os.environ.pop("FLOWFILE_SHARED_DIR", None)
+
+        # Reset storage singletons to pick up original paths
+        from shared.storage_config import FlowfileStorage
+        import shared.storage_config as storage_module
+        storage_module.storage = FlowfileStorage()
+        from flowfile_core.artifacts import reset_storage_backend
+        reset_storage_backend()
+
         if start_core:
             if original_token is not None:
                 os.environ["FLOWFILE_INTERNAL_TOKEN"] = original_token

@@ -150,9 +150,13 @@ class FlowfileStorage:
 
         In Docker mode, this maps to /shared inside containers.
         In local mode, this is ~/.flowfile/shared on the host.
+        Can be overridden via FLOWFILE_SHARED_DIR environment variable.
         """
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir)
         if _is_docker_mode():
-            return Path(os.environ.get("FLOWFILE_SHARED_DIR", "/shared"))
+            return Path("/shared")
         else:
             return self.base_directory / "shared"
 
