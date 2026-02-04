@@ -24,7 +24,7 @@ logger = logging.getLogger("kernel_fixture")
 
 KERNEL_IMAGE = "flowfile-kernel"
 KERNEL_TEST_ID = "integration-test"
-KERNEL_CONTAINER_NAME = f"flowfile-kernel-{KERNEL_TEST_ID}"
+KERNEL_TEST_ID_WITH_CORE = "integration-test-core"
 CORE_TEST_PORT = 63578
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -180,6 +180,10 @@ def managed_kernel(
     from flowfile_core.kernel.manager import KernelManager
     from flowfile_core.kernel.models import KernelConfig
 
+    # Use different kernel IDs for kernel-only vs kernel+Core tests to avoid conflicts
+    kernel_id = KERNEL_TEST_ID_WITH_CORE if start_core else KERNEL_TEST_ID
+    container_name = f"flowfile-kernel-{kernel_id}"
+
     # Track what we need to clean up
     core_started_by_us = False
     original_token = None
@@ -207,13 +211,12 @@ def managed_kernel(
         raise RuntimeError("Could not build flowfile-kernel Docker image")
 
     # 3 — Ensure stale container is removed
-    _remove_container(KERNEL_CONTAINER_NAME)
+    _remove_container(container_name)
 
     # 4 — Temp shared volume
     shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
 
     manager = KernelManager(shared_volume_path=shared_dir)
-    kernel_id = KERNEL_TEST_ID
 
     try:
         # 5 — Create + start
@@ -241,7 +244,7 @@ def managed_kernel(
         loop.close()
 
         # Belt-and-suspenders: force-remove the container
-        _remove_container(KERNEL_CONTAINER_NAME)
+        _remove_container(container_name)
 
         # Clean up shared dir
         import shutil
