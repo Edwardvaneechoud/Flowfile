@@ -19,6 +19,25 @@ logger = logging.getLogger(__name__)
 artifact_store = ArtifactStore()
 
 # ---------------------------------------------------------------------------
+# Persistent namespace store for notebook-style execution
+# ---------------------------------------------------------------------------
+# Maintains a persistent execution namespace per flow_id so that variables
+# defined in one cell execution are available in subsequent cell executions.
+_namespace_store: dict[int, dict] = {}
+
+
+def _get_namespace(flow_id: int) -> dict:
+    """Get or create a persistent namespace for the given flow_id."""
+    if flow_id not in _namespace_store:
+        _namespace_store[flow_id] = {}
+    return _namespace_store[flow_id]
+
+
+def _clear_namespace(flow_id: int) -> None:
+    """Clear the namespace for a flow (e.g., on kernel restart)."""
+    _namespace_store.pop(flow_id, None)
+
+# ---------------------------------------------------------------------------
 # Persistence setup (driven by environment variables)
 # ---------------------------------------------------------------------------
 _persistence: ArtifactPersistence | None = None
@@ -268,8 +287,12 @@ async def execute(request: ExecuteRequest):
         # Reset display outputs for this execution
         flowfile_client._reset_displays()
 
-        # Prepare execution namespace with flowfile module
-        exec_globals = {"flowfile": flowfile_client}
+        # Get or create persistent namespace for this flow
+        # Variables defined in one cell will be available in subsequent cells
+        exec_globals = _get_namespace(request.flow_id)
+
+        # Always update flowfile reference (context changes between executions)
+        exec_globals["flowfile"] = flowfile_client
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             # Execute matplotlib setup to patch plt.show()
@@ -332,7 +355,19 @@ async def execute(request: ExecuteRequest):
 async def clear_artifacts(flow_id: int | None = Query(default=None)):
     """Clear all artifacts, or only those belonging to a specific flow."""
     artifact_store.clear(flow_id=flow_id)
+    # Also clear the namespace for this flow
+    if flow_id is not None:
+        _clear_namespace(flow_id)
+    else:
+        _namespace_store.clear()
     return {"status": "cleared"}
+
+
+@app.post("/clear_namespace")
+async def clear_namespace(flow_id: int = Query(...)):
+    """Clear the execution namespace for a flow (variables, imports, etc.)."""
+    _clear_namespace(flow_id)
+    return {"status": "cleared", "flow_id": flow_id}
 
 
 @app.post("/clear_node_artifacts")
