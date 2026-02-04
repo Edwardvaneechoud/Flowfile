@@ -106,13 +106,21 @@ def _build_kernel_image() -> bool:
     dockerfile = _REPO_ROOT / "kernel_runtime" / "Dockerfile"
     context = _REPO_ROOT / "kernel_runtime"
 
+    logger.info("Repo root: %s", _REPO_ROOT)
+    logger.info("Looking for Dockerfile at %s", dockerfile)
+
     if not dockerfile.exists():
         logger.error("Dockerfile not found at %s", dockerfile)
+        # List contents of kernel_runtime directory if it exists
+        if context.exists():
+            logger.error("Contents of %s: %s", context, list(context.iterdir()))
+        else:
+            logger.error("Context directory %s does not exist", context)
         return False
 
     logger.info("Building Docker image '%s' ...", KERNEL_IMAGE)
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["docker", "build", "-t", KERNEL_IMAGE, "-f", str(dockerfile), str(context)],
             check=True,
             capture_output=True,
@@ -120,6 +128,7 @@ def _build_kernel_image() -> bool:
             timeout=300,
         )
         logger.info("Docker image '%s' built successfully", KERNEL_IMAGE)
+        logger.debug("Build stdout: %s", result.stdout)
         return True
     except subprocess.CalledProcessError as exc:
         logger.error("Failed to build Docker image: %s\nstdout: %s\nstderr: %s", exc, exc.stdout, exc.stderr)

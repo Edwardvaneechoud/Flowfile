@@ -278,13 +278,21 @@ def kernel_manager():
     global artifacts (publish_global, get_global, etc.), use the
     `kernel_manager_with_core` fixture instead.
     """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
     if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
         pytest.skip("Docker is not available, skipping kernel tests")
 
     try:
         with managed_kernel() as ctx:
             yield ctx
     except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel container could not be started in CI: {exc}")
         pytest.skip(f"Kernel container could not be started: {exc}")
 
 
@@ -307,13 +315,21 @@ def kernel_manager_with_core():
 
     Yields a (KernelManager, kernel_id) tuple.
     """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
     if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
         pytest.skip("Docker is not available, skipping kernel tests")
 
     try:
         with managed_kernel(start_core=True) as ctx:
             yield ctx
     except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel + Core could not be started in CI: {exc}")
         pytest.skip(f"Kernel + Core could not be started: {exc}")
 
 

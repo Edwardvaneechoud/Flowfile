@@ -60,7 +60,7 @@ jobs:
 
       - name: Run kernel integration tests
         run: |
-          poetry run pytest flowfile_core/tests -m kernel -v --tb=short
+          poetry run pytest flowfile_core/tests -m kernel -vv --tb=long --log-cli-level=INFO
         timeout-minutes: 20
         env:
           # Set test mode to avoid conflicts
