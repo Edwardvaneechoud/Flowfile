@@ -433,55 +433,47 @@ class TestCheckPickleable:
         check_pickleable("string")
         check_pickleable(42)
 
-    def test_check_pickleable_local_class_raises(self):
-        """Local classes should raise UnpickleableObjectError."""
-        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+    def test_check_pickleable_local_class_succeeds(self):
+        """Local classes should work with cloudpickle."""
+        from kernel_runtime.serialization import check_pickleable
 
         class LocalClass:
             pass
 
         obj = LocalClass()
 
-        with pytest.raises(UnpickleableObjectError) as exc_info:
-            check_pickleable(obj)
+        # cloudpickle can handle local classes - should not raise
+        check_pickleable(obj)
 
-        assert "LocalClass" in str(exc_info.value)
-        assert "Move the class definition to module level" in str(exc_info.value)
-
-    def test_check_pickleable_lambda_raises(self):
-        """Lambda functions should raise UnpickleableObjectError."""
-        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+    def test_check_pickleable_lambda_succeeds(self):
+        """Lambda functions should work with cloudpickle."""
+        from kernel_runtime.serialization import check_pickleable
 
         obj = lambda x: x + 1
 
-        with pytest.raises(UnpickleableObjectError) as exc_info:
-            check_pickleable(obj)
+        # cloudpickle can handle lambdas - should not raise
+        check_pickleable(obj)
 
-        assert "Cannot publish object" in str(exc_info.value)
-
-    def test_check_pickleable_nested_unpickleable_raises(self):
-        """Objects containing unpickleable items should raise."""
-        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+    def test_check_pickleable_nested_lambda_succeeds(self):
+        """Objects containing lambdas should work with cloudpickle."""
+        from kernel_runtime.serialization import check_pickleable
 
         # Dict containing a lambda
         obj = {"func": lambda x: x}
 
-        with pytest.raises(UnpickleableObjectError):
-            check_pickleable(obj)
+        # cloudpickle can handle nested lambdas - should not raise
+        check_pickleable(obj)
 
-    def test_error_message_includes_type_info(self):
-        """Error message should include object type information."""
-        from kernel_runtime.serialization import check_pickleable, UnpickleableObjectError
+    def test_local_class_roundtrip(self):
+        """Local classes should roundtrip successfully with cloudpickle."""
+        from kernel_runtime.serialization import serialize_to_bytes, deserialize_from_bytes
 
-        class MyLocalClass:
-            pass
+        class LocalClass:
+            def __init__(self, value):
+                self.value = value
 
-        obj = MyLocalClass()
+        obj = LocalClass(42)
+        blob, sha256 = serialize_to_bytes(obj, "pickle")
+        result = deserialize_from_bytes(blob, "pickle")
 
-        with pytest.raises(UnpickleableObjectError) as exc_info:
-            check_pickleable(obj)
-
-        # Should include the class name in the error
-        assert "MyLocalClass" in str(exc_info.value)
-        # Should include the module path
-        assert "test_serialization" in str(exc_info.value)
+        assert result.value == 42

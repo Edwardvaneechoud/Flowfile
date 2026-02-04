@@ -204,33 +204,63 @@ class TestPublishGlobal:
 
         assert "CustomClass" in prepare_json["python_type"]
 
-    def test_publish_unpickleable_local_class_raises_error(self, mock_httpx_client):
-        """Should raise UnpickleableObjectError for local classes."""
-        from kernel_runtime.serialization import UnpickleableObjectError
+    def test_publish_local_class_succeeds_with_cloudpickle(self, mock_httpx_client, tmp_path):
+        """Local classes should work with cloudpickle."""
+        mock_client = MagicMock()
+        mock_httpx_client.return_value.__enter__.return_value = mock_client
+
+        # Setup mock responses
+        staging_path = tmp_path / "staging" / "1_local_class.pkl"
+        mock_client.post.side_effect = [
+            MagicMock(
+                status_code=201,
+                json=lambda: {
+                    "artifact_id": 1,
+                    "version": 1,
+                    "method": "file",
+                    "path": str(staging_path),
+                    "storage_key": "artifacts/1/1_local_class.pkl",
+                },
+            ),
+            MagicMock(status_code=200, json=lambda: {"status": "ok", "artifact_id": 1, "version": 1}),
+        ]
 
         class LocalClass:
-            pass
+            def __init__(self):
+                self.value = 42
 
         obj = LocalClass()
 
-        with pytest.raises(UnpickleableObjectError) as exc_info:
-            publish_global("local_class", obj)
+        # cloudpickle can handle local classes - should succeed
+        artifact_id = publish_global("local_class", obj)
+        assert artifact_id == 1
 
-        # Should have helpful error message
-        assert "Cannot publish object" in str(exc_info.value)
-        assert "LocalClass" in str(exc_info.value)
-        assert "Move the class definition to module level" in str(exc_info.value)
+    def test_publish_lambda_succeeds_with_cloudpickle(self, mock_httpx_client, tmp_path):
+        """Lambda functions should work with cloudpickle."""
+        mock_client = MagicMock()
+        mock_httpx_client.return_value.__enter__.return_value = mock_client
 
-    def test_publish_unpickleable_lambda_raises_error(self, mock_httpx_client):
-        """Should raise UnpickleableObjectError for lambda functions."""
-        from kernel_runtime.serialization import UnpickleableObjectError
+        # Setup mock responses
+        staging_path = tmp_path / "staging" / "1_lambda_func.pkl"
+        mock_client.post.side_effect = [
+            MagicMock(
+                status_code=201,
+                json=lambda: {
+                    "artifact_id": 1,
+                    "version": 1,
+                    "method": "file",
+                    "path": str(staging_path),
+                    "storage_key": "artifacts/1/1_lambda_func.pkl",
+                },
+            ),
+            MagicMock(status_code=200, json=lambda: {"status": "ok", "artifact_id": 1, "version": 1}),
+        ]
 
         obj = lambda x: x + 1
 
-        with pytest.raises(UnpickleableObjectError) as exc_info:
-            publish_global("lambda_func", obj)
-
-        assert "Cannot publish object" in str(exc_info.value)
+        # cloudpickle can handle lambdas - should succeed
+        artifact_id = publish_global("lambda_func", obj)
+        assert artifact_id == 1
 
 
 # ---------------------------------------------------------------------------
