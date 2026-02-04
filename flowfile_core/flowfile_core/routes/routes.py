@@ -982,6 +982,62 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
     return list(node.get_all_dependent_node_ids())
 
 
+@router.post('/node/prepare_inputs', tags=['editor'])
+def prepare_node_inputs(flow_id: int, node_id: int):
+    """Prepares input data for a node's interactive (notebook) execution.
+
+    Fetches upstream node outputs, writes them to parquet files in the shared
+    volume, and returns the input_paths dict that can be passed to the kernel
+    /execute endpoint.
+
+    Returns:
+        dict with:
+          - input_paths: dict mapping input names to file paths
+          - output_dir: path where outputs should be written
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(node_id)
+
+    # Get upstream node IDs (the nodes this node depends on)
+    depending_on_ids = node.setting_input.depending_on_ids or []
+
+    # Prepare directories
+    input_dir = os.path.join(storage.shared_dir, str(flow_id), str(node_id), "inputs")
+    output_dir = os.path.join(storage.shared_dir, str(flow_id), str(node_id), "outputs")
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Collect upstream node outputs and write to parquet
+    input_paths: dict[str, list[str]] = {}
+    main_paths: list[str] = []
+
+    for idx, upstream_id in enumerate(depending_on_ids):
+        try:
+            upstream_node = flow.get_node(upstream_id)
+            # Get the resulting data from the upstream node
+            flow_data = upstream_node.get_resulting_data()
+            if flow_data is not None and flow_data.data_frame is not None:
+                filename = f"main_{idx}.parquet"
+                local_path = os.path.join(input_dir, filename)
+                # Collect and write to parquet
+                flow_data.data_frame.collect().write_parquet(local_path)
+                # Ensure file is flushed to disk
+                with open(local_path, "rb") as f:
+                    os.fsync(f.fileno())
+                # Use container path (kernel sees /shared/...)
+                main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
+        except Exception as e:
+            logger.warning(f"Failed to get data from upstream node {upstream_id}: {e}")
+
+    if main_paths:
+        input_paths["main"] = main_paths
+
+    return {
+        "input_paths": input_paths,
+        "output_dir": f"/shared/{flow_id}/{node_id}/outputs",
+    }
+
+
 @router.get("/import_flow/", tags=["editor"], response_model=int)
 def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""

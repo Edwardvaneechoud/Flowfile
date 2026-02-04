@@ -40,6 +40,7 @@
 <script lang="ts" setup>
 import { ref, computed } from "vue";
 import { KernelApi } from "../../../../../api/kernel.api";
+import { NodeApi } from "../../../../../api/node.api";
 import type { NotebookCell, CellOutput } from "../../../../../types/node.types";
 import NotebookCellComponent from "./NotebookCell.vue";
 
@@ -114,11 +115,17 @@ const runCell = async (cellId: string): Promise<boolean> => {
 
   executingCellId.value = cellId;
   try {
+    // Prepare inputs from upstream nodes (writes parquet files)
+    const { input_paths, output_dir } = await NodeApi.prepareInputs(
+      props.flowId,
+      props.nodeId,
+    );
+
     const result = await KernelApi.executeCell(props.kernelId, {
       node_id: props.nodeId,
       code: cell.code,
-      input_paths: {},
-      output_dir: "",
+      input_paths,
+      output_dir,
       flow_id: props.flowId,
     });
 
