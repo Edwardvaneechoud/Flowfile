@@ -1,6 +1,6 @@
 [project]
 name = "kernel_runtime"
-version = "0.1.0"
+version = "0.2.2"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
 requires-python = ">=3.10"
 dependencies = [
