@@ -887,11 +887,19 @@ class NodePolarsCode(NodeMultiInput):
     polars_code_input: transform_schema.PolarsCodeInput
 
 
+class NotebookCell(BaseModel):
+    """A single cell in the notebook editor."""
+
+    id: str
+    code: str = ""
+
+
 class PythonScriptInput(BaseModel):
     """Settings for Python code execution on a kernel."""
 
     code: str = ""
     kernel_id: str | None = None
+    cells: list[NotebookCell] | None = None
 
 
 class NodePythonScript(NodeMultiInput):
