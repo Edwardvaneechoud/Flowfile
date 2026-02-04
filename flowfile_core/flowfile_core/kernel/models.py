@@ -12,6 +12,12 @@ class KernelState(str, Enum):
     ERROR = "error"
 
 
+class RecoveryMode(str, Enum):
+    LAZY = "lazy"
+    EAGER = "eager"
+    CLEAR = "clear"  # Clears all persisted artifacts on startup (destructive)
+
+
 class KernelConfig(BaseModel):
     id: str
     name: str
@@ -20,6 +26,9 @@ class KernelConfig(BaseModel):
     memory_gb: float = 4.0
     gpu: bool = False
     health_timeout: int = 120
+    # Persistence configuration
+    persistence_enabled: bool = True
+    recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
 class KernelInfo(BaseModel):
@@ -36,6 +45,9 @@ class KernelInfo(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
     kernel_version: str | None = None
+    # Persistence configuration
+    persistence_enabled: bool = True
+    recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
 class DockerStatus(BaseModel):
@@ -74,3 +86,48 @@ class ExecuteResult(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Artifact Persistence & Recovery models
+# ---------------------------------------------------------------------------
+
+
+class RecoveryStatus(BaseModel):
+    status: str  # "pending", "recovering", "completed", "error", "disabled"
+    mode: str | None = None
+    recovered: list[str] = Field(default_factory=list)
+    indexed: int | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+class ArtifactIdentifier(BaseModel):
+    """Identifies a specific artifact by flow_id and name."""
+    flow_id: int
+    name: str
+
+
+class CleanupRequest(BaseModel):
+    """Request to clean up old persisted artifacts."""
+    max_age_hours: float | None = None
+    artifact_names: list[ArtifactIdentifier] | None = Field(
+        default=None,
+        description="List of specific artifacts to delete",
+    )
+
+
+class CleanupResult(BaseModel):
+    status: str
+    removed_count: int = 0
+
+
+class ArtifactPersistenceInfo(BaseModel):
+    """Persistence configuration and stats for a kernel."""
+    enabled: bool
+    recovery_mode: str = "lazy"
+    kernel_id: str | None = None
+    persistence_path: str | None = None
+    persisted_count: int = 0
+    in_memory_count: int = 0
+    disk_usage_bytes: int = 0
+    artifacts: dict = Field(default_factory=dict)
