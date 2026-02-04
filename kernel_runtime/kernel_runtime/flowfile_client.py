@@ -10,6 +10,35 @@ import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
 
+
+def _translate_host_path_to_container(host_path: str) -> str:
+    """Translate a host filesystem path to the container's /shared mount.
+
+    When running in Docker, the host's shared directory is mounted at /shared.
+    Core API returns paths using the host's perspective, so we need to translate
+    them for the kernel container.
+
+    Example:
+        Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
+        Container: /shared/artifact_staging/1_test.pkl
+    """
+    host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
+    if not host_shared_dir:
+        # Not running in Docker or env var not set - use path as-is
+        return host_path
+
+    # Replace host shared dir prefix with /shared
+    if host_path.startswith(host_shared_dir):
+        relative_path = host_path[len(host_shared_dir):]
+        # Handle both with and without trailing slash
+        if relative_path.startswith("/"):
+            return f"/shared{relative_path}"
+        else:
+            return f"/shared/{relative_path}"
+
+    # Path doesn't start with host shared dir - return as-is
+    return host_path
+
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
 # Reusable HTTP client for log callbacks (created per execution context)
@@ -261,8 +290,10 @@ def publish_global(
         # 2. Serialize and write directly to storage
         if target["method"] == "file":
             # Shared filesystem - write to staging path
-            sha256 = serialize_to_file(obj, target["path"], format)
-            size_bytes = os.path.getsize(target["path"])
+            # Translate host path to container path if running in Docker
+            staging_path = _translate_host_path_to_container(target["path"])
+            sha256 = serialize_to_file(obj, staging_path, format)
+            size_bytes = os.path.getsize(staging_path)
         else:
             # S3 presigned URL - upload directly
             blob, sha256 = serialize_to_bytes(obj, format)
@@ -339,8 +370,9 @@ def get_global(
 
         # 2. Read directly from storage
         if download["method"] == "file":
-            # Shared filesystem
-            obj = deserialize_from_file(download["path"], format)
+            # Shared filesystem - translate host path to container path if in Docker
+            file_path = _translate_host_path_to_container(download["path"])
+            obj = deserialize_from_file(file_path, format)
         else:
             # S3 presigned URL
             download_resp = client.get(download["path"], timeout=600.0)

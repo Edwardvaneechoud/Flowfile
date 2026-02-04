@@ -229,6 +229,8 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
             # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
             env["FLOWFILE_KERNEL_ID"] = kernel_id
+            # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
+            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
             # Persistence settings from kernel config
             env["KERNEL_ID"] = kernel_id
             env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
@@ -295,6 +297,8 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
             # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
             env["FLOWFILE_KERNEL_ID"] = kernel_id
+            # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
+            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
             # Persistence settings from kernel config
             env["KERNEL_ID"] = kernel_id
             env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
