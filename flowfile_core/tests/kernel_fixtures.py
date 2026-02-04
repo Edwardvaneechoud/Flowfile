@@ -234,9 +234,25 @@ def managed_kernel(
 
     manager = KernelManager(shared_volume_path=shared_dir)
 
+    # 5 — Clean up any existing kernel with this ID (from previous failed runs)
+    loop = asyncio.new_event_loop()
     try:
-        # 5 — Create + start
-        loop = asyncio.new_event_loop()
+        existing = manager.get_kernel(kernel_id)
+        if existing:
+            logger.info("Found existing kernel '%s', deleting it first", kernel_id)
+            try:
+                loop.run_until_complete(manager.stop_kernel(kernel_id))
+            except Exception:
+                pass
+            try:
+                loop.run_until_complete(manager.delete_kernel(kernel_id))
+            except Exception:
+                pass
+    except Exception:
+        pass  # Kernel doesn't exist, that's fine
+
+    try:
+        # 6 — Create + start
         config = KernelConfig(
             id=kernel_id,
             name="Integration Test Kernel",
@@ -248,7 +264,7 @@ def managed_kernel(
         yield manager, kernel_id
 
     finally:
-        # 6 — Tear down
+        # 7 — Tear down
         try:
             loop.run_until_complete(manager.stop_kernel(kernel_id))
         except Exception as exc:
