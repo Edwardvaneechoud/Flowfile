@@ -31,3 +31,29 @@ export interface KernelInfo {
   error_message: string | null;
   kernel_version: string | null;
 }
+
+export interface DisplayOutput {
+  mime_type: string;
+  data: string;
+  title: string;
+}
+
+export interface ExecuteResult {
+  success: boolean;
+  output_paths: string[];
+  artifacts_published: string[];
+  artifacts_deleted: string[];
+  display_outputs: DisplayOutput[];
+  stdout: string;
+  stderr: string;
+  error: string | null;
+  execution_time_ms: number;
+}
+
+export interface ExecuteCellRequest {
+  node_id: number;
+  code: string;
+  input_paths: Record<string, string[]>;
+  output_dir: string;
+  flow_id: number;
+}
