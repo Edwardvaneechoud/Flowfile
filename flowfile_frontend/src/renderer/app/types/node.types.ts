@@ -2,6 +2,7 @@
 // Consolidated from features/designer/baseNode/nodeInterfaces.ts and nodeInput.ts
 
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
+import type { DisplayOutput } from "./kernel.types";
 
 // ============================================================================
 // Data Type Definitions
@@ -524,9 +525,25 @@ export interface PolarsCodeInput {
 // Python Script Types
 // ============================================================================
 
+export interface CellOutput {
+  stdout: string;
+  stderr: string;
+  display_outputs: DisplayOutput[];
+  error: string | null;
+  execution_time_ms: number;
+  execution_count: number;
+}
+
+export interface NotebookCell {
+  id: string;
+  code: string;
+  output?: CellOutput | null;
+}
+
 export interface PythonScriptInput {
   code: string;
   kernel_id: string | null;
+  cells?: NotebookCell[];
 }
 
 // ============================================================================
