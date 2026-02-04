@@ -5,9 +5,13 @@ These tests verify that publish_global, get_global, list_global_artifacts,
 and delete_global_artifact work correctly when executed from within a kernel
 container against the live Core API.
 
+Uses the `kernel_manager_with_core` fixture which:
+- Starts the Core API server (for global artifacts endpoints)
+- Sets up authentication tokens for kernel ↔ Core communication
+- Builds and starts a kernel container
+
 Requires:
 - Docker available (for kernel container)
-- flowfile_worker running (provides Core API endpoints)
 """
 
 import asyncio
@@ -74,9 +78,9 @@ def _handle_run_info(run_info: RunInformation):
 class TestGlobalArtifactsKernelRuntime:
     """Tests that exercise global artifact functions directly via KernelManager."""
 
-    def test_publish_global_basic(self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts):
+    def test_publish_global_basic(self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts):
         """publish_global stores an object to persistent storage."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 artifact_id = flowfile.publish_global("kernel_test_model", {"accuracy": 0.95, "type": "classifier"})
@@ -97,10 +101,10 @@ print(f"Published artifact with ID: {artifact_id}")
         assert "Published artifact with ID:" in result.stdout
 
     def test_publish_and_get_global_roundtrip(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global then get_global retrieves the same data."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         # Publish an artifact
         publish_code = '''
@@ -144,10 +148,10 @@ print("Roundtrip successful!")
         assert "Roundtrip successful!" in result.stdout
 
     def test_publish_global_with_metadata(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global includes description and tags."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 artifact_id = flowfile.publish_global(
@@ -172,10 +176,10 @@ print(f"Published with tags, id={artifact_id}")
         assert result.success, f"Failed: {result.error}"
 
     def test_list_global_artifacts(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """list_global_artifacts returns published artifacts."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         # Publish two artifacts
         setup_code = '''
@@ -218,10 +222,10 @@ print(f"Found {len(artifacts)} artifacts")
         assert result.success, f"List failed: {result.error}"
 
     def test_delete_global_artifact(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """delete_global_artifact removes an artifact."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         # Publish then delete
         code = '''
@@ -257,10 +261,10 @@ except KeyError:
         assert "Correctly deleted artifact" in result.stdout
 
     def test_get_nonexistent_raises_key_error(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """get_global raises KeyError for nonexistent artifact."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 try:
@@ -284,10 +288,10 @@ except KeyError as e:
         assert "Correctly raised KeyError" in result.stdout
 
     def test_versioning_on_republish(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """Publishing to same name creates a new version."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 # Publish v1
@@ -333,10 +337,10 @@ class TestGlobalArtifactsFlowGraph:
     """Tests that wire up global artifact calls inside FlowGraph python_script nodes."""
 
     def test_publish_global_in_flow(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """python_script node can publish a global artifact."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
         import flowfile_core.kernel as _kernel_mod
 
         _prev = _kernel_mod._manager
@@ -409,10 +413,10 @@ print("Flow-published global artifact verified!")
             _kernel_mod._manager = _prev
 
     def test_use_global_artifact_across_flows(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """Global artifacts persist across separate flow runs."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
         import flowfile_core.kernel as _kernel_mod
 
         _prev = _kernel_mod._manager
@@ -531,10 +535,10 @@ class TestGlobalArtifactsComplexTypes:
     """Tests for publishing various Python object types as global artifacts."""
 
     def test_publish_numpy_array(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global handles numpy arrays via joblib serialization."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 import numpy as np
@@ -564,10 +568,10 @@ print("Numpy array roundtrip successful!")
         assert "Numpy array roundtrip successful!" in result.stdout
 
     def test_publish_polars_dataframe(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global handles Polars DataFrames via parquet serialization."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 import polars as pl
@@ -602,10 +606,10 @@ print("Polars DataFrame roundtrip successful!")
         assert "Polars DataFrame roundtrip successful!" in result.stdout
 
     def test_publish_nested_dict(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global handles complex nested dictionaries."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 # Publish a complex nested structure
@@ -649,10 +653,10 @@ print("Nested dict roundtrip successful!")
         assert "Nested dict roundtrip successful!" in result.stdout
 
     def test_publish_custom_class(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """publish_global handles custom class instances via pickle."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 class ModelWrapper:
@@ -699,10 +703,10 @@ class TestGlobalArtifactsErrorHandling:
     """Tests for error handling in global artifact operations."""
 
     def test_delete_nonexistent_raises_key_error(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """delete_global_artifact raises KeyError for nonexistent artifact."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 try:
@@ -726,10 +730,10 @@ except KeyError as e:
         assert "Correctly raised KeyError" in result.stdout
 
     def test_get_specific_version_not_found(
-        self, kernel_manager: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
     ):
         """get_global raises KeyError when specific version doesn't exist."""
-        manager, kernel_id = kernel_manager
+        manager, kernel_id = kernel_manager_with_core
 
         code = '''
 # Publish version 1

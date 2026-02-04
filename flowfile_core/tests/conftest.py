@@ -273,6 +273,10 @@ def kernel_manager():
     KernelManager, starts a test kernel, and tears everything down afterwards.
 
     Yields a (KernelManager, kernel_id) tuple.
+
+    Note: This fixture does NOT start the Core API. For tests that need
+    global artifacts (publish_global, get_global, etc.), use the
+    `kernel_manager_with_core` fixture instead.
     """
     if not is_docker_available():
         pytest.skip("Docker is not available, skipping kernel tests")
@@ -282,6 +286,35 @@ def kernel_manager():
             yield ctx
     except Exception as exc:
         pytest.skip(f"Kernel container could not be started: {exc}")
+
+
+@pytest.fixture(scope="session")
+def kernel_manager_with_core():
+    """
+    Pytest fixture for tests that need kernel + Core API integration.
+
+    This fixture:
+    - Starts the Core API server (for global artifacts endpoints)
+    - Sets up authentication tokens for kernel ↔ Core communication
+    - Builds and starts a kernel container
+    - Tears everything down afterwards
+
+    Use this fixture for tests that call:
+    - flowfile.publish_global()
+    - flowfile.get_global()
+    - flowfile.list_global_artifacts()
+    - flowfile.delete_global_artifact()
+
+    Yields a (KernelManager, kernel_id) tuple.
+    """
+    if not is_docker_available():
+        pytest.skip("Docker is not available, skipping kernel tests")
+
+    try:
+        with managed_kernel(start_core=True) as ctx:
+            yield ctx
+    except Exception as exc:
+        pytest.skip(f"Kernel + Core could not be started: {exc}")
 
 
 @pytest.fixture

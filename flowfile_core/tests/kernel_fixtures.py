@@ -141,57 +141,73 @@ def _remove_container(name: str) -> None:
 @contextmanager
 def managed_kernel(
     packages: list[str] | None = None,
+    start_core: bool = False,
 ) -> Generator[tuple, None, None]:
     """
     Context manager that:
-      1. Generates an internal token for kernel ↔ Core auth
-      2. Starts the Core API server (if not already running)
-      3. Builds the flowfile-kernel Docker image
-      4. Creates a KernelManager with a temp shared volume
-      5. Creates and starts a kernel
-      6. Yields (manager, kernel_id)
-      7. Stops + deletes the kernel and cleans up
+      1. Optionally starts the Core API server (for global artifacts tests)
+      2. Builds the flowfile-kernel Docker image
+      3. Creates a KernelManager with a temp shared volume
+      4. Creates and starts a kernel
+      5. Yields (manager, kernel_id)
+      6. Stops + deletes the kernel and cleans up
+
+    Args:
+        packages: List of Python packages to install in the kernel.
+        start_core: If True, starts the Core API server and sets up auth tokens
+                   for kernel ↔ Core communication. Required for global artifacts.
 
     Usage::
 
+        # Kernel-only tests
         with managed_kernel(packages=["scikit-learn"]) as (manager, kernel_id):
+            result = await manager.execute(kernel_id, request)
+
+        # Tests requiring Core API (global artifacts)
+        with managed_kernel(start_core=True) as (manager, kernel_id):
+            # kernel can now call flowfile.publish_global() etc.
             result = await manager.execute(kernel_id, request)
     """
     from flowfile_core.kernel.manager import KernelManager
     from flowfile_core.kernel.models import KernelConfig
 
-    # 1 — Generate internal token for kernel → Core auth
-    # Save original value to restore later
-    original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-    internal_token = secrets.token_hex(32)
-    os.environ["FLOWFILE_INTERNAL_TOKEN"] = internal_token
-    logger.info("Set FLOWFILE_INTERNAL_TOKEN for kernel ↔ Core auth")
-
-    # Also set FLOWFILE_CORE_URL to ensure kernel can reach Core
-    original_core_url = os.environ.get("FLOWFILE_CORE_URL")
-    os.environ["FLOWFILE_CORE_URL"] = f"http://host.docker.internal:{CORE_TEST_PORT}"
-
-    # 2 — Start Core API server
+    # Track what we need to clean up
     core_started_by_us = False
-    if not _start_core_server():
-        raise RuntimeError("Could not start Core API server for integration tests")
-    core_started_by_us = True
+    original_token = None
+    original_core_url = None
 
-    # 3 — Build image
+    # 1 — Optionally start Core API server and set up auth
+    if start_core:
+        # Save original values to restore later
+        original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+        internal_token = secrets.token_hex(32)
+        os.environ["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+        logger.info("Set FLOWFILE_INTERNAL_TOKEN for kernel ↔ Core auth")
+
+        # Set FLOWFILE_CORE_URL so kernel can reach Core
+        original_core_url = os.environ.get("FLOWFILE_CORE_URL")
+        os.environ["FLOWFILE_CORE_URL"] = f"http://host.docker.internal:{CORE_TEST_PORT}"
+
+        # Start Core API server
+        if not _start_core_server():
+            raise RuntimeError("Could not start Core API server for integration tests")
+        core_started_by_us = True
+
+    # 2 — Build image
     if not _build_kernel_image():
         raise RuntimeError("Could not build flowfile-kernel Docker image")
 
-    # 4 — Ensure stale container is removed
+    # 3 — Ensure stale container is removed
     _remove_container(KERNEL_CONTAINER_NAME)
 
-    # 5 — Temp shared volume
+    # 4 — Temp shared volume
     shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
 
     manager = KernelManager(shared_volume_path=shared_dir)
     kernel_id = KERNEL_TEST_ID
 
     try:
-        # 6 — Create + start
+        # 5 — Create + start
         loop = asyncio.new_event_loop()
         config = KernelConfig(
             id=kernel_id,
@@ -204,7 +220,7 @@ def managed_kernel(
         yield manager, kernel_id
 
     finally:
-        # 7 — Tear down
+        # 6 — Tear down
         try:
             loop.run_until_complete(manager.stop_kernel(kernel_id))
         except Exception as exc:
@@ -227,12 +243,13 @@ def managed_kernel(
         if core_started_by_us:
             _stop_core_server()
 
-        # Restore original environment
-        if original_token is not None:
-            os.environ["FLOWFILE_INTERNAL_TOKEN"] = original_token
-        else:
-            os.environ.pop("FLOWFILE_INTERNAL_TOKEN", None)
-        if original_core_url is not None:
-            os.environ["FLOWFILE_CORE_URL"] = original_core_url
-        else:
-            os.environ.pop("FLOWFILE_CORE_URL", None)
+        # Restore original environment (only if we modified it)
+        if start_core:
+            if original_token is not None:
+                os.environ["FLOWFILE_INTERNAL_TOKEN"] = original_token
+            else:
+                os.environ.pop("FLOWFILE_INTERNAL_TOKEN", None)
+            if original_core_url is not None:
+                os.environ["FLOWFILE_CORE_URL"] = original_core_url
+            else:
+                os.environ.pop("FLOWFILE_CORE_URL", None)
