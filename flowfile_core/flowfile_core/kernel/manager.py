@@ -211,12 +211,23 @@ class KernelManager:
 
         try:
             packages_str = " ".join(kernel.packages)
+            # Build environment with Core URL and internal token for global artifacts
+            env = {"KERNEL_PACKAGES": packages_str}
+            # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
+            core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+            env["FLOWFILE_CORE_URL"] = core_url
+            # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
+            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+            if internal_token:
+                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+            # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
+            env["FLOWFILE_KERNEL_ID"] = kernel_id
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {"KERNEL_PACKAGES": packages_str},
+                "environment": env,
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},
@@ -261,12 +272,23 @@ class KernelManager:
 
         try:
             packages_str = " ".join(kernel.packages)
+            # Build environment with Core URL and internal token for global artifacts
+            env = {"KERNEL_PACKAGES": packages_str}
+            # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
+            core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+            env["FLOWFILE_CORE_URL"] = core_url
+            # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
+            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+            if internal_token:
+                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+            # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
+            env["FLOWFILE_KERNEL_ID"] = kernel_id
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {"KERNEL_PACKAGES": packages_str},
+                "environment": env,
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},

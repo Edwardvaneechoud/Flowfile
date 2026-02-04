@@ -66,7 +66,9 @@ async def execute(request: ExecuteRequest):
         )
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-            exec(request.code, {"flowfile": flowfile_client})  # noqa: S102
+            # Provide __name__ and __builtins__ so classes defined in user code
+            # get __module__ = "__main__" instead of "builtins", enabling pickle to work
+            exec(request.code, {"flowfile": flowfile_client, "__builtins__": __builtins__, "__name__": "__main__"})  # noqa: S102
 
         # Collect output parquet files
         output_paths: list[str] = []

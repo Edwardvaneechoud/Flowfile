@@ -8,19 +8,97 @@ create a KernelManager, start/stop kernels, and clean up.
 import asyncio
 import logging
 import os
+import secrets
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+
+import httpx
+import uvicorn
 
 logger = logging.getLogger("kernel_fixture")
 
 KERNEL_IMAGE = "flowfile-kernel"
 KERNEL_TEST_ID = "integration-test"
 KERNEL_CONTAINER_NAME = f"flowfile-kernel-{KERNEL_TEST_ID}"
+CORE_TEST_PORT = 63578
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Global reference to the Core server thread for cleanup
+_core_server_thread: threading.Thread | None = None
+_core_server_instance: uvicorn.Server | None = None
+
+
+def _start_core_server() -> bool:
+    """Start the Core API server in a background thread.
+
+    Returns True if the server started successfully, False otherwise.
+    """
+    global _core_server_thread, _core_server_instance
+
+    # Check if already running
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"http://localhost:{CORE_TEST_PORT}/health/status")
+            if resp.status_code == 200:
+                logger.info("Core API already running on port %d", CORE_TEST_PORT)
+                return True
+    except (httpx.HTTPError, OSError):
+        pass
+
+    logger.info("Starting Core API server on port %d ...", CORE_TEST_PORT)
+
+    # Import here to avoid circular imports
+    from flowfile_core.main import app
+
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=CORE_TEST_PORT,
+        log_level="warning",
+    )
+    _core_server_instance = uvicorn.Server(config)
+
+    def run_server():
+        _core_server_instance.run()
+
+    _core_server_thread = threading.Thread(target=run_server, daemon=True)
+    _core_server_thread.start()
+
+    # Wait for server to become healthy
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get(f"http://localhost:{CORE_TEST_PORT}/health/status")
+                if resp.status_code == 200:
+                    logger.info("Core API server started successfully")
+                    return True
+        except (httpx.HTTPError, OSError):
+            pass
+        time.sleep(0.5)
+
+    logger.error("Core API server failed to start within timeout")
+    return False
+
+
+def _stop_core_server() -> None:
+    """Stop the Core API server."""
+    global _core_server_thread, _core_server_instance
+
+    if _core_server_instance is not None:
+        logger.info("Stopping Core API server...")
+        _core_server_instance.should_exit = True
+        if _core_server_thread is not None:
+            _core_server_thread.join(timeout=5)
+        _core_server_instance = None
+        _core_server_thread = None
+        logger.info("Core API server stopped")
 
 
 def _build_kernel_image() -> bool:
@@ -66,11 +144,13 @@ def managed_kernel(
 ) -> Generator[tuple, None, None]:
     """
     Context manager that:
-      1. Builds the flowfile-kernel Docker image
-      2. Creates a KernelManager with a temp shared volume
-      3. Creates and starts a kernel
-      4. Yields (manager, kernel_id)
-      5. Stops + deletes the kernel and cleans up
+      1. Generates an internal token for kernel ↔ Core auth
+      2. Starts the Core API server (if not already running)
+      3. Builds the flowfile-kernel Docker image
+      4. Creates a KernelManager with a temp shared volume
+      5. Creates and starts a kernel
+      6. Yields (manager, kernel_id)
+      7. Stops + deletes the kernel and cleans up
 
     Usage::
 
@@ -80,21 +160,38 @@ def managed_kernel(
     from flowfile_core.kernel.manager import KernelManager
     from flowfile_core.kernel.models import KernelConfig
 
-    # 1 — Build image
+    # 1 — Generate internal token for kernel → Core auth
+    # Save original value to restore later
+    original_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+    internal_token = secrets.token_hex(32)
+    os.environ["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+    logger.info("Set FLOWFILE_INTERNAL_TOKEN for kernel ↔ Core auth")
+
+    # Also set FLOWFILE_CORE_URL to ensure kernel can reach Core
+    original_core_url = os.environ.get("FLOWFILE_CORE_URL")
+    os.environ["FLOWFILE_CORE_URL"] = f"http://host.docker.internal:{CORE_TEST_PORT}"
+
+    # 2 — Start Core API server
+    core_started_by_us = False
+    if not _start_core_server():
+        raise RuntimeError("Could not start Core API server for integration tests")
+    core_started_by_us = True
+
+    # 3 — Build image
     if not _build_kernel_image():
         raise RuntimeError("Could not build flowfile-kernel Docker image")
 
-    # 2 — Ensure stale container is removed
+    # 4 — Ensure stale container is removed
     _remove_container(KERNEL_CONTAINER_NAME)
 
-    # 3 — Temp shared volume
+    # 5 — Temp shared volume
     shared_dir = tempfile.mkdtemp(prefix="kernel_test_shared_")
 
     manager = KernelManager(shared_volume_path=shared_dir)
     kernel_id = KERNEL_TEST_ID
 
     try:
-        # 4 — Create + start
+        # 6 — Create + start
         loop = asyncio.new_event_loop()
         config = KernelConfig(
             id=kernel_id,
@@ -107,7 +204,7 @@ def managed_kernel(
         yield manager, kernel_id
 
     finally:
-        # 5 — Tear down
+        # 7 — Tear down
         try:
             loop.run_until_complete(manager.stop_kernel(kernel_id))
         except Exception as exc:
@@ -125,3 +222,17 @@ def managed_kernel(
         import shutil
 
         shutil.rmtree(shared_dir, ignore_errors=True)
+
+        # Stop Core server if we started it
+        if core_started_by_us:
+            _stop_core_server()
+
+        # Restore original environment
+        if original_token is not None:
+            os.environ["FLOWFILE_INTERNAL_TOKEN"] = original_token
+        else:
+            os.environ.pop("FLOWFILE_INTERNAL_TOKEN", None)
+        if original_core_url is not None:
+            os.environ["FLOWFILE_CORE_URL"] = original_core_url
+        else:
+            os.environ.pop("FLOWFILE_CORE_URL", None)
