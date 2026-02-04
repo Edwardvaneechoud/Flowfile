@@ -12,6 +12,9 @@ export interface PanelState {
   top: number
   isMinimized: boolean
   zIndex?: number
+  // Viewport dimensions at the time of saving (for resize detection on load)
+  savedViewportWidth?: number
+  savedViewportHeight?: number
 }
 
 interface StoredPanelStates {

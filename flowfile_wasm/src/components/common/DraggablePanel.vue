@@ -104,7 +104,10 @@ function saveCurrentState() {
     left: left.value,
     top: top.value,
     isMinimized: isMinimized.value,
-    zIndex: zIndex.value
+    zIndex: zIndex.value,
+    // Save viewport dimensions to detect resize on next load
+    savedViewportWidth: window.innerWidth,
+    savedViewportHeight: window.innerHeight
   }
   savePanelState(props.panelId, state)
 }
@@ -312,22 +315,64 @@ onMounted(() => {
   if (props.panelId) {
     const savedState = getPanelState(props.panelId)
     if (savedState) {
-      // Validate saved position is still within viewport using smart constraints
-      const validWidth = Math.max(MIN_PANEL_WIDTH, Math.min(savedState.width, vw))
-      const validHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(savedState.height, vh))
-      const validLeft = Math.max(0, Math.min(savedState.left, vw - MIN_VISIBLE_HEADER))
-      const validTop = Math.max(0, Math.min(savedState.top, vh - MIN_VISIBLE_HEADER))
+      // Check if viewport has changed since state was saved
+      const savedVw = savedState.savedViewportWidth
+      const savedVh = savedState.savedViewportHeight
+      const hasViewportInfo = savedVw !== undefined && savedVh !== undefined
+      const viewportChanged = hasViewportInfo && (savedVw !== vw || savedVh !== vh)
 
-      width.value = validWidth
-      height.value = validHeight
-      left.value = validLeft
-      top.value = validTop
-      isMinimized.value = savedState.isMinimized
+      if (!hasViewportInfo) {
+        // No viewport info saved (old saved state) - reset to initial position
+        // to ensure proper layout on first load with new code
+        resetToInitialPosition()
 
-      // Restore zIndex if saved, and update the store
-      if (savedState.zIndex !== undefined) {
-        zIndex.value = savedState.zIndex
-        zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
+        // Restore zIndex if saved, and update the store
+        if (savedState.zIndex !== undefined) {
+          zIndex.value = savedState.zIndex
+          zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
+        }
+
+        // Save the new state with viewport info
+        saveCurrentState()
+      } else if (viewportChanged) {
+        // Viewport changed - use the saved viewport dimensions for smart resize calculation
+        // First, restore the saved state temporarily
+        width.value = savedState.width
+        height.value = savedState.height
+        left.value = savedState.left
+        top.value = savedState.top
+        isMinimized.value = savedState.isMinimized
+
+        // Set prevViewport to the saved dimensions so smart resize calculates correctly
+        prevViewportWidth = savedVw!
+        prevViewportHeight = savedVh!
+
+        // Apply smart resize to recalculate position for new viewport
+        handleWindowResizeSmartly()
+
+        // Restore zIndex if saved, and update the store
+        if (savedState.zIndex !== undefined) {
+          zIndex.value = savedState.zIndex
+          zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
+        }
+      } else {
+        // Viewport same as when saved - validate and restore directly
+        const validWidth = Math.max(MIN_PANEL_WIDTH, Math.min(savedState.width, vw))
+        const validHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(savedState.height, vh))
+        const validLeft = Math.max(0, Math.min(savedState.left, vw - MIN_VISIBLE_HEADER))
+        const validTop = Math.max(0, Math.min(savedState.top, vh - MIN_VISIBLE_HEADER))
+
+        width.value = validWidth
+        height.value = validHeight
+        left.value = validLeft
+        top.value = validTop
+        isMinimized.value = savedState.isMinimized
+
+        // Restore zIndex if saved, and update the store
+        if (savedState.zIndex !== undefined) {
+          zIndex.value = savedState.zIndex
+          zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
+        }
       }
 
       // Add resize listener before returning
