@@ -215,6 +215,9 @@ class KernelManager:
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
+        # Remove any stale container with the same name (e.g., from Docker restart)
+        self._remove_stale_container(kernel_id)
+
         try:
             packages_str = " ".join(kernel.packages)
             run_kwargs: dict = {
@@ -270,6 +273,9 @@ class KernelManager:
 
         kernel.state = KernelState.STARTING
         kernel.error_message = None
+
+        # Remove any stale container with the same name (e.g., from Docker restart)
+        self._remove_stale_container(kernel_id)
 
         try:
             packages_str = " ".join(kernel.packages)
@@ -570,6 +576,34 @@ class KernelManager:
             pass
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
+
+    def _remove_stale_container(self, kernel_id: str) -> None:
+        """Remove any existing container with the kernel's name, regardless of state.
+
+        This handles the case where Docker was restarted and left stopped containers
+        that would cause a name conflict when trying to create a new container.
+        """
+        container_name = f"flowfile-kernel-{kernel_id}"
+        try:
+            # Use list with all=True to find containers in any state (running, stopped, exited)
+            containers = self._docker.containers.list(
+                all=True, filters={"name": container_name}
+            )
+            for container in containers:
+                # Verify exact name match (Docker filters by prefix)
+                if container.name == container_name:
+                    logger.info(
+                        "Removing stale container '%s' (status: %s) before starting kernel '%s'",
+                        container.short_id, container.status, kernel_id,
+                    )
+                    container.stop(timeout=5)
+                    container.remove(force=True)
+        except docker.errors.NotFound:
+            pass
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.warning(
+                "Error removing stale container for kernel '%s': %s", kernel_id, exc
+            )
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
