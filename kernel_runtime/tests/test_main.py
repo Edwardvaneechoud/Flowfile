@@ -158,8 +158,8 @@ class TestExecuteWithParquet:
 
         code = (
             "inputs = flowfile.read_inputs()\n"
-            "left = inputs['left'].collect()\n"
-            "right = inputs['right'].collect()\n"
+            "left = inputs['left'][0].collect()\n"
+            "right = inputs['right'][0].collect()\n"
             "merged = left.join(right, on='id')\n"
             "flowfile.publish_output(merged)\n"
         )

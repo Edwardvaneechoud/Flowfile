@@ -98,18 +98,16 @@ def read_first(name: str = "main") -> pl.LazyFrame:
     return pl.scan_parquet(input_paths[name][0])
 
 
-def read_inputs() -> dict[str, pl.LazyFrame]:
-    """Read all named inputs, returning a dict of LazyFrames.
+def read_inputs() -> dict[str, list[pl.LazyFrame]]:
+    """Read all named inputs, returning a dict of LazyFrame lists.
 
-    Each entry concatenates all paths registered under that name.
+    Each entry contains a list of LazyFrames, one for each connected input.
+    This allows distinguishing between multiple upstream nodes.
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
-    result: dict[str, pl.LazyFrame] = {}
+    result: dict[str, list[pl.LazyFrame]] = {}
     for name, paths in input_paths.items():
-        if len(paths) == 1:
-            result[name] = pl.scan_parquet(paths[0])
-        else:
-            result[name] = pl.scan_parquet(paths)
+        result[name] = [pl.scan_parquet(path) for path in paths]
     return result
 
 
