@@ -17,8 +17,8 @@ export const flowfileCompletionVals = [
   {
     label: "read_inputs",
     type: "function",
-    info: "Read all inputs as a dict of DataFrames.",
-    detail: "flowfile.read_inputs()",
+    info: "Read all inputs as a dict of LazyFrame lists (one per connection).",
+    detail: "flowfile.read_inputs() -> dict[str, list[LazyFrame]]",
     apply: "read_inputs()",
   },
   {
