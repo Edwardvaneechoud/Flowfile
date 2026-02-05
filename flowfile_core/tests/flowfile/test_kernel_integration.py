@@ -197,8 +197,8 @@ flowfile.publish_output(df)
 
         code = """
 inputs = flowfile.read_inputs()
-left = inputs["left"].collect()
-right = inputs["right"].collect()
+left = inputs["left"][0].collect()
+right = inputs["right"][0].collect()
 merged = left.join(right, on="id")
 flowfile.publish_output(merged)
 """

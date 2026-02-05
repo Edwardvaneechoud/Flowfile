@@ -87,7 +87,9 @@ class TestReadInput:
         inputs = flowfile_client.read_inputs()
         assert isinstance(inputs, dict)
         assert "main" in inputs
-        assert isinstance(inputs["main"], pl.LazyFrame)
+        assert isinstance(inputs["main"], list)
+        assert len(inputs["main"]) == 1
+        assert isinstance(inputs["main"][0], pl.LazyFrame)
 
 
 class TestReadMultipleInputs:
@@ -110,8 +112,8 @@ class TestReadMultipleInputs:
 
         inputs = flowfile_client.read_inputs()
         assert set(inputs.keys()) == {"left", "right"}
-        assert inputs["left"].collect()["id"].to_list() == [1, 2]
-        assert inputs["right"].collect()["id"].to_list() == [3, 4]
+        assert inputs["left"][0].collect()["id"].to_list() == [1, 2]
+        assert inputs["right"][0].collect()["id"].to_list() == [3, 4]
 
     def test_read_input_concatenates_multiple_main_paths(self, tmp_dir: Path):
         """When 'main' has multiple paths, read_input returns a union of all."""
@@ -160,7 +162,7 @@ class TestReadMultipleInputs:
             flowfile_client.read_first("nonexistent")
 
     def test_read_inputs_with_multiple_main_paths(self, tmp_dir: Path):
-        """read_inputs should concatenate paths per name."""
+        """read_inputs should return a list of LazyFrames per name."""
         store = ArtifactStore()
         input_dir = tmp_dir / "inputs"
         input_dir.mkdir(exist_ok=True)
@@ -180,8 +182,9 @@ class TestReadMultipleInputs:
         )
 
         inputs = flowfile_client.read_inputs()
-        df = inputs["main"].collect()
-        assert sorted(df["x"].to_list()) == [1, 2, 3]
+        assert len(inputs["main"]) == 3
+        values = [lf.collect()["x"].to_list()[0] for lf in inputs["main"]]
+        assert sorted(values) == [1, 2, 3]
 
 
 class TestPublishOutput:
