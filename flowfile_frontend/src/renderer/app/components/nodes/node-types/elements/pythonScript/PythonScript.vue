@@ -98,9 +98,14 @@
         <div class="setting-block">
           <div class="code-header">
             <label class="setting-label">Code</label>
-            <button class="help-button" title="API Reference" @click="showHelp = true">
-              <i class="fa-solid fa-circle-question"></i>
-            </button>
+            <div class="code-header-actions">
+              <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
+                <i class="fa-solid fa-expand"></i>
+              </button>
+              <button class="icon-button" title="API Reference" @click="showHelp = true">
+                <i class="fa-solid fa-circle-question"></i>
+              </button>
+            </div>
           </div>
           <NotebookEditor
             v-if="showEditor && cells.length > 0"
@@ -116,6 +121,43 @@
 
     <!-- Help Modal -->
     <FlowfileApiHelp v-if="showHelp" @close="showHelp = false" />
+
+    <!-- Expanded Editor Dialog -->
+    <el-dialog
+      v-model="showExpandedEditor"
+      title="Python Script"
+      fullscreen
+      :close-on-click-modal="false"
+      class="expanded-editor-dialog"
+    >
+      <template #header>
+        <div class="expanded-dialog-header">
+          <span class="expanded-dialog-title">Python Script</span>
+          <div class="expanded-dialog-actions">
+            <span v-if="selectedKernelId" class="kernel-indicator">
+              <span
+                class="kernel-state-dot"
+                :class="`kernel-state-dot--${selectedKernelState}`"
+              ></span>
+              {{ kernels.find(k => k.id === selectedKernelId)?.name }}
+            </span>
+            <button class="icon-button" title="API Reference" @click="showHelp = true">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div class="expanded-editor-content">
+        <NotebookEditor
+          v-if="showExpandedEditor && cells.length > 0"
+          :cells="cells"
+          :kernel-id="selectedKernelId"
+          :flow-id="nodePythonScript!.flow_id as number"
+          :node-id="nodePythonScript!.node_id"
+          @update:cells="handleCellsUpdate"
+        />
+      </div>
+    </el-dialog>
   </div>
 
   <CodeLoader v-else />
@@ -142,6 +184,7 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const showEditor = ref(false);
 const showHelp = ref(false);
+const showExpandedEditor = ref(false);
 
 const nodePythonScript = ref<NodePythonScript | null>(null);
 const nodeData = ref<NodeData | null>(null);
@@ -366,18 +409,27 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   justify-content: space-between;
 }
 
-.help-button {
+.code-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-button {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   color: var(--el-text-color-secondary);
-  padding: 0;
+  padding: 0.2rem;
   line-height: 1;
+  border-radius: 3px;
+  transition: all 0.15s;
 }
 
-.help-button:hover {
+.icon-button:hover {
   color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
 }
 
 /* ─── Setting blocks ─────────────────────────────────────────────────────── */
@@ -527,5 +579,44 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .artifacts-empty {
   color: var(--el-text-color-placeholder);
   font-style: italic;
+}
+
+/* ─── Expanded Editor Dialog ─────────────────────────────────────────────── */
+
+.expanded-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 2rem;
+}
+
+.expanded-dialog-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.expanded-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.kernel-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+  padding: 0.25rem 0.75rem;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
+
+.expanded-editor-content {
+  height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 0 1rem;
 }
 </style>
