@@ -68,6 +68,162 @@ def _get_context_value(key: str) -> Any:
     return ctx[key]
 
 
+def _translate_host_path_to_container(host_path: str) -> str:
+    """Translate a host filesystem path to the container's /shared mount."""
+    host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
+    if not host_shared_dir:
+        return host_path
+    try:
+        host_path_obj = Path(host_path).resolve()
+        host_shared_obj = Path(host_shared_dir).resolve()
+        relative = host_path_obj.relative_to(host_shared_obj)
+        return str(Path("/shared") / relative)
+    except ValueError:
+        return host_path
+
+
+def _get_shared_base_dir() -> Path:
+    """Return the base directory for user shared files."""
+    shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+    if shared_dir:
+        return Path(shared_dir) / "user_files"
+    # Inside a Docker container, the shared volume is at /shared
+    if os.path.isdir("/shared"):
+        return Path("/shared/user_files")
+    # Local development fallback
+    return Path.home() / ".flowfile" / "shared" / "user_files"
+
+
+# ===== Shared File I/O APIs =====
+
+
+def shared_path(filename: str) -> str:
+    """Get the full path to a file in the shared directory.
+
+    Use this to read/write files that persist across kernel executions
+    and are accessible from both kernel and Core.
+
+    Args:
+        filename: Relative path within the shared directory.
+                  Can include subdirectories (e.g., "exports/report.csv").
+
+    Returns:
+        Absolute path string usable with any file I/O library.
+
+    Raises:
+        ValueError: If the filename attempts path traversal.
+
+    Examples:
+        >>> import flowfile
+        >>> import polars as pl
+        >>>
+        >>> # Write a CSV
+        >>> df.write_csv(flowfile.shared_path("my_export.csv"))
+        >>>
+        >>> # Read it back
+        >>> df = pl.read_csv(flowfile.shared_path("my_export.csv"))
+        >>>
+        >>> # Use subdirectories
+        >>> df.write_parquet(flowfile.shared_path("models/training_data.parquet"))
+    """
+    base_dir = _get_shared_base_dir()
+    resolved = (base_dir / filename).resolve()
+    base_resolved = base_dir.resolve()
+    if not str(resolved).startswith(str(base_resolved) + os.sep) and resolved != base_resolved:
+        raise ValueError(f"Path '{filename}' escapes the shared directory")
+    os.makedirs(resolved.parent, exist_ok=True)
+    return str(resolved)
+
+
+def write_shared(filename: str, data: bytes | str) -> str:
+    """Write data to a file in the shared directory.
+
+    Args:
+        filename: Relative path within the shared directory.
+        data: Content to write (str for text, bytes for binary).
+
+    Returns:
+        The absolute path of the written file.
+    """
+    path = shared_path(filename)
+    if isinstance(data, bytes):
+        with open(path, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    else:
+        with open(path, "w") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    return path
+
+
+def read_shared(filename: str, mode: str = "r") -> str | bytes:
+    """Read a file from the shared directory.
+
+    Args:
+        filename: Relative path within the shared directory.
+        mode: "r" for text (default), "rb" for binary.
+
+    Returns:
+        File contents as str or bytes.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    path = shared_path(filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Shared file '{filename}' not found at {path}")
+    with open(path, mode) as f:
+        return f.read()
+
+
+def list_shared(subdirectory: str = "") -> list[str]:
+    """List files in the shared directory.
+
+    Args:
+        subdirectory: Optional subdirectory to list (relative to shared root).
+
+    Returns:
+        List of filenames (relative to the shared directory root).
+    """
+    base_dir = _get_shared_base_dir()
+    if subdirectory:
+        target = (base_dir / subdirectory).resolve()
+        base_resolved = base_dir.resolve()
+        if not str(target).startswith(str(base_resolved) + os.sep) and target != base_resolved:
+            raise ValueError(f"Subdirectory '{subdirectory}' escapes the shared directory")
+    else:
+        target = base_dir
+
+    if not target.exists():
+        return []
+
+    results: list[str] = []
+    for item in sorted(target.iterdir()):
+        if subdirectory:
+            results.append(f"{subdirectory}/{item.name}")
+        else:
+            results.append(item.name)
+    return results
+
+
+def delete_shared(filename: str) -> None:
+    """Delete a file from the shared directory.
+
+    Args:
+        filename: Relative path within the shared directory.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    path = shared_path(filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Shared file '{filename}' not found at {path}")
+    os.remove(path)
+
+
 def read_input(name: str = "main") -> pl.LazyFrame:
     """Read all input files for *name* and return them as a single LazyFrame.
 

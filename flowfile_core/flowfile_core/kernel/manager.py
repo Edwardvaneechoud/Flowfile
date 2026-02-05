@@ -165,6 +165,22 @@ class KernelManager:
         )
 
     # ------------------------------------------------------------------
+    # Environment
+    # ------------------------------------------------------------------
+
+    def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
+        """Build the environment variable dict for a kernel container."""
+        env: dict[str, str] = {
+            "KERNEL_PACKAGES": " ".join(kernel.packages),
+            "KERNEL_ID": kernel_id,
+            "PERSISTENCE_ENABLED": "true" if kernel.persistence_enabled else "false",
+            "PERSISTENCE_PATH": "/shared/artifacts",
+            "RECOVERY_MODE": kernel.recovery_mode.value,
+            "FLOWFILE_HOST_SHARED_DIR": self._shared_volume,
+        }
+        return env
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -216,19 +232,13 @@ class KernelManager:
         kernel.error_message = None
 
         try:
-            packages_str = " ".join(kernel.packages)
+            env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {
-                    "KERNEL_PACKAGES": packages_str,
-                    "KERNEL_ID": kernel_id,
-                    "PERSISTENCE_ENABLED": "true" if kernel.persistence_enabled else "false",
-                    "PERSISTENCE_PATH": "/shared/artifacts",
-                    "RECOVERY_MODE": kernel.recovery_mode.value,
-                },
+                "environment": env,
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},
@@ -272,19 +282,13 @@ class KernelManager:
         kernel.error_message = None
 
         try:
-            packages_str = " ".join(kernel.packages)
+            env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs: dict = {
                 "detach": True,
                 "name": f"flowfile-kernel-{kernel_id}",
                 "ports": {"9999/tcp": kernel.port},
                 "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": {
-                    "KERNEL_PACKAGES": packages_str,
-                    "KERNEL_ID": kernel_id,
-                    "PERSISTENCE_ENABLED": "true" if kernel.persistence_enabled else "false",
-                    "PERSISTENCE_PATH": "/shared/artifacts",
-                    "RECOVERY_MODE": kernel.recovery_mode.value,
-                },
+                "environment": env,
                 "mem_limit": f"{kernel.memory_gb}g",
                 "nano_cpus": int(kernel.cpu_cores * 1e9),
                 "extra_hosts": {"host.docker.internal": "host-gateway"},

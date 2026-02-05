@@ -16,6 +16,8 @@ DirectoryOptions = Literal[
     "cache_directory",
     "flows_directory",
     "user_defined_nodes_directory",
+    "shared_directory",
+    "user_files_directory",
 ]
 
 
@@ -133,6 +135,22 @@ class FlowfileStorage:
         return self.base_directory / "logs"
 
     @property
+    def shared_directory(self) -> Path:
+        """Directory shared between core and kernel containers."""
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir)
+        if _is_docker_mode():
+            return Path("/shared")
+        else:
+            return self.base_directory / "shared"
+
+    @property
+    def user_files_directory(self) -> Path:
+        """Directory for user-created files in the shared volume."""
+        return self.shared_directory / "user_files"
+
+    @property
     def temp_directory(self) -> Path:
         """Directory for temporary files (internal)."""
         return self.base_directory / "temp"
@@ -152,6 +170,8 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.shared_directory,
+            self.user_files_directory,
         ]
 
         # User-accessible directories (location depends on environment)
@@ -268,3 +288,13 @@ def get_logs_directory() -> str:
 def get_system_logs_directory() -> str:
     """Get system logs directory path as string."""
     return str(storage.system_logs_directory)
+
+
+def get_shared_directory() -> str:
+    """Get shared directory path as string."""
+    return str(storage.shared_directory)
+
+
+def get_user_files_directory() -> str:
+    """Get user files directory path as string."""
+    return str(storage.user_files_directory)
