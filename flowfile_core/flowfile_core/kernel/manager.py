@@ -215,10 +215,16 @@ class KernelManager:
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
-        # Remove any stale container with the same name (e.g., from Docker restart)
-        self._remove_stale_container(kernel_id)
-
         try:
+            # Try to reuse an existing container (e.g., from Docker restart)
+            if self._try_reuse_existing_container(kernel_id, kernel):
+                # Container was restarted, just wait for it to be healthy
+                await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
+                kernel.state = KernelState.IDLE
+                logger.info("Kernel '%s' is idle (reused container)", kernel_id)
+                return kernel
+
+            # No existing container to reuse, create a new one
             packages_str = " ".join(kernel.packages)
             run_kwargs: dict = {
                 "detach": True,
@@ -274,10 +280,16 @@ class KernelManager:
         kernel.state = KernelState.STARTING
         kernel.error_message = None
 
-        # Remove any stale container with the same name (e.g., from Docker restart)
-        self._remove_stale_container(kernel_id)
-
         try:
+            # Try to reuse an existing container (e.g., from Docker restart)
+            if self._try_reuse_existing_container(kernel_id, kernel):
+                # Container was restarted, just wait for it to be healthy
+                self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
+                kernel.state = KernelState.IDLE
+                flow_logger.info(f"Kernel {kernel_id} is idle (reused container)") if flow_logger else None
+                return kernel
+
+            # No existing container to reuse, create a new one
             packages_str = " ".join(kernel.packages)
             run_kwargs: dict = {
                 "detach": True,
@@ -299,14 +311,14 @@ class KernelManager:
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
-            flow_logger.info(f"Kernel  {kernel_id} is idle (container {container.short_id})") if flow_logger else None
+            flow_logger.info(f"Kernel {kernel_id} is idle (container {container.short_id})") if flow_logger else None
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
             self._cleanup_container(kernel_id)
             raise
-        flow_logger.info(f"Kernel  {kernel_id} started (container {container.short_id})") if flow_logger else None
+        flow_logger.info(f"Kernel {kernel_id} started") if flow_logger else None
         return kernel
 
     async def stop_kernel(self, kernel_id: str) -> None:
@@ -577,33 +589,85 @@ class KernelManager:
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
 
-    def _remove_stale_container(self, kernel_id: str) -> None:
-        """Remove any existing container with the kernel's name, regardless of state.
+    def _try_reuse_existing_container(self, kernel_id: str, kernel: KernelInfo) -> bool:
+        """Try to reuse an existing container for this kernel.
 
-        This handles the case where Docker was restarted and left stopped containers
-        that would cause a name conflict when trying to create a new container.
+        If a stopped container exists with the same name, try to restart it and
+        update the kernel's port to match. This is more efficient than removing
+        and recreating the container.
+
+        Returns True if the container was successfully reused, False otherwise.
         """
         container_name = f"flowfile-kernel-{kernel_id}"
         try:
-            # Use list with all=True to find containers in any state (running, stopped, exited)
             containers = self._docker.containers.list(
                 all=True, filters={"name": container_name}
             )
             for container in containers:
-                # Verify exact name match (Docker filters by prefix)
-                if container.name == container_name:
+                if container.name != container_name:
+                    continue
+
+                # Get the port binding from the existing container
+                try:
+                    bindings = container.attrs["NetworkSettings"]["Ports"].get("9999/tcp")
+                    if bindings:
+                        container_port = int(bindings[0]["HostPort"])
+                    else:
+                        # No port binding, can't reuse
+                        logger.info(
+                            "Existing container '%s' has no port binding, removing it",
+                            container.short_id,
+                        )
+                        container.remove(force=True)
+                        return False
+                except (KeyError, IndexError, TypeError, ValueError):
+                    container.remove(force=True)
+                    return False
+
+                if container.status == "running":
+                    # Container is already running, update kernel info and reuse
                     logger.info(
-                        "Removing stale container '%s' (status: %s) before starting kernel '%s'",
+                        "Reusing running container '%s' for kernel '%s' on port %d",
+                        container.short_id, kernel_id, container_port,
+                    )
+                    kernel.container_id = container.id
+                    kernel.port = container_port
+                    return True
+
+                if container.status in ("exited", "created", "paused"):
+                    # Try to restart the stopped container
+                    logger.info(
+                        "Restarting existing container '%s' (status: %s) for kernel '%s'",
                         container.short_id, container.status, kernel_id,
                     )
-                    container.stop(timeout=5)
-                    container.remove(force=True)
+                    try:
+                        container.start()
+                        kernel.container_id = container.id
+                        kernel.port = container_port
+                        return True
+                    except (docker.errors.APIError, docker.errors.DockerException) as exc:
+                        logger.warning(
+                            "Failed to restart container '%s', removing it: %s",
+                            container.short_id, exc,
+                        )
+                        container.remove(force=True)
+                        return False
+
+                # Unknown status, remove and recreate
+                logger.info(
+                    "Container '%s' in unexpected state '%s', removing it",
+                    container.short_id, container.status,
+                )
+                container.remove(force=True)
+                return False
+
         except docker.errors.NotFound:
             pass
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning(
-                "Error removing stale container for kernel '%s': %s", kernel_id, exc
+                "Error checking existing container for kernel '%s': %s", kernel_id, exc
             )
+        return False
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
