@@ -113,6 +113,7 @@
             :kernel-id="selectedKernelId"
             :flow-id="nodePythonScript!.flow_id as number"
             :node-id="nodePythonScript!.node_id"
+            :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
             @update:cells="handleCellsUpdate"
           />
         </div>
@@ -154,6 +155,7 @@
           :kernel-id="selectedKernelId"
           :flow-id="nodePythonScript!.flow_id as number"
           :node-id="nodePythonScript!.node_id"
+          :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
           @update:cells="handleCellsUpdate"
         />
       </div>

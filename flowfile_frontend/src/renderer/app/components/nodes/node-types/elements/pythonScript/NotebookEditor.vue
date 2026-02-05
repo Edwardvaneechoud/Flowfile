@@ -40,8 +40,7 @@
 <script lang="ts" setup>
 import { ref, computed } from "vue";
 import { KernelApi } from "../../../../../api/kernel.api";
-import { NodeApi } from "../../../../../api/node.api";
-import type { NotebookCell, CellOutput } from "../../../../../types/node.types";
+import type { NotebookCell } from "../../../../../types/node.types";
 import NotebookCellComponent from "./NotebookCell.vue";
 
 interface Props {
@@ -49,6 +48,7 @@ interface Props {
   kernelId: string | null;
   flowId: number;
   nodeId: number;
+  dependingOnIds: number[];
 }
 
 const props = defineProps<Props>();
@@ -57,100 +57,95 @@ const emit = defineEmits<{
 }>();
 
 const executingCellId = ref<string | null>(null);
-const executionCounter = ref(0);
+const executionCounter = ref(1);
 const isAnyExecuting = computed(() => executingCellId.value !== null);
 
 // ─── Cell Operations ──────────────────────────────────────────────────────────
 
-const emitUpdate = () => {
-  emit('update:cells', [...props.cells]);
-};
-
 const updateCellCode = (cellId: string, code: string) => {
-  const cell = props.cells.find(c => c.id === cellId);
-  if (cell) {
-    cell.code = code;
-    emitUpdate();
-  }
+  emit('update:cells', props.cells.map(c =>
+    c.id === cellId ? { ...c, code } : c
+  ));
 };
 
 const addCell = () => {
-  props.cells.push({
-    id: crypto.randomUUID(),
-    code: "",
-    output: null,
-  });
-  emitUpdate();
+  emit('update:cells', [
+    ...props.cells,
+    { id: crypto.randomUUID(), code: "", output: null },
+  ]);
 };
 
 const deleteCell = (cellId: string) => {
-  if (props.cells.length <= 1) return; // never delete the last cell
-  const index = props.cells.findIndex(c => c.id === cellId);
-  if (index !== -1) {
-    props.cells.splice(index, 1);
-    emitUpdate();
-  }
+  if (props.cells.length <= 1) return;
+  emit('update:cells', props.cells.filter(c => c.id !== cellId));
 };
 
 const moveCell = (index: number, direction: number) => {
   const newIndex = index + direction;
   if (newIndex < 0 || newIndex >= props.cells.length) return;
-  const [cell] = props.cells.splice(index, 1);
-  props.cells.splice(newIndex, 0, cell);
-  emitUpdate();
+  const newCells = [...props.cells];
+  const [cell] = newCells.splice(index, 1);
+  newCells.splice(newIndex, 0, cell);
+  emit('update:cells', newCells);
 };
 
 const clearAllOutputs = () => {
-  props.cells.forEach(cell => { cell.output = null; });
-  emitUpdate();
+  emit('update:cells', props.cells.map(c => ({ ...c, output: null })));
 };
 
 // ─── Execution ────────────────────────────────────────────────────────────────
+
+const updateCellOutput = (cellId: string, output: NotebookCell['output']) => {
+  emit('update:cells', props.cells.map(c =>
+    c.id === cellId ? { ...c, output } : c
+  ));
+};
 
 const runCell = async (cellId: string): Promise<boolean> => {
   if (!props.kernelId) return false;
 
   const cell = props.cells.find(c => c.id === cellId);
-  if (!cell || !cell.code.trim()) return true; // empty cell is success
+  if (!cell || !cell.code.trim()) return true;
 
   executingCellId.value = cellId;
   try {
-    // Prepare inputs from upstream nodes (writes parquet files)
-    const { input_paths, output_dir } = await NodeApi.prepareInputs(
-      props.flowId,
-      props.nodeId,
-    );
+    // Build input paths client-side from dependingOnIds
+    const inputPaths: Record<string, string[]> = {};
+    if (props.dependingOnIds.length > 0) {
+      inputPaths["main"] = props.dependingOnIds.map((_, idx) =>
+        `/shared/${props.flowId}/${props.nodeId}/inputs/main_${idx}.parquet`
+      );
+    }
+    const outputDir = `/shared/${props.flowId}/${props.nodeId}/outputs`;
 
     const result = await KernelApi.executeCell(props.kernelId, {
       node_id: props.nodeId,
       code: cell.code,
-      input_paths,
-      output_dir,
+      input_paths: inputPaths,
+      output_dir: outputDir,
       flow_id: props.flowId,
     });
 
-    executionCounter.value++;
-    cell.output = {
+    const execCount = executionCounter.value++;
+    updateCellOutput(cellId, {
       stdout: result.stdout,
       stderr: result.stderr,
       display_outputs: result.display_outputs,
       error: result.error,
       execution_time_ms: result.execution_time_ms,
-      execution_count: executionCounter.value,
-    };
-    emitUpdate();
+      execution_count: execCount,
+    });
     return result.success;
   } catch (error) {
-    executionCounter.value++;
-    cell.output = {
+    const execCount = executionCounter.value++;
+    updateCellOutput(cellId, {
       stdout: "",
       stderr: "",
       display_outputs: [],
       error: error instanceof Error ? error.message : String(error),
       execution_time_ms: 0,
-      execution_count: executionCounter.value,
-    };
-    emitUpdate();
+      execution_count: execCount,
+    });
     return false;
   } finally {
     executingCellId.value = null;

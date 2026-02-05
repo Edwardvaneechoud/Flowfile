@@ -37,25 +37,6 @@ export class NodeApi {
   }
 
   /**
-   * Prepare inputs for interactive notebook execution.
-   * Fetches upstream node outputs and writes them to parquet files.
-   * Returns the input_paths and output_dir for the kernel execute call.
-   */
-  static async prepareInputs(
-    flowId: number,
-    nodeId: number,
-  ): Promise<{ input_paths: Record<string, string[]>; output_dir: string }> {
-    const response = await axios.post<{
-      input_paths: Record<string, string[]>;
-      output_dir: string;
-    }>("/node/prepare_inputs", null, {
-      params: { flow_id: flowId, node_id: nodeId },
-      headers: { accept: "application/json" },
-    });
-    return response.data;
-  }
-
-  /**
    * Get node description
    */
   static async getNodeDescription(flowId: number, nodeId: number): Promise<string> {

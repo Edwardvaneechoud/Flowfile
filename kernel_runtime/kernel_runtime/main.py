@@ -23,19 +23,37 @@ artifact_store = ArtifactStore()
 # ---------------------------------------------------------------------------
 # Maintains a persistent execution namespace per flow_id so that variables
 # defined in one cell execution are available in subsequent cell executions.
+# Uses LRU eviction to prevent unbounded memory growth.
 _namespace_store: dict[int, dict] = {}
+_namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
+_MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
+
+
+def _evict_oldest_namespace() -> None:
+    """Evict the least recently used namespace if at capacity."""
+    if len(_namespace_store) < _MAX_NAMESPACES:
+        return
+    if not _namespace_access:
+        return
+    oldest_flow_id = min(_namespace_access, key=_namespace_access.get)  # type: ignore[arg-type]
+    _namespace_store.pop(oldest_flow_id, None)
+    _namespace_access.pop(oldest_flow_id, None)
+    logger.debug("Evicted namespace for flow_id=%d (LRU)", oldest_flow_id)
 
 
 def _get_namespace(flow_id: int) -> dict:
     """Get or create a persistent namespace for the given flow_id."""
     if flow_id not in _namespace_store:
+        _evict_oldest_namespace()
         _namespace_store[flow_id] = {}
+    _namespace_access[flow_id] = time.time()
     return _namespace_store[flow_id]
 
 
 def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
+    _namespace_access.pop(flow_id, None)
 
 # ---------------------------------------------------------------------------
 # Persistence setup (driven by environment variables)
@@ -360,6 +378,7 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
         _clear_namespace(flow_id)
     else:
         _namespace_store.clear()
+        _namespace_access.clear()
     return {"status": "cleared"}
 
 
