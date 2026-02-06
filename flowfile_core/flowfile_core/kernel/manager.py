@@ -112,9 +112,7 @@ class KernelManager:
     def _reclaim_running_containers(self) -> None:
         """Discover running flowfile-kernel containers and reclaim their ports."""
         try:
-            containers = self._docker.containers.list(
-                filters={"name": "flowfile-kernel-", "status": "running"}
-            )
+            containers = self._docker.containers.list(filters={"name": "flowfile-kernel-", "status": "running"})
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Could not list running containers: %s", exc)
             return
@@ -123,7 +121,7 @@ class KernelManager:
             name = container.name
             if not name.startswith("flowfile-kernel-"):
                 continue
-            kernel_id = name[len("flowfile-kernel-"):]
+            kernel_id = name[len("flowfile-kernel-") :]
 
             # Determine which host port is mapped
             port = None
@@ -141,7 +139,9 @@ class KernelManager:
                 self._kernels[kernel_id].state = KernelState.IDLE
                 logger.info(
                     "Reclaimed running kernel '%s' on port %d (container %s)",
-                    kernel_id, port, container.short_id,
+                    kernel_id,
+                    port,
+                    container.short_id,
                 )
             elif port is not None and kernel_id not in self._kernels:
                 # Orphan container with no DB record — stop it
@@ -161,9 +161,7 @@ class KernelManager:
         for port in range(_BASE_PORT, _BASE_PORT + _PORT_RANGE):
             if port not in used_ports and _is_port_available(port):
                 return port
-        raise RuntimeError(
-            f"No available ports in range {_BASE_PORT}-{_BASE_PORT + _PORT_RANGE - 1}"
-        )
+        raise RuntimeError(f"No available ports in range {_BASE_PORT}-{_BASE_PORT + _PORT_RANGE - 1}")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -181,9 +179,17 @@ class KernelManager:
         core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
         env["FLOWFILE_CORE_URL"] = core_url
         # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
-        internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-        if internal_token:
-            env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+        # Use get_internal_token() instead of reading env directly so that in
+        # Electron mode the token is auto-generated before the kernel starts.
+        try:
+            from flowfile_core.auth.jwt import get_internal_token
+
+            env["FLOWFILE_INTERNAL_TOKEN"] = get_internal_token()
+        except (ValueError, ImportError):
+            # Token not configured (e.g. local dev without env var) – skip
+            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+            if internal_token:
+                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
         # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
@@ -282,8 +288,10 @@ class KernelManager:
                 f"Docker image '{_KERNEL_IMAGE}' not found. "
                 "Please build or pull the kernel image before starting a kernel."
             )
-            flow_logger.error(f"Docker image '{_KERNEL_IMAGE}' not found. "
-                              "Please build or pull the kernel image before starting a kernel.") if flow_logger else None
+            flow_logger.error(
+                f"Docker image '{_KERNEL_IMAGE}' not found. "
+                "Please build or pull the kernel image before starting a kernel."
+            ) if flow_logger else None
             raise RuntimeError(kernel.error_message)
 
         if kernel.port is None:
@@ -367,8 +375,9 @@ class KernelManager:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
 
-    def execute_sync(self, kernel_id: str, request: ExecuteRequest,
-                     flow_logger: FlowLogger | None = None) -> ExecuteResult:
+    def execute_sync(
+        self, kernel_id: str, request: ExecuteRequest, flow_logger: FlowLogger | None = None
+    ) -> ExecuteResult:
         """Synchronous wrapper around execute() for use from non-async code."""
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
@@ -407,7 +416,10 @@ class KernelManager:
             response.raise_for_status()
 
     async def clear_node_artifacts(
-        self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+        self,
+        kernel_id: str,
+        node_ids: list[int],
+        flow_id: int | None = None,
     ) -> ClearNodeArtifactsResult:
         """Clear only artifacts published by the given node IDs."""
         kernel = self._get_kernel_or_raise(kernel_id)
@@ -424,7 +436,10 @@ class KernelManager:
             return ClearNodeArtifactsResult(**response.json())
 
     def clear_node_artifacts_sync(
-        self, kernel_id: str, node_ids: list[int], flow_id: int | None = None,
+        self,
+        kernel_id: str,
+        node_ids: list[int],
+        flow_id: int | None = None,
         flow_logger: FlowLogger | None = None,
     ) -> ClearNodeArtifactsResult:
         """Synchronous wrapper for clearing artifacts by node IDs."""
@@ -522,10 +537,7 @@ class KernelManager:
 
     async def list_kernels(self, user_id: int | None = None) -> list[KernelInfo]:
         if user_id is not None:
-            return [
-                k for kid, k in self._kernels.items()
-                if self._kernel_owners.get(kid) == user_id
-            ]
+            return [k for kid, k in self._kernels.items() if self._kernel_owners.get(kid) == user_id]
         return list(self._kernels.values())
 
     async def get_kernel(self, kernel_id: str) -> KernelInfo | None:
@@ -552,7 +564,8 @@ class KernelManager:
         if kernel.state in (KernelState.STOPPED, KernelState.ERROR):
             logger.info(
                 "Kernel '%s' is %s, attempting automatic restart...",
-                kernel_id, kernel.state.value,
+                kernel_id,
+                kernel.state.value,
             )
             self._cleanup_container(kernel_id)
             kernel.container_id = None
