@@ -17,8 +17,8 @@ export const flowfileCompletionVals = [
   {
     label: "read_inputs",
     type: "function",
-    info: "Read all inputs as a dict of DataFrames.",
-    detail: "flowfile.read_inputs()",
+    info: "Read all inputs as a dict of LazyFrame lists (one per connection).",
+    detail: "flowfile.read_inputs() -> dict[str, list[LazyFrame]]",
     apply: "read_inputs()",
   },
   {
@@ -27,6 +27,15 @@ export const flowfileCompletionVals = [
     info: "Write output DataFrame. Optional name parameter for named outputs.",
     detail: "flowfile.publish_output(df, name?)",
     apply: "publish_output(df)",
+  },
+
+  // Display function
+  {
+    label: "display",
+    type: "function",
+    info: "Display a rich object (matplotlib figure, plotly figure, PIL image, HTML string) in the output panel.",
+    detail: "flowfile.display(obj, title?)",
+    apply: "display(obj)",
   },
 
   // Artifact functions

@@ -87,7 +87,9 @@ class TestReadInput:
         inputs = flowfile_client.read_inputs()
         assert isinstance(inputs, dict)
         assert "main" in inputs
-        assert isinstance(inputs["main"], pl.LazyFrame)
+        assert isinstance(inputs["main"], list)
+        assert len(inputs["main"]) == 1
+        assert isinstance(inputs["main"][0], pl.LazyFrame)
 
 
 class TestReadMultipleInputs:
@@ -110,8 +112,8 @@ class TestReadMultipleInputs:
 
         inputs = flowfile_client.read_inputs()
         assert set(inputs.keys()) == {"left", "right"}
-        assert inputs["left"].collect()["id"].to_list() == [1, 2]
-        assert inputs["right"].collect()["id"].to_list() == [3, 4]
+        assert inputs["left"][0].collect()["id"].to_list() == [1, 2]
+        assert inputs["right"][0].collect()["id"].to_list() == [3, 4]
 
     def test_read_input_concatenates_multiple_main_paths(self, tmp_dir: Path):
         """When 'main' has multiple paths, read_input returns a union of all."""
@@ -160,7 +162,7 @@ class TestReadMultipleInputs:
             flowfile_client.read_first("nonexistent")
 
     def test_read_inputs_with_multiple_main_paths(self, tmp_dir: Path):
-        """read_inputs should concatenate paths per name."""
+        """read_inputs should return a list of LazyFrames per name."""
         store = ArtifactStore()
         input_dir = tmp_dir / "inputs"
         input_dir.mkdir(exist_ok=True)
@@ -180,8 +182,9 @@ class TestReadMultipleInputs:
         )
 
         inputs = flowfile_client.read_inputs()
-        df = inputs["main"].collect()
-        assert sorted(df["x"].to_list()) == [1, 2, 3]
+        assert len(inputs["main"]) == 3
+        values = [lf.collect()["x"].to_list()[0] for lf in inputs["main"]]
+        assert sorted(values) == [1, 2, 3]
 
 
 class TestPublishOutput:
@@ -257,3 +260,109 @@ class TestArtifacts:
         flowfile_client.delete_artifact("model")
         flowfile_client.publish_artifact("model", "v2")
         assert flowfile_client.read_artifact("model") == "v2"
+
+
+class TestDisplay:
+    def test_reset_displays(self):
+        flowfile_client._reset_displays()
+        assert flowfile_client._get_displays() == []
+
+    def test_display_plain_text(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display("hello world")
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["mime_type"] == "text/plain"
+        assert displays[0]["data"] == "hello world"
+        assert displays[0]["title"] == ""
+
+    def test_display_with_title(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display("some data", title="My Title")
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["title"] == "My Title"
+
+    def test_display_html_string(self):
+        flowfile_client._reset_displays()
+        html = "<b>bold text</b>"
+        flowfile_client.display(html)
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["mime_type"] == "text/html"
+        assert displays[0]["data"] == html
+
+    def test_display_complex_html(self):
+        flowfile_client._reset_displays()
+        html = '<div class="test"><p>Hello</p></div>'
+        flowfile_client.display(html)
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["mime_type"] == "text/html"
+
+    def test_display_multiple_outputs(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display("first")
+        flowfile_client.display("second")
+        flowfile_client.display("third")
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 3
+        assert displays[0]["data"] == "first"
+        assert displays[1]["data"] == "second"
+        assert displays[2]["data"] == "third"
+
+    def test_display_number_as_plain_text(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display(42)
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["mime_type"] == "text/plain"
+        assert displays[0]["data"] == "42"
+
+    def test_display_dict_as_plain_text(self):
+        flowfile_client._reset_displays()
+        flowfile_client.display({"key": "value"})
+        displays = flowfile_client._get_displays()
+        assert len(displays) == 1
+        assert displays[0]["mime_type"] == "text/plain"
+        assert "key" in displays[0]["data"]
+
+    def test_get_displays_returns_copy(self):
+        """Ensure _get_displays returns the actual list that can be cleared."""
+        flowfile_client._reset_displays()
+        flowfile_client.display("test")
+        displays1 = flowfile_client._get_displays()
+        assert len(displays1) == 1
+        flowfile_client._reset_displays()
+        displays2 = flowfile_client._get_displays()
+        assert len(displays2) == 0
+
+
+class TestDisplayTypeDetection:
+    def test_is_html_string_true(self):
+        assert flowfile_client._is_html_string("<b>test</b>") is True
+        assert flowfile_client._is_html_string("<div></div>") is True
+        assert flowfile_client._is_html_string("Hello <b>world</b>!") is True
+
+    def test_is_html_string_false(self):
+        assert flowfile_client._is_html_string("plain text") is False
+        assert flowfile_client._is_html_string("just text with math: 5 < 10") is False  # only <
+        assert flowfile_client._is_html_string("x < 10 and y > 5") is False  # comparison, not HTML
+        assert flowfile_client._is_html_string("a < b > c") is False  # not actual HTML tags
+        assert flowfile_client._is_html_string(123) is False
+        assert flowfile_client._is_html_string(None) is False
+
+    def test_is_matplotlib_figure_without_import(self):
+        """Without matplotlib installed, should return False."""
+        result = flowfile_client._is_matplotlib_figure("not a figure")
+        assert result is False
+
+    def test_is_plotly_figure_without_import(self):
+        """Without plotly installed, should return False."""
+        result = flowfile_client._is_plotly_figure("not a figure")
+        assert result is False
+
+    def test_is_pil_image_without_import(self):
+        """Without PIL installed, should return False."""
+        result = flowfile_client._is_pil_image("not an image")
+        assert result is False

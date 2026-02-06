@@ -63,6 +63,7 @@ class ExecuteRequest(BaseModel):
     output_dir: str = ""
     flow_id: int = 0
     log_callback_url: str = ""
+    interactive: bool = False  # When True, auto-display last expression
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -77,11 +78,19 @@ class ClearNodeArtifactsResult(BaseModel):
     removed: list[str] = Field(default_factory=list)
 
 
+class DisplayOutput(BaseModel):
+    """A single display output from code execution."""
+    mime_type: str  # "image/png", "text/html", "text/plain"
+    data: str       # base64 for images, raw HTML for text/html, plain text otherwise
+    title: str = ""
+
+
 class ExecuteResult(BaseModel):
     success: bool
     output_paths: list[str] = Field(default_factory=list)
     artifacts_published: list[str] = Field(default_factory=list)
     artifacts_deleted: list[str] = Field(default_factory=list)
+    display_outputs: list[DisplayOutput] = Field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     error: str | None = None

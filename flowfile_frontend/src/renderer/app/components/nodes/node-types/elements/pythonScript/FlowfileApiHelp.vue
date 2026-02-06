@@ -20,7 +20,7 @@
           </div>
           <div class="api-item">
             <code>flowfile.read_inputs()</code>
-            <p>Read all inputs as a dict of LazyFrames.</p>
+            <p>Read all inputs as a dict of LazyFrame lists (one per connection).</p>
           </div>
           <div class="api-item">
             <code>flowfile.publish_output(df)</code>
@@ -106,10 +106,11 @@ flowfile.publish_output(result.lazy())</code></pre>
             <pre><code>import polars as pl
 
 inputs = flowfile.read_inputs()
-# inputs is a dict: {"main": LazyFrame, ...}
-# All connected inputs are concatenated as "main"
-df = inputs["main"]
-flowfile.publish_output(df)</code></pre>
+# inputs is a dict: {"main": [LazyFrame, ...]}
+# Each connected input is a separate LazyFrame in the list
+df1, df2 = inputs["main"]
+combined = pl.concat([df1, df2])
+flowfile.publish_output(combined)</code></pre>
           </div>
         </section>
       </div>

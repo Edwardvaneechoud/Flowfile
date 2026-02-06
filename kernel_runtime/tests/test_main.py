@@ -158,8 +158,8 @@ class TestExecuteWithParquet:
 
         code = (
             "inputs = flowfile.read_inputs()\n"
-            "left = inputs['left'].collect()\n"
-            "right = inputs['right'].collect()\n"
+            "left = inputs['left'][0].collect()\n"
+            "right = inputs['right'][0].collect()\n"
             "merged = left.join(right, on='id')\n"
             "flowfile.publish_output(merged)\n"
         )
@@ -605,6 +605,193 @@ class TestNodeArtifactsEndpoint:
         resp = client.get("/artifacts/node/999")
         assert resp.status_code == 200
         assert resp.json() == {}
+
+
+class TestDisplayOutputs:
+    def test_display_outputs_empty_by_default(self, client: TestClient):
+        """Execute code without displays should return empty display_outputs."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 60,
+                "code": 'print("hello")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert data["display_outputs"] == []
+
+    def test_display_output_explicit(self, client: TestClient):
+        """Execute flowfile.display() should return a display output."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 61,
+                "code": 'flowfile.display("hello")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["mime_type"] == "text/plain"
+        assert data["display_outputs"][0]["data"] == "hello"
+
+    def test_display_output_html(self, client: TestClient):
+        """Execute flowfile.display() with HTML should return HTML mime type."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 62,
+                "code": 'flowfile.display("<b>bold</b>")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["mime_type"] == "text/html"
+        assert data["display_outputs"][0]["data"] == "<b>bold</b>"
+
+    def test_display_output_with_title(self, client: TestClient):
+        """Display with title should preserve the title."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 63,
+                "code": 'flowfile.display("data", title="My Chart")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["title"] == "My Chart"
+
+    def test_multiple_display_outputs(self, client: TestClient):
+        """Multiple display calls should return multiple outputs."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 64,
+                "code": (
+                    'flowfile.display("first")\n'
+                    'flowfile.display("second")\n'
+                    'flowfile.display("third")\n'
+                ),
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 3
+        assert data["display_outputs"][0]["data"] == "first"
+        assert data["display_outputs"][1]["data"] == "second"
+        assert data["display_outputs"][2]["data"] == "third"
+
+    def test_display_outputs_cleared_between_executions(self, client: TestClient):
+        """Display outputs should not persist between execution calls."""
+        # First execution
+        client.post(
+            "/execute",
+            json={
+                "node_id": 65,
+                "code": 'flowfile.display("from first call")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+        # Second execution should not include first call's displays
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 66,
+                "code": 'flowfile.display("from second call")',
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["data"] == "from second call"
+
+    def test_display_output_on_error_still_collected(self, client: TestClient):
+        """Display outputs generated before an error should still be returned."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 67,
+                "code": (
+                    'flowfile.display("before error")\n'
+                    'raise ValueError("oops")\n'
+                ),
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is False
+        assert "ValueError" in data["error"]
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["data"] == "before error"
+
+    def test_interactive_mode_auto_display_last_expression(self, client: TestClient):
+        """Interactive mode should auto-display the last expression."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 68,
+                "code": "1 + 2 + 3",
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["display_outputs"]) == 1
+        assert data["display_outputs"][0]["data"] == "6"
+
+    def test_non_interactive_mode_no_auto_display(self, client: TestClient):
+        """Non-interactive mode should not auto-display the last expression."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 69,
+                "code": "1 + 2 + 3",
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": False,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        assert data["display_outputs"] == []
+
+    def test_interactive_mode_with_print_no_double_display(self, client: TestClient):
+        """Print statements should not trigger auto-display."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 70,
+                "code": 'print("hello")',
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True
+        # print doesn't return a value worth displaying
+        assert data["display_outputs"] == []
 
 
 class TestContextCleanup:
