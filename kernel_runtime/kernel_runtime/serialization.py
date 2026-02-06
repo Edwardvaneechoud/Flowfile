@@ -210,6 +210,14 @@ def deserialize_from_file(path: str, format: str) -> Any:
 
     Returns:
         Deserialized Python object.
+
+    SECURITY: pickle.load is a known RCE vector - malicious pickle files can
+    execute arbitrary code. This is acceptable here because:
+    1. Artifacts are only written by kernel containers the user controls
+    2. Artifacts flow: user code -> kernel -> storage -> kernel -> user code
+    3. There's no path for external/untrusted data to become artifacts
+    The trust boundary is the user's own code, which can already execute
+    arbitrary Python in the kernel container.
     """
     path = Path(path)
 
@@ -233,6 +241,8 @@ def deserialize_from_bytes(blob: bytes, format: str) -> Any:
 
     Returns:
         Deserialized Python object.
+
+    SECURITY: See deserialize_from_file() for trust boundary documentation.
     """
     buf = io.BytesIO(blob)
 

@@ -13,13 +13,14 @@ import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 from flowfile_core.artifacts.exceptions import (
-    ArtifactNotActiveError,
     ArtifactNotFoundError,
+    ArtifactStateError,
     ArtifactUploadError,
     NamespaceNotFoundError,
     StorageError,
@@ -70,6 +71,7 @@ class ArtifactService:
         self,
         request: PrepareUploadRequest,
         owner_id: int,
+        _max_retries: int = 3,
     ) -> PrepareUploadResponse:
         """Create pending artifact record and return upload target.
 
@@ -78,6 +80,7 @@ class ArtifactService:
         Args:
             request: Upload request with artifact metadata.
             owner_id: User ID of the artifact owner.
+            _max_retries: Internal retry count for version conflicts.
 
         Returns:
             PrepareUploadResponse with upload target information.
@@ -91,36 +94,60 @@ class ArtifactService:
             if ns is None:
                 raise NamespaceNotFoundError(request.namespace_id)
 
-        # Determine next version for this artifact name + namespace
-        # Only count "active" versions to avoid gaps from failed/pending uploads
-        latest = (
-            self.db.query(GlobalArtifact)
-            .filter_by(name=request.name, namespace_id=request.namespace_id)
-            .filter(GlobalArtifact.status == "active")
-            .order_by(GlobalArtifact.version.desc())
-            .first()
-        )
-        next_version = (latest.version + 1) if latest else 1
+        # Create artifact with retry logic for concurrent version conflicts.
+        # If two prepare_upload calls race for the same name, one will fail
+        # with IntegrityError on the unique constraint. We retry with a fresh
+        # version number in that case.
+        last_error: IntegrityError | None = None
+        for attempt in range(_max_retries):
+            # Determine next version for this artifact name + namespace
+            # Only count "active" versions to avoid gaps from failed/pending uploads
+            latest = (
+                self.db.query(GlobalArtifact)
+                .filter_by(name=request.name, namespace_id=request.namespace_id)
+                .filter(GlobalArtifact.status == "active")
+                .order_by(GlobalArtifact.version.desc())
+                .first()
+            )
+            next_version = (latest.version + 1) if latest else 1
 
-        # Create pending artifact record
-        artifact = GlobalArtifact(
-            name=request.name,
-            namespace_id=request.namespace_id,
-            version=next_version,
-            status="pending",
-            owner_id=owner_id,
-            source_flow_id=request.source_flow_id,
-            source_node_id=request.source_node_id,
-            source_kernel_id=request.source_kernel_id,
-            python_type=request.python_type,
-            python_module=request.python_module,
-            serialization_format=request.serialization_format,
-            description=request.description,
-            tags=json.dumps(request.tags) if request.tags else "[]",
-        )
-        self.db.add(artifact)
-        self.db.commit()
-        self.db.refresh(artifact)
+            # Create pending artifact record
+            artifact = GlobalArtifact(
+                name=request.name,
+                namespace_id=request.namespace_id,
+                version=next_version,
+                status="pending",
+                owner_id=owner_id,
+                source_flow_id=request.source_flow_id,
+                source_node_id=request.source_node_id,
+                source_kernel_id=request.source_kernel_id,
+                python_type=request.python_type,
+                python_module=request.python_module,
+                serialization_format=request.serialization_format,
+                description=request.description,
+                tags=json.dumps(request.tags) if request.tags else "[]",
+            )
+            self.db.add(artifact)
+
+            try:
+                self.db.commit()
+                self.db.refresh(artifact)
+                break  # Success - exit retry loop
+            except IntegrityError as e:
+                # Version conflict - another concurrent request got the same version
+                self.db.rollback()
+                last_error = e
+                logger.warning(
+                    "Version conflict for artifact '%s' v%d (attempt %d/%d), retrying...",
+                    request.name, next_version, attempt + 1, _max_retries
+                )
+                continue
+        else:
+            # Exhausted all retries
+            raise ArtifactUploadError(
+                artifact_id=0,
+                reason=f"Failed to create artifact after {_max_retries} attempts due to version conflicts: {last_error}"
+            )
 
         # Get upload target from storage backend
         ext_map = {
@@ -163,7 +190,7 @@ class ArtifactService:
 
         Raises:
             ArtifactNotFoundError: If artifact doesn't exist.
-            ArtifactNotActiveError: If artifact is not in pending state.
+            ArtifactStateError: If artifact is not in pending state.
             ArtifactUploadError: If blob verification fails.
         """
         artifact = self.db.get(GlobalArtifact, artifact_id)
@@ -171,7 +198,7 @@ class ArtifactService:
             raise ArtifactNotFoundError(artifact_id=artifact_id)
 
         if artifact.status != "pending":
-            raise ArtifactNotActiveError(artifact_id, artifact.status)
+            raise ArtifactStateError(artifact_id, artifact.status, expected_status="pending")
 
         # Verify and finalize storage
         try:

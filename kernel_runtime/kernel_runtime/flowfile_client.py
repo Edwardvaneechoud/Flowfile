@@ -18,8 +18,9 @@ def _translate_host_path_to_container(host_path: str) -> str:
     Core API returns paths using the host's perspective, so we need to translate
     them for the kernel container.
 
-    Uses Path.relative_to() for robust path handling that accounts for
-    trailing slashes, normalization, and edge cases.
+    NOTE: Uses PurePosixPath for path manipulation WITHOUT filesystem access.
+    This is critical because inside the container, host paths don't exist,
+    so Path.resolve() would fail or produce incorrect results.
 
     Example:
         Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
@@ -30,19 +31,23 @@ def _translate_host_path_to_container(host_path: str) -> str:
         # Not running in Docker or env var not set - use path as-is
         return host_path
 
-    try:
-        # Use pathlib for robust path handling
-        host_path_obj = Path(host_path).resolve()
-        host_shared_obj = Path(host_shared_dir).resolve()
+    # Normalize paths to handle trailing slashes consistently
+    # Use os.path.normpath for string normalization without filesystem access
+    normalized_host_path = os.path.normpath(host_path)
+    normalized_shared_dir = os.path.normpath(host_shared_dir)
 
-        # Get the relative path from host shared dir
-        relative = host_path_obj.relative_to(host_shared_obj)
-        return str(Path("/shared") / relative)
-    except ValueError:
-        # Path is not relative to host_shared_dir - return as-is
-        # This can happen if paths are on different drives (Windows)
-        # or if the path doesn't actually start with the shared dir
-        return host_path
+    # Check if the host path starts with the shared directory
+    # We need to be careful about partial matches (e.g., /shared vs /shared2)
+    if normalized_host_path.startswith(normalized_shared_dir + os.sep):
+        # Extract relative path after the shared directory prefix
+        relative_path = normalized_host_path[len(normalized_shared_dir) + 1:]
+        return f"/shared/{relative_path}"
+    elif normalized_host_path == normalized_shared_dir:
+        # Path is exactly the shared directory
+        return "/shared"
+
+    # Path doesn't start with host shared dir - return as-is
+    return host_path
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
