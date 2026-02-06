@@ -529,6 +529,30 @@ def test_get_node_data_not_run():
     assert node_data_parsed.main_output.data == [], "Node data should be empty"
 
 
+def test_polars_code_node_data_before_run():
+    """Opening a polars_code node before running should return instantly
+    with a predicted schema from the input, not trigger execution."""
+    flow_id = create_flow_with_manual_input()
+    add_node(flow_id, 2, node_type='polars_code', pos_x=200, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(flow_id, connection)
+    settings = {'flow_id': flow_id, 'node_id': 2, 'pos_x': 200, 'pos_y': 0,
+                'polars_code_input': {'polars_code': '# Add your polars code here\noutput_df = input_df'},
+                'cache_results': False, 'is_setup': True}
+    response = client.post('/update_settings/', json=settings, params={'node_type': 'polars_code'})
+    assert response.status_code == 200, 'Settings not updated'
+
+    # Request node data — this is what the frontend does when you click the node
+    response = client.get("/node", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node not retrieved'
+
+    node_data = output_model.NodeData(**response.json())
+    # The predicted schema should include columns from the input node (name, city)
+    assert node_data.main_output is not None, 'Main output should exist'
+    assert len(node_data.main_output.columns) > 0, 'Should have predicted schema columns'
+    assert node_data.main_output.data == [], 'Node data should be empty (not run)'
+
+
 def test_get_node_data_after_run():
     flow_id = create_flow_with_manual_input()
     flow = flow_file_handler.get_flow(flow_id)

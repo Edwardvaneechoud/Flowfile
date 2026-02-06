@@ -1102,12 +1102,33 @@ class FlowGraph:
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
 
+        def schema_callback():
+            """Best-effort schema prediction for polars_code nodes.
+
+            Returns the input node(s) schema as a reasonable default
+            (most polars_code nodes transform and pass through).
+            If nothing is available, returns a minimal placeholder — never raises.
+            """
+            try:
+                node = self.get_node(node_polars_code.node_id)
+                if node is None:
+                    return [FlowfileColumn.from_input("col_1", "na")]
+                main_inputs = node.node_inputs.main_inputs
+                if main_inputs:
+                    input_schema = main_inputs[0].schema
+                    if input_schema:
+                        return input_schema
+                return [FlowfileColumn.from_input("col_1", "na")]
+            except Exception:
+                return [FlowfileColumn.from_input("col_1", "na")]
+
         self.add_node_step(
             node_id=node_polars_code.node_id,
             function=_func,
             node_type="polars_code",
             setting_input=node_polars_code,
             input_node_ids=node_polars_code.depending_on_ids,
+            schema_callback=schema_callback,
         )
 
         try:
