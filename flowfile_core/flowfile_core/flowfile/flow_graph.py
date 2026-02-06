@@ -1176,6 +1176,16 @@ class FlowGraph:
             # Execute on kernel (synchronous — no async boundary issues)
             reg_id = self._flow_settings.source_registration_id
             node_logger.info(f"[source_registration_id] Sending to kernel: {reg_id}")
+            # Pass the internal auth token so the kernel can call Core API
+            # (e.g. for global artifact upload). This is more reliable than
+            # env vars because it survives core restarts and pre-existing containers.
+            internal_token: str | None = None
+            try:
+                from flowfile_core.auth.jwt import get_internal_token
+
+                internal_token = get_internal_token()
+            except (ValueError, ImportError):
+                pass
             request = ExecuteRequest(
                 node_id=node_id,
                 code=code,
@@ -1184,6 +1194,7 @@ class FlowGraph:
                 flow_id=flow_id,
                 source_registration_id=reg_id,
                 log_callback_url=log_callback_url,
+                internal_token=internal_token,
             )
             result = manager.execute_sync(kernel_id, request, self.flow_logger)
 

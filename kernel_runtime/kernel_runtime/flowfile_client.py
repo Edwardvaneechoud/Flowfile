@@ -43,7 +43,7 @@ def _translate_host_path_to_container(host_path: str) -> str:
     # We need to be careful about partial matches (e.g., /shared vs /shared2)
     if normalized_host_path.startswith(normalized_shared_dir + os.sep):
         # Extract relative path after the shared directory prefix
-        relative_path = normalized_host_path[len(normalized_shared_dir) + 1:]
+        relative_path = normalized_host_path[len(normalized_shared_dir) + 1 :]
         return f"/shared/{relative_path}"
     elif normalized_host_path == normalized_shared_dir:
         # Path is exactly the shared directory
@@ -52,17 +52,14 @@ def _translate_host_path_to_container(host_path: str) -> str:
     # Path doesn't start with host shared dir - return as-is
     return host_path
 
+
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
 # Reusable HTTP client for log callbacks (created per execution context)
-_log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar(
-    "flowfile_log_client", default=None
-)
+_log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar("flowfile_log_client", default=None)
 
 # Display outputs collector (reset at start of each execution)
-_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar(
-    "flowfile_displays", default=[]
-)
+_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar("flowfile_displays", default=[])
 
 
 def _set_context(
@@ -73,16 +70,20 @@ def _set_context(
     flow_id: int = 0,
     source_registration_id: int | None = None,
     log_callback_url: str = "",
+    internal_token: str | None = None,
 ) -> None:
-    _context.set({
-        "node_id": node_id,
-        "input_paths": input_paths,
-        "output_dir": output_dir,
-        "artifact_store": artifact_store,
-        "flow_id": flow_id,
-        "source_registration_id": source_registration_id,
-        "log_callback_url": log_callback_url,
-    })
+    _context.set(
+        {
+            "node_id": node_id,
+            "input_paths": input_paths,
+            "output_dir": output_dir,
+            "artifact_store": artifact_store,
+            "flow_id": flow_id,
+            "source_registration_id": source_registration_id,
+            "log_callback_url": log_callback_url,
+            "internal_token": internal_token,
+        }
+    )
     # Create a reusable HTTP client for log callbacks
     if log_callback_url:
         _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
@@ -105,7 +106,9 @@ def _clear_context() -> None:
 def _get_context_value(key: str) -> Any:
     ctx = _context.get({})
     if key not in ctx:
-        raise RuntimeError(f"flowfile context not initialized (missing '{key}'). This API is only available during /execute.")
+        raise RuntimeError(
+            f"flowfile context not initialized (missing '{key}'). This API is only available during /execute."
+        )
     return ctx[key]
 
 
@@ -202,9 +205,18 @@ _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 def _get_internal_auth_headers() -> dict[str, str]:
     """Get authentication headers for Core API calls.
 
-    Returns headers with X-Internal-Token for service-to-service authentication.
-    The token is shared between Core and Kernel via FLOWFILE_INTERNAL_TOKEN env var.
+    Prefers the token passed via ExecuteRequest context (always fresh),
+    falls back to FLOWFILE_INTERNAL_TOKEN env var for backwards compatibility.
     """
+    # Prefer token from execution context (set per-request by Core)
+    try:
+        ctx = _context.get({})
+        token = ctx.get("internal_token")
+        if token:
+            return {"X-Internal-Token": token}
+    except LookupError:
+        pass
+    # Fall back to env var (set at container creation time)
     token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
     if token:
         return {"X-Internal-Token": token}
@@ -348,8 +360,7 @@ def publish_global(
         if resp.status_code >= 400:
             detail = resp.text
             raise RuntimeError(
-                f"Artifact finalize failed ({resp.status_code}): {detail}. "
-                f"Request body: {finalize_body}"
+                f"Artifact finalize failed ({resp.status_code}): {detail}. " f"Request body: {finalize_body}"
             )
 
     return target["artifact_id"]
@@ -505,6 +516,7 @@ def delete_global_artifact(
 
 # ===== Logging APIs =====
 
+
 def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> None:
     """Send a log message to the FlowFile log viewer.
 
@@ -558,10 +570,12 @@ def log_error(message: str) -> None:
 
 # ===== Display APIs =====
 
+
 def _is_matplotlib_figure(obj: Any) -> bool:
     """Check if obj is a matplotlib Figure (without requiring matplotlib)."""
     try:
         import matplotlib.figure
+
         return isinstance(obj, matplotlib.figure.Figure)
     except ImportError:
         return False
@@ -571,6 +585,7 @@ def _is_plotly_figure(obj: Any) -> bool:
     """Check if obj is a plotly Figure (without requiring plotly)."""
     try:
         import plotly.graph_objects as go
+
         return isinstance(obj, go.Figure)
     except ImportError:
         return False
@@ -580,6 +595,7 @@ def _is_pil_image(obj: Any) -> bool:
     """Check if obj is a PIL Image (without requiring PIL)."""
     try:
         from PIL import Image
+
         return isinstance(obj, Image.Image)
     except ImportError:
         return False
@@ -632,43 +648,53 @@ def display(obj: Any, title: str = "") -> None:
         obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
         buf.seek(0)
         data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append({
-            "mime_type": "image/png",
-            "data": data,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "image/png",
+                "data": data,
+                "title": title,
+            }
+        )
     elif _is_plotly_figure(obj):
         # Render plotly figure to HTML
         html = obj.to_html(include_plotlyjs="cdn", full_html=False)
-        displays.append({
-            "mime_type": "text/html",
-            "data": html,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/html",
+                "data": html,
+                "title": title,
+            }
+        )
     elif _is_pil_image(obj):
         # Render PIL image to PNG
         buf = io.BytesIO()
         obj.save(buf, format="PNG")
         buf.seek(0)
         data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append({
-            "mime_type": "image/png",
-            "data": data,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "image/png",
+                "data": data,
+                "title": title,
+            }
+        )
     elif _is_html_string(obj):
         # Store HTML string directly
-        displays.append({
-            "mime_type": "text/html",
-            "data": obj,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/html",
+                "data": obj,
+                "title": title,
+            }
+        )
     else:
         # Fall back to plain text
-        displays.append({
-            "mime_type": "text/plain",
-            "data": str(obj),
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/plain",
+                "data": str(obj),
+                "title": title,
+            }
+        )
 
     _displays.set(displays)

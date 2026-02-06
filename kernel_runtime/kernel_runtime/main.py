@@ -55,6 +55,7 @@ def _clear_namespace(flow_id: int) -> None:
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
 
+
 # ---------------------------------------------------------------------------
 # Persistence setup (driven by environment variables)
 # ---------------------------------------------------------------------------
@@ -94,10 +95,7 @@ def _setup_persistence() -> None:
         try:
             removed = _persistence.cleanup(max_age_hours=cleanup_age_hours)
             if removed > 0:
-                logger.info(
-                    "Startup cleanup: removed %d artifacts older than %.1f hours",
-                    removed, cleanup_age_hours
-                )
+                logger.info("Startup cleanup: removed %d artifacts older than %.1f hours", removed, cleanup_age_hours)
         except Exception as exc:
             logger.warning("Startup cleanup failed (continuing anyway): %s", exc)
 
@@ -139,8 +137,7 @@ def _setup_persistence() -> None:
 
     elif _recovery_mode == RecoveryMode.CLEAR:
         logger.warning(
-            "RECOVERY_MODE=clear: Deleting ALL persisted artifacts. "
-            "This is destructive and cannot be undone."
+            "RECOVERY_MODE=clear: Deleting ALL persisted artifacts. " "This is destructive and cannot be undone."
         )
         _persistence.clear()
         _recovery_status = {
@@ -217,11 +214,11 @@ def _maybe_wrap_last_expression(code: str) -> str:
         return code
 
     # Build the new code with the last expression wrapped
-    lines = code.split('\n')
-    prefix = '\n'.join(lines[:last.lineno - 1])
+    lines = code.split("\n")
+    prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
-        prefix += '\n'
-    return prefix + f'flowfile.display({last_expr_text})\n'
+        prefix += "\n"
+    return prefix + f"flowfile.display({last_expr_text})\n"
 
 
 class ExecuteRequest(BaseModel):
@@ -234,6 +231,7 @@ class ExecuteRequest(BaseModel):
     source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
+    internal_token: str | None = None  # Core→kernel auth token for artifact API calls
 
 
 class ClearNodeArtifactsRequest(BaseModel):
@@ -243,8 +241,9 @@ class ClearNodeArtifactsRequest(BaseModel):
 
 class DisplayOutput(BaseModel):
     """A single display output from code execution."""
+
     mime_type: str  # "image/png", "text/html", "text/plain"
-    data: str       # base64 for images, raw HTML for text/html, plain text otherwise
+    data: str  # base64 for images, raw HTML for text/html, plain text otherwise
     title: str = ""
 
 
@@ -262,6 +261,7 @@ class ExecuteResponse(BaseModel):
 
 class ArtifactIdentifier(BaseModel):
     """Identifies a specific artifact by flow_id and name."""
+
     flow_id: int
     name: str
 
@@ -277,6 +277,7 @@ class CleanupRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Existing endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(request: ExecuteRequest):
@@ -303,6 +304,7 @@ async def execute(request: ExecuteRequest):
             flow_id=request.flow_id,
             source_registration_id=request.source_registration_id,
             log_callback_url=request.log_callback_url,
+            internal_token=request.internal_token,
         )
 
         # Reset display outputs for this execution
@@ -333,16 +335,12 @@ async def execute(request: ExecuteRequest):
             exec(user_code, exec_globals)  # noqa: S102
 
         # Collect display outputs
-        display_outputs = [
-            DisplayOutput(**d) for d in flowfile_client._get_displays()
-        ]
+        display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
         # Collect output parquet files
         output_paths: list[str] = []
         if output_dir and Path(output_dir).exists():
-            output_paths = [
-                str(p) for p in sorted(Path(output_dir).glob("*.parquet"))
-            ]
+            output_paths = [str(p) for p in sorted(Path(output_dir).glob("*.parquet"))]
 
         artifacts_after = set(artifact_store.list_all(flow_id=request.flow_id).keys())
         new_artifacts = sorted(artifacts_after - artifacts_before)
@@ -361,9 +359,7 @@ async def execute(request: ExecuteRequest):
         )
     except Exception as exc:
         # Still collect any display outputs that were generated before the error
-        display_outputs = [
-            DisplayOutput(**d) for d in flowfile_client._get_displays()
-        ]
+        display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,
@@ -401,7 +397,8 @@ async def clear_namespace(flow_id: int = Query(...)):
 async def clear_node_artifacts(request: ClearNodeArtifactsRequest):
     """Clear only artifacts published by the specified node IDs."""
     removed = artifact_store.clear_by_node_ids(
-        set(request.node_ids), flow_id=request.flow_id,
+        set(request.node_ids),
+        flow_id=request.flow_id,
     )
     return {"status": "cleared", "removed": removed}
 
@@ -414,7 +411,8 @@ async def list_artifacts(flow_id: int | None = Query(default=None)):
 
 @app.get("/artifacts/node/{node_id}")
 async def list_node_artifacts(
-    node_id: int, flow_id: int | None = Query(default=None),
+    node_id: int,
+    flow_id: int | None = Query(default=None),
 ):
     """List artifacts published by a specific node."""
     return artifact_store.list_by_node_id(node_id, flow_id=flow_id)
@@ -423,6 +421,7 @@ async def list_node_artifacts(
 # ---------------------------------------------------------------------------
 # Persistence & Recovery endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/recover")
 async def recover_artifacts():
