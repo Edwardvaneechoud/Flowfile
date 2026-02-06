@@ -9,6 +9,10 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+# Load diagnostics plugin when PYTEST_DIAGNOSTICS=1 is set
+if os.environ.get("PYTEST_DIAGNOSTICS") == "1":
+    pytest_plugins = ["tests.conftest_diagnostics"]
+
 # Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
 import bcrypt
 _original_hashpw = bcrypt.hashpw

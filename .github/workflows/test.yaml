@@ -151,9 +151,10 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings $COV_ARGS
+        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=30 $COV_ARGS
         env:
           COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov --cov-append --cov-report=' || '' }}
+          PYTEST_DIAGNOSTICS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
 
       - name: Run pytest for flowfile_worker
         if: |
