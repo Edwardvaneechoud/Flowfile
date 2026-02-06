@@ -335,16 +335,22 @@ def publish_global(
             upload_resp.raise_for_status()
 
         # 3. Finalize with Core
+        finalize_body = {
+            "artifact_id": target["artifact_id"],
+            "storage_key": target["storage_key"],
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+        }
         resp = client.post(
             f"{_CORE_URL}/artifacts/finalize",
-            json={
-                "artifact_id": target["artifact_id"],
-                "storage_key": target["storage_key"],
-                "sha256": sha256,
-                "size_bytes": size_bytes,
-            },
+            json=finalize_body,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.text
+            raise RuntimeError(
+                f"Artifact finalize failed ({resp.status_code}): {detail}. "
+                f"Request body: {finalize_body}"
+            )
 
     return target["artifact_id"]
 
