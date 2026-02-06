@@ -116,7 +116,7 @@ export class KernelApi {
       await axios.post(
         `${API_BASE_URL}/${encodeURIComponent(kernelId)}/clear_namespace`,
         null,
-        { params: { flow_id: flowId } },
+        { params: { flow_id: flowId } }
       );
     } catch (error) {
       console.error("API Error: Failed to clear namespace:", error);
