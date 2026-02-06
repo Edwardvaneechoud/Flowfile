@@ -85,16 +85,16 @@ export const useItemStore = defineStore("itemStore", () => {
     // Don't modify if item is in fullscreen
     if (items.value[id].fullScreen) return;
 
-    // Find the maximum z-index among all non-fullscreen items
+    // Find the maximum z-index among all OTHER non-fullscreen items
     let maxZIndex = BASE_Z_INDEX - 1;
     Object.entries(items.value).forEach(([itemId, item]) => {
-      if (!item.fullScreen) {
+      if (!item.fullScreen && itemId !== id) {
         maxZIndex = Math.max(maxZIndex, item.zIndex);
       }
     });
 
-    // Only increment if this item is not already at the top
-    if (items.value[id].zIndex >= maxZIndex) return;
+    // Already above all others, no change needed
+    if (items.value[id].zIndex > maxZIndex) return;
 
     items.value[id].zIndex = maxZIndex + 1;
 
