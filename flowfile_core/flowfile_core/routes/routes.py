@@ -834,12 +834,14 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
     return True
 
 
-@router.get('/node/description', tags=['editor'])
+@router.get('/node/description', response_model=output_model.NodeDescriptionResponse, tags=['editor'])
 def get_description_node(flow_id: int, node_id: int):
     """Retrieves the description text for a specific node.
 
     Returns the user-provided description if set, otherwise falls back
     to an auto-generated description based on the node's configuration.
+    The response includes an `is_auto_generated` flag so the frontend
+    knows whether to refresh the description after settings changes.
     """
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
@@ -849,10 +851,11 @@ def get_description_node(flow_id: int, node_id: int):
         raise HTTPException(404, 'Could not find the node')
     user_description = node.setting_input.description if hasattr(node.setting_input, 'description') else ''
     if user_description:
-        return user_description
+        return output_model.NodeDescriptionResponse(description=user_description, is_auto_generated=False)
     if hasattr(node.setting_input, 'get_default_description'):
-        return node.setting_input.get_default_description()
-    return ''
+        auto_desc = node.setting_input.get_default_description()
+        return output_model.NodeDescriptionResponse(description=auto_desc, is_auto_generated=True)
+    return output_model.NodeDescriptionResponse(description='', is_auto_generated=True)
 
 
 @router.post('/node/reference/', tags=['editor'])
