@@ -19,6 +19,43 @@ logger = logging.getLogger(__name__)
 artifact_store = ArtifactStore()
 
 # ---------------------------------------------------------------------------
+# Persistent namespace store for notebook-style execution
+# ---------------------------------------------------------------------------
+# Maintains a persistent execution namespace per flow_id so that variables
+# defined in one cell execution are available in subsequent cell executions.
+# Uses LRU eviction to prevent unbounded memory growth.
+_namespace_store: dict[int, dict] = {}
+_namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
+_MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
+
+
+def _evict_oldest_namespace() -> None:
+    """Evict the least recently used namespace if at capacity."""
+    if len(_namespace_store) < _MAX_NAMESPACES:
+        return
+    if not _namespace_access:
+        return
+    oldest_flow_id = min(_namespace_access, key=lambda k: _namespace_access[k])
+    _namespace_store.pop(oldest_flow_id, None)
+    _namespace_access.pop(oldest_flow_id, None)
+    logger.debug("Evicted namespace for flow_id=%d (LRU)", oldest_flow_id)
+
+
+def _get_namespace(flow_id: int) -> dict:
+    """Get or create a persistent namespace for the given flow_id."""
+    if flow_id not in _namespace_store:
+        _evict_oldest_namespace()
+        _namespace_store[flow_id] = {}
+    _namespace_access[flow_id] = time.time()
+    return _namespace_store[flow_id]
+
+
+def _clear_namespace(flow_id: int) -> None:
+    """Clear the namespace for a flow (e.g., on kernel restart)."""
+    _namespace_store.pop(flow_id, None)
+    _namespace_access.pop(flow_id, None)
+
+# ---------------------------------------------------------------------------
 # Persistence setup (driven by environment variables)
 # ---------------------------------------------------------------------------
 _persistence: ArtifactPersistence | None = None
@@ -190,6 +227,7 @@ def _maybe_wrap_last_expression(code: str) -> str:
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
+    flow_id: int  # Required - namespaces are keyed by flow_id
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
     flow_id: int = 0
@@ -270,22 +308,17 @@ async def execute(request: ExecuteRequest):
         # Reset display outputs for this execution
         flowfile_client._reset_displays()
 
-        # Prepare execution namespace with flowfile module
+        # Get or create persistent namespace for this flow
+        # Variables defined in one cell will be available in subsequent cells
+        exec_globals = _get_namespace(request.flow_id)
+
+        # Always update flowfile reference (context changes between executions)
         # Include __name__ and __builtins__ so classes defined in user code
         # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
-        # to serialize them correctly. Without this, classes get __module__ = "builtins"
-        # and cloudpickle/pickle cannot resolve them during deserialization.
-        #
-        # SECURITY NOTE: Adding __builtins__ exposes Python's builtin functions
-        # to user code. This is acceptable here because:
-        # 1. Kernel runs in an isolated Docker container
-        # 2. User code already has full Python execution capability
-        # 3. Network access is controlled by container configuration
-        exec_globals = {
-            "flowfile": flowfile_client,
-            "__builtins__": __builtins__,
-            "__name__": "__main__",
-        }
+        # to serialize them correctly.
+        exec_globals["flowfile"] = flowfile_client
+        exec_globals["__builtins__"] = __builtins__
+        exec_globals["__name__"] = "__main__"
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             # Execute matplotlib setup to patch plt.show()
@@ -348,7 +381,20 @@ async def execute(request: ExecuteRequest):
 async def clear_artifacts(flow_id: int | None = Query(default=None)):
     """Clear all artifacts, or only those belonging to a specific flow."""
     artifact_store.clear(flow_id=flow_id)
+    # Also clear the namespace for this flow
+    if flow_id is not None:
+        _clear_namespace(flow_id)
+    else:
+        _namespace_store.clear()
+        _namespace_access.clear()
     return {"status": "cleared"}
+
+
+@app.post("/clear_namespace")
+async def clear_namespace(flow_id: int = Query(...)):
+    """Clear the execution namespace for a flow (variables, imports, etc.)."""
+    _clear_namespace(flow_id)
+    return {"status": "cleared", "flow_id": flow_id}
 
 
 @app.post("/clear_node_artifacts")
