@@ -23,7 +23,6 @@ from flowfile_core.artifacts.exceptions import (
     ArtifactStateError,
     ArtifactUploadError,
     NamespaceNotFoundError,
-    StorageError,
 )
 from flowfile_core.catalog.exceptions import FlowNotFoundError
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
@@ -60,7 +59,7 @@ class ArtifactService:
     - TTL column with automatic status transition
     """
 
-    def __init__(self, db: Session, storage: "ArtifactStorageBackend") -> None:
+    def __init__(self, db: Session, storage: ArtifactStorageBackend) -> None:
         self.db = db
         self.storage = storage
 
@@ -109,14 +108,27 @@ class ArtifactService:
         # If two prepare_upload calls race for the same name, one will fail
         # with IntegrityError on the unique constraint. We retry with a fresh
         # version number in that case.
+        #
+        # Clean up stale pending/failed artifacts for this name first so they
+        # don't block version numbering.
+        stale = (
+            self.db.query(GlobalArtifact)
+            .filter_by(name=request.name, namespace_id=request.namespace_id)
+            .filter(GlobalArtifact.status.in_(("pending", "failed")))
+            .all()
+        )
+        for row in stale:
+            self.db.delete(row)
+        if stale:
+            self.db.commit()
+
         last_error: IntegrityError | None = None
         for attempt in range(_max_retries):
-            # Determine next version for this artifact name + namespace
-            # Only count "active" versions to avoid gaps from failed/pending uploads
+            # Determine next version across ALL statuses to avoid unique-constraint
+            # collisions with pending/failed rows.
             latest = (
                 self.db.query(GlobalArtifact)
                 .filter_by(name=request.name, namespace_id=request.namespace_id)
-                .filter(GlobalArtifact.status == "active")
                 .order_by(GlobalArtifact.version.desc())
                 .first()
             )
@@ -151,14 +163,17 @@ class ArtifactService:
                 last_error = e
                 logger.warning(
                     "Version conflict for artifact '%s' v%d (attempt %d/%d), retrying...",
-                    request.name, next_version, attempt + 1, _max_retries
+                    request.name,
+                    next_version,
+                    attempt + 1,
+                    _max_retries,
                 )
                 continue
         else:
             # Exhausted all retries
             raise ArtifactUploadError(
                 artifact_id=0,
-                reason=f"Failed to create artifact after {_max_retries} attempts due to version conflicts: {last_error}"
+                reason=f"Failed to create artifact after {_max_retries} attempts due to version conflicts: {last_error}",
             )
 
         # Get upload target from storage backend
@@ -382,9 +397,7 @@ class ArtifactService:
             query = query.filter(GlobalArtifact.name.contains(name_contains))
 
         if python_type_contains:
-            query = query.filter(
-                GlobalArtifact.python_type.contains(python_type_contains)
-            )
+            query = query.filter(GlobalArtifact.python_type.contains(python_type_contains))
 
         # Tag filtering using SQLite json_each for proper element matching
         # This avoids false positives (e.g., "ml" matching "html") and
@@ -399,8 +412,7 @@ class ArtifactService:
                 # This works with SQLite's JSON1 extension
                 query = query.filter(
                     text(
-                        "EXISTS (SELECT 1 FROM json_each(global_artifacts.tags) "
-                        "WHERE json_each.value = :tag)"
+                        "EXISTS (SELECT 1 FROM json_each(global_artifacts.tags) " "WHERE json_each.value = :tag)"
                     ).bindparams(tag=tag)
                 )
 

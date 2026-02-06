@@ -68,9 +68,7 @@ def get_storage_backend() -> "ArtifactStorageBackend":
 
             bucket = os.environ.get("FLOWFILE_S3_BUCKET")
             if not bucket:
-                raise ValueError(
-                    "FLOWFILE_S3_BUCKET environment variable is required for S3 storage"
-                )
+                raise ValueError("FLOWFILE_S3_BUCKET environment variable is required for S3 storage")
 
             _backend = S3Storage(
                 bucket=bucket,
@@ -79,11 +77,19 @@ def get_storage_backend() -> "ArtifactStorageBackend":
                 endpoint_url=os.environ.get("FLOWFILE_S3_ENDPOINT_URL"),
             )
         else:
+            from pathlib import Path
+
+            # Staging root MUST be inside the kernel's shared volume so that
+            # both Core (host) and kernel containers (Docker) can access it.
+            # The kernel manager mounts <shared_volume_path> → /shared.
+            from flowfile_core.kernel import get_kernel_manager
             from shared.artifact_storage import SharedFilesystemStorage
             from shared.storage_config import storage
 
+            staging_root = Path(get_kernel_manager().shared_volume_path) / "artifact_staging"
+
             _backend = SharedFilesystemStorage(
-                staging_root=storage.artifact_staging_directory,
+                staging_root=staging_root,
                 artifacts_root=storage.global_artifacts_directory,
             )
 
