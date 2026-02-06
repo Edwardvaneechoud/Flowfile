@@ -198,7 +198,7 @@ class TestArtifactCodeGeneration:
     """Test artifact publish/consume code generation."""
 
     def test_artifact_publish(self):
-        """publish_artifact becomes _artifacts assignment."""
+        """publish_artifact becomes _artifacts[kernel_id] assignment."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -208,21 +208,20 @@ class TestArtifactCodeGeneration:
             'flowfile.publish_artifact("my_model", model)\n'
             "flowfile.publish_output(flowfile.read_input())\n"
         )
-        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="k1")
         connect_nodes(flow, 1, 2)
 
         generated = export_flow_to_polars(flow)
 
         assert "_artifacts" in generated
         assert "my_model" in generated
+        assert "k1" in generated
         assert "flowfile" not in generated
-        # Should have _artifacts = {} at top level
-        assert "_artifacts = {}" in generated
 
         verify_code_executes(generated)
 
-    def test_artifact_chain(self):
-        """Artifacts flow correctly between two python_script nodes."""
+    def test_artifact_chain_same_kernel(self):
+        """Artifacts flow correctly between two python_script nodes on same kernel."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -232,16 +231,16 @@ class TestArtifactCodeGeneration:
             'flowfile.publish_artifact("info", info)\n'
             "flowfile.publish_output(flowfile.read_input())\n"
         )
-        add_python_script_node(flow, node_id=2, code=producer_code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=producer_code, depending_on_ids=[1], kernel_id="k1")
         connect_nodes(flow, 1, 2)
 
-        # Consumer node
+        # Consumer node — same kernel
         consumer_code = (
             'info = flowfile.read_artifact("info")\n'
             "df = flowfile.read_input().collect()\n"
             "flowfile.publish_output(df)\n"
         )
-        add_python_script_node(flow, node_id=3, code=consumer_code, depending_on_ids=[2])
+        add_python_script_node(flow, node_id=3, code=consumer_code, depending_on_ids=[2], kernel_id="k1")
         connect_nodes(flow, 2, 3)
 
         generated = export_flow_to_polars(flow)
@@ -252,8 +251,32 @@ class TestArtifactCodeGeneration:
 
         verify_code_executes(generated)
 
+    def test_artifact_cross_kernel_error(self):
+        """Consuming an artifact from a different kernel should fail."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        # Producer on kernel k1
+        producer_code = (
+            'flowfile.publish_artifact("model", {"x": 1})\n'
+            "flowfile.publish_output(flowfile.read_input())\n"
+        )
+        add_python_script_node(flow, node_id=2, code=producer_code, depending_on_ids=[1], kernel_id="k1")
+        connect_nodes(flow, 1, 2)
+
+        # Consumer on kernel k2 — different kernel, should fail
+        consumer_code = (
+            'model = flowfile.read_artifact("model")\n'
+            "flowfile.publish_output(flowfile.read_input())\n"
+        )
+        add_python_script_node(flow, node_id=3, code=consumer_code, depending_on_ids=[2], kernel_id="k2")
+        connect_nodes(flow, 2, 3)
+
+        with pytest.raises(UnsupportedNodeError, match="model"):
+            export_flow_to_polars(flow)
+
     def test_artifact_delete(self):
-        """delete_artifact becomes del _artifacts[...]."""
+        """delete_artifact becomes del _artifacts[kernel][...]."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -263,13 +286,14 @@ class TestArtifactCodeGeneration:
             'flowfile.delete_artifact("temp")\n'
             "flowfile.publish_output(flowfile.read_input())\n"
         )
-        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="k1")
         connect_nodes(flow, 1, 2)
 
         generated = export_flow_to_polars(flow)
 
         assert "del _artifacts" in generated
         assert "temp" in generated
+        assert "k1" in generated
         verify_code_executes(generated)
 
     def test_unconsumed_artifact_error(self):
@@ -509,19 +533,38 @@ class TestMixedNodeTypes:
 
 
 class TestArtifactStoreInitialization:
-    """Test that _artifacts = {} is emitted properly."""
+    """Test that _artifacts is emitted properly with per-kernel sub-dicts."""
 
     def test_artifacts_dict_emitted_for_python_script(self):
-        """_artifacts = {} should appear when python_script nodes exist."""
+        """_artifacts should appear with kernel sub-dict when python_script nodes exist."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
         code = "flowfile.publish_output(flowfile.read_input())\n"
-        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="k1")
         connect_nodes(flow, 1, 2)
 
         generated = export_flow_to_polars(flow)
-        assert "_artifacts = {}" in generated
+        assert '_artifacts = {"k1": {}}' in generated
+
+    def test_multiple_kernels_initialized(self):
+        """Multiple kernels should each get their own sub-dict."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = "flowfile.publish_output(flowfile.read_input())\n"
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="k1")
+        connect_nodes(flow, 1, 2)
+
+        add_python_script_node(flow, node_id=3, code=code, depending_on_ids=[2], kernel_id="k2")
+        connect_nodes(flow, 2, 3)
+
+        generated = export_flow_to_polars(flow)
+        assert "k1" in generated
+        assert "k2" in generated
+        # Both should be initialized as empty dicts
+        assert "_artifacts" in generated
+        verify_code_executes(generated)
 
     def test_no_artifacts_dict_without_python_script(self):
         """_artifacts should NOT appear when no python_script nodes exist."""
@@ -558,7 +601,7 @@ class TestFullPipelineExample:
     """Test the complete example from the specification."""
 
     def test_train_predict_pipeline(self):
-        """Simulate train → predict pipeline with artifacts."""
+        """Simulate train → predict pipeline with artifacts on same kernel."""
         flow = create_basic_flow()
 
         # Node 1: Manual input with training data
@@ -583,10 +626,10 @@ class TestFullPipelineExample:
             'flowfile.publish_artifact("model", model)\n'
             "flowfile.publish_output(flowfile.read_input())\n"
         )
-        add_python_script_node(flow, node_id=2, code=train_code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=train_code, depending_on_ids=[1], kernel_id="ml")
         connect_nodes(flow, 1, 2)
 
-        # Node 3: Use model (consume artifact)
+        # Node 3: Use model (consume artifact — same kernel)
         predict_code = (
             "import polars as pl\n"
             'model = flowfile.read_artifact("model")\n'
@@ -594,16 +637,16 @@ class TestFullPipelineExample:
             "result = df.with_columns(pl.lit(model['n_features']).alias('n_features'))\n"
             "flowfile.publish_output(result)\n"
         )
-        add_python_script_node(flow, node_id=3, code=predict_code, depending_on_ids=[2])
+        add_python_script_node(flow, node_id=3, code=predict_code, depending_on_ids=[2], kernel_id="ml")
         connect_nodes(flow, 2, 3)
 
         generated = export_flow_to_polars(flow)
 
-        # Verify structure
-        assert "_artifacts = {}" in generated
+        # Verify structure — kernel-scoped artifacts
         assert "def _node_2" in generated
         assert "def _node_3" in generated
         assert "_artifacts" in generated
+        assert "ml" in generated
         assert "model" in generated
         assert "flowfile" not in generated
 
@@ -616,7 +659,7 @@ class TestFullPipelineExample:
         assert "n_features" in result.columns
 
     def test_list_artifacts_usage(self):
-        """Test that list_artifacts becomes _artifacts reference."""
+        """Test that list_artifacts becomes _artifacts[kernel_id] reference."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -626,12 +669,13 @@ class TestFullPipelineExample:
             "arts = flowfile.list_artifacts()\n"
             "flowfile.publish_output(flowfile.read_input())\n"
         )
-        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="k1")
         connect_nodes(flow, 1, 2)
 
         generated = export_flow_to_polars(flow)
 
         assert "flowfile" not in generated
+        assert "k1" in generated
         verify_code_executes(generated)
 
     def test_node_comment_header(self):
@@ -646,3 +690,33 @@ class TestFullPipelineExample:
         generated = export_flow_to_polars(flow)
 
         assert "# --- Node 2: python_script ---" in generated
+
+
+# ---------------------------------------------------------------------------
+# Multi-input (read_inputs) tests
+# ---------------------------------------------------------------------------
+
+
+class TestMultiInputCodeGeneration:
+    """Test python_script nodes with multiple inputs (read_inputs)."""
+
+    def test_read_inputs_dict_structure(self):
+        """read_inputs should produce dict[str, list[pl.LazyFrame]] matching runtime."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+        add_manual_input_node(flow, node_id=3)
+
+        code = (
+            "dfs = flowfile.read_inputs()\n"
+            "df = dfs['main'][0].collect()\n"
+            "flowfile.publish_output(df)\n"
+        )
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1, 3])
+        connect_nodes(flow, 1, 2)
+        connect_nodes(flow, 3, 2)
+
+        generated = export_flow_to_polars(flow)
+
+        assert "dict[str, list[pl.LazyFrame]]" in generated
+        assert "flowfile" not in generated
+        verify_code_executes(generated)

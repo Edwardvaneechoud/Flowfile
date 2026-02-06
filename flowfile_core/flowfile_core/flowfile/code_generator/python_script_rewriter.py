@@ -5,14 +5,18 @@ Transforms flowfile.* API calls in user code into plain Python equivalents,
 enabling code generation for python_script nodes that normally execute inside
 Docker kernel containers.
 
+Artifacts are scoped per kernel — each kernel gets its own sub-dict inside
+``_artifacts``, matching the runtime behaviour where every kernel container
+has an independent artifact store.
+
 Mapping:
     flowfile.read_input()             → function parameter (input_df)
     flowfile.read_inputs()            → function parameter (inputs)
     flowfile.publish_output(expr)     → return statement
-    flowfile.publish_artifact("n", o) → _artifacts["n"] = o
-    flowfile.read_artifact("n")       → _artifacts["n"]
-    flowfile.delete_artifact("n")     → del _artifacts["n"]
-    flowfile.list_artifacts()         → _artifacts
+    flowfile.publish_artifact("n", o) → _artifacts["<kernel_id>"]["n"] = o
+    flowfile.read_artifact("n")       → _artifacts["<kernel_id>"]["n"]
+    flowfile.delete_artifact("n")     → del _artifacts["<kernel_id>"]["n"]
+    flowfile.list_artifacts()         → _artifacts["<kernel_id>"]
     flowfile.log(msg, level)          → print(f"[{level}] {msg}")
 """
 
@@ -153,15 +157,40 @@ def analyze_flowfile_usage(code: str) -> FlowfileUsageAnalysis:
 
 
 class _FlowfileCallRewriter(ast.NodeTransformer):
-    """Rewrite flowfile.* API calls to plain Python equivalents."""
+    """Rewrite flowfile.* API calls to plain Python equivalents.
 
-    def __init__(self, analysis: FlowfileUsageAnalysis) -> None:
+    Artifact operations are scoped to a kernel-specific sub-dict so that
+    each kernel's artifacts stay isolated, matching runtime semantics.
+    """
+
+    def __init__(self, analysis: FlowfileUsageAnalysis, kernel_id: str | None = None) -> None:
         self.analysis = analysis
+        self.kernel_id = kernel_id or "_default"
         self.input_var = "input_df" if analysis.input_mode == "single" else "inputs"
         self._last_output_expr: ast.expr | None = None
         # Track which publish_output call is the last one
         if analysis.output_exprs:
             self._last_output_expr = analysis.output_exprs[-1]
+
+    # --- helpers for kernel-scoped artifact access ---
+
+    def _kernel_artifacts_node(self, ctx: type[ast.expr_context] = ast.Load) -> ast.Subscript:
+        """Build ``_artifacts["<kernel_id>"]`` AST node."""
+        return ast.Subscript(
+            value=ast.Name(id="_artifacts", ctx=ast.Load()),
+            slice=ast.Constant(value=self.kernel_id),
+            ctx=ctx(),
+        )
+
+    def _artifact_subscript(self, name_node: ast.expr, ctx: type[ast.expr_context] = ast.Load) -> ast.Subscript:
+        """Build ``_artifacts["<kernel_id>"]["<name>"]`` AST node."""
+        return ast.Subscript(
+            value=self._kernel_artifacts_node(),
+            slice=name_node,
+            ctx=ctx(),
+        )
+
+    # --- visitors ---
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         # First transform any nested calls
@@ -181,16 +210,12 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
             return ast.Name(id=self.input_var, ctx=ast.Load())
 
         if method == "read_artifact":
-            # flowfile.read_artifact("name") → _artifacts["name"]
-            return ast.Subscript(
-                value=ast.Name(id="_artifacts", ctx=ast.Load()),
-                slice=node.args[0],
-                ctx=ast.Load(),
-            )
+            # flowfile.read_artifact("name") → _artifacts["kernel_id"]["name"]
+            return self._artifact_subscript(node.args[0])
 
         if method == "list_artifacts":
-            # flowfile.list_artifacts() → _artifacts
-            return ast.Name(id="_artifacts", ctx=ast.Load())
+            # flowfile.list_artifacts() → _artifacts["kernel_id"]
+            return self._kernel_artifacts_node()
 
         if method == "log":
             return self._make_log_print(node)
@@ -224,16 +249,10 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
             return None
 
         if method == "publish_artifact":
-            # flowfile.publish_artifact("name", obj) → _artifacts["name"] = obj
+            # flowfile.publish_artifact("name", obj) → _artifacts["kernel_id"]["name"] = obj
             if len(call.args) >= 2:
                 return ast.Assign(
-                    targets=[
-                        ast.Subscript(
-                            value=ast.Name(id="_artifacts", ctx=ast.Load()),
-                            slice=call.args[0],
-                            ctx=ast.Store(),
-                        )
-                    ],
+                    targets=[self._artifact_subscript(call.args[0], ctx=ast.Store)],
                     value=call.args[1],
                     lineno=node.lineno,
                     col_offset=node.col_offset,
@@ -241,16 +260,10 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
             return node
 
         if method == "delete_artifact":
-            # flowfile.delete_artifact("name") → del _artifacts["name"]
+            # flowfile.delete_artifact("name") → del _artifacts["kernel_id"]["name"]
             if call.args:
                 return ast.Delete(
-                    targets=[
-                        ast.Subscript(
-                            value=ast.Name(id="_artifacts", ctx=ast.Load()),
-                            slice=call.args[0],
-                            ctx=ast.Del(),
-                        )
-                    ],
+                    targets=[self._artifact_subscript(call.args[0], ctx=ast.Del)],
                     lineno=node.lineno,
                     col_offset=node.col_offset,
                 )
@@ -311,7 +324,11 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
         )
 
 
-def rewrite_flowfile_calls(code: str, analysis: FlowfileUsageAnalysis) -> str:
+def rewrite_flowfile_calls(
+    code: str,
+    analysis: FlowfileUsageAnalysis,
+    kernel_id: str | None = None,
+) -> str:
     """Rewrite flowfile.* API calls in user code to plain Python.
 
     This removes/replaces flowfile API calls but does NOT add function
@@ -321,12 +338,13 @@ def rewrite_flowfile_calls(code: str, analysis: FlowfileUsageAnalysis) -> str:
     Args:
         code: The raw Python source from a python_script node.
         analysis: Pre-computed analysis of flowfile usage.
+        kernel_id: The kernel ID for scoping artifact operations.
 
     Returns:
         The rewritten source code with flowfile calls replaced.
     """
     tree = ast.parse(code)
-    rewriter = _FlowfileCallRewriter(analysis)
+    rewriter = _FlowfileCallRewriter(analysis, kernel_id=kernel_id)
     new_tree = rewriter.visit(tree)
     # Remove None nodes (deleted statements)
     new_tree.body = [node for node in new_tree.body if node is not None]
@@ -389,6 +407,7 @@ def build_function_code(
     rewritten_code: str,
     analysis: FlowfileUsageAnalysis,
     input_vars: dict[str, str],
+    kernel_id: str | None = None,
 ) -> tuple[str, str]:
     """Assemble rewritten code into a function definition and call.
 
@@ -398,6 +417,7 @@ def build_function_code(
             with imports already stripped).
         analysis: The flowfile usage analysis.
         input_vars: Mapping of input names to variable names from upstream nodes.
+        kernel_id: The kernel ID (used to scope return expressions).
 
     Returns:
         Tuple of (function_definition, call_code).
@@ -423,8 +443,14 @@ def build_function_code(
                     break
         args.append(main_var or "pl.LazyFrame()")
     elif analysis.input_mode == "multi":
-        params.append("inputs: dict[str, pl.LazyFrame]")
-        dict_entries = ", ".join(f'"{k}": {v}' for k, v in sorted(input_vars.items()))
+        # Runtime returns dict[str, list[pl.LazyFrame]] — each input name
+        # maps to a *list* of LazyFrames (multiple connections can share a name).
+        params.append("inputs: dict[str, list[pl.LazyFrame]]")
+        # Group input_vars by their base name (strip _0, _1 suffixes).
+        grouped = _group_input_vars(input_vars)
+        dict_entries = ", ".join(
+            f'"{k}": [{", ".join(vs)}]' for k, vs in sorted(grouped.items())
+        )
         args.append("{" + dict_entries + "}")
 
     param_str = ", ".join(params)
@@ -447,20 +473,17 @@ def build_function_code(
             # publish_output(read_input()) → return input_df
             body_lines.append("return input_df")
         else:
-            # The output expr was rewritten by the transformer —
-            # we need to figure out what it became.
-            # The rewriter removed the publish_output Expr statement.
-            # We need to produce a return for the last output expression.
-            # Approach: re-parse and transform just the output expression
-            output_return = _build_return_for_output(last_expr, analysis)
+            output_return = _build_return_for_output(last_expr, analysis, kernel_id=kernel_id)
             body_lines.append(output_return)
     elif analysis.input_mode == "single":
         # No explicit output — pass through input
         body_lines.append("return input_df")
     elif analysis.input_mode == "multi":
-        # Pass through first input
+        # Pass through first input list
         first_key = sorted(input_vars.keys())[0] if input_vars else "main"
-        body_lines.append(f'return inputs["{first_key}"]')
+        # Strip _0 suffix to get the base name
+        base_key = _base_input_name(first_key)
+        body_lines.append(f'return inputs["{base_key}"][0]')
     elif not params:
         body_lines.append("return None")
 
@@ -478,7 +501,32 @@ def build_function_code(
     return func_def, call_code
 
 
-def _build_return_for_output(output_expr: ast.expr, analysis: FlowfileUsageAnalysis) -> str:
+def _base_input_name(key: str) -> str:
+    """Strip numeric suffix from input var keys: 'main_0' → 'main'."""
+    parts = key.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return key
+
+
+def _group_input_vars(input_vars: dict[str, str]) -> dict[str, list[str]]:
+    """Group input variable names by their base name.
+
+    E.g. {"main_0": "df_1", "main_1": "df_3"} → {"main": ["df_1", "df_3"]}
+         {"main": "df_1"} → {"main": ["df_1"]}
+    """
+    grouped: dict[str, list[str]] = {}
+    for key, var in sorted(input_vars.items()):
+        base = _base_input_name(key)
+        grouped.setdefault(base, []).append(var)
+    return grouped
+
+
+def _build_return_for_output(
+    output_expr: ast.expr,
+    analysis: FlowfileUsageAnalysis,
+    kernel_id: str | None = None,
+) -> str:
     """Build a return statement from a publish_output expression.
 
     The expression is the original AST node from publish_output(expr).
@@ -490,7 +538,7 @@ def _build_return_for_output(output_expr: ast.expr, analysis: FlowfileUsageAnaly
     # Check if it's just a variable name — common pattern like publish_output(result)
     # In that case, ensure .lazy() is called for DataFrame returns
     # We add .lazy() wrapper as a safety measure for DataFrames
-    rewriter = _FlowfileCallRewriter(analysis)
+    rewriter = _FlowfileCallRewriter(analysis, kernel_id=kernel_id)
     expr_tree = ast.parse(temp_code, mode="eval")
     new_expr = rewriter.visit(expr_tree)
     ast.fix_missing_locations(new_expr)

@@ -52,10 +52,12 @@ class FlowGraphToPolarsConverter:
         self.last_node_var = None
         self.unsupported_nodes = []
         self.custom_node_classes = {}
-        # Track which artifacts have been published and by which node (for validation)
-        self._published_artifacts: dict[str, int] = {}  # artifact_name → node_id
+        # Track which artifacts have been published: (kernel_id, artifact_name) → node_id
+        self._published_artifacts: dict[tuple[str, str], int] = {}
         # Track if any python_script nodes exist (to emit _artifacts = {} once)
         self._has_python_script_nodes: bool = False
+        # Track which kernel IDs are used (for initializing per-kernel sub-dicts)
+        self._kernel_ids_used: list[str] = []
 
     def convert(self) -> str:
         """
@@ -1156,6 +1158,9 @@ class FlowGraphToPolarsConverter:
             ))
             return
         self._has_python_script_nodes = True
+        effective_kernel_id = kernel_id or "_default"
+        if effective_kernel_id not in self._kernel_ids_used:
+            self._kernel_ids_used.append(effective_kernel_id)
 
         # 2. Check for unsupported patterns
         if analysis.dynamic_artifact_names:
@@ -1176,13 +1181,14 @@ class FlowGraphToPolarsConverter:
             ))
             return
 
-        # 3. Validate artifact dependencies are available
+        # 3. Validate artifact dependencies are available (same kernel only)
         for artifact_name in analysis.artifacts_consumed:
-            if artifact_name not in self._published_artifacts:
+            if (effective_kernel_id, artifact_name) not in self._published_artifacts:
                 self.unsupported_nodes.append((
                     node_id,
                     "python_script",
-                    f"Artifact '{artifact_name}' is consumed but not published by any upstream node"
+                    f"Artifact '{artifact_name}' is consumed but not published by any "
+                    f"upstream node on kernel '{effective_kernel_id}'"
                 ))
                 return
 
@@ -1195,12 +1201,12 @@ class FlowGraphToPolarsConverter:
         if kernel_id:
             self._add_kernel_requirements(kernel_id, user_imports)
 
-        # 6. Rewrite the code
-        rewritten = rewrite_flowfile_calls(code, analysis)
+        # 6. Rewrite the code (kernel_id scopes artifact access)
+        rewritten = rewrite_flowfile_calls(code, analysis, kernel_id=kernel_id)
 
         # 7. Build and emit the function
         func_def, call_code = build_function_code(
-            node_id, rewritten, analysis, input_vars
+            node_id, rewritten, analysis, input_vars, kernel_id=kernel_id
         )
 
         self._add_code(f"# --- Node {node_id}: python_script ---")
@@ -1211,7 +1217,7 @@ class FlowGraphToPolarsConverter:
 
         # 8. Track published artifacts for validation of downstream nodes
         for artifact_name, _ in analysis.artifacts_published:
-            self._published_artifacts[artifact_name] = node_id
+            self._published_artifacts[(effective_kernel_id, artifact_name)] = node_id
 
         self._add_code("")
 
@@ -1756,9 +1762,10 @@ class FlowGraphToPolarsConverter:
         lines.append("    Generated from Flowfile")
         lines.append('    """')
 
-        # Artifact store (only if python_script nodes exist)
+        # Artifact store — one sub-dict per kernel, matching runtime isolation
         if self._has_python_script_nodes or self._published_artifacts:
-            lines.append("    _artifacts = {}  # Shared artifact store")
+            kernel_init = ", ".join(f'"{kid}": {{}}' for kid in self._kernel_ids_used)
+            lines.append(f"    _artifacts = {{{kernel_init}}}  # Artifact store (per kernel)")
 
         lines.append("    ")
 
