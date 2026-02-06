@@ -16,6 +16,8 @@ import pytest
 
 from kernel_runtime.flowfile_client import (
     _CORE_URL,
+    _clear_context,
+    _set_context,
     delete_global_artifact,
     get_global,
     list_global_artifacts,
@@ -74,6 +76,20 @@ def mock_artifact_response():
 
 class TestPublishGlobal:
     """Tests for publish_global function."""
+
+    @pytest.fixture(autouse=True)
+    def set_publish_context(self):
+        """Set up flowfile context with source_registration_id for publish tests."""
+        _set_context(
+            node_id=1,
+            input_paths={},
+            output_dir="/tmp/output",
+            artifact_store=MagicMock(),
+            flow_id=1,
+            source_registration_id=42,
+        )
+        yield
+        _clear_context()
 
     def test_publish_dict_object(self, mock_httpx_client, tmp_path):
         """Should publish a dict object successfully."""
@@ -510,6 +526,20 @@ class TestDeleteGlobalArtifact:
 
 class TestGlobalArtifactIntegration:
     """Integration tests using actual serialization but mocked HTTP."""
+
+    @pytest.fixture(autouse=True)
+    def set_publish_context(self):
+        """Set up flowfile context with source_registration_id for publish tests."""
+        _set_context(
+            node_id=1,
+            input_paths={},
+            output_dir="/tmp/output",
+            artifact_store=MagicMock(),
+            flow_id=1,
+            source_registration_id=42,
+        )
+        yield
+        _clear_context()
 
     @pytest.fixture
     def integration_setup(self, mock_httpx_client, tmp_path):
