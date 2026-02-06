@@ -35,7 +35,7 @@ def _evict_oldest_namespace() -> None:
         return
     if not _namespace_access:
         return
-    oldest_flow_id = min(_namespace_access, key=_namespace_access.get)  # type: ignore[arg-type]
+    oldest_flow_id = min(_namespace_access, key=lambda k: _namespace_access[k])
     _namespace_store.pop(oldest_flow_id, None)
     _namespace_access.pop(oldest_flow_id, None)
     logger.debug("Evicted namespace for flow_id=%d (LRU)", oldest_flow_id)
@@ -227,9 +227,9 @@ def _maybe_wrap_last_expression(code: str) -> str:
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
+    flow_id: int  # Required - namespaces are keyed by flow_id
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
-    flow_id: int = 0
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
 

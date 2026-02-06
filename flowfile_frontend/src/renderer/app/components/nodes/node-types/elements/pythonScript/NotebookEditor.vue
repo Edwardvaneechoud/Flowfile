@@ -8,6 +8,9 @@
       <button @click="clearAllOutputs" title="Clear All Outputs">
         <i class="fa-solid fa-eraser"></i> Clear
       </button>
+      <button @click="restartKernel" :disabled="!kernelId || isAnyExecuting" title="Restart Kernel (clear all variables)">
+        <i class="fa-solid fa-rotate-right"></i> Restart
+      </button>
       <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? 's' : '' }}</span>
     </div>
 
@@ -104,8 +107,11 @@ const updateCellOutput = (cellId: string, output: NotebookCell['output']) => {
 const runCell = async (cellId: string): Promise<boolean> => {
   if (!props.kernelId) return false;
 
+  // Capture code at start to avoid race conditions if cells change during execution
   const cell = props.cells.find(c => c.id === cellId);
-  if (!cell || !cell.code.trim()) return true;
+  if (!cell) return true;
+  const codeToRun = cell.code;
+  if (!codeToRun.trim()) return true;
 
   executingCellId.value = cellId;
   try {
@@ -120,7 +126,7 @@ const runCell = async (cellId: string): Promise<boolean> => {
 
     const result = await KernelApi.executeCell(props.kernelId, {
       node_id: props.nodeId,
-      code: cell.code,
+      code: codeToRun,
       input_paths: inputPaths,
       output_dir: outputDir,
       flow_id: props.flowId,
@@ -169,6 +175,18 @@ const runCellAndAdvance = async (cellId: string, index: number) => {
   }
   // Note: actual focus management of the next cell's CodeMirror editor
   // would require ref tracking. For v1, just adding the cell is sufficient.
+};
+
+const restartKernel = async () => {
+  if (!props.kernelId) return;
+  try {
+    await KernelApi.clearNamespace(props.kernelId, props.flowId);
+    // Clear outputs and reset execution counter
+    clearAllOutputs();
+    executionCounter.value = 1;
+  } catch (error) {
+    console.error("Failed to restart kernel:", error);
+  }
 };
 </script>
 
