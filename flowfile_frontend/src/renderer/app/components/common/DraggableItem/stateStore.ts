@@ -41,6 +41,11 @@ export const useItemStore = defineStore("itemStore", () => {
   const idItemClicked = ref<string | null>(null);
   const idItemVisible = ref<string | null>(null);
 
+  // Z-index constants to prevent unbounded growth
+  const BASE_Z_INDEX = 100;
+  const MAX_Z_INDEX = 200;
+  const FULLSCREEN_Z_INDEX = 250;
+
   const layoutPresets = {
     sidePanel: { width: 400, height: "100%" },
     bottomPanel: { width: "100%", height: 300 },
@@ -60,6 +65,17 @@ export const useItemStore = defineStore("itemStore", () => {
     }
   };
 
+  const normalizeZIndices = () => {
+    const nonFullscreenEntries = Object.entries(items.value)
+      .filter(([, item]) => !item.fullScreen)
+      .sort((a, b) => a[1].zIndex - b[1].zIndex);
+
+    nonFullscreenEntries.forEach(([entryId, item], index) => {
+      item.zIndex = BASE_Z_INDEX + index;
+      saveItemState(entryId);
+    });
+  };
+
   const bringToFront = (id: string) => {
     if (!items.value[id]) {
       console.warn(`Item ${id} not found`);
@@ -70,18 +86,24 @@ export const useItemStore = defineStore("itemStore", () => {
     if (items.value[id].fullScreen) return;
 
     // Find the maximum z-index among all non-fullscreen items
-    let maxZIndex = 99;
+    let maxZIndex = BASE_Z_INDEX - 1;
     Object.entries(items.value).forEach(([itemId, item]) => {
-      if (!item.fullScreen && itemId !== id) {
+      if (!item.fullScreen) {
         maxZIndex = Math.max(maxZIndex, item.zIndex);
       }
     });
 
-    // Set this item's z-index to be above all others
+    // Only increment if this item is not already at the top
+    if (items.value[id].zIndex >= maxZIndex) return;
+
     items.value[id].zIndex = maxZIndex + 1;
 
-    // Optionally save the state
-    saveItemState(id);
+    // Normalize if z-indices are getting too high to prevent unbounded growth
+    if (items.value[id].zIndex > MAX_Z_INDEX) {
+      normalizeZIndices();
+    } else {
+      saveItemState(id);
+    }
   };
 
   const setItemState = (id: string, state: Partial<ItemLayout>) => {
@@ -94,7 +116,7 @@ export const useItemStore = defineStore("itemStore", () => {
         stickynessPosition: "free",
         fullWidth: false,
         fullHeight: false,
-        zIndex: 100,
+        zIndex: BASE_Z_INDEX,
         fullScreen: false,
         clicked: false,
       };
@@ -238,6 +260,10 @@ export const useItemStore = defineStore("itemStore", () => {
     const savedState = localStorage.getItem(`overlayPositionAndSize_${id}`);
     if (savedState) {
       const state = JSON.parse(savedState);
+      // Clamp restored z-index to prevent inflated values from localStorage
+      if (state.zIndex !== undefined && state.zIndex > MAX_Z_INDEX) {
+        state.zIndex = BASE_Z_INDEX;
+      }
       setItemState(id, state);
     }
 
@@ -298,19 +324,17 @@ export const useItemStore = defineStore("itemStore", () => {
         items.value[id].height = window.innerHeight;
         items.value[id].left = 0;
         items.value[id].top = 0;
-        items.value[id].zIndex = 9999;
+        items.value[id].zIndex = FULLSCREEN_Z_INDEX;
       } else {
         items.value[id].fullScreen = false;
         items.value[id].width = items.value[id].prevWidth || 400;
         items.value[id].height = items.value[id].prevHeight || 300;
         items.value[id].left = items.value[id].prevLeft || 100;
         items.value[id].top = items.value[id].prevTop || 100;
-        items.value[id].zIndex = 1000;
 
+        // Restore all items to base, then bring this one to front
         Object.keys(items.value).forEach((otherId) => {
-          if (otherId !== id) {
-            items.value[otherId].zIndex = 100;
-          }
+          items.value[otherId].zIndex = BASE_Z_INDEX;
         });
       }
 
@@ -345,7 +369,7 @@ export const useItemStore = defineStore("itemStore", () => {
         stickynessPosition: initialState.stickynessPosition || "free",
         fullWidth: initialState.fullWidth || false,
         fullHeight: initialState.fullHeight || false,
-        zIndex: 100,
+        zIndex: BASE_Z_INDEX,
         fullScreen: false,
         clicked: false,
         group: initialState.group,
@@ -396,7 +420,7 @@ export const useItemStore = defineStore("itemStore", () => {
       stickynessPosition: initialState.stickynessPosition || "free",
       fullWidth: initialState.fullWidth || false,
       fullHeight: initialState.fullHeight || false,
-      zIndex: items.value[id]?.zIndex || 100,
+      zIndex: items.value[id]?.zIndex || BASE_Z_INDEX,
       fullScreen: false,
       clicked: false,
       group: initialState.group,
@@ -409,18 +433,7 @@ export const useItemStore = defineStore("itemStore", () => {
   const clickOnItem = (id: string) => {
     if (!items.value[id] || items.value[id].fullScreen) return;
 
-    let maxZIndex = 99;
-    Object.values(items.value).forEach((item) => {
-      if (!item.fullScreen) {
-        maxZIndex = Math.max(maxZIndex, item.zIndex);
-      }
-    });
-
-    if (items.value[id].zIndex <= maxZIndex) {
-      items.value[id].zIndex = maxZIndex + 1;
-      saveItemState(id);
-    }
-
+    bringToFront(id);
     idItemClicked.value = id;
   };
 
@@ -441,9 +454,9 @@ export const useItemStore = defineStore("itemStore", () => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             idItemVisible.value = id;
-            items.value[id].zIndex = 1000;
+            bringToFront(id);
           } else if (idItemVisible.value === id) {
-            items.value[id].zIndex = 100;
+            items.value[id].zIndex = BASE_Z_INDEX;
             idItemVisible.value = null;
           }
         });
