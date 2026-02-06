@@ -25,7 +25,8 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
     StorageError,
 )
-from flowfile_core.database.models import CatalogNamespace, GlobalArtifact
+from flowfile_core.catalog.exceptions import FlowNotFoundError
+from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
 from flowfile_core.schemas.artifact_schema import (
     ArtifactListItem,
     ArtifactOut,
@@ -86,8 +87,18 @@ class ArtifactService:
             PrepareUploadResponse with upload target information.
 
         Raises:
+            FlowNotFoundError: If source registration doesn't exist.
             NamespaceNotFoundError: If specified namespace doesn't exist.
         """
+        # Validate registration exists
+        registration = self.db.get(FlowRegistration, request.source_registration_id)
+        if registration is None:
+            raise FlowNotFoundError(registration_id=request.source_registration_id)
+
+        # Inherit namespace_id from registration if not explicitly provided
+        if request.namespace_id is None:
+            request.namespace_id = registration.namespace_id
+
         # Validate namespace if specified
         if request.namespace_id is not None:
             ns = self.db.get(CatalogNamespace, request.namespace_id)
@@ -118,6 +129,7 @@ class ArtifactService:
                 version=next_version,
                 status="pending",
                 owner_id=owner_id,
+                source_registration_id=request.source_registration_id,
                 source_flow_id=request.source_flow_id,
                 source_node_id=request.source_node_id,
                 source_kernel_id=request.source_kernel_id,
@@ -546,6 +558,7 @@ class ArtifactService:
             version=artifact.version,
             status=artifact.status,
             owner_id=artifact.owner_id,
+            source_registration_id=artifact.source_registration_id,
             source_flow_id=artifact.source_flow_id,
             source_node_id=artifact.source_node_id,
             source_kernel_id=artifact.source_kernel_id,
@@ -570,6 +583,7 @@ class ArtifactService:
             namespace_id=artifact.namespace_id,
             version=artifact.version,
             status=artifact.status,
+            source_registration_id=artifact.source_registration_id,
             python_type=artifact.python_type,
             serialization_format=artifact.serialization_format,
             size_bytes=artifact.size_bytes,

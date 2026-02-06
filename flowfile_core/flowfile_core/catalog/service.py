@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
+    FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
     NamespaceExistsError,
@@ -388,10 +389,17 @@ class CatalogService:
         ------
         FlowNotFoundError
             If the flow doesn't exist.
+        FlowHasArtifactsError
+            If the flow still has active (non-deleted) artifacts.
         """
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
+
+        artifact_count = self.repo.count_active_artifacts_for_flow(registration_id)
+        if artifact_count > 0:
+            raise FlowHasArtifactsError(registration_id, artifact_count)
+
         self.repo.delete_flow(registration_id)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:

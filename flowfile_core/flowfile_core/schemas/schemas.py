@@ -116,6 +116,10 @@ class FlowGraphConfig(BaseModel):
     save_location: str | None = None
     name: str = ""
     path: str = ""
+    source_registration_id: int | None = Field(
+        default=None,
+        description="Catalog registration ID when running a registered flow.",
+    )
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")

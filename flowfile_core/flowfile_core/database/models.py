@@ -1,6 +1,7 @@
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -215,9 +216,20 @@ class GlobalArtifact(Base):
 
     # Ownership & Lineage
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    source_registration_id = Column(
+        Integer,
+        ForeignKey("flow_registrations.id"),
+        nullable=False,
+    )
     source_flow_id = Column(Integer, nullable=True)
     source_node_id = Column(Integer, nullable=True)
     source_kernel_id = Column(String, nullable=True)
+
+    source_registration = relationship(
+        "FlowRegistration",
+        backref="artifacts",
+        passive_deletes=True,
+    )
 
     # Serialization
     python_type = Column(String, nullable=True)      # e.g., "sklearn.ensemble.RandomForestClassifier"

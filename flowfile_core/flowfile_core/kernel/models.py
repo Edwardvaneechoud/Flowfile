@@ -62,6 +62,7 @@ class ExecuteRequest(BaseModel):
     input_paths: dict[str, list[str]] = Field(default_factory=dict)
     output_dir: str = ""
     flow_id: int = 0
+    source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
 
