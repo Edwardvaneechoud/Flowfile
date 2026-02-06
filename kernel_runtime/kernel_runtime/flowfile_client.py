@@ -13,6 +13,45 @@ import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
 
+
+def _translate_host_path_to_container(host_path: str) -> str:
+    """Translate a host filesystem path to the container's /shared mount.
+
+    When running in Docker, the host's shared directory is mounted at /shared.
+    Core API returns paths using the host's perspective, so we need to translate
+    them for the kernel container.
+
+    NOTE: Uses PurePosixPath for path manipulation WITHOUT filesystem access.
+    This is critical because inside the container, host paths don't exist,
+    so Path.resolve() would fail or produce incorrect results.
+
+    Example:
+        Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
+        Container: /shared/artifact_staging/1_test.pkl
+    """
+    host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
+    if not host_shared_dir:
+        # Not running in Docker or env var not set - use path as-is
+        return host_path
+
+    # Normalize paths to handle trailing slashes consistently
+    # Use os.path.normpath for string normalization without filesystem access
+    normalized_host_path = os.path.normpath(host_path)
+    normalized_shared_dir = os.path.normpath(host_shared_dir)
+
+    # Check if the host path starts with the shared directory
+    # We need to be careful about partial matches (e.g., /shared vs /shared2)
+    if normalized_host_path.startswith(normalized_shared_dir + os.sep):
+        # Extract relative path after the shared directory prefix
+        relative_path = normalized_host_path[len(normalized_shared_dir) + 1:]
+        return f"/shared/{relative_path}"
+    elif normalized_host_path == normalized_shared_dir:
+        # Path is exactly the shared directory
+        return "/shared"
+
+    # Path doesn't start with host shared dir - return as-is
+    return host_path
+
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
 # Reusable HTTP client for log callbacks (created per execution context)
@@ -147,6 +186,304 @@ def list_artifacts() -> dict:
     store: ArtifactStore = _get_context_value("artifact_store")
     flow_id: int = _get_context_value("flow_id")
     return store.list_all(flow_id=flow_id)
+
+
+# ===== Global Artifacts APIs =====
+
+# Core URL for global artifact API calls
+_CORE_URL = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+
+# Shared path inside container for file-based storage
+_SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
+
+
+def _get_internal_auth_headers() -> dict[str, str]:
+    """Get authentication headers for Core API calls.
+
+    Returns headers with X-Internal-Token for service-to-service authentication.
+    The token is shared between Core and Kernel via FLOWFILE_INTERNAL_TOKEN env var.
+    """
+    token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+    if token:
+        return {"X-Internal-Token": token}
+    return {}
+
+
+def publish_global(
+    name: str,
+    obj: Any,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    namespace_id: int | None = None,
+    fmt: str | None = None,
+) -> int:
+    """Persist a Python object to the global artifact store.
+
+    Global artifacts are persisted beyond the current flow execution and can be
+    retrieved later in the same flow, a different flow, or a different session.
+
+    Args:
+        name: Artifact name (required). Used to retrieve the artifact later.
+        obj: Python object to persist (required). Supported types include:
+             - Polars/Pandas DataFrames (serialized as parquet)
+             - scikit-learn models (serialized with joblib)
+             - Any picklable Python object (serialized with pickle)
+        description: Human-readable description of the artifact.
+        tags: List of tags for categorization and search.
+        namespace_id: Namespace (schema) ID. Defaults to user's default namespace.
+        fmt: Serialization format override ("parquet", "joblib", or "pickle").
+             Auto-detected from object type if not specified.
+
+    Returns:
+        The artifact ID (database ID).
+
+    Raises:
+        UnpickleableObjectError: If the object cannot be serialized. Common causes:
+            - Lambda functions or nested functions
+            - Classes defined inside functions (local classes)
+            - Objects with open file handles or network connections
+        httpx.HTTPStatusError: If API calls fail.
+
+    Example:
+        >>> import flowfile
+        >>> from sklearn.ensemble import RandomForestClassifier
+        >>> model = RandomForestClassifier().fit(X, y)
+        >>> artifact_id = flowfile.publish_global(
+        ...     "my_model",
+        ...     model,
+        ...     description="Random Forest trained on Q4 data",
+        ...     tags=["ml", "classification"],
+        ... )
+    """
+    from kernel_runtime.serialization import (
+        check_pickleable,
+        detect_format,
+        serialize_to_file,
+        serialize_to_bytes,
+    )
+
+    serialization_format = fmt or detect_format(obj)
+    python_type = f"{type(obj).__module__}.{type(obj).__name__}"
+    python_module = type(obj).__module__
+
+    # Validate that the object can be serialized before making API calls
+    # This provides a clear error message upfront rather than failing during serialization
+    if serialization_format in ("pickle", "joblib"):
+        check_pickleable(obj)
+
+    # Get context for lineage tracking
+    try:
+        flow_id = _get_context_value("flow_id")
+        node_id = _get_context_value("node_id")
+    except RuntimeError:
+        # Context not available - allow publish without lineage
+        flow_id = None
+        node_id = None
+
+    # Get kernel ID from environment
+    kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
+
+    # 1. Request upload target from Core
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
+        resp = client.post(
+            f"{_CORE_URL}/artifacts/prepare-upload",
+            json={
+                "name": name,
+                "serialization_format": serialization_format,
+                "description": description,
+                "tags": tags or [],
+                "namespace_id": namespace_id,
+                "source_flow_id": flow_id,
+                "source_node_id": node_id,
+                "source_kernel_id": kernel_id,
+                "python_type": python_type,
+                "python_module": python_module,
+            },
+        )
+        resp.raise_for_status()
+        target = resp.json()
+
+        # 2. Serialize and write directly to storage
+        if target["method"] == "file":
+            # Shared filesystem - write to staging path
+            # Translate host path to container path if running in Docker
+            staging_path = _translate_host_path_to_container(target["path"])
+            sha256 = serialize_to_file(obj, staging_path, serialization_format)
+            size_bytes = os.path.getsize(staging_path)
+        else:
+            # S3 presigned URL - upload directly
+            blob, sha256 = serialize_to_bytes(obj, serialization_format)
+            size_bytes = len(blob)
+            upload_resp = client.put(
+                target["path"],
+                content=blob,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=600.0,  # 10 min for large uploads
+            )
+            upload_resp.raise_for_status()
+
+        # 3. Finalize with Core
+        resp = client.post(
+            f"{_CORE_URL}/artifacts/finalize",
+            json={
+                "artifact_id": target["artifact_id"],
+                "storage_key": target["storage_key"],
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+            },
+        )
+        resp.raise_for_status()
+
+    return target["artifact_id"]
+
+
+def get_global(
+    name: str,
+    version: int | None = None,
+    namespace_id: int | None = None,
+) -> Any:
+    """Retrieve a Python object from the global artifact store.
+
+    Args:
+        name: Artifact name to retrieve.
+        version: Specific version to retrieve. Returns latest version if not specified.
+        namespace_id: Namespace (schema) filter.
+
+    Returns:
+        The deserialized Python object.
+
+    Raises:
+        KeyError: If artifact is not found.
+        httpx.HTTPStatusError: If API calls fail.
+
+    Example:
+        >>> import flowfile
+        >>> model = flowfile.get_global("my_model")
+        >>> model_v1 = flowfile.get_global("my_model", version=1)
+    """
+    from kernel_runtime.serialization import deserialize_from_file, deserialize_from_bytes
+
+    # 1. Get metadata and download source from Core
+    params = {}
+    if version is not None:
+        params["version"] = version
+    if namespace_id is not None:
+        params["namespace_id"] = namespace_id
+
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
+        resp = client.get(
+            f"{_CORE_URL}/artifacts/by-name/{name}",
+            params=params,
+        )
+        if resp.status_code == 404:
+            raise KeyError(f"Artifact '{name}' not found")
+        resp.raise_for_status()
+
+        meta = resp.json()
+        download = meta["download_source"]
+        format = meta["serialization_format"]
+
+        # 2. Read directly from storage
+        if download["method"] == "file":
+            # Shared filesystem - translate host path to container path if in Docker
+            file_path = _translate_host_path_to_container(download["path"])
+            obj = deserialize_from_file(file_path, format)
+        else:
+            # S3 presigned URL
+            download_resp = client.get(download["path"], timeout=600.0)
+            download_resp.raise_for_status()
+            obj = deserialize_from_bytes(download_resp.content, format)
+
+    return obj
+
+
+def list_global_artifacts(
+    namespace_id: int | None = None,
+    tags: list[str] | None = None,
+) -> list[dict]:
+    """List available global artifacts.
+
+    Args:
+        namespace_id: Filter by namespace.
+        tags: Filter by tags (AND logic - all tags must match).
+
+    Returns:
+        List of artifact metadata dictionaries.
+
+    Example:
+        >>> import flowfile
+        >>> artifacts = flowfile.list_global_artifacts(tags=["ml"])
+        >>> for a in artifacts:
+        ...     print(f"{a['name']} v{a['version']} - {a['python_type']}")
+    """
+    params = {}
+    if namespace_id is not None:
+        params["namespace_id"] = namespace_id
+    if tags:
+        params["tags"] = tags
+
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
+        resp = client.get(f"{_CORE_URL}/artifacts/", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def delete_global_artifact(
+    name: str,
+    version: int | None = None,
+    namespace_id: int | None = None,
+) -> None:
+    """Delete a global artifact.
+
+    Args:
+        name: Artifact name to delete.
+        version: Specific version to delete. Deletes all versions if not specified.
+        namespace_id: Namespace (schema) filter.
+
+    Raises:
+        KeyError: If artifact is not found.
+        httpx.HTTPStatusError: If API calls fail.
+
+    Example:
+        >>> import flowfile
+        >>> flowfile.delete_global_artifact("my_model")  # delete all versions
+        >>> flowfile.delete_global_artifact("my_model", version=1)  # delete v1 only
+    """
+    auth_headers = _get_internal_auth_headers()
+    with httpx.Client(timeout=30.0, headers=auth_headers) as client:
+        if version is not None:
+            # Delete specific version - need to get artifact ID first
+            params = {"version": version}
+            if namespace_id is not None:
+                params["namespace_id"] = namespace_id
+
+            resp = client.get(
+                f"{_CORE_URL}/artifacts/by-name/{name}",
+                params=params,
+            )
+            if resp.status_code == 404:
+                raise KeyError(f"Artifact '{name}' version {version} not found")
+            resp.raise_for_status()
+
+            artifact_id = resp.json()["id"]
+            resp = client.delete(f"{_CORE_URL}/artifacts/{artifact_id}")
+            resp.raise_for_status()
+        else:
+            # Delete all versions by name
+            params = {}
+            if namespace_id is not None:
+                params["namespace_id"] = namespace_id
+
+            resp = client.delete(
+                f"{_CORE_URL}/artifacts/by-name/{name}",
+                params=params,
+            )
+            if resp.status_code == 404:
+                raise KeyError(f"Artifact '{name}' not found")
+            resp.raise_for_status()
 
 
 # ===== Logging APIs =====

@@ -310,7 +310,12 @@ async def execute(request: ExecuteRequest):
         exec_globals = _get_namespace(request.flow_id)
 
         # Always update flowfile reference (context changes between executions)
+        # Include __name__ and __builtins__ so classes defined in user code
+        # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
+        # to serialize them correctly.
         exec_globals["flowfile"] = flowfile_client
+        exec_globals["__builtins__"] = __builtins__
+        exec_globals["__name__"] = "__main__"
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             # Execute matplotlib setup to patch plt.show()
