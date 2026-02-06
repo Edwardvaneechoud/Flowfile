@@ -487,3 +487,66 @@ class TestArtifactContextDeletionOrigins:
         producers = ctx.get_producer_nodes_for_deletions({3})
         # Only the k2 producer should remain
         assert producers == {2}
+
+
+# ---------------------------------------------------------------------------
+# ArtifactContext — Independent chain isolation
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactContextChainIsolation:
+    """Verify that artifacts from independent DAG chains are not visible
+    to nodes in other chains, even when they share the same kernel."""
+
+    def test_independent_chains_are_isolated(self):
+        """Chain A (nodes 4→5→6) and chain B (nodes 7→8→9) share kernel 'ds'.
+        Node 9 should only see artifacts from its own chain (8), not from
+        chain A (node 5).
+        """
+        ctx = ArtifactContext()
+        # Chain A: node 5 publishes "linear_model"
+        ctx.record_published(5, "ds", [{"name": "linear_model", "type_name": "dict"}])
+        # Chain B: node 8 publishes "graph" and "centrality"
+        ctx.record_published(8, "ds", [
+            {"name": "graph", "type_name": "Graph"},
+            {"name": "centrality", "type_name": "dict"},
+        ])
+
+        # Node 6 is downstream of chain A only (upstream = [5, 4])
+        avail_6 = ctx.compute_available(node_id=6, kernel_id="ds", upstream_node_ids=[5, 4])
+        assert "linear_model" in avail_6
+        assert "graph" not in avail_6
+        assert "centrality" not in avail_6
+
+        # Node 9 is downstream of chain B only (upstream = [8, 7])
+        avail_9 = ctx.compute_available(node_id=9, kernel_id="ds", upstream_node_ids=[8, 7])
+        assert "graph" in avail_9
+        assert "centrality" in avail_9
+        assert "linear_model" not in avail_9
+
+    def test_kernel_artifacts_returns_all_regardless_of_chain(self):
+        """get_kernel_artifacts returns ALL artifacts in the kernel, which is
+        the data source the frontend was using before the fix."""
+        ctx = ArtifactContext()
+        ctx.record_published(5, "ds", ["linear_model"])
+        ctx.record_published(8, "ds", ["graph", "centrality"])
+
+        # Kernel-level query returns everything (unfiltered)
+        all_kernel = ctx.get_kernel_artifacts("ds")
+        assert set(all_kernel.keys()) == {"linear_model", "graph", "centrality"}
+
+    def test_upstream_ids_determine_visibility(self):
+        """Only the upstream_node_ids list determines what a node can see.
+        Nodes not in the upstream list are invisible."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k", ["a"])
+        ctx.record_published(2, "k", ["b"])
+        ctx.record_published(3, "k", ["c"])
+
+        # Node 4 only has node 1 upstream
+        avail = ctx.compute_available(node_id=4, kernel_id="k", upstream_node_ids=[1])
+        assert set(avail.keys()) == {"a"}
+
+        # Node 5 only has node 2 and 3 upstream
+        avail = ctx.compute_available(node_id=5, kernel_id="k", upstream_node_ids=[2, 3])
+        assert set(avail.keys()) == {"b", "c"}
