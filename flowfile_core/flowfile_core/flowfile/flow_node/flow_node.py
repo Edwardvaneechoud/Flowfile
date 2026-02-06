@@ -432,9 +432,13 @@ class FlowNode:
         )
         node_information.setting_input = self.setting_input
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
-        node_information.description = (
-            self.setting_input.description if hasattr(self.setting_input, "description") else ""
-        )
+        user_description = self.setting_input.description if hasattr(self.setting_input, "description") else ""
+        if user_description:
+            node_information.description = user_description
+        elif hasattr(self.setting_input, "get_default_description"):
+            node_information.description = self.setting_input.get_default_description()
+        else:
+            node_information.description = ""
         node_information.node_reference = (
             self.setting_input.node_reference if hasattr(self.setting_input, "node_reference") else None
         )

@@ -19,11 +19,11 @@
         >
           <el-card class="node-card">
             <div
-              v-if="nodeStore.nodeDescriptions[nodeStore.flow_id][node.node_id]"
+              v-if="nodeStore.nodeDescriptions[nodeStore.flow_id]?.[node.node_id]?.description"
               class="node-info"
             >
               <h4 class="node-title">
-                {{ nodeStore.nodeDescriptions[nodeStore.flow_id][node.node_id] }}
+                {{ nodeStore.nodeDescriptions[nodeStore.flow_id][node.node_id].description }}
               </h4>
               <p class="node-description">node type: {{ node.node_name }}</p>
             </div>
