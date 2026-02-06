@@ -113,6 +113,18 @@ class FollowNotFoundError(CatalogError):
         super().__init__(f"Follow not found for user={user_id}, flow={registration_id}")
 
 
+class FlowHasArtifactsError(CatalogError):
+    """Raised when trying to delete a flow that still has active artifacts."""
+
+    def __init__(self, registration_id: int, artifact_count: int):
+        self.registration_id = registration_id
+        self.artifact_count = artifact_count
+        super().__init__(
+            f"Cannot delete flow {registration_id}: "
+            f"{artifact_count} active artifact(s) still reference it"
+        )
+
+
 class NoSnapshotError(CatalogError):
     """Raised when a run has no flow snapshot available."""
 

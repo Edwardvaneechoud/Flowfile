@@ -47,6 +47,7 @@ def _create_graph(
     flow_id: int = 1,
     execution_mode: str = "Development",
     execution_location: str | None = "remote",
+    source_registration_id: int | None = None,
 ) -> FlowGraph:
     handler = FlowfileHandler()
     handler.register_flow(
@@ -56,9 +57,36 @@ def _create_graph(
             path=".",
             execution_mode=execution_mode,
             execution_location=execution_location,
+            source_registration_id=source_registration_id,
         )
     )
     return handler.get_flow(flow_id)
+
+
+@pytest.fixture
+def test_registration():
+    """Create a FlowRegistration in the DB for tests that publish global artifacts."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import FlowRegistration, GlobalArtifact
+
+    with get_db_context() as db:
+        reg = FlowRegistration(
+            name="test_flow_registration",
+            flow_path="/test/flow.yaml",
+            owner_id=1,
+        )
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+        reg_id = reg.id
+
+    yield reg_id
+
+    with get_db_context() as db:
+        # Clean up artifacts referencing this registration before deleting it
+        db.query(GlobalArtifact).filter_by(source_registration_id=reg_id).delete()
+        db.query(FlowRegistration).filter_by(id=reg_id).delete()
+        db.commit()
 
 
 def _handle_run_info(run_info: RunInformation):
@@ -78,7 +106,7 @@ def _handle_run_info(run_info: RunInformation):
 class TestGlobalArtifactsKernelRuntime:
     """Tests that exercise global artifact functions directly via KernelManager."""
 
-    def test_publish_global_basic(self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts):
+    def test_publish_global_basic(self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration):
         """publish_global stores an object to persistent storage."""
         manager, kernel_id = kernel_manager_with_core
 
@@ -94,6 +122,7 @@ print(f"Published artifact with ID: {artifact_id}")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_publish_global",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -101,7 +130,7 @@ print(f"Published artifact with ID: {artifact_id}")
         assert "Published artifact with ID:" in result.stdout
 
     def test_publish_and_get_global_roundtrip(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global then get_global retrieves the same data."""
         manager, kernel_id = kernel_manager_with_core
@@ -120,6 +149,7 @@ print(f"artifact_id={artifact_id}")
                     code=publish_code,
                     input_paths={},
                     output_dir="/shared/test_roundtrip_publish",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -148,7 +178,7 @@ print("Roundtrip successful!")
         assert "Roundtrip successful!" in result.stdout
 
     def test_publish_global_with_metadata(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global includes description and tags."""
         manager, kernel_id = kernel_manager_with_core
@@ -170,13 +200,14 @@ print(f"Published with tags, id={artifact_id}")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_metadata",
+                    source_registration_id=test_registration,
                 ),
             )
         )
         assert result.success, f"Failed: {result.error}"
 
     def test_list_global_artifacts(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """list_global_artifacts returns published artifacts."""
         manager, kernel_id = kernel_manager_with_core
@@ -195,6 +226,7 @@ print("Published two artifacts")
                     code=setup_code,
                     input_paths={},
                     output_dir="/shared/test_list_setup",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -222,7 +254,7 @@ print(f"Found {len(artifacts)} artifacts")
         assert result.success, f"List failed: {result.error}"
 
     def test_delete_global_artifact(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """delete_global_artifact removes an artifact."""
         manager, kernel_id = kernel_manager_with_core
@@ -254,6 +286,7 @@ except KeyError:
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_delete",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -288,7 +321,7 @@ except KeyError as e:
         assert "Correctly raised KeyError" in result.stdout
 
     def test_versioning_on_republish(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """Publishing to same name creates a new version."""
         manager, kernel_id = kernel_manager_with_core
@@ -321,6 +354,7 @@ print("Versioning works correctly!")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_versioning",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -337,7 +371,7 @@ class TestGlobalArtifactsFlowGraph:
     """Tests that wire up global artifact calls inside FlowGraph python_script nodes."""
 
     def test_publish_global_in_flow(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """python_script node can publish a global artifact."""
         manager, kernel_id = kernel_manager_with_core
@@ -347,7 +381,7 @@ class TestGlobalArtifactsFlowGraph:
         _kernel_mod._manager = manager
 
         try:
-            graph = _create_graph()
+            graph = _create_graph(source_registration_id=test_registration)
 
             # Node 1: input data
             data = [{"x": 1, "y": 2}]
@@ -413,7 +447,7 @@ print("Flow-published global artifact verified!")
             _kernel_mod._manager = _prev
 
     def test_use_global_artifact_across_flows(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """Global artifacts persist across separate flow runs."""
         manager, kernel_id = kernel_manager_with_core
@@ -424,7 +458,7 @@ print("Flow-published global artifact verified!")
 
         try:
             # Flow 1: Publish a global artifact
-            graph1 = _create_graph(flow_id=1)
+            graph1 = _create_graph(flow_id=1, source_registration_id=test_registration)
 
             data1 = [{"val": 100}]
             graph1.add_node_promise(
@@ -535,7 +569,7 @@ class TestGlobalArtifactsComplexTypes:
     """Tests for publishing various Python object types as global artifacts."""
 
     def test_publish_numpy_array(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global handles numpy arrays via joblib serialization."""
         manager, kernel_id = kernel_manager_with_core
@@ -561,6 +595,7 @@ print("Numpy array roundtrip successful!")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_numpy",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -568,7 +603,7 @@ print("Numpy array roundtrip successful!")
         assert "Numpy array roundtrip successful!" in result.stdout
 
     def test_publish_polars_dataframe(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global handles Polars DataFrames via parquet serialization."""
         manager, kernel_id = kernel_manager_with_core
@@ -599,6 +634,7 @@ print("Polars DataFrame roundtrip successful!")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_polars_df",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -606,7 +642,7 @@ print("Polars DataFrame roundtrip successful!")
         assert "Polars DataFrame roundtrip successful!" in result.stdout
 
     def test_publish_nested_dict(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global handles complex nested dictionaries."""
         manager, kernel_id = kernel_manager_with_core
@@ -646,6 +682,7 @@ print("Nested dict roundtrip successful!")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_nested",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -653,7 +690,7 @@ print("Nested dict roundtrip successful!")
         assert "Nested dict roundtrip successful!" in result.stdout
 
     def test_publish_custom_class(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """publish_global handles custom class instances via pickle."""
         manager, kernel_id = kernel_manager_with_core
@@ -687,6 +724,7 @@ print("Custom class roundtrip successful!")
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_custom_class",
+                    source_registration_id=test_registration,
                 ),
             )
         )
@@ -730,7 +768,7 @@ except KeyError as e:
         assert "Correctly raised KeyError" in result.stdout
 
     def test_get_specific_version_not_found(
-        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts
+        self, kernel_manager_with_core: tuple[KernelManager, str], cleanup_global_artifacts, test_registration
     ):
         """get_global raises KeyError when specific version doesn't exist."""
         manager, kernel_id = kernel_manager_with_core
@@ -754,6 +792,7 @@ except KeyError as e:
                     code=code,
                     input_paths={},
                     output_dir="/shared/test_version_error",
+                    source_registration_id=test_registration,
                 ),
             )
         )

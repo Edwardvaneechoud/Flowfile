@@ -71,6 +71,7 @@ def _set_context(
     output_dir: str,
     artifact_store: ArtifactStore,
     flow_id: int = 0,
+    source_registration_id: int | None = None,
     log_callback_url: str = "",
 ) -> None:
     _context.set({
@@ -79,6 +80,7 @@ def _set_context(
         "output_dir": output_dir,
         "artifact_store": artifact_store,
         "flow_id": flow_id,
+        "source_registration_id": source_registration_id,
         "log_callback_url": log_callback_url,
     })
     # Create a reusable HTTP client for log callbacks
@@ -275,10 +277,18 @@ def publish_global(
     try:
         flow_id = _get_context_value("flow_id")
         node_id = _get_context_value("node_id")
+        source_registration_id = _get_context_value("source_registration_id")
     except RuntimeError:
         # Context not available - allow publish without lineage
         flow_id = None
         node_id = None
+        source_registration_id = None
+
+    if source_registration_id is None:
+        raise RuntimeError(
+            "source_registration_id is required for publish_global. "
+            "This artifact must be produced by a registered catalog flow."
+        )
 
     # Get kernel ID from environment
     kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
@@ -290,6 +300,7 @@ def publish_global(
             f"{_CORE_URL}/artifacts/prepare-upload",
             json={
                 "name": name,
+                "source_registration_id": source_registration_id,
                 "serialization_format": serialization_format,
                 "description": description,
                 "tags": tags or [],

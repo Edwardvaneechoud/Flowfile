@@ -1,6 +1,6 @@
 // Node API Service - Handles all node-related HTTP requests
 import axios from "../services/axios.config";
-import type { NodeData, TableExample } from "../types";
+import type { NodeData, TableExample, NodeDescriptionResponse } from "../types";
 
 export class NodeApi {
   /**
@@ -39,8 +39,11 @@ export class NodeApi {
   /**
    * Get node description
    */
-  static async getNodeDescription(flowId: number, nodeId: number): Promise<string> {
-    const response = await axios.get<string>("/node/description", {
+  static async getNodeDescription(
+    flowId: number,
+    nodeId: number,
+  ): Promise<NodeDescriptionResponse> {
+    const response = await axios.get<NodeDescriptionResponse>("/node/description", {
       params: { node_id: nodeId, flow_id: flowId },
     });
     return response.data;

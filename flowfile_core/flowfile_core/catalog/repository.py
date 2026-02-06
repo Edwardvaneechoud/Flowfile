@@ -16,6 +16,7 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    GlobalArtifact,
 )
 
 
@@ -77,6 +78,8 @@ class CatalogRepository(Protocol):
     def delete_flow(self, registration_id: int) -> None: ...
 
     def count_flows_in_namespace(self, namespace_id: int) -> int: ...
+
+    def count_active_artifacts_for_flow(self, registration_id: int) -> int: ...
 
     # -- Run operations ------------------------------------------------------
 
@@ -267,6 +270,10 @@ class SQLAlchemyCatalogRepository:
         # Clean up related records first
         self._db.query(FlowFavorite).filter_by(registration_id=registration_id).delete()
         self._db.query(FlowFollow).filter_by(registration_id=registration_id).delete()
+        # Hard-delete any soft-deleted artifacts referencing this flow
+        self._db.query(GlobalArtifact).filter_by(
+            source_registration_id=registration_id,
+        ).filter(GlobalArtifact.status == "deleted").delete()
         flow = self._db.get(FlowRegistration, registration_id)
         if flow is not None:
             self._db.delete(flow)
@@ -276,6 +283,14 @@ class SQLAlchemyCatalogRepository:
         return (
             self._db.query(FlowRegistration)
             .filter_by(namespace_id=namespace_id)
+            .count()
+        )
+
+    def count_active_artifacts_for_flow(self, registration_id: int) -> int:
+        return (
+            self._db.query(GlobalArtifact)
+            .filter_by(source_registration_id=registration_id)
+            .filter(GlobalArtifact.status != "deleted")
             .count()
         )
 
