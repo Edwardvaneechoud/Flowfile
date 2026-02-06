@@ -1216,12 +1216,35 @@ class FlowGraph:
             # No output published, pass through first input
             return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
+        def schema_callback():
+            """Best-effort schema prediction for python_script nodes.
+
+            Returns the input node(s) schema as a reasonable default
+            (most python_script nodes transform and pass through).
+            If nothing is available, returns [] — never raises.
+            """
+            try:
+                node = self.get_node(node_python_script.node_id)
+                if node is None:
+                    return []
+
+                main_inputs = node.node_inputs.main_inputs
+                if main_inputs:
+                    first_input = main_inputs[0]
+                    input_node_schema = first_input.schema
+                    if input_node_schema:
+                        return input_node_schema
+                return []
+            except Exception:
+                return []
+
         self.add_node_step(
             node_id=node_python_script.node_id,
             function=_func,
             node_type="python_script",
             setting_input=node_python_script,
             input_node_ids=node_python_script.depending_on_ids,
+            schema_callback=schema_callback,
         )
 
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
