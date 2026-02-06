@@ -81,12 +81,30 @@ export interface NodeResult {
 // Node Description Types
 // ============================================================================
 
+export interface NodeDescriptionResponse {
+  description: string;
+  is_auto_generated: boolean;
+}
+
+export interface NodeDescriptionEntry {
+  description: string;
+  is_auto_generated: boolean;
+}
+
 export interface NodeDescriptionDictionaryPerGraph {
-  [node_id: number]: string;
+  [node_id: number]: NodeDescriptionEntry;
 }
 
 export interface NodeDescriptionDictionary {
   [flow_id: number]: NodeDescriptionDictionaryPerGraph;
+}
+
+export interface NodeReferenceDictionaryPerGraph {
+  [node_id: number]: string;
+}
+
+export interface NodeReferenceDictionary {
+  [flow_id: number]: NodeReferenceDictionaryPerGraph;
 }
 
 export interface NodeTitleInfo {

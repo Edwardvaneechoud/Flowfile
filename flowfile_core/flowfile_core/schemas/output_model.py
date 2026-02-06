@@ -147,3 +147,10 @@ class InstantFuncResult(BaseModel):
 
     success: bool | None = None
     result: str
+
+
+class NodeDescriptionResponse(BaseModel):
+    """Response model for the node description endpoint."""
+
+    description: str = ""
+    is_auto_generated: bool = False

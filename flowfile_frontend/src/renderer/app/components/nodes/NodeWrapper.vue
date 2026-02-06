@@ -519,9 +519,9 @@ onMounted(async () => {
       const nodeId = props.data.id;
       return nodeStore.nodeDescriptions[flowId]?.[nodeId];
     },
-    (newDescription) => {
-      if (newDescription !== undefined) {
-        description.value = newDescription;
+    (newEntry) => {
+      if (newEntry !== undefined) {
+        description.value = newEntry.description;
       }
     },
   );
