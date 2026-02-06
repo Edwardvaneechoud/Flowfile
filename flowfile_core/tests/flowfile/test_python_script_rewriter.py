@@ -193,32 +193,50 @@ class TestRewriteFlowfileCalls:
     def test_publish_artifact_becomes_assignment(self):
         code = 'flowfile.publish_artifact("model", clf)'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
+        assert "k1" in result
         assert "model" in result
 
     def test_read_artifact_becomes_subscript(self):
         code = 'model = flowfile.read_artifact("model")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
+        assert "k1" in result
         assert "model" in result
 
     def test_delete_artifact_becomes_del(self):
         code = 'flowfile.delete_artifact("model")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "del _artifacts" in result
+        assert "k1" in result
 
-    def test_list_artifacts_becomes_dict(self):
+    def test_list_artifacts_becomes_kernel_dict(self):
         code = "arts = flowfile.list_artifacts()"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
+        assert "k1" in result
+
+    def test_default_kernel_id_when_none(self):
+        code = 'flowfile.publish_artifact("model", clf)'
+        analysis = analyze_flowfile_usage(code)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id=None)
+        assert "_default" in result
+
+    def test_artifacts_scoped_to_kernel(self):
+        """Verify artifact access includes the kernel_id key."""
+        code = 'model = flowfile.read_artifact("model")'
+        analysis = analyze_flowfile_usage(code)
+        result = rewrite_flowfile_calls(code, analysis, kernel_id="my_kernel")
+        assert "my_kernel" in result
+        assert "model" in result
 
     def test_log_becomes_print(self):
         code = 'flowfile.log("hello")'
@@ -336,8 +354,23 @@ class TestBuildFunctionCode:
             analysis=analysis,
             input_vars={"main": "df_1", "right": "df_0"},
         )
-        assert "inputs: dict[str, pl.LazyFrame]" in func_def
+        # Runtime uses dict[str, list[pl.LazyFrame]]
+        assert "inputs: dict[str, list[pl.LazyFrame]]" in func_def
         assert "df_2 = _node_2(" in call_code
+
+    def test_multi_input_grouped(self):
+        """Multiple main inputs (main_0, main_1) should be grouped into a list."""
+        code = 'dfs = inputs["main"]'
+        analysis = FlowfileUsageAnalysis(input_mode="multi")
+        func_def, call_code = build_function_code(
+            node_id=2,
+            rewritten_code=code,
+            analysis=analysis,
+            input_vars={"main_0": "df_1", "main_1": "df_3"},
+        )
+        assert "inputs: dict[str, list[pl.LazyFrame]]" in func_def
+        # The call should group main_0 and main_1 under "main"
+        assert '"main": [df_1, df_3]' in call_code
 
     def test_passthrough_return(self):
         code = "x = 1"
