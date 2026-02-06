@@ -377,6 +377,14 @@ class NodeBase(BaseModel):
             raise ValueError("node_reference must be lowercase")
         return v
 
+    def get_default_description(self) -> str:
+        """Generates a human-readable description based on the node's configured content.
+
+        Subclasses override this to provide meaningful descriptions.
+        Returns an empty string by default.
+        """
+        return ""
+
 
 class NodeSingleInput(NodeBase):
     """A base model for any node that takes a single data input."""
@@ -396,6 +404,31 @@ class NodeSelect(NodeSingleInput):
     keep_missing: bool = True
     select_input: list[transform_schema.SelectInput] = Field(default_factory=list)
     sorted_by: Literal["none", "asc", "desc"] | None = "none"
+
+    def get_default_description(self) -> str:
+        """Describes column selections, renames, and drops."""
+        if not self.select_input:
+            return ""
+        parts = []
+        renames = [s for s in self.select_input if s.old_name != s.new_name and s.keep]
+        drops = [s for s in self.select_input if not s.keep]
+        type_changes = [s for s in self.select_input if s.data_type_change and s.keep]
+        if renames:
+            rename_strs = [f"{r.old_name} -> {r.new_name}" for r in renames[:3]]
+            parts.append("Rename: " + ", ".join(rename_strs))
+            if len(renames) > 3:
+                parts[-1] += f" (+{len(renames) - 3} more)"
+        if drops:
+            drop_names = [d.old_name for d in drops[:3]]
+            parts.append("Drop: " + ", ".join(drop_names))
+            if len(drops) > 3:
+                parts[-1] += f" (+{len(drops) - 3} more)"
+        if type_changes and not renames and not drops:
+            cast_strs = [f"{t.old_name} to {t.data_type}" for t in type_changes[:3]]
+            parts.append("Cast: " + ", ".join(cast_strs))
+            if len(type_changes) > 3:
+                parts[-1] += f" (+{len(type_changes) - 3} more)"
+        return "; ".join(parts) if parts else ""
 
     def to_yaml_dict(self) -> NodeSelectYaml:
         """Converts the select node settings to a dictionary for YAML serialization."""
@@ -427,11 +460,42 @@ class NodeFilter(NodeSingleInput):
 
     filter_input: transform_schema.FilterInput
 
+    def get_default_description(self) -> str:
+        """Describes the filter condition."""
+        fi = self.filter_input
+        if fi.mode == "advanced" and fi.advanced_filter:
+            expr = fi.advanced_filter
+            if len(expr) > 80:
+                expr = expr[:77] + "..."
+            return expr
+        if fi.mode == "basic" and fi.basic_filter:
+            bf = fi.basic_filter
+            if not bf.field:
+                return ""
+            op = bf.operator
+            op_str = op.to_symbol() if hasattr(op, "to_symbol") else str(op)
+            if op_str in ("is_null", "is_not_null"):
+                return f"{bf.field} {op_str}"
+            if op_str == "between" and bf.value2:
+                return f"{bf.field} between {bf.value} and {bf.value2}"
+            return f"{bf.field} {op_str} {bf.value}"
+        return ""
+
 
 class NodeSort(NodeSingleInput):
     """Settings for a node that sorts the data by one or more columns."""
 
     sort_input: list[transform_schema.SortByInput] = Field(default_factory=list)
+
+    def get_default_description(self) -> str:
+        """Describes the sort columns and directions."""
+        if not self.sort_input:
+            return ""
+        parts = [f"{s.column} {s.how or 'asc'}" for s in self.sort_input[:3]]
+        desc = "Sort by " + ", ".join(parts)
+        if len(self.sort_input) > 3:
+            desc += f" (+{len(self.sort_input) - 3} more)"
+        return desc
 
 
 class NodeTextToRows(NodeSingleInput):
@@ -439,17 +503,36 @@ class NodeTextToRows(NodeSingleInput):
 
     text_to_rows_input: transform_schema.TextToRowsInput
 
+    def get_default_description(self) -> str:
+        """Describes the text-to-rows split operation."""
+        t = self.text_to_rows_input
+        delim = t.split_fixed_value if t.split_by_fixed_value else t.split_by_column
+        return f"Split {t.column_to_split} by '{delim}'"
+
 
 class NodeSample(NodeSingleInput):
     """Settings for a node that samples a subset of the data."""
 
     sample_size: int = 1000
 
+    def get_default_description(self) -> str:
+        """Describes the sample size."""
+        return f"Sample {self.sample_size} rows"
+
 
 class NodeRecordId(NodeSingleInput):
     """Settings for a node that adds a unique record ID column."""
 
     record_id_input: transform_schema.RecordIdInput
+
+    def get_default_description(self) -> str:
+        """Describes the record ID column being added."""
+        r = self.record_id_input
+        desc = f"Add column '{r.output_column_name}'"
+        if r.group_by and r.group_by_columns:
+            cols = ", ".join(r.group_by_columns[:3])
+            desc += f" per group ({cols})"
+        return desc
 
 
 class NodeJoin(NodeMultiInput):
@@ -461,6 +544,21 @@ class NodeJoin(NodeMultiInput):
     auto_keep_all: bool = True
     auto_keep_right: bool = True
     auto_keep_left: bool = True
+
+    def get_default_description(self) -> str:
+        """Describes the join type and key columns."""
+        ji = self.join_input
+        how = ji.how
+        if ji.join_mapping:
+            keys = [
+                f"{jm.left_col} = {jm.right_col}" if jm.left_col != jm.right_col else jm.left_col
+                for jm in ji.join_mapping[:3]
+            ]
+            key_str = ", ".join(keys)
+            if len(ji.join_mapping) > 3:
+                key_str += f" (+{len(ji.join_mapping) - 3} more)"
+            return f"{how} join on {key_str}"
+        return f"{how} join"
 
     def to_yaml_dict(self) -> NodeJoinYaml:
         """Converts the join node settings to a dictionary for YAML serialization."""
@@ -500,6 +598,10 @@ class NodeCrossJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def get_default_description(self) -> str:
+        """Describes the cross join."""
+        return "Cross join"
+
     def to_yaml_dict(self) -> NodeCrossJoinYaml:
         """Converts the cross join node settings to a dictionary for YAML serialization."""
         result: NodeCrossJoinYaml = {
@@ -532,6 +634,21 @@ class NodeFuzzyMatch(NodeJoin):
     """Settings for a node that performs a fuzzy join based on string similarity."""
 
     join_input: transform_schema.FuzzyMatchInput
+
+    def get_default_description(self) -> str:
+        """Describes the fuzzy match join."""
+        ji = self.join_input
+        how = ji.how
+        if ji.join_mapping:
+            keys = [
+                f"{fm.left_col} ~ {fm.right_col}" if fm.left_col != fm.right_col else fm.left_col
+                for fm in ji.join_mapping[:3]
+            ]
+            key_str = ", ".join(keys)
+            if len(ji.join_mapping) > 3:
+                key_str += f" (+{len(ji.join_mapping) - 3} more)"
+            return f"Fuzzy {how} join on {key_str}"
+        return f"Fuzzy {how} join"
 
     def to_yaml_dict(self) -> NodeFuzzyMatchYaml:
         """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
@@ -604,11 +721,28 @@ class NodeManualInput(NodeBase):
 
     raw_data_format: RawData | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the manual input columns."""
+        if self.raw_data_format and self.raw_data_format.columns:
+            cols = [c.name for c in self.raw_data_format.columns[:5]]
+            desc = ", ".join(cols)
+            if len(self.raw_data_format.columns) > 5:
+                desc += f" (+{len(self.raw_data_format.columns) - 5} more)"
+            num_rows = len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            return f"{len(self.raw_data_format.columns)} cols, {num_rows} rows: {desc}"
+        return ""
+
 
 class NodeRead(NodeBase):
     """Settings for a node that reads data from a file."""
 
     received_file: ReceivedTable
+
+    def get_default_description(self) -> str:
+        """Describes the file being read."""
+        rf = self.received_file
+        name = rf.name or Path(rf.path).name
+        return f"{name} ({rf.file_type})"
 
 
 class DatabaseConnection(BaseModel):
@@ -694,11 +828,30 @@ class NodeDatabaseReader(NodeBase):
     database_settings: DatabaseSettings
     fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the database source."""
+        ds = self.database_settings
+        if ds.query_mode == "table" and ds.table_name:
+            table = f"{ds.schema_name}.{ds.table_name}" if ds.schema_name else ds.table_name
+            return f"Read from {table}"
+        if ds.query_mode == "query" and ds.query:
+            q = ds.query
+            if len(q) > 60:
+                q = q[:57] + "..."
+            return f"Query: {q}"
+        return ""
+
 
 class NodeDatabaseWriter(NodeSingleInput):
     """Settings for a node that writes data to a database."""
 
     database_write_settings: DatabaseWriteSettings
+
+    def get_default_description(self) -> str:
+        """Describes the database write target."""
+        dw = self.database_write_settings
+        table = f"{dw.schema_name}.{dw.table_name}" if dw.schema_name else dw.table_name
+        return f"Write to {table} ({dw.if_exists})"
 
 
 class NodeCloudStorageReader(NodeBase):
@@ -707,11 +860,21 @@ class NodeCloudStorageReader(NodeBase):
     cloud_storage_settings: CloudStorageReadSettings
     fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the cloud storage source."""
+        cs = self.cloud_storage_settings
+        return f"Read {cs.resource_path} ({cs.file_format})"
+
 
 class NodeCloudStorageWriter(NodeSingleInput):
     """Settings for a node that writes to a cloud storage service."""
 
     cloud_storage_settings: CloudStorageWriteSettings
+
+    def get_default_description(self) -> str:
+        """Describes the cloud storage write target."""
+        cs = self.cloud_storage_settings
+        return f"Write to {cs.resource_path} ({cs.file_format})"
 
 
 class ExternalSource(BaseModel):
@@ -735,17 +898,50 @@ class NodeExternalSource(NodeBase):
     identifier: str
     source_settings: SampleUsers
 
+    def get_default_description(self) -> str:
+        """Describes the external source."""
+        return self.identifier
+
 
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 
     function: transform_schema.FunctionInput = None
 
+    def get_default_description(self) -> str:
+        """Describes the formula being applied."""
+        if self.function is None:
+            return ""
+        name = self.function.field.name if self.function.field else ""
+        expr = self.function.function or ""
+        if len(expr) > 60:
+            expr = expr[:57] + "..."
+        return f"{name} = {expr}" if name else expr
+
 
 class NodeGroupBy(NodeSingleInput):
     """Settings for a node that performs a group-by and aggregation operation."""
 
     groupby_input: transform_schema.GroupByInput = None
+
+    def get_default_description(self) -> str:
+        """Describes the group-by columns and aggregations."""
+        if self.groupby_input is None or not self.groupby_input.agg_cols:
+            return ""
+        group_cols = [a.old_name for a in self.groupby_input.agg_cols if a.agg == "groupby"]
+        agg_cols = [a for a in self.groupby_input.agg_cols if a.agg != "groupby"]
+        parts = []
+        if group_cols:
+            cols_str = ", ".join(group_cols[:3])
+            if len(group_cols) > 3:
+                cols_str += f" (+{len(group_cols) - 3} more)"
+            parts.append(f"By {cols_str}")
+        if agg_cols:
+            agg_strs = [f"{a.agg}({a.old_name})" for a in agg_cols[:3]]
+            if len(agg_cols) > 3:
+                agg_strs.append(f"+{len(agg_cols) - 3} more")
+            parts.append(", ".join(agg_strs))
+        return ": ".join(parts) if parts else ""
 
 
 class NodePromise(NodeBase):
@@ -780,11 +976,35 @@ class NodePivot(NodeSingleInput):
     pivot_input: transform_schema.PivotInput = None
     output_fields: list[MinimalFieldInfo] | None = None
 
+    def get_default_description(self) -> str:
+        """Describes the pivot operation."""
+        if self.pivot_input is None:
+            return ""
+        p = self.pivot_input
+        aggs = ", ".join(p.aggregations[:2]) if p.aggregations else ""
+        if len(p.aggregations) > 2:
+            aggs += f" (+{len(p.aggregations) - 2} more)"
+        return f"Pivot {p.value_col} by {p.pivot_column} ({aggs})"
+
 
 class NodeUnpivot(NodeSingleInput):
     """Settings for a node that unpivots data from a wide to a long format."""
 
     unpivot_input: transform_schema.UnpivotInput = None
+
+    def get_default_description(self) -> str:
+        """Describes the unpivot operation."""
+        if self.unpivot_input is None:
+            return ""
+        u = self.unpivot_input
+        if u.value_columns:
+            cols = ", ".join(u.value_columns[:3])
+            if len(u.value_columns) > 3:
+                cols += f" (+{len(u.value_columns) - 3} more)"
+            return f"Unpivot {cols}"
+        if u.data_type_selector:
+            return f"Unpivot {u.data_type_selector} columns"
+        return "Unpivot"
 
 
 class NodeUnion(NodeMultiInput):
@@ -792,11 +1012,20 @@ class NodeUnion(NodeMultiInput):
 
     union_input: transform_schema.UnionInput = Field(default_factory=transform_schema.UnionInput)
 
+    def get_default_description(self) -> str:
+        """Describes the union mode."""
+        return f"Union ({self.union_input.mode})"
+
 
 class NodeOutput(NodeSingleInput):
     """Settings for a node that writes its input to a file."""
 
     output_settings: OutputSettings
+
+    def get_default_description(self) -> str:
+        """Describes the output file target."""
+        o = self.output_settings
+        return f"{o.name} ({o.file_type})"
 
     def to_yaml_dict(self) -> NodeOutputYaml:
         """Converts the output node settings to a dictionary for YAML serialization."""
@@ -868,11 +1097,26 @@ class NodeGraphSolver(NodeSingleInput):
 
     graph_solver_input: transform_schema.GraphSolverInput
 
+    def get_default_description(self) -> str:
+        """Describes the graph solver operation."""
+        g = self.graph_solver_input
+        return f"{g.col_from} -> {g.col_to} as '{g.output_column_name}'"
+
 
 class NodeUnique(NodeSingleInput):
     """Settings for a node that returns the unique rows from the data."""
 
     unique_input: transform_schema.UniqueInput
+
+    def get_default_description(self) -> str:
+        """Describes the uniqueness operation."""
+        u = self.unique_input
+        if u.columns:
+            cols = ", ".join(u.columns[:3])
+            if len(u.columns) > 3:
+                cols += f" (+{len(u.columns) - 3} more)"
+            return f"Unique by {cols} (keep {u.strategy})"
+        return f"Unique rows (keep {u.strategy})"
 
 
 class NodeRecordCount(NodeSingleInput):
@@ -885,6 +1129,14 @@ class NodePolarsCode(NodeMultiInput):
     """Settings for a node that executes arbitrary user-provided Polars code."""
 
     polars_code_input: transform_schema.PolarsCodeInput
+
+    def get_default_description(self) -> str:
+        """Describes the Polars code snippet."""
+        code = self.polars_code_input.polars_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
 
 
 class UserDefinedNode(NodeMultiInput):
