@@ -45,7 +45,11 @@ def _make_manager(kernel_id: str = "test-kernel", port: int = 19000):
         container_id="fake-container-id",
     )
 
-    with patch("flowfile_core.kernel.manager.docker"):
+    # Patch docker.from_env() but keep docker.errors as real exceptions
+    import docker.errors
+    with patch("flowfile_core.kernel.manager.docker") as mock_docker:
+        # Preserve real exception classes so except clauses work
+        mock_docker.errors = docker.errors
         from flowfile_core.kernel.manager import KernelManager
 
         with patch.object(KernelManager, "_restore_kernels_from_db"):
@@ -348,8 +352,11 @@ class TestKernelStartupEnvironment:
     def test_start_kernel_passes_persistence_env_vars(self):
         """start_kernel should pass KERNEL_ID, PERSISTENCE_ENABLED, etc."""
         from flowfile_core.kernel.models import KernelConfig, KernelState
+        import docker.errors
 
         with patch("flowfile_core.kernel.manager.docker") as mock_docker:
+            # Preserve real exception classes so except clauses work
+            mock_docker.errors = docker.errors
             from flowfile_core.kernel.manager import KernelManager
 
             with patch.object(KernelManager, "_restore_kernels_from_db"):
@@ -382,8 +389,11 @@ class TestKernelStartupEnvironment:
     def test_start_kernel_uses_per_kernel_persistence_config(self):
         """Persistence env vars should be taken from kernel config, not hardcoded."""
         from flowfile_core.kernel.models import KernelConfig, KernelState
+        import docker.errors
 
         with patch("flowfile_core.kernel.manager.docker") as mock_docker:
+            # Preserve real exception classes so except clauses work
+            mock_docker.errors = docker.errors
             from flowfile_core.kernel.manager import KernelManager
 
             with patch.object(KernelManager, "_restore_kernels_from_db"):

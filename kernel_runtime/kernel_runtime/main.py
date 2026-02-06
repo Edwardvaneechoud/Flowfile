@@ -269,7 +269,21 @@ async def execute(request: ExecuteRequest):
         flowfile_client._reset_displays()
 
         # Prepare execution namespace with flowfile module
-        exec_globals = {"flowfile": flowfile_client}
+        # Include __name__ and __builtins__ so classes defined in user code
+        # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
+        # to serialize them correctly. Without this, classes get __module__ = "builtins"
+        # and cloudpickle/pickle cannot resolve them during deserialization.
+        #
+        # SECURITY NOTE: Adding __builtins__ exposes Python's builtin functions
+        # to user code. This is acceptable here because:
+        # 1. Kernel runs in an isolated Docker container
+        # 2. User code already has full Python execution capability
+        # 3. Network access is controlled by container configuration
+        exec_globals = {
+            "flowfile": flowfile_client,
+            "__builtins__": __builtins__,
+            "__name__": "__main__",
+        }
 
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             # Execute matplotlib setup to patch plt.show()

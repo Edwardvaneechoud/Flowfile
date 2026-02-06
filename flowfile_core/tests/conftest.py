@@ -273,12 +273,83 @@ def kernel_manager():
     KernelManager, starts a test kernel, and tears everything down afterwards.
 
     Yields a (KernelManager, kernel_id) tuple.
+
+    Note: This fixture does NOT start the Core API. For tests that need
+    global artifacts (publish_global, get_global, etc.), use the
+    `kernel_manager_with_core` fixture instead.
     """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
     if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
         pytest.skip("Docker is not available, skipping kernel tests")
 
     try:
         with managed_kernel() as ctx:
             yield ctx
     except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel container could not be started in CI: {exc}")
         pytest.skip(f"Kernel container could not be started: {exc}")
+
+
+@pytest.fixture(scope="session")
+def kernel_manager_with_core():
+    """
+    Pytest fixture for tests that need kernel + Core API integration.
+
+    This fixture:
+    - Starts the Core API server (for global artifacts endpoints)
+    - Sets up authentication tokens for kernel ↔ Core communication
+    - Builds and starts a kernel container
+    - Tears everything down afterwards
+
+    Use this fixture for tests that call:
+    - flowfile.publish_global()
+    - flowfile.get_global()
+    - flowfile.list_global_artifacts()
+    - flowfile.delete_global_artifact()
+
+    Yields a (KernelManager, kernel_id) tuple.
+    """
+    # In CI, we want to fail loudly to see what's wrong
+    in_ci = os.environ.get("CI") == "true" or os.environ.get("TEST_MODE") == "1"
+
+    if not is_docker_available():
+        if in_ci:
+            pytest.fail("Docker is not available in CI - this is unexpected")
+        pytest.skip("Docker is not available, skipping kernel tests")
+
+    try:
+        with managed_kernel(start_core=True) as ctx:
+            yield ctx
+    except Exception as exc:
+        if in_ci:
+            # In CI, fail loudly so we can see the actual error
+            pytest.fail(f"Kernel + Core could not be started in CI: {exc}")
+        pytest.skip(f"Kernel + Core could not be started: {exc}")
+
+
+@pytest.fixture
+def cleanup_global_artifacts():
+    """Clean up global artifacts before and after each test.
+
+    Use this fixture explicitly in tests that need artifact cleanup.
+    """
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import GlobalArtifact
+
+    def _cleanup():
+        try:
+            with get_db_context() as db:
+                db.query(GlobalArtifact).delete()
+                db.commit()
+        except Exception:
+            pass  # Table may not exist yet
+
+    _cleanup()
+    yield
+    _cleanup()

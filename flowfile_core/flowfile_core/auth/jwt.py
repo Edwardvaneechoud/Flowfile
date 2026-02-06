@@ -4,7 +4,7 @@ import os
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -21,6 +21,44 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
+
+# Internal service authentication
+# This token is shared between Core and Kernel for service-to-service auth
+_internal_token: str | None = None
+
+
+def get_internal_token() -> str:
+    """Get the internal service token from environment.
+
+    This token is used for kernel → Core communication and MUST be explicitly
+    set via environment variable FLOWFILE_INTERNAL_TOKEN in Docker/production
+    deployments, since Core and Kernel run in separate containers.
+
+    In Electron mode (single process), auto-generates if not set.
+
+    Raises:
+        ValueError: If FLOWFILE_INTERNAL_TOKEN is not set in Docker mode.
+    """
+    global _internal_token
+    if _internal_token is None:
+        _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+        if not _internal_token:
+            # Only auto-generate in Electron mode (single process)
+            if os.environ.get("FLOWFILE_MODE") == "electron":
+                _internal_token = secrets.token_hex(32)
+                os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+            else:
+                raise ValueError(
+                    "FLOWFILE_INTERNAL_TOKEN environment variable must be set in Docker mode. "
+                    "This token is used for kernel → Core authentication and must be shared "
+                    "between containers via docker-compose environment variables."
+                )
+    return _internal_token
+
+
+def verify_internal_token(token: str) -> bool:
+    """Verify an internal service token."""
+    return secrets.compare_digest(token, get_internal_token())
 
 
 def get_jwt_secret():
@@ -212,3 +250,43 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
             detail="Admin privileges required"
         )
     return current_user
+
+
+async def get_user_or_internal_service(
+    token: str = Depends(oauth2_scheme),
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> User:
+    """Auth dependency that accepts either JWT or internal service token.
+
+    Used for endpoints that need to be accessible from both:
+    - External clients (using JWT authentication)
+    - Internal services like kernel (using X-Internal-Token header)
+
+    For internal service auth, returns a synthetic "service" user.
+    For JWT auth, delegates to get_current_user to avoid code duplication.
+    """
+    # First, try internal service token
+    if x_internal_token:
+        try:
+            if verify_internal_token(x_internal_token):
+                # Return synthetic service user for artifact ownership
+                # The user ID is configurable via FLOWFILE_INTERNAL_SERVICE_USER_ID
+                # In production, ensure this user exists in the database
+                # Default is 1, which is typically the first/admin user
+                service_user_id = int(
+                    os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1")
+                )
+                return User(
+                    username="_internal_service",
+                    id=service_user_id,
+                    disabled=False,
+                    is_admin=False,
+                    must_change_password=False,
+                )
+        except ValueError:
+            # Token not configured or invalid user ID - fall through to JWT auth
+            pass
+
+    # Fall back to JWT auth - delegate to existing function
+    return await get_current_user(token=token, db=db)
