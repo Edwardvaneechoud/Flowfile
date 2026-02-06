@@ -441,6 +441,17 @@ class KernelManager:
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
 
+    async def clear_namespace(self, kernel_id: str, flow_id: int) -> None:
+        """Clear the execution namespace for a flow (variables, imports, etc.)."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            await self._ensure_running(kernel_id)
+
+        url = f"http://localhost:{kernel.port}/clear_namespace"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.post(url, params={"flow_id": flow_id})
+            response.raise_for_status()
+
     async def get_node_artifacts(self, kernel_id: str, node_id: int) -> dict:
         """Get artifacts published by a specific node."""
         kernel = self._get_kernel_or_raise(kernel_id)

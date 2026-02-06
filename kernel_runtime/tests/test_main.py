@@ -24,6 +24,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 1,
                 "code": 'print("hello")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -40,6 +41,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 2,
                 "code": "def broken(",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -55,6 +57,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 3,
                 "code": "1 / 0",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -69,6 +72,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 4,
                 "code": 'import sys; sys.stderr.write("warning\\n")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -83,6 +87,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 5,
                 "code": "x = sum(range(1000))",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -97,6 +102,7 @@ class TestExecuteEndpoint:
             json={
                 "node_id": 6,
                 "code": "print(type(flowfile).__name__)",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -129,6 +135,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 10,
                 "code": code,
+                "flow_id": 1,
                 "input_paths": {"main": [str(input_path)]},
                 "output_dir": str(output_dir),
             },
@@ -169,6 +176,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 11,
                 "code": code,
+                "flow_id": 1,
                 "input_paths": {
                     "left": [str(input_dir / "left.parquet")],
                     "right": [str(input_dir / "right.parquet")],
@@ -203,6 +211,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 13,
                 "code": code,
+                "flow_id": 1,
                 "input_paths": {
                     "main": [
                         str(input_dir / "main_0.parquet"),
@@ -238,6 +247,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 14,
                 "code": code,
+                "flow_id": 1,
                 "input_paths": {
                     "main": [
                         str(input_dir / "a.parquet"),
@@ -271,6 +281,7 @@ class TestExecuteWithParquet:
             json={
                 "node_id": 12,
                 "code": code,
+                "flow_id": 1,
                 "input_paths": {"main": [str(input_dir / "main.parquet")]},
                 "output_dir": str(output_dir),
             },
@@ -288,6 +299,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 20,
                 "code": 'flowfile.publish_artifact("my_dict", {"a": 1})',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -306,6 +318,7 @@ class TestArtifactEndpoints:
                     'flowfile.publish_artifact("item_a", [1, 2])\n'
                     'flowfile.publish_artifact("item_b", "hello")\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -325,6 +338,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 22,
                 "code": 'flowfile.publish_artifact("tmp", 42)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -343,6 +357,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 23,
                 "code": 'flowfile.publish_artifact("x", 1)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -357,6 +372,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 24,
                 "code": 'flowfile.publish_artifact("model", 1)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -368,6 +384,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 25,
                 "code": 'flowfile.publish_artifact("model", 2)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -383,6 +400,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 26,
                 "code": 'flowfile.publish_artifact("temp", 99)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -392,6 +410,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 27,
                 "code": 'flowfile.delete_artifact("temp")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -411,6 +430,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 24,
                 "code": 'flowfile.publish_artifact("model", "v1")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -424,6 +444,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 24,
                 "code": 'flowfile.publish_artifact("model", "v2")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -437,6 +458,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 99,
                 "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -451,6 +473,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 28,
                 "code": 'flowfile.publish_artifact("model", "v1")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -463,6 +486,7 @@ class TestArtifactEndpoints:
                     'flowfile.delete_artifact("model")\n'
                     'flowfile.publish_artifact("model", "v2")\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -485,6 +509,7 @@ class TestArtifactEndpoints:
                     'v = flowfile.read_artifact("model")\n'
                     'print(v)\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -502,6 +527,7 @@ class TestClearNodeArtifactsEndpoint:
             json={
                 "node_id": 40,
                 "code": 'flowfile.publish_artifact("model", {"v": 1})',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -511,6 +537,7 @@ class TestClearNodeArtifactsEndpoint:
             json={
                 "node_id": 41,
                 "code": 'flowfile.publish_artifact("scaler", {"v": 2})',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -535,6 +562,7 @@ class TestClearNodeArtifactsEndpoint:
             json={
                 "node_id": 42,
                 "code": 'flowfile.publish_artifact("keep_me", 42)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -551,6 +579,7 @@ class TestClearNodeArtifactsEndpoint:
             json={
                 "node_id": 43,
                 "code": 'flowfile.publish_artifact("reuse", "v1")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -561,6 +590,7 @@ class TestClearNodeArtifactsEndpoint:
             json={
                 "node_id": 43,
                 "code": 'flowfile.publish_artifact("reuse", "v2")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -579,6 +609,7 @@ class TestNodeArtifactsEndpoint:
                     'flowfile.publish_artifact("a", 1)\n'
                     'flowfile.publish_artifact("b", 2)\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -588,6 +619,7 @@ class TestNodeArtifactsEndpoint:
             json={
                 "node_id": 51,
                 "code": 'flowfile.publish_artifact("c", 3)',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -615,6 +647,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 60,
                 "code": 'print("hello")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -630,6 +663,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 61,
                 "code": 'flowfile.display("hello")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -647,6 +681,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 62,
                 "code": 'flowfile.display("<b>bold</b>")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -664,6 +699,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 63,
                 "code": 'flowfile.display("data", title="My Chart")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -684,6 +720,7 @@ class TestDisplayOutputs:
                     'flowfile.display("second")\n'
                     'flowfile.display("third")\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -703,6 +740,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 65,
                 "code": 'flowfile.display("from first call")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -714,6 +752,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 66,
                 "code": 'flowfile.display("from second call")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -733,6 +772,7 @@ class TestDisplayOutputs:
                     'flowfile.display("before error")\n'
                     'raise ValueError("oops")\n'
                 ),
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -750,6 +790,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 68,
                 "code": "1 + 2 + 3",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
                 "interactive": True,
@@ -767,6 +808,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 69,
                 "code": "1 + 2 + 3",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
                 "interactive": False,
@@ -783,6 +825,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 70,
                 "code": 'print("hello")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
                 "interactive": True,
@@ -802,6 +845,7 @@ class TestContextCleanup:
             json={
                 "node_id": 30,
                 "code": "x = 1",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -813,6 +857,7 @@ class TestContextCleanup:
             json={
                 "node_id": 31,
                 "code": 'print("ok")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -826,6 +871,7 @@ class TestContextCleanup:
             json={
                 "node_id": 32,
                 "code": "raise ValueError('boom')",
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
@@ -835,6 +881,7 @@ class TestContextCleanup:
             json={
                 "node_id": 33,
                 "code": 'print("still works")',
+                "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
             },
