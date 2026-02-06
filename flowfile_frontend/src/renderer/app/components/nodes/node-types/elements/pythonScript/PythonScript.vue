@@ -6,13 +6,6 @@
       @request-save="saveSettings"
     >
       <div class="python-script-settings">
-        <!-- Help button -->
-        <div class="section-header">
-          <button class="help-button" title="API Reference" @click="showHelp = true">
-            <i class="fa-solid fa-circle-question"></i>
-          </button>
-        </div>
-
         <!-- Kernel Selection -->
         <div class="setting-block">
           <label class="setting-label">Kernel</label>
@@ -21,6 +14,7 @@
               v-model="selectedKernelId"
               placeholder="Select a kernel..."
               class="kernel-select"
+              size="small"
               :loading="kernelsLoading"
               @change="handleKernelChange"
             >
@@ -62,7 +56,12 @@
 
         <!-- Code Editor -->
         <div class="setting-block">
-          <label class="setting-label">Code</label>
+          <div class="code-header">
+            <label class="setting-label">Code</label>
+            <button class="help-button" title="API Reference" @click="showHelp = true">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </div>
           <div class="editor-container">
             <codemirror
               v-if="showEditor"
@@ -398,19 +397,20 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .python-script-settings {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.65rem;
 }
 
-.section-header {
+.code-header {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .help-button {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.25rem;
+  font-size: 1rem;
   color: var(--el-text-color-secondary);
   padding: 0;
   line-height: 1;
@@ -425,12 +425,12 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .setting-block {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.3rem;
 }
 
 .setting-label {
   font-weight: 500;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: var(--el-text-color-primary);
 }
 
@@ -499,8 +499,8 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
   color: var(--el-color-warning-dark-2, #b88230);
   background-color: var(--el-color-warning-light-9, #fdf6ec);
   border: 1px solid var(--el-color-warning-light-5, #f3d19e);
@@ -515,16 +515,18 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 
 .editor-container {
   border: 1px solid var(--el-border-color);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 /* ─── Artifacts panel ────────────────────────────────────────────────────── */
 
 .artifacts-panel {
-  background-color: var(--el-fill-color-lighter);
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
+  background: transparent;
+  border-top: 1px solid var(--el-border-color-lighter);
+  border-radius: 0;
+  padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
 }
 
