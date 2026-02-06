@@ -7,11 +7,14 @@ The Core API never handles blob data directly - all binary data flows between
 kernel and storage backend. Core only manages metadata.
 """
 
+import hashlib
+import logging
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-import hashlib
-import shutil
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,6 +26,7 @@ class UploadTarget:
         path: Local filesystem path OR presigned URL for upload.
         storage_key: Unique key identifying this blob in storage (e.g., "42/model.joblib").
     """
+
     method: str
     path: str
     storage_key: str
@@ -36,6 +40,7 @@ class DownloadSource:
         method: Storage method - "file" for local filesystem or "s3_presigned" for S3.
         path: Local filesystem path OR presigned URL for download.
     """
+
     method: str
     path: str
 
@@ -136,11 +141,26 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
         self.permanent = Path(artifacts_root)
         self.staging.mkdir(parents=True, exist_ok=True)
         self.permanent.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "[artifact_storage] SharedFilesystemStorage initialized: "
+            "staging=%s (exists=%s), permanent=%s (exists=%s)",
+            self.staging,
+            self.staging.exists(),
+            self.permanent,
+            self.permanent.exists(),
+        )
 
     def prepare_upload(self, artifact_id: int, filename: str) -> UploadTarget:
         """Prepare a local filesystem path for the kernel to write to."""
         staging_path = self.staging / f"{artifact_id}_{filename}"
         storage_key = f"{artifact_id}/{filename}"
+        logger.info(
+            "[artifact_storage] prepare_upload: artifact_id=%s, filename='%s', " "staging_path='%s', storage_key='%s'",
+            artifact_id,
+            filename,
+            staging_path,
+            storage_key,
+        )
 
         return UploadTarget(
             method="file",
@@ -153,6 +173,24 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
         artifact_id, filename = storage_key.split("/", 1)
         staging_path = self.staging / f"{artifact_id}_{filename}"
 
+        logger.info(
+            "[artifact_storage] finalize_upload: storage_key='%s', " "staging_path='%s', exists=%s",
+            storage_key,
+            staging_path,
+            staging_path.exists(),
+        )
+        # List staging directory contents to see what's actually there
+        try:
+            contents = list(self.staging.iterdir())
+            logger.info(
+                "[artifact_storage] finalize_upload: staging dir '%s' contains %d files: %s",
+                self.staging,
+                len(contents),
+                [str(f.name) for f in contents],
+            )
+        except Exception as e:
+            logger.error("[artifact_storage] finalize_upload: cannot list staging dir: %s", e)
+
         if not staging_path.exists():
             raise FileNotFoundError(f"Staged file not found: {staging_path}")
 
@@ -160,9 +198,7 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
         actual_sha256 = self._compute_sha256(staging_path)
         if actual_sha256 != expected_sha256:
             staging_path.unlink()  # Clean up failed upload
-            raise ValueError(
-                f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-            )
+            raise ValueError(f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}")
 
         # Move to permanent location
         # Use rename for atomicity when on same filesystem, fall back to
@@ -233,10 +269,7 @@ class S3Storage(ArtifactStorageBackend):
         try:
             import boto3
         except ImportError:
-            raise ImportError(
-                "boto3 is required for S3 storage backend. "
-                "Install with: pip install boto3"
-            )
+            raise ImportError("boto3 is required for S3 storage backend. " "Install with: pip install boto3")
 
         self.bucket = bucket
         self.prefix = prefix

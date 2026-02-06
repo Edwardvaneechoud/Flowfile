@@ -8,9 +8,12 @@ Public interface:
 * Domain exceptions (``ArtifactError`` hierarchy)
 """
 
+import logging
 import os
 import threading
 from typing import TYPE_CHECKING
+
+_logger = logging.getLogger(__name__)
 
 from .exceptions import (
     ArtifactError,
@@ -86,11 +89,20 @@ def get_storage_backend() -> "ArtifactStorageBackend":
             from shared.artifact_storage import SharedFilesystemStorage
             from shared.storage_config import storage
 
-            staging_root = Path(get_kernel_manager().shared_volume_path) / "artifact_staging"
+            kernel_shared = get_kernel_manager().shared_volume_path
+            staging_root = Path(kernel_shared) / "artifact_staging"
+            artifacts_root = storage.global_artifacts_directory
+
+            _logger.info(
+                "[artifacts] get_storage_backend: kernel_shared='%s', " "staging_root='%s', artifacts_root='%s'",
+                kernel_shared,
+                staging_root,
+                artifacts_root,
+            )
 
             _backend = SharedFilesystemStorage(
                 staging_root=staging_root,
-                artifacts_root=storage.global_artifacts_directory,
+                artifacts_root=artifacts_root,
             )
 
     return _backend
