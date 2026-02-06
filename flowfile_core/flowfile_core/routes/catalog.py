@@ -22,6 +22,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
     CatalogService,
     FavoriteNotFoundError,
+    FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
     NamespaceExistsError,
@@ -225,6 +226,8 @@ def delete_flow(
         service.delete_flow(registration_id=flow_id)
     except FlowNotFoundError:
         raise HTTPException(404, "Flow not found")
+    except FlowHasArtifactsError as e:
+        raise HTTPException(409, str(e))
 
 
 # ---------------------------------------------------------------------------

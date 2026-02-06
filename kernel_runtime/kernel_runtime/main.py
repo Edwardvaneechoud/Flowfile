@@ -193,6 +193,7 @@ class ExecuteRequest(BaseModel):
     input_paths: dict[str, list[str]] = {}
     output_dir: str = ""
     flow_id: int = 0
+    source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
 
@@ -262,6 +263,7 @@ async def execute(request: ExecuteRequest):
             output_dir=output_dir,
             artifact_store=artifact_store,
             flow_id=request.flow_id,
+            source_registration_id=request.source_registration_id,
             log_callback_url=request.log_callback_url,
         )
 

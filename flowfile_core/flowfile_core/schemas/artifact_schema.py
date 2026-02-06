@@ -17,6 +17,10 @@ class PrepareUploadRequest(BaseModel):
     Sent by kernel to Core to get upload target information.
     """
     name: str = Field(..., description="Artifact name (required)")
+    source_registration_id: int = Field(
+        ...,
+        description="ID of the registered catalog flow that produces this artifact"
+    )
     serialization_format: str = Field(
         ...,
         description="Serialization format: parquet, joblib, or pickle"
@@ -31,7 +35,7 @@ class PrepareUploadRequest(BaseModel):
     )
     namespace_id: int | None = Field(
         None,
-        description="Namespace (schema) ID. Defaults to user's default namespace."
+        description="Namespace (schema) ID. Defaults from source registration if not provided."
     )
 
     # Lineage information (set by kernel)
@@ -129,6 +133,7 @@ class ArtifactOut(BaseModel):
 
     # Ownership & Lineage
     owner_id: int
+    source_registration_id: int
     source_flow_id: int | None = None
     source_node_id: int | None = None
     source_kernel_id: str | None = None
@@ -167,6 +172,7 @@ class ArtifactListItem(BaseModel):
     namespace_id: int | None = None
     version: int
     status: str
+    source_registration_id: int
     python_type: str | None = None
     serialization_format: str
     size_bytes: int | None = None

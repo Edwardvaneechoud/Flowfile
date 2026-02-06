@@ -1177,6 +1177,7 @@ class FlowGraph:
                 input_paths=input_paths,
                 output_dir=f"/shared/{flow_id}/{node_id}/outputs",
                 flow_id=flow_id,
+                source_registration_id=self._flow_settings.source_registration_id,
                 log_callback_url=log_callback_url,
             )
             result = manager.execute_sync(kernel_id, request, self.flow_logger)

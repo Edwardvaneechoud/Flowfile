@@ -6,6 +6,7 @@ Covers:
 - Versioning
 - Listing and filtering
 - Deletion
+- Source registration linking
 - Error handling
 """
 
@@ -19,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, GlobalArtifact, User
+from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact, User
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +57,28 @@ def _cleanup_namespaces():
         db.query(CatalogNamespace).filter(
             CatalogNamespace.name.like("ArtifactTest%")
         ).delete(synchronize_session=False)
+        db.commit()
+
+
+def _cleanup_registrations():
+    """Remove test flow registrations and their orphaned artifacts."""
+    with get_db_context() as db:
+        # Find registration IDs to clean up
+        reg_ids = [
+            r.id
+            for r in db.query(FlowRegistration)
+            .filter(FlowRegistration.name.like("ArtifactTest%"))
+            .all()
+        ]
+        if reg_ids:
+            # Hard-delete any artifacts referencing these registrations
+            db.query(GlobalArtifact).filter(
+                GlobalArtifact.source_registration_id.in_(reg_ids)
+            ).delete(synchronize_session=False)
+            # Then delete the registrations
+            db.query(FlowRegistration).filter(
+                FlowRegistration.id.in_(reg_ids)
+            ).delete(synchronize_session=False)
         db.commit()
 
 
@@ -102,6 +125,23 @@ def _create_test_namespace() -> int:
     return schema_resp.json()["id"]
 
 
+def _create_test_registration(
+    namespace_id: int | None = None,
+    name: str = "ArtifactTestFlow",
+) -> int:
+    """Create a test flow registration and return its ID."""
+    resp = client.post(
+        "/catalog/flows",
+        json={
+            "name": name,
+            "flow_path": f"/tmp/{name}.flow",
+            "namespace_id": namespace_id,
+        },
+    )
+    assert resp.status_code == 201, f"Failed to create registration: {resp.text}"
+    return resp.json()["id"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -122,6 +162,29 @@ def test_namespace() -> int:
     ns_id = _create_test_namespace()
     yield ns_id
     _cleanup_namespaces()
+
+
+@pytest.fixture
+def test_registration() -> int:
+    """Create a test flow registration for artifact tests."""
+    _cleanup_registrations()
+    reg_id = _create_test_registration()
+    yield reg_id
+    _cleanup_artifacts()
+    _cleanup_registrations()
+
+
+@pytest.fixture
+def test_registration_with_namespace(test_namespace) -> tuple[int, int]:
+    """Create a flow registration under a namespace. Returns (reg_id, ns_id)."""
+    _cleanup_registrations()
+    reg_id = _create_test_registration(
+        namespace_id=test_namespace,
+        name="ArtifactTestFlowNS",
+    )
+    yield reg_id, test_namespace
+    _cleanup_artifacts()
+    _cleanup_registrations()
 
 
 @pytest.fixture
@@ -148,12 +211,13 @@ def artifacts_dir(tmp_path):
 class TestPrepareUpload:
     """Tests for the /artifacts/prepare-upload endpoint."""
 
-    def test_prepare_upload_creates_pending_artifact(self):
+    def test_prepare_upload_creates_pending_artifact(self, test_registration):
         """Prepare upload should create an artifact in pending status."""
         resp = client.post(
             "/artifacts/prepare-upload",
             json={
                 "name": "test_model",
+                "source_registration_id": test_registration,
                 "serialization_format": "pickle",
                 "description": "A test artifact",
                 "tags": ["test", "model"],
@@ -172,13 +236,18 @@ class TestPrepareUpload:
             assert artifact is not None
             assert artifact.status == "pending"
             assert artifact.name == "test_model"
+            assert artifact.source_registration_id == test_registration
 
-    def test_prepare_upload_increments_version(self):
+    def test_prepare_upload_increments_version(self, test_registration):
         """Each upload to same name should increment version."""
         # First upload
         resp1 = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "versioned_model", "serialization_format": "pickle"},
+            json={
+                "name": "versioned_model",
+                "source_registration_id": test_registration,
+                "serialization_format": "pickle",
+            },
         )
         assert resp1.status_code == 201
         assert resp1.json()["version"] == 1
@@ -189,45 +258,53 @@ class TestPrepareUpload:
         # Second upload - should be version 2
         resp2 = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "versioned_model", "serialization_format": "pickle"},
+            json={
+                "name": "versioned_model",
+                "source_registration_id": test_registration,
+                "serialization_format": "pickle",
+            },
         )
         assert resp2.status_code == 201
         assert resp2.json()["version"] == 2
 
-    def test_prepare_upload_with_namespace(self, test_namespace):
+    def test_prepare_upload_with_namespace(self, test_registration_with_namespace):
         """Upload with namespace_id should associate artifact with namespace."""
+        reg_id, ns_id = test_registration_with_namespace
         resp = client.post(
             "/artifacts/prepare-upload",
             json={
                 "name": "namespaced_model",
+                "source_registration_id": reg_id,
                 "serialization_format": "joblib",
-                "namespace_id": test_namespace,
+                "namespace_id": ns_id,
             },
         )
         assert resp.status_code == 201
 
         with get_db_context() as db:
             artifact = db.get(GlobalArtifact, resp.json()["artifact_id"])
-            assert artifact.namespace_id == test_namespace
+            assert artifact.namespace_id == ns_id
 
-    def test_prepare_upload_invalid_namespace(self):
+    def test_prepare_upload_invalid_namespace(self, test_registration):
         """Upload with nonexistent namespace should return 404."""
         resp = client.post(
             "/artifacts/prepare-upload",
             json={
                 "name": "invalid_ns_model",
+                "source_registration_id": test_registration,
                 "serialization_format": "pickle",
                 "namespace_id": 999999,
             },
         )
         assert resp.status_code == 404
 
-    def test_prepare_upload_stores_python_type_info(self):
+    def test_prepare_upload_stores_python_type_info(self, test_registration):
         """Python type and module info should be stored."""
         resp = client.post(
             "/artifacts/prepare-upload",
             json={
                 "name": "typed_model",
+                "source_registration_id": test_registration,
                 "serialization_format": "joblib",
                 "python_type": "sklearn.ensemble.RandomForestClassifier",
                 "python_module": "sklearn.ensemble",
@@ -239,6 +316,97 @@ class TestPrepareUpload:
             artifact = db.get(GlobalArtifact, resp.json()["artifact_id"])
             assert artifact.python_type == "sklearn.ensemble.RandomForestClassifier"
             assert artifact.python_module == "sklearn.ensemble"
+
+    def test_prepare_upload_without_source_registration_id(self):
+        """Prepare upload without source_registration_id should return 422."""
+        resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": "no_reg_model",
+                "serialization_format": "pickle",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_prepare_upload_with_invalid_source_registration_id(self):
+        """Prepare upload with nonexistent source_registration_id should return 404."""
+        resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": "bad_reg_model",
+                "source_registration_id": 999999,
+                "serialization_format": "pickle",
+            },
+        )
+        assert resp.status_code == 404
+
+    def test_namespace_inherited_from_registration(self, test_registration_with_namespace):
+        """namespace_id should be inherited from registration when not provided."""
+        reg_id, ns_id = test_registration_with_namespace
+        resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": "inherited_ns_model",
+                "source_registration_id": reg_id,
+                "serialization_format": "pickle",
+                # namespace_id intentionally omitted
+            },
+        )
+        assert resp.status_code == 201
+
+        with get_db_context() as db:
+            artifact = db.get(GlobalArtifact, resp.json()["artifact_id"])
+            assert artifact.namespace_id == ns_id
+
+    def test_explicit_namespace_overrides_registration(self, test_registration_with_namespace, test_namespace):
+        """Explicit namespace_id should override the registration's namespace."""
+        reg_id, reg_ns_id = test_registration_with_namespace
+
+        # Create a second namespace to use as override
+        cat_resp = client.post(
+            "/catalog/namespaces",
+            json={"name": "ArtifactTestCatalog2", "description": "Second test catalog"},
+        )
+        if cat_resp.status_code == 201:
+            cat_id = cat_resp.json()["id"]
+            schema_resp = client.post(
+                "/catalog/namespaces",
+                json={"name": "ArtifactTestSchema2", "parent_id": cat_id},
+            )
+            override_ns_id = schema_resp.json()["id"]
+        else:
+            with get_db_context() as db:
+                cat = db.query(CatalogNamespace).filter_by(
+                    name="ArtifactTestCatalog2", parent_id=None
+                ).first()
+                schema = db.query(CatalogNamespace).filter_by(
+                    name="ArtifactTestSchema2", parent_id=cat.id
+                ).first()
+                override_ns_id = schema.id
+
+        resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": "override_ns_model",
+                "source_registration_id": reg_id,
+                "serialization_format": "pickle",
+                "namespace_id": override_ns_id,
+            },
+        )
+        assert resp.status_code == 201
+
+        with get_db_context() as db:
+            artifact = db.get(GlobalArtifact, resp.json()["artifact_id"])
+            assert artifact.namespace_id == override_ns_id
+            assert artifact.namespace_id != reg_ns_id
+
+        # Cleanup extra namespace
+        with get_db_context() as db:
+            db.query(CatalogNamespace).filter(
+                CatalogNamespace.name.like("ArtifactTestCatalog2%")
+                | CatalogNamespace.name.like("ArtifactTestSchema2%")
+            ).delete(synchronize_session=False)
+            db.commit()
 
     def _finalize_artifact(self, prepare_response: dict):
         """Helper to finalize an artifact upload."""
@@ -265,12 +433,16 @@ class TestPrepareUpload:
 class TestFinalizeUpload:
     """Tests for the /artifacts/finalize endpoint."""
 
-    def test_finalize_activates_artifact(self, tmp_path):
+    def test_finalize_activates_artifact(self, test_registration):
         """Finalize should activate the artifact and store metadata."""
         # Prepare upload
         prep_resp = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "finalize_test", "serialization_format": "pickle"},
+            json={
+                "name": "finalize_test",
+                "source_registration_id": test_registration,
+                "serialization_format": "pickle",
+            },
         )
         assert prep_resp.status_code == 201
         prep_data = prep_resp.json()
@@ -320,12 +492,16 @@ class TestFinalizeUpload:
         )
         assert resp.status_code == 404
 
-    def test_finalize_already_active_artifact(self, tmp_path):
+    def test_finalize_already_active_artifact(self, test_registration):
         """Finalize on already active artifact should return 400."""
         # Create and finalize an artifact
         prep_resp = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "double_finalize", "serialization_format": "pickle"},
+            json={
+                "name": "double_finalize",
+                "source_registration_id": test_registration,
+                "serialization_format": "pickle",
+            },
         )
         prep_data = prep_resp.json()
 
@@ -369,6 +545,10 @@ class TestFinalizeUpload:
 class TestRetrieveArtifact:
     """Tests for artifact retrieval endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _setup_registration(self, test_registration):
+        self._reg_id = test_registration
+
     def _create_active_artifact(
         self,
         name: str,
@@ -380,6 +560,7 @@ class TestRetrieveArtifact:
             "/artifacts/prepare-upload",
             json={
                 "name": name,
+                "source_registration_id": self._reg_id,
                 "serialization_format": "pickle",
                 "namespace_id": namespace_id,
                 "tags": tags or [],
@@ -417,6 +598,7 @@ class TestRetrieveArtifact:
         data = resp.json()
         assert data["name"] == "retrieve_by_name"
         assert data["status"] == "active"
+        assert data["source_registration_id"] == self._reg_id
         assert data["download_source"] is not None
         assert data["download_source"]["method"] == "file"
 
@@ -506,6 +688,10 @@ class TestRetrieveArtifact:
 class TestListArtifacts:
     """Tests for artifact listing endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _setup_registration(self, test_registration):
+        self._reg_id = test_registration
+
     def _create_active_artifact(
         self,
         name: str,
@@ -518,6 +704,7 @@ class TestListArtifacts:
             "/artifacts/prepare-upload",
             json={
                 "name": name,
+                "source_registration_id": self._reg_id,
                 "serialization_format": "pickle",
                 "namespace_id": namespace_id,
                 "tags": tags or [],
@@ -656,11 +843,19 @@ class TestListArtifacts:
 class TestDeleteArtifact:
     """Tests for artifact deletion endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _setup_registration(self, test_registration):
+        self._reg_id = test_registration
+
     def _create_active_artifact(self, name: str) -> int:
         """Helper to create an active artifact."""
         prep_resp = client.post(
             "/artifacts/prepare-upload",
-            json={"name": name, "serialization_format": "pickle"},
+            json={
+                "name": name,
+                "source_registration_id": self._reg_id,
+                "serialization_format": "pickle",
+            },
         )
         prep_data = prep_resp.json()
 
@@ -729,6 +924,84 @@ class TestDeleteArtifact:
 
 
 # ---------------------------------------------------------------------------
+# Flow Deletion Cascade Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFlowDeletionWithArtifacts:
+    """Tests for flow deletion when artifacts exist."""
+
+    def _create_active_artifact(self, name: str, reg_id: int) -> int:
+        """Helper to create an active artifact for a given registration."""
+        prep_resp = client.post(
+            "/artifacts/prepare-upload",
+            json={
+                "name": name,
+                "source_registration_id": reg_id,
+                "serialization_format": "pickle",
+            },
+        )
+        prep_data = prep_resp.json()
+
+        staging_path = Path(prep_data["path"])
+        staging_path.parent.mkdir(parents=True, exist_ok=True)
+        test_data = b"test"
+        staging_path.write_bytes(test_data)
+
+        import hashlib
+        sha256 = hashlib.sha256(test_data).hexdigest()
+
+        client.post(
+            "/artifacts/finalize",
+            json={
+                "artifact_id": prep_data["artifact_id"],
+                "storage_key": prep_data["storage_key"],
+                "sha256": sha256,
+                "size_bytes": len(test_data),
+            },
+        )
+        return prep_data["artifact_id"]
+
+    def test_delete_flow_with_active_artifacts_blocked(self):
+        """Deleting a flow with active artifacts should be blocked (409)."""
+        _cleanup_registrations()
+        reg_id = _create_test_registration(name="ArtifactTestFlowBlock")
+        self._create_active_artifact("blocking_artifact", reg_id)
+
+        resp = client.delete(f"/catalog/flows/{reg_id}")
+        assert resp.status_code == 409
+
+        # Cleanup
+        _cleanup_artifacts()
+        _cleanup_registrations()
+
+    def test_delete_flow_after_artifacts_deleted(self):
+        """Deleting a flow should succeed after all its artifacts are deleted."""
+        _cleanup_registrations()
+        reg_id = _create_test_registration(name="ArtifactTestFlowAllow")
+        artifact_id = self._create_active_artifact("deletable_artifact", reg_id)
+
+        # Delete the artifact first
+        client.delete(f"/artifacts/{artifact_id}")
+
+        # Now deleting the flow should succeed
+        resp = client.delete(f"/catalog/flows/{reg_id}")
+        assert resp.status_code == 204
+
+        _cleanup_registrations()
+
+    def test_delete_flow_without_artifacts_succeeds(self):
+        """Deleting a flow with no artifacts should succeed."""
+        _cleanup_registrations()
+        reg_id = _create_test_registration(name="ArtifactTestFlowEmpty")
+
+        resp = client.delete(f"/catalog/flows/{reg_id}")
+        assert resp.status_code == 204
+
+        _cleanup_registrations()
+
+
+# ---------------------------------------------------------------------------
 # Edge Cases and Error Handling
 # ---------------------------------------------------------------------------
 
@@ -736,12 +1009,20 @@ class TestDeleteArtifact:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
+    @pytest.fixture(autouse=True)
+    def _setup_registration(self, test_registration):
+        self._reg_id = test_registration
+
     def test_artifact_with_special_characters_in_name(self):
         """Should handle special characters in artifact name."""
         # Note: URL encoding is handled by TestClient
         resp = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "model-v1.2_final", "serialization_format": "pickle"},
+            json={
+                "name": "model-v1.2_final",
+                "source_registration_id": self._reg_id,
+                "serialization_format": "pickle",
+            },
         )
         assert resp.status_code == 201
 
@@ -749,7 +1030,12 @@ class TestEdgeCases:
         """Should handle empty tags list."""
         resp = client.post(
             "/artifacts/prepare-upload",
-            json={"name": "no_tags", "serialization_format": "pickle", "tags": []},
+            json={
+                "name": "no_tags",
+                "source_registration_id": self._reg_id,
+                "serialization_format": "pickle",
+                "tags": [],
+            },
         )
         assert resp.status_code == 201
 
@@ -760,6 +1046,7 @@ class TestEdgeCases:
             "/artifacts/prepare-upload",
             json={
                 "name": "long_desc",
+                "source_registration_id": self._reg_id,
                 "serialization_format": "pickle",
                 "description": long_desc,
             },

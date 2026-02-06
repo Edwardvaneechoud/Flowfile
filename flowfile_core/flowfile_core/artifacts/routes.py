@@ -23,6 +23,7 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.artifacts.service import ArtifactService
+from flowfile_core.catalog.exceptions import FlowNotFoundError
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.artifact_schema import (
@@ -79,6 +80,8 @@ async def prepare_upload(
     """Initiate an artifact upload."""
     try:
         return service.prepare_upload(body, owner_id=current_user.id)
+    except FlowNotFoundError:
+        raise HTTPException(404, "Source registration not found")
     except NamespaceNotFoundError:
         raise HTTPException(404, "Namespace not found")
 
