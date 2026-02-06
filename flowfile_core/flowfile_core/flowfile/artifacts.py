@@ -93,6 +93,9 @@ class ArtifactContext:
         ``artifacts`` may be a list of dicts (with at least a ``"name"`` key)
         or a plain list of artifact name strings.
 
+        If an artifact with the same name was already published by this node,
+        it is replaced (node_id + artifact_name are unique).
+
         Returns the created :class:`ArtifactRef` objects.
         """
         state = self._get_or_create_state(node_id)
@@ -100,8 +103,17 @@ class ArtifactContext:
         for item in artifacts:
             if isinstance(item, str):
                 item = {"name": item}
+            artifact_name = item["name"]
+
+            # Remove any existing artifact with the same name from this node
+            # to ensure (node_id, artifact_name) uniqueness
+            state.published = [
+                r for r in state.published
+                if not (r.name == artifact_name and r.kernel_id == kernel_id)
+            ]
+
             ref = ArtifactRef(
-                name=item["name"],
+                name=artifact_name,
                 source_node_id=node_id,
                 kernel_id=kernel_id,
                 type_name=item.get("type_name", ""),

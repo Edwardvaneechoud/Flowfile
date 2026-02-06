@@ -113,6 +113,55 @@ class TestArtifactContextRecording:
         assert "model" in ka
         assert ka["model"].source_node_id == 1
 
+    def test_record_published_overwrites_same_name_same_node(self):
+        """Publishing the same artifact name from the same node should overwrite,
+        not create duplicates. This ensures (node_id, artifact_name) uniqueness."""
+        ctx = ArtifactContext()
+        # First publish
+        refs1 = ctx.record_published(
+            node_id=1,
+            kernel_id="k1",
+            artifacts=[{"name": "model", "type_name": "RF"}],
+        )
+        assert len(ctx.get_published_by_node(1)) == 1
+        assert ctx.get_published_by_node(1)[0].type_name == "RF"
+
+        # Second publish of same artifact name from same node - should overwrite
+        refs2 = ctx.record_published(
+            node_id=1,
+            kernel_id="k1",
+            artifacts=[{"name": "model", "type_name": "XGBoost"}],
+        )
+        # Should still only have 1 artifact, not 2
+        assert len(ctx.get_published_by_node(1)) == 1
+        assert ctx.get_published_by_node(1)[0].type_name == "XGBoost"
+        # Kernel artifacts should also be updated
+        ka = ctx.get_kernel_artifacts("k1")
+        assert ka["model"].type_name == "XGBoost"
+
+    def test_record_published_allows_same_name_different_nodes(self):
+        """Different nodes can publish artifacts with the same name."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", [{"name": "model", "type_name": "RF"}])
+        ctx.record_published(2, "k1", [{"name": "model", "type_name": "XGBoost"}])
+        # Both nodes should have their own published list
+        assert len(ctx.get_published_by_node(1)) == 1
+        assert len(ctx.get_published_by_node(2)) == 1
+        # Kernel artifacts should have the latest (from node 2)
+        ka = ctx.get_kernel_artifacts("k1")
+        assert ka["model"].source_node_id == 2
+
+    def test_record_published_allows_same_name_different_kernels(self):
+        """Same node can publish same artifact name to different kernels."""
+        ctx = ArtifactContext()
+        ctx.record_published(1, "k1", [{"name": "model", "type_name": "RF"}])
+        ctx.record_published(1, "k2", [{"name": "model", "type_name": "XGBoost"}])
+        # Node 1 should have 2 published artifacts (one per kernel)
+        assert len(ctx.get_published_by_node(1)) == 2
+        # Each kernel should have its own version
+        assert ctx.get_kernel_artifacts("k1")["model"].type_name == "RF"
+        assert ctx.get_kernel_artifacts("k2")["model"].type_name == "XGBoost"
+
     def test_record_consumed(self):
         ctx = ArtifactContext()
         ctx.record_consumed(5, ["model", "scaler"])
