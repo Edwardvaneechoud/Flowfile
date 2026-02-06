@@ -52,6 +52,10 @@ class FlowGraphToPolarsConverter:
         self.last_node_var = None
         self.unsupported_nodes = []
         self.custom_node_classes = {}
+        # Track which artifacts have been published and by which node (for validation)
+        self._published_artifacts: dict[str, int] = {}  # artifact_name → node_id
+        # Track if any python_script nodes exist (to emit _artifacts = {} once)
+        self._has_python_script_nodes: bool = False
 
     def convert(self) -> str:
         """
@@ -1118,6 +1122,118 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
         self._add_code("")
 
+    def _handle_python_script(
+        self, settings: input_schema.NodePythonScript, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle python_script nodes by rewriting flowfile.* calls to plain Python."""
+        from flowfile_core.flowfile.code_generator.python_script_rewriter import (
+            analyze_flowfile_usage,
+            build_function_code,
+            extract_imports,
+            rewrite_flowfile_calls,
+        )
+
+        code = settings.python_script_input.code.strip()
+        kernel_id = settings.python_script_input.kernel_id
+        node_id = settings.node_id
+
+        # Handle empty code — pass through input
+        if not code:
+            if input_vars:
+                self._add_code(f"{var_name} = {list(input_vars.values())[0]}")
+            else:
+                self._add_code(f"{var_name} = pl.LazyFrame()")
+            return
+
+        # 1. Analyze flowfile usage
+        try:
+            analysis = analyze_flowfile_usage(code)
+        except SyntaxError as e:
+            self.unsupported_nodes.append((
+                node_id,
+                "python_script",
+                f"Syntax error in python_script code: {e}"
+            ))
+            return
+        self._has_python_script_nodes = True
+
+        # 2. Check for unsupported patterns
+        if analysis.dynamic_artifact_names:
+            self.unsupported_nodes.append((
+                node_id,
+                "python_script",
+                "Artifact names must be string literals for code generation. "
+                f"Found dynamic names at lines: {[getattr(n, 'lineno', '?') for n in analysis.dynamic_artifact_names]}"
+            ))
+            return
+
+        if analysis.unsupported_calls:
+            methods = [m for m, _ in analysis.unsupported_calls]
+            self.unsupported_nodes.append((
+                node_id,
+                "python_script",
+                f"Unsupported flowfile API calls for code generation: {', '.join(methods)}"
+            ))
+            return
+
+        # 3. Validate artifact dependencies are available
+        for artifact_name in analysis.artifacts_consumed:
+            if artifact_name not in self._published_artifacts:
+                self.unsupported_nodes.append((
+                    node_id,
+                    "python_script",
+                    f"Artifact '{artifact_name}' is consumed but not published by any upstream node"
+                ))
+                return
+
+        # 4. Extract and register imports
+        user_imports = extract_imports(code)
+        for imp in user_imports:
+            self.imports.add(imp)
+
+        # 5. Add kernel package requirements as comments
+        if kernel_id:
+            self._add_kernel_requirements(kernel_id, user_imports)
+
+        # 6. Rewrite the code
+        rewritten = rewrite_flowfile_calls(code, analysis)
+
+        # 7. Build and emit the function
+        func_def, call_code = build_function_code(
+            node_id, rewritten, analysis, input_vars
+        )
+
+        self._add_code(f"# --- Node {node_id}: python_script ---")
+        for line in func_def.split("\n"):
+            self._add_code(line)
+        self._add_code("")
+        self._add_code(call_code)
+
+        # 8. Track published artifacts for validation of downstream nodes
+        for artifact_name, _ in analysis.artifacts_published:
+            self._published_artifacts[artifact_name] = node_id
+
+        self._add_code("")
+
+    def _add_kernel_requirements(self, kernel_id: str, user_imports: list[str]) -> None:
+        """Add a comment block with required packages from kernel config."""
+        try:
+            from flowfile_core.flowfile.code_generator.python_script_rewriter import get_required_packages
+            from flowfile_core.kernel.manager import get_kernel_manager
+
+            manager = get_kernel_manager()
+            kernel = manager._kernels.get(kernel_id)
+            if not kernel or not kernel.packages:
+                return
+
+            required = get_required_packages(user_imports, kernel.packages)
+            if required:
+                self._add_code(f"# Required packages: {', '.join(required)}")
+                self._add_code(f"# Install with: pip install {' '.join(required)}")
+                self._add_code("")
+        except Exception:
+            pass  # Kernel manager not available; skip requirements comment
+
     # Handlers for unsupported node types - these add nodes to the unsupported list
 
     def _handle_explore_data(
@@ -1639,6 +1755,11 @@ class FlowGraphToPolarsConverter:
         lines.append(f"    ETL Pipeline: {self.flow_graph.__name__}")
         lines.append("    Generated from Flowfile")
         lines.append('    """')
+
+        # Artifact store (only if python_script nodes exist)
+        if self._has_python_script_nodes or self._published_artifacts:
+            lines.append("    _artifacts = {}  # Shared artifact store")
+
         lines.append("    ")
 
         # Add the generated code
