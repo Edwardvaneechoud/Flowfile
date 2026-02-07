@@ -347,7 +347,7 @@ class TestErrorHandling:
     """Test error cases in python_script code generation."""
 
     def test_dynamic_artifact_name(self):
-        """Dynamic artifact names should produce UnsupportedNodeError."""
+        """Dynamic artifact names should produce a warning comment, not an error."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -359,8 +359,9 @@ class TestErrorHandling:
         add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
         connect_nodes(flow, 1, 2)
 
-        with pytest.raises(UnsupportedNodeError, match="string literals"):
-            export_flow_to_polars(flow)
+        result = export_flow_to_polars(flow)
+        assert "WARNING" in result
+        assert "Dynamic artifact names" in result
 
     def test_syntax_error_in_code(self):
         """Syntax errors should produce UnsupportedNodeError."""
@@ -375,7 +376,7 @@ class TestErrorHandling:
             export_flow_to_polars(flow)
 
     def test_unsupported_display_call(self):
-        """flowfile.display should produce UnsupportedNodeError."""
+        """flowfile.display should produce a warning comment, not an error."""
         flow = create_basic_flow()
         add_manual_input_node(flow, node_id=1)
 
@@ -386,8 +387,10 @@ class TestErrorHandling:
         add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
         connect_nodes(flow, 1, 2)
 
-        with pytest.raises(UnsupportedNodeError, match="Unsupported flowfile API"):
-            export_flow_to_polars(flow)
+        result = export_flow_to_polars(flow)
+        assert "WARNING" in result
+        assert "not supported in code generation" in result
+        assert "display" in result
 
 
 # ---------------------------------------------------------------------------
