@@ -91,7 +91,9 @@ def get_storage_backend() -> "ArtifactStorageBackend":
 
             kernel_shared = get_kernel_manager().shared_volume_path
             staging_root = Path(kernel_shared) / "artifact_staging"
-            artifacts_root = storage.global_artifacts_directory
+            # Permanent storage MUST also be inside the kernel's shared volume
+            # so kernel containers can read artifacts via the /shared mount.
+            artifacts_root = Path(kernel_shared) / "global_artifacts"
 
             _logger.info(
                 "[artifacts] get_storage_backend: kernel_shared='%s', " "staging_root='%s', artifacts_root='%s'",
