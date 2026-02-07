@@ -121,6 +121,7 @@
         <ArtifactDetailPanel
           v-else-if="catalogStore.selectedArtifact"
           :artifact="catalogStore.selectedArtifact"
+          :versions="selectedArtifactVersions"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -224,7 +225,7 @@ import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
-import type { CatalogTab } from "../../types";
+import type { CatalogTab, GlobalArtifact, NamespaceTree } from "../../types";
 
 const router = useRouter();
 
@@ -290,6 +291,25 @@ function selectArtifact(artifactId: number) {
   catalogStore.selectedFlowId = null;
   catalogStore.selectArtifact(artifactId);
 }
+
+/** Collect all versions of the selected artifact from the tree. */
+function collectArtifactVersions(nodes: NamespaceTree[], name: string, nsId: number | null): GlobalArtifact[] {
+  const result: GlobalArtifact[] = [];
+  for (const node of nodes) {
+    for (const a of node.artifacts ?? []) {
+      if (a.name === name && a.namespace_id === nsId) result.push(a);
+    }
+    result.push(...collectArtifactVersions(node.children, name, nsId));
+  }
+  return result;
+}
+
+const selectedArtifactVersions = computed((): GlobalArtifact[] => {
+  const a = catalogStore.selectedArtifact;
+  if (!a) return [];
+  const versions = collectArtifactVersions(catalogStore.tree, a.name, a.namespace_id);
+  return versions.sort((x, y) => y.version - x.version);
+});
 
 function openCreateSchema(parentId: number) {
   createSchemaParentId.value = parentId;

@@ -74,17 +74,18 @@
         </div>
       </div>
 
-      <!-- Artifacts under this namespace -->
+      <!-- Artifacts grouped by name -->
       <div
-        v-for="artifact in node.artifacts"
-        :key="'a-' + artifact.id"
+        v-for="group in groupedArtifacts"
+        :key="'ag-' + group.name"
         class="tree-artifact"
-        :class="{ selected: selectedArtifactId === artifact.id }"
-        @click.stop="$emit('selectArtifact', artifact.id)"
+        :class="{ selected: selectedArtifactId === group.latest.id }"
+        @click.stop="$emit('selectArtifact', group.latest.id)"
       >
         <i class="fa-solid fa-cube artifact-icon"></i>
-        <span class="artifact-name">{{ artifact.name }}</span>
-        <span class="artifact-version">v{{ artifact.version }}</span>
+        <span class="artifact-name">{{ group.name }}</span>
+        <span v-if="group.versionCount > 1" class="artifact-versions-count">{{ group.versionCount }} versions</span>
+        <span class="artifact-version">v{{ group.latest.version }}</span>
       </div>
     </div>
   </div>
@@ -92,7 +93,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { NamespaceTree } from "../../types";
+import type { GlobalArtifact, NamespaceTree } from "../../types";
+
+interface ArtifactGroup {
+  name: string;
+  latest: GlobalArtifact;
+  versionCount: number;
+}
 
 const props = defineProps<{
   node: NamespaceTree;
@@ -123,10 +130,27 @@ watch(() => props.selectedFlowId, (flowId) => {
   }
 });
 
+function countUniqueArtifactNames(artifacts: GlobalArtifact[]): number {
+  return new Set(artifacts.map(a => a.name)).size;
+}
+
+const groupedArtifacts = computed((): ArtifactGroup[] => {
+  const byName = new Map<string, GlobalArtifact[]>();
+  for (const a of (props.node.artifacts ?? [])) {
+    const list = byName.get(a.name) ?? [];
+    list.push(a);
+    byName.set(a.name, list);
+  }
+  return [...byName.entries()].map(([name, versions]) => {
+    const sorted = [...versions].sort((a, b) => b.version - a.version);
+    return { name, latest: sorted[0], versionCount: versions.length };
+  });
+});
+
 const totalFlows = computed(() => {
-  let count = props.node.flows.length + (props.node.artifacts?.length ?? 0);
+  let count = props.node.flows.length + countUniqueArtifactNames(props.node.artifacts ?? []);
   for (const child of props.node.children) {
-    count += child.flows.length + (child.artifacts?.length ?? 0);
+    count += child.flows.length + countUniqueArtifactNames(child.artifacts ?? []);
   }
   return count;
 });
@@ -320,6 +344,12 @@ const totalFlows = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.artifact-versions-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 .artifact-version {

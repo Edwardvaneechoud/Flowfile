@@ -6,7 +6,6 @@
         <div class="header-title">
           <i class="fa-solid fa-cube header-icon"></i>
           <h2>{{ artifact.name }}</h2>
-          <span class="version-badge">v{{ artifact.version }}</span>
           <span class="status-badge" :class="artifact.status">{{ artifact.status }}</span>
         </div>
         <p v-if="artifact.description" class="description">{{ artifact.description }}</p>
@@ -21,23 +20,23 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Format</span>
-        <span class="meta-value">{{ artifact.serialization_format ?? 'unknown' }}</span>
+        <span class="meta-value">{{ artifact.serialization_format ?? "unknown" }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Size</span>
         <span class="meta-value">{{ formatSize(artifact.size_bytes) }}</span>
       </div>
       <div class="meta-card">
+        <span class="meta-label">Latest Version</span>
+        <span class="meta-value">v{{ artifact.version }}</span>
+      </div>
+      <div class="meta-card">
+        <span class="meta-label">Total Versions</span>
+        <span class="meta-value">{{ versions.length }}</span>
+      </div>
+      <div class="meta-card">
         <span class="meta-label">Created</span>
-        <span class="meta-value">{{ artifact.created_at ? formatDate(artifact.created_at) : '--' }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="meta-label">Updated</span>
-        <span class="meta-value">{{ artifact.updated_at ? formatDate(artifact.updated_at) : '--' }}</span>
-      </div>
-      <div class="meta-card">
-        <span class="meta-label">Version</span>
-        <span class="meta-value">{{ artifact.version }}</span>
+        <span class="meta-value">{{ artifact.created_at ? formatDate(artifact.created_at) : "--" }}</span>
       </div>
     </div>
 
@@ -72,11 +71,41 @@
       </div>
     </div>
 
+    <!-- Versions Table -->
+    <div v-if="versions.length > 1" class="section">
+      <h3>Versions</h3>
+      <div class="versions-table">
+        <div class="versions-header">
+          <span class="col-version">Version</span>
+          <span class="col-type">Type</span>
+          <span class="col-size">Size</span>
+          <span class="col-date">Created</span>
+        </div>
+        <div
+          v-for="v in versions"
+          :key="v.id"
+          class="versions-row"
+          :class="{ current: v.id === artifact.id }"
+        >
+          <span class="col-version">
+            v{{ v.version }}
+            <span v-if="v.id === artifact.id" class="latest-tag">latest</span>
+          </span>
+          <span class="col-type mono">{{ formatType(v) }}</span>
+          <span class="col-size">{{ formatSize(v.size_bytes) }}</span>
+          <span class="col-date">{{ v.created_at ? formatDate(v.created_at) : "--" }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Usage Example -->
     <div class="section">
       <h3>Usage</h3>
       <div class="code-block">
         <code>obj = flowfile.get_global("{{ artifact.name }}")</code>
+      </div>
+      <div v-if="versions.length > 1" class="code-block" style="margin-top: 8px">
+        <code>obj_v1 = flowfile.get_global("{{ artifact.name }}", version=1)</code>
       </div>
     </div>
   </div>
@@ -87,12 +116,15 @@ import type { GlobalArtifact } from "../../types";
 
 defineProps<{
   artifact: GlobalArtifact;
+  versions: GlobalArtifact[];
 }>();
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -113,7 +145,9 @@ function formatSize(bytes: number | null): string {
 </script>
 
 <style scoped>
-.artifact-detail { max-width: 900px; }
+.artifact-detail {
+  max-width: 900px;
+}
 
 .detail-header {
   margin-bottom: var(--spacing-5);
@@ -137,16 +171,6 @@ function formatSize(bytes: number | null): string {
   color: var(--color-text-primary);
 }
 
-.version-badge {
-  font-size: var(--font-size-xs);
-  font-family: monospace;
-  color: var(--color-text-muted);
-  background: var(--color-background-tertiary);
-  padding: 1px 8px;
-  border-radius: var(--border-radius-full);
-  line-height: 20px;
-}
-
 .status-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -155,9 +179,18 @@ function formatSize(bytes: number | null): string {
   font-weight: var(--font-weight-medium);
 }
 
-.status-badge.active { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-.status-badge.deleted { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-.status-badge.pending { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+.status-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.status-badge.deleted {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.status-badge.pending {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
 
 .description {
   margin: var(--spacing-2) 0 0;
@@ -268,6 +301,61 @@ function formatSize(bytes: number | null): string {
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);
   color: var(--color-text-secondary);
+}
+
+/* ========== Versions Table ========== */
+.versions-table {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.versions-header {
+  display: grid;
+  grid-template-columns: 120px 1fr 80px 140px;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-background-tertiary);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: var(--font-weight-medium);
+}
+
+.versions-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 80px 140px;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-sm);
+  border-top: 1px solid var(--color-border-light);
+  transition: background var(--transition-fast);
+}
+
+.versions-row:hover {
+  background: var(--color-background-hover);
+}
+
+.versions-row.current {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.latest-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-primary);
+  color: #fff;
+  margin-left: 4px;
+  line-height: 16px;
+  vertical-align: middle;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: var(--font-size-xs);
 }
 
 /* ========== Code Block ========== */
