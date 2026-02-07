@@ -5,6 +5,7 @@ import socket
 import time
 
 import docker
+import docker.types
 import httpx
 
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -62,10 +63,20 @@ class KernelManager:
         )
         if self._kernel_volume:
             logger.info(
-                "Docker-in-Docker mode: kernel_volume=%s, docker_network=%s",
+                "Docker-in-Docker mode: kernel_volume=%s, docker_network=%s, shared_path=%s",
                 self._kernel_volume,
                 self._docker_network,
+                self._shared_volume,
             )
+            # Verify the shared volume is accessible from this container
+            try:
+                test_file = os.path.join(self._shared_volume, ".volume_test")
+                with open(test_file, "w") as f:
+                    f.write("ok")
+                os.remove(test_file)
+                logger.info("Shared volume at %s is writable", self._shared_volume)
+            except OSError as exc:
+                logger.error("Shared volume at %s is NOT writable: %s", self._shared_volume, exc)
 
         self._restore_kernels_from_db()
         self._reclaim_running_containers()
@@ -123,10 +134,18 @@ class KernelManager:
         }
 
         if self._kernel_volume:
-            # Docker-in-Docker: use a named volume and the shared network.
-            run_kwargs["volumes"] = {
-                self._kernel_volume: {"bind": "/shared", "mode": "rw"},
-            }
+            # Docker-in-Docker: explicitly mount the named volume.
+            # Using docker.types.Mount with type="volume" avoids ambiguity
+            # that can occur with the volumes dict (Docker might otherwise
+            # treat the name as a relative bind-mount path).
+            run_kwargs["mounts"] = [
+                docker.types.Mount(
+                    target="/shared",
+                    source=self._kernel_volume,
+                    type="volume",
+                    read_only=False,
+                )
+            ]
             if self._docker_network:
                 run_kwargs["network"] = self._docker_network
         else:
