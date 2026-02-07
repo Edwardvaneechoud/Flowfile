@@ -1162,26 +1162,7 @@ class FlowGraphToPolarsConverter:
         if effective_kernel_id not in self._kernel_ids_used:
             self._kernel_ids_used.append(effective_kernel_id)
 
-        # 2. Check for unsupported patterns
-        if analysis.dynamic_artifact_names:
-            self.unsupported_nodes.append((
-                node_id,
-                "python_script",
-                "Artifact names must be string literals for code generation. "
-                f"Found dynamic names at lines: {[getattr(n, 'lineno', '?') for n in analysis.dynamic_artifact_names]}"
-            ))
-            return
-
-        if analysis.unsupported_calls:
-            methods = [m for m, _ in analysis.unsupported_calls]
-            self.unsupported_nodes.append((
-                node_id,
-                "python_script",
-                f"Unsupported flowfile API calls for code generation: {', '.join(methods)}"
-            ))
-            return
-
-        # 3. Validate artifact dependencies are available (same kernel only)
+        # 2. Validate artifact dependencies are available (same kernel only)
         for artifact_name in analysis.artifacts_consumed:
             if (effective_kernel_id, artifact_name) not in self._published_artifacts:
                 self.unsupported_nodes.append((

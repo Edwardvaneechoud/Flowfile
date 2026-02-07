@@ -51,6 +51,8 @@ class FlowfileUsageAnalysis:
     """Results of analyzing flowfile.* API usage in user code."""
 
     input_mode: Literal["none", "single", "multi"] = "none"
+    has_read_input: bool = False
+    has_read_inputs: bool = False
     has_output: bool = False
     output_exprs: list[ast.expr] = field(default_factory=list)
     passthrough_output: bool = False
@@ -98,8 +100,11 @@ class _FlowfileUsageVisitor(ast.NodeVisitor):
         if _is_flowfile_call(node):
             method = node.func.attr
             if method == "read_input":
-                self.analysis.input_mode = "single"
+                self.analysis.has_read_input = True
+                if not self.analysis.has_read_inputs:
+                    self.analysis.input_mode = "single"
             elif method == "read_inputs":
+                self.analysis.has_read_inputs = True
                 self.analysis.input_mode = "multi"
             elif method == "publish_output":
                 self.analysis.has_output = True
@@ -202,6 +207,17 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
         method = node.func.attr
 
         if method == "read_input":
+            if self.analysis.input_mode == "multi":
+                # Both read_input and read_inputs used — read_input() → inputs["main"][0]
+                return ast.Subscript(
+                    value=ast.Subscript(
+                        value=ast.Name(id="inputs", ctx=ast.Load()),
+                        slice=ast.Constant(value="main"),
+                        ctx=ast.Load(),
+                    ),
+                    slice=ast.Constant(value=0),
+                    ctx=ast.Load(),
+                )
             # flowfile.read_input() → input_df
             return ast.Name(id=self.input_var, ctx=ast.Load())
 
@@ -458,6 +474,14 @@ def build_function_code(
 
     # Build function body
     body_lines: list[str] = []
+
+    # Add warnings for unsupported calls / dynamic artifact names
+    if analysis.unsupported_calls:
+        methods = sorted({m for m, _ in analysis.unsupported_calls})
+        body_lines.append(f"# WARNING: The following flowfile API calls are not supported in code generation")
+        body_lines.append(f"# and will not work outside the kernel runtime: {', '.join(methods)}")
+    if analysis.dynamic_artifact_names:
+        body_lines.append("# WARNING: Dynamic artifact names detected — these may not resolve correctly")
 
     # Strip imports from rewritten code (they go to top-level)
     body_code = _strip_imports_and_flowfile(rewritten_code)
