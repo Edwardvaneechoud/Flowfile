@@ -4,7 +4,6 @@ import io
 import logging
 import os
 import time
-import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -222,31 +221,6 @@ def _maybe_wrap_last_expression(code: str) -> str:
     return prefix + f"ff_kernel.display({last_expr_text})\n"
 
 
-class _DeprecatedFlowfileAlias:
-    """Proxy that warns on first use, then delegates to ff_kernel."""
-
-    def __init__(self, target):
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_warned", False)
-
-    def _warn_once(self):
-        if not object.__getattribute__(self, "_warned"):
-            warnings.warn(
-                "'flowfile' is deprecated in kernel scripts, use 'ff_kernel' instead",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            object.__setattr__(self, "_warned", True)
-
-    def __getattr__(self, name):
-        self._warn_once()
-        return getattr(object.__getattribute__(self, "_target"), name)
-
-    def __repr__(self):
-        self._warn_once()
-        return repr(object.__getattribute__(self, "_target"))
-
-
 class ExecuteRequest(BaseModel):
     node_id: int
     code: str
@@ -345,7 +319,6 @@ async def execute(request: ExecuteRequest):
         # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
         # to serialize them correctly.
         exec_globals["ff_kernel"] = flowfile_client
-        exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
 

@@ -138,8 +138,6 @@ curl -X POST http://localhost:9999/clear_node_artifacts \
 
 When code is executed, the `ff_kernel` module is automatically injected into the namespace. Here's how to use it:
 
-> **Note:** The previous name `flowfile` is still available as a deprecated alias and will emit a `DeprecationWarning` on first use. Please migrate your scripts to use `ff_kernel` instead.
-
 ### Reading Input Data
 
 ```python
