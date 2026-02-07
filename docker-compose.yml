@@ -89,3 +89,8 @@ volumes:
     driver: local
   flowfile-kernel-shared:
     driver: local
+    # Explicit name so the Docker API (used by KernelManager to create
+    # kernel containers) resolves the same volume as Compose.  Without
+    # this, Compose would prefix the project name (e.g. "myproj_flowfile-
+    # kernel-shared") while KernelManager looks for "flowfile-kernel-shared".
+    name: flowfile-kernel-shared

@@ -1170,8 +1170,13 @@ class FlowGraph:
                 main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
             input_paths["main"] = main_paths
 
-            # Build the callback URL so the kernel can stream logs in real time
-            log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+            # Build the callback URL so the kernel can stream logs in real time.
+            # In Docker-in-Docker mode the kernel is on the same Docker network
+            # as core, so it can reach core by service name instead of host.docker.internal.
+            if os.environ.get("FLOWFILE_KERNEL_VOLUME"):
+                log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
+            else:
+                log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
 
             # Execute on kernel (synchronous — no async boundary issues)
             reg_id = self._flow_settings.source_registration_id
