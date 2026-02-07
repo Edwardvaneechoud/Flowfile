@@ -174,13 +174,7 @@ async def get_artifacts(kernel_id: str, current_user=Depends(get_current_active_
         raise HTTPException(status_code=400, detail=f"Kernel '{kernel_id}' is not running")
 
     try:
-        import httpx
-
-        url = f"http://localhost:{kernel.port}/artifacts"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.json()
+        return await manager.list_kernel_artifacts(kernel_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

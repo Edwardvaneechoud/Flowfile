@@ -30,11 +30,15 @@ services:
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Kernel Docker-in-Docker: named volume and network for kernel containers
+      - FLOWFILE_KERNEL_VOLUME=flowfile-kernel-shared
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
+      - flowfile-kernel-shared:/shared
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
       - flowfile-network
@@ -61,10 +65,27 @@ services:
     networks:
       - flowfile-network
 
+  # Build-only service: produces the flowfile-kernel image used by kernel
+  # containers.  Not started by `docker compose up` — build with:
+  #   docker compose build flowfile-kernel
+  flowfile-kernel:
+    build:
+      context: .
+      dockerfile: kernel_runtime/Dockerfile
+    image: flowfile-kernel
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
 networks:
   flowfile-network:
     driver: bridge
+    # Fixed name so kernel containers (created via Docker API) can join it
+    name: flowfile-network
 
 volumes:
   flowfile-internal-storage:
+    driver: local
+  flowfile-kernel-shared:
     driver: local
