@@ -80,24 +80,19 @@ def get_storage_backend() -> "ArtifactStorageBackend":
                 endpoint_url=os.environ.get("FLOWFILE_S3_ENDPOINT_URL"),
             )
         else:
-            from pathlib import Path
-
-            # Staging root MUST be inside the kernel's shared volume so that
-            # both Core (host) and kernel containers (Docker) can access it.
-            # The kernel manager mounts <shared_volume_path> → /shared.
-            from flowfile_core.kernel import get_kernel_manager
             from shared.artifact_storage import SharedFilesystemStorage
             from shared.storage_config import storage
 
-            kernel_shared = get_kernel_manager().shared_volume_path
-            staging_root = Path(kernel_shared) / "artifact_staging"
-            # Permanent storage MUST also be inside the kernel's shared volume
-            # so kernel containers can read artifacts via the /shared mount.
-            artifacts_root = Path(kernel_shared) / "global_artifacts"
+            # Both staging and permanent paths are resolved by storage_config
+            # to be under the kernel's shared volume mount, so Docker
+            # containers can access them.  In tests FLOWFILE_SHARED_DIR is
+            # set to the temp shared volume; in production the paths default
+            # to <temp>/kernel_shared/ (matching KernelManager's mount).
+            staging_root = storage.artifact_staging_directory
+            artifacts_root = storage.global_artifacts_directory
 
             _logger.info(
-                "[artifacts] get_storage_backend: kernel_shared='%s', " "staging_root='%s', artifacts_root='%s'",
-                kernel_shared,
+                "[artifacts] get_storage_backend: staging_root='%s', artifacts_root='%s'",
                 staging_root,
                 artifacts_root,
             )
