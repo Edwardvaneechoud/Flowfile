@@ -1139,11 +1139,23 @@ class NodePolarsCode(NodeMultiInput):
         return first_line
 
 
+class NotebookCell(BaseModel):
+    """A single cell in the notebook editor.
+
+    Note: Cell output (stdout, display_outputs, errors) is handled entirely
+    on the frontend and is not persisted. Only id and code are stored.
+    """
+
+    id: str
+    code: str = ""
+
+
 class PythonScriptInput(BaseModel):
     """Settings for Python code execution on a kernel."""
 
     code: str = ""
     kernel_id: str | None = None
+    cells: list[NotebookCell] | None = None
 
 
 class NodePythonScript(NodeMultiInput):

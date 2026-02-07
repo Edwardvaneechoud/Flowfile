@@ -54,6 +54,10 @@
         <span class="meta-value">{{ flow.last_run_at ? formatDate(flow.last_run_at) : 'Never' }}</span>
       </div>
       <div class="meta-card">
+        <span class="meta-label">Artifacts</span>
+        <span class="meta-value">{{ flow.artifact_count ?? 0 }}</span>
+      </div>
+      <div class="meta-card">
         <span class="meta-label">Status</span>
         <span class="meta-value" :class="statusClass">{{ statusText }}</span>
       </div>
@@ -102,16 +106,51 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Artifacts Section -->
+    <div class="section">
+      <h3>Global Artifacts</h3>
+      <div v-if="artifacts.length === 0" class="empty-runs">No artifacts published yet.</div>
+      <table v-else class="runs-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Version</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="artifact in artifacts" :key="artifact.id" class="artifact-row">
+            <td>
+              <div class="artifact-name">
+                <i class="fa-solid fa-cube artifact-icon"></i>
+                {{ artifact.name }}
+              </div>
+              <div v-if="artifact.description" class="artifact-desc">{{ artifact.description }}</div>
+            </td>
+            <td>v{{ artifact.version }}</td>
+            <td>
+              <span class="type-badge">{{ formatType(artifact) }}</span>
+            </td>
+            <td>{{ formatSize(artifact.size_bytes) }}</td>
+            <td>{{ artifact.created_at ? formatDate(artifact.created_at) : '--' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { FlowRegistration, FlowRun } from "../../types";
+import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
 
 const props = defineProps<{
   flow: FlowRegistration;
   runs: FlowRun[];
+  artifacts: GlobalArtifact[];
 }>();
 
 defineEmits<{
@@ -153,6 +192,21 @@ function formatDuration(seconds: number | null): string {
   if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatType(artifact: GlobalArtifact): string {
+  if (artifact.python_type) {
+    const parts = artifact.python_type.split(".");
+    return parts[parts.length - 1];
+  }
+  return artifact.serialization_format ?? "unknown";
+}
+
+function formatSize(bytes: number | null): string {
+  if (bytes === null) return "--";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 </script>
 
@@ -315,6 +369,22 @@ function formatDuration(seconds: number | null): string {
 
 .no-snapshot { color: var(--color-text-muted); }
 .empty-runs { color: var(--color-text-muted); font-size: var(--font-size-sm); padding: var(--spacing-4); text-align: center; }
+
+/* ========== Artifact Rows ========== */
+.artifact-row td { vertical-align: top; }
+.artifact-name { display: flex; align-items: center; gap: var(--spacing-1); font-weight: var(--font-weight-medium); }
+.artifact-icon { color: var(--color-primary); font-size: var(--font-size-xs); }
+.artifact-desc { font-size: var(--font-size-xs); color: var(--color-text-muted); margin-top: 2px; }
+.type-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: monospace;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-secondary);
+}
 
 /* ========== Missing File Banner ========== */
 .missing-banner {

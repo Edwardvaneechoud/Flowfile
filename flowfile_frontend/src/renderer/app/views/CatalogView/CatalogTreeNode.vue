@@ -32,7 +32,9 @@
         :key="child.id"
         :node="child"
         :selected-flow-id="selectedFlowId"
+        :selected-artifact-id="selectedArtifactId"
         @select-flow="$emit('selectFlow', $event)"
+        @select-artifact="$emit('selectArtifact', $event)"
         @toggle-favorite="$emit('toggleFavorite', $event)"
         @toggle-follow="$emit('toggleFollow', $event)"
         @register-flow="$emit('registerFlow', $event)"
@@ -71,21 +73,43 @@
           ></span>
         </div>
       </div>
+
+      <!-- Artifacts grouped by name -->
+      <div
+        v-for="group in groupedArtifacts"
+        :key="'ag-' + group.name"
+        class="tree-artifact"
+        :class="{ selected: selectedArtifactId === group.latest.id }"
+        @click.stop="$emit('selectArtifact', group.latest.id)"
+      >
+        <i class="fa-solid fa-cube artifact-icon"></i>
+        <span class="artifact-name">{{ group.name }}</span>
+        <span v-if="group.versionCount > 1" class="artifact-versions-count">{{ group.versionCount }} versions</span>
+        <span class="artifact-version">v{{ group.latest.version }}</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { NamespaceTree } from "../../types";
+import type { GlobalArtifact, NamespaceTree } from "../../types";
+
+interface ArtifactGroup {
+  name: string;
+  latest: GlobalArtifact;
+  versionCount: number;
+}
 
 const props = defineProps<{
   node: NamespaceTree;
   selectedFlowId: number | null;
+  selectedArtifactId: number | null;
 }>();
 
 defineEmits<{
   selectFlow: [id: number];
+  selectArtifact: [id: number];
   toggleFavorite: [id: number];
   toggleFollow: [id: number];
   registerFlow: [namespaceId: number];
@@ -106,10 +130,27 @@ watch(() => props.selectedFlowId, (flowId) => {
   }
 });
 
+function countUniqueArtifactNames(artifacts: GlobalArtifact[]): number {
+  return new Set(artifacts.map(a => a.name)).size;
+}
+
+const groupedArtifacts = computed((): ArtifactGroup[] => {
+  const byName = new Map<string, GlobalArtifact[]>();
+  for (const a of (props.node.artifacts ?? [])) {
+    const list = byName.get(a.name) ?? [];
+    list.push(a);
+    byName.set(a.name, list);
+  }
+  return [...byName.entries()].map(([name, versions]) => {
+    const sorted = [...versions].sort((a, b) => b.version - a.version);
+    return { name, latest: sorted[0], versionCount: versions.length };
+  });
+});
+
 const totalFlows = computed(() => {
-  let count = props.node.flows.length;
+  let count = props.node.flows.length + countUniqueArtifactNames(props.node.artifacts ?? []);
   for (const child of props.node.children) {
-    count += child.flows.length;
+    count += child.flows.length + countUniqueArtifactNames(child.artifacts ?? []);
   }
   return count;
 });
@@ -269,5 +310,56 @@ const totalFlows = computed(() => {
   font-size: 11px;
   color: #f59e0b;
   flex-shrink: 0;
+}
+
+/* ========== Artifact Items ========== */
+.tree-artifact {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-artifact:hover {
+  background: var(--color-background-hover);
+}
+
+.tree-artifact.selected {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+}
+
+.tree-artifact .artifact-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.tree-artifact .artifact-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artifact-versions-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.artifact-version {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-background-tertiary);
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 18px;
+  flex-shrink: 0;
+  font-family: monospace;
 }
 </style>

@@ -54,31 +54,7 @@
           </div>
         </div>
 
-        <!-- Code Editor -->
-        <div class="setting-block">
-          <div class="code-header">
-            <label class="setting-label">Code</label>
-            <button class="help-button" title="API Reference" @click="showHelp = true">
-              <i class="fa-solid fa-circle-question"></i>
-            </button>
-          </div>
-          <div class="editor-container">
-            <codemirror
-              v-if="showEditor"
-              v-model="code"
-              placeholder="Write your Python code here..."
-              :style="{ height: '400px' }"
-              :autofocus="true"
-              :indent-with-tab="false"
-              :tab-size="4"
-              :extensions="editorExtensions"
-              @ready="handleEditorReady"
-              @blur="handleEditorBlur"
-            />
-          </div>
-        </div>
-
-        <!-- Artifacts Panel -->
+        <!-- Artifacts Panel — moved ABOVE code, it's reference info -->
         <div class="setting-block">
           <label class="setting-label">Artifacts</label>
           <div class="artifacts-panel">
@@ -117,39 +93,92 @@
             </template>
           </div>
         </div>
+
+        <!-- Code Editor — replaced with notebook -->
+        <div class="setting-block">
+          <div class="code-header">
+            <label class="setting-label">Code</label>
+            <div class="code-header-actions">
+              <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
+                <i class="fa-solid fa-expand"></i>
+              </button>
+              <button class="icon-button" title="API Reference" @click="showHelp = true">
+                <i class="fa-solid fa-circle-question"></i>
+              </button>
+            </div>
+          </div>
+          <NotebookEditor
+            v-if="showEditor && cells.length > 0"
+            :cells="cells"
+            :kernel-id="selectedKernelId"
+            :flow-id="nodePythonScript!.flow_id as number"
+            :node-id="nodePythonScript!.node_id"
+            :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+            @update:cells="handleCellsUpdate"
+          />
+        </div>
       </div>
     </generic-node-settings>
 
     <!-- Help Modal -->
     <FlowfileApiHelp v-if="showHelp" @close="showHelp = false" />
+
+    <!-- Expanded Editor Dialog -->
+    <el-dialog
+      v-model="showExpandedEditor"
+      title="Python Script"
+      fullscreen
+      :close-on-click-modal="false"
+      class="expanded-editor-dialog"
+    >
+      <template #header>
+        <div class="expanded-dialog-header">
+          <span class="expanded-dialog-title">Python Script</span>
+          <div class="expanded-dialog-actions">
+            <span v-if="selectedKernelId" class="kernel-indicator">
+              <span
+                class="kernel-state-dot"
+                :class="`kernel-state-dot--${selectedKernelState}`"
+              ></span>
+              {{ kernels.find(k => k.id === selectedKernelId)?.name }}
+            </span>
+            <button class="icon-button" title="API Reference" @click="showHelp = true">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div class="expanded-editor-content">
+        <NotebookEditor
+          v-if="showExpandedEditor && cells.length > 0"
+          :cells="cells"
+          :kernel-id="selectedKernelId"
+          :flow-id="nodePythonScript!.flow_id as number"
+          :node-id="nodePythonScript!.node_id"
+          :depending-on-ids="nodePythonScript!.depending_on_ids ?? []"
+          @update:cells="handleCellsUpdate"
+        />
+      </div>
+    </el-dialog>
   </div>
 
   <CodeLoader v-else />
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import type { Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { EditorState, Prec } from "@codemirror/state";
-import { Codemirror } from "vue-codemirror";
-import { python } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
-import type { CompletionSource } from "@codemirror/autocomplete";
-import { indentMore, indentLess } from "@codemirror/commands";
+import { ref, computed, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
 
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
-import type { NodePythonScript } from "../../../../../types/node.types";
+import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
-import { flowfileCompletionVals } from "./flowfileCompletions";
-import { createPythonScriptNode } from "./utils";
+import NotebookEditor from "./NotebookEditor.vue";
+import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -157,10 +186,11 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const showEditor = ref(false);
 const showHelp = ref(false);
+const showExpandedEditor = ref(false);
 
 const nodePythonScript = ref<NodePythonScript | null>(null);
 const nodeData = ref<NodeData | null>(null);
-const code = ref("");
+const cells = ref<NotebookCell[]>([]);
 
 // Kernel state
 const kernels = ref<KernelInfo[]>([]);
@@ -274,74 +304,37 @@ const loadArtifacts = async () => {
   }
 };
 
-// ─── Code editor setup ─────────────────────────────────────────────────────
+// ─── Cell sync ──────────────────────────────────────────────────────────────
 
-const flowfileCompletions: CompletionSource = (context) => {
-  const word = context.matchBefore(/\w*/);
-  if (word?.from === word?.to && !context.explicit) {
-    return null;
-  }
-  return {
-    from: word?.from ?? 0,
-    options: flowfileCompletionVals,
-  };
+const handleCellsUpdate = (updatedCells: NotebookCell[]) => {
+  cells.value = updatedCells;
+  syncCellsToNode();
 };
 
-const tabKeymap = keymap.of([
-  {
-    key: "Tab",
-    run: (view: EditorView): boolean => {
-      if (acceptCompletion(view)) return true;
-      return indentMore(view);
-    },
-  },
-  {
-    key: "Shift-Tab",
-    run: (view: EditorView): boolean => {
-      return indentLess(view);
-    },
-  },
-]);
+const syncCellsToNode = () => {
+  if (!nodePythonScript.value) return;
 
-const editorExtensions: Extension[] = [
-  python(),
-  oneDark,
-  EditorState.tabSize.of(4),
-  autocompletion({
-    override: [flowfileCompletions],
-    defaultKeymap: true,
-    closeOnBlur: false,
-  }),
-  Prec.highest(tabKeymap),
-];
+  // Persist cells WITHOUT output (outputs are runtime-only, contain base64 images)
+  nodePythonScript.value.python_script_input.cells = cells.value.map(c => ({
+    id: c.id,
+    code: c.code,
+  }));
 
-const handleEditorReady = (_payload: { view: EditorView }) => {
-  // Editor is ready
+  // Derive combined code for flow execution
+  // flow_graph.py reads python_script_input.code — this must always be populated
+  nodePythonScript.value.python_script_input.code =
+    cells.value.map(c => c.code).filter(Boolean).join("\n\n");
 };
-
-const handleEditorBlur = () => {
-  // Sync code back to node on blur
-  syncCodeToNode();
-};
-
-const syncCodeToNode = () => {
-  if (nodePythonScript.value) {
-    nodePythonScript.value.python_script_input.code = code.value;
-  }
-};
-
-// Keep code synced as user types
-watch(code, () => {
-  syncCodeToNode();
-});
 
 // ─── Node settings composable ───────────────────────────────────────────────
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePythonScript,
   onBeforeSave: () => {
-    syncCodeToNode();
-    if (!nodePythonScript.value?.python_script_input.code) {
+    syncCellsToNode();
+    // Validate that there's actual code
+    const combinedCode = nodePythonScript.value?.python_script_input.code;
+    if (!combinedCode?.trim()) {
       return false;
     }
     return true;
@@ -363,8 +356,24 @@ const loadNodeData = async (nodeId: number) => {
         ? nodeData.value.setting_input
         : createPythonScriptNode(nodeStore.flow_id, nodeStore.node_id);
 
-      // Sync local state from node data
-      code.value = nodePythonScript.value!.python_script_input.code;
+      // Initialize cells from saved data or create from existing code
+      const input = nodePythonScript.value!.python_script_input;
+      if (input.cells && input.cells.length > 0) {
+        // Load from saved cells (output is runtime-only, not persisted)
+        cells.value = input.cells.map(c => ({
+          id: c.id,
+          code: c.code,
+          output: null,
+        }));
+      } else {
+        // Backward compat: create single cell from existing code
+        cells.value = [{
+          id: crypto.randomUUID(),
+          code: input.code || DEFAULT_PYTHON_SCRIPT_CODE,
+          output: null,
+        }];
+      }
+
       selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
 
       showEditor.value = true;
@@ -381,10 +390,6 @@ const loadNodeData = async (nodeId: number) => {
     dataLoaded.value = false;
   }
 };
-
-onMounted(() => {
-  // Polling starts after loadNodeData
-});
 
 onUnmounted(() => {
   stopKernelPolling();
@@ -406,18 +411,27 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   justify-content: space-between;
 }
 
-.help-button {
+.code-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-button {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   color: var(--el-text-color-secondary);
-  padding: 0;
+  padding: 0.2rem;
   line-height: 1;
+  border-radius: 3px;
+  transition: all 0.15s;
 }
 
-.help-button:hover {
+.icon-button:hover {
   color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
 }
 
 /* ─── Setting blocks ─────────────────────────────────────────────────────── */
@@ -511,15 +525,6 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   flex-shrink: 0;
 }
 
-/* ─── Code editor ────────────────────────────────────────────────────────── */
-
-.editor-container {
-  border: 1px solid var(--el-border-color);
-  border-radius: 3px;
-  overflow: hidden;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
 /* ─── Artifacts panel ────────────────────────────────────────────────────── */
 
 .artifacts-panel {
@@ -576,5 +581,44 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .artifacts-empty {
   color: var(--el-text-color-placeholder);
   font-style: italic;
+}
+
+/* ─── Expanded Editor Dialog ─────────────────────────────────────────────── */
+
+.expanded-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 2rem;
+}
+
+.expanded-dialog-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.expanded-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.kernel-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+  padding: 0.25rem 0.75rem;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
+
+.expanded-editor-content {
+  height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 0 1rem;
 }
 </style>

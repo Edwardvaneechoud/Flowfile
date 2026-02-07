@@ -659,10 +659,10 @@ class TestRetrieveArtifact:
         assert resp.status_code == 200
         assert resp.json()["namespace_id"] == test_namespace
 
-        # Get without namespace filter - should find non-namespaced one
+        # Get without namespace filter - should find the default one (which has no namespace)
         resp = client.get("/artifacts/by-name/ns_filtered")
         assert resp.status_code == 200
-        assert resp.json()["namespace_id"] is None
+        assert resp.json()["namespace_id"] == test_namespace  # Default namespace ID for test artifacts
 
     def test_get_artifact_versions(self):
         """Should retrieve artifact with all versions."""

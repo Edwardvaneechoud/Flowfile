@@ -58,6 +58,78 @@
         </section>
 
         <section class="api-section">
+          <h4>Display</h4>
+          <p class="section-description">
+            Render rich objects (matplotlib figures, plotly figures, PIL images, HTML strings) in the
+            output panel.
+          </p>
+          <div class="api-item">
+            <code>flowfile.display(obj)</code>
+            <p>Display a rich object in the output panel.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.display(fig, "My Chart")</code>
+            <p>Display with an optional title.</p>
+          </div>
+        </section>
+
+        <section class="api-section">
+          <h4>Global Artifacts</h4>
+          <p class="section-description">
+            Global artifacts persist across sessions in the catalog. Use them to share models,
+            datasets, or any Python object between flows. The flow must be registered in the catalog
+            to use global artifacts.
+          </p>
+          <div class="api-item">
+            <code>flowfile.publish_global("model", obj)</code>
+            <p>Persist a Python object to the global artifact store.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.publish_global("model", obj, description="...", tags=["ml"])</code>
+            <p>Publish with optional description, tags, namespace, and format.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.get_global("model")</code>
+            <p>Retrieve a Python object from the global artifact store.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.get_global("model", version=2)</code>
+            <p>Retrieve a specific version of a global artifact.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.list_global_artifacts()</code>
+            <p>List all available global artifacts (with optional namespace/tag filters).</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.delete_global_artifact("model")</code>
+            <p>Delete a global artifact by name (optionally a specific version).</p>
+          </div>
+        </section>
+
+        <section class="api-section">
+          <h4>Logging</h4>
+          <p class="section-description">
+            Send log messages to the FlowFile log viewer for debugging and monitoring.
+          </p>
+          <div class="api-item">
+            <code>flowfile.log("message")</code>
+            <p>Send a log message (default level: INFO).</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.log_info("message")</code>
+            <p>Send an INFO log message.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.log_warning("message")</code>
+            <p>Send a WARNING log message.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.log_error("message")</code>
+            <p>Send an ERROR log message.</p>
+          </div>
+        </section>
+
+        <section class="api-section">
           <h4>Common Patterns</h4>
 
           <div class="pattern">
@@ -99,6 +171,17 @@ result = df.with_columns(
     pl.Series("prediction", predictions)
 )
 flowfile.publish_output(result.lazy())</code></pre>
+          </div>
+
+          <div class="pattern">
+            <h5>Publish a Global Artifact</h5>
+            <pre><code>from sklearn.ensemble import RandomForestClassifier
+
+model = flowfile.read_artifact("model")
+flowfile.publish_global("rf_model", model,
+    description="Trained random forest",
+    tags=["ml", "production"])
+flowfile.log_info("Model published to catalog")</code></pre>
           </div>
 
           <div class="pattern">

@@ -164,25 +164,35 @@ class FlowfileStorage:
     def global_artifacts_directory(self) -> Path:
         """Directory for permanent storage of global artifacts.
 
-        When FLOWFILE_SHARED_DIR is set (e.g., during tests), artifacts are stored
-        under the shared directory so kernel containers can access them.
+        Must be under the kernel's shared volume so Docker containers can
+        access artifact files.  When FLOWFILE_SHARED_DIR is set (e.g. tests),
+        that path is used directly; otherwise we default to the same
+        ``temp/kernel_shared`` directory that KernelManager mounts.
         """
-        # If FLOWFILE_SHARED_DIR is set, put artifacts under it for kernel access
         shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
         if shared_dir:
             return Path(shared_dir) / "global_artifacts"
         if _is_docker_mode():
             return self.user_data_directory / "global_artifacts"
         else:
-            return self.base_directory / "global_artifacts"
+            # Must match KernelManager default shared volume path
+            return self.temp_directory / "kernel_shared" / "global_artifacts"
 
     @property
     def artifact_staging_directory(self) -> Path:
         """Directory for staging artifact uploads before finalization.
 
-        Kernel writes here during upload, then Core moves to permanent storage.
+        Must be under the kernel's shared volume so Docker containers can
+        write blobs here.  Uses the same resolution logic as
+        ``global_artifacts_directory``.
         """
-        return self.shared_directory / "artifact_staging"
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir) / "artifact_staging"
+        if _is_docker_mode():
+            return Path("/shared") / "artifact_staging"
+        else:
+            return self.temp_directory / "kernel_shared" / "artifact_staging"
 
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""

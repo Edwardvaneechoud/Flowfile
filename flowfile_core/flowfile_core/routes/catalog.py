@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from shared.storage_config import storage
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -43,11 +42,13 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunDetail,
     FlowRunOut,
     FollowOut,
+    GlobalArtifactOut,
     NamespaceCreate,
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
 )
+from shared.storage_config import storage
 
 router = APIRouter(
     prefix="/catalog",
@@ -230,6 +231,21 @@ def delete_flow(
         raise HTTPException(409, str(e))
 
 
+@router.get(
+    "/flows/{flow_id}/artifacts",
+    response_model=list[GlobalArtifactOut],
+)
+def list_flow_artifacts(
+    flow_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List all active artifacts produced by a registered flow."""
+    try:
+        return service.list_artifacts_for_flow(flow_id)
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found")
+
+
 # ---------------------------------------------------------------------------
 # Run History
 # ---------------------------------------------------------------------------
@@ -242,9 +258,7 @@ def list_runs(
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_runs(
-        registration_id=registration_id, limit=limit, offset=offset
-    )
+    return service.list_runs(registration_id=registration_id, limit=limit, offset=offset)
 
 
 @router.get("/runs/{run_id}", response_model=FlowRunDetail)
@@ -318,9 +332,7 @@ def add_favorite(
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.add_favorite(
-            user_id=current_user.id, registration_id=flow_id
-        )
+        return service.add_favorite(user_id=current_user.id, registration_id=flow_id)
     except FlowNotFoundError:
         raise HTTPException(404, "Flow not found")
 
@@ -357,9 +369,7 @@ def add_follow(
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.add_follow(
-            user_id=current_user.id, registration_id=flow_id
-        )
+        return service.add_follow(user_id=current_user.id, registration_id=flow_id)
     except FlowNotFoundError:
         raise HTTPException(404, "Flow not found")
 

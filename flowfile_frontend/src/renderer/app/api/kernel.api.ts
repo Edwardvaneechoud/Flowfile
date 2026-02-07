@@ -110,4 +110,15 @@ export class KernelApi {
       throw new Error(errorMsg);
     }
   }
+
+  static async clearNamespace(kernelId: string, flowId: number): Promise<void> {
+    const url = `${API_BASE_URL}/${encodeURIComponent(kernelId)}/clear_namespace`;
+    try {
+      await axios.post(url, null, { params: { flow_id: flowId } });
+    } catch (error) {
+      console.error("API Error: Failed to clear namespace:", error);
+      const errorMsg = (error as any).response?.data?.detail || "Failed to clear namespace";
+      throw new Error(errorMsg);
+    }
+  }
 }

@@ -29,9 +29,18 @@ def _translate_host_path_to_container(host_path: str) -> str:
         Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
         Container: /shared/artifact_staging/1_test.pkl
     """
+    import logging as _logging
+
+    _logger = _logging.getLogger(__name__)
+
     host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
+    _logger.info(
+        "[path_translate] input='%s', FLOWFILE_HOST_SHARED_DIR='%s'",
+        host_path,
+        host_shared_dir,
+    )
     if not host_shared_dir:
-        # Not running in Docker or env var not set - use path as-is
+        _logger.info("[path_translate] no host shared dir set, returning as-is: '%s'", host_path)
         return host_path
 
     # Normalize paths to handle trailing slashes consistently
@@ -43,26 +52,30 @@ def _translate_host_path_to_container(host_path: str) -> str:
     # We need to be careful about partial matches (e.g., /shared vs /shared2)
     if normalized_host_path.startswith(normalized_shared_dir + os.sep):
         # Extract relative path after the shared directory prefix
-        relative_path = normalized_host_path[len(normalized_shared_dir) + 1:]
-        return f"/shared/{relative_path}"
+        relative_path = normalized_host_path[len(normalized_shared_dir) + 1 :]
+        result = f"/shared/{relative_path}"
+        _logger.info("[path_translate] translated: '%s' -> '%s'", host_path, result)
+        return result
     elif normalized_host_path == normalized_shared_dir:
-        # Path is exactly the shared directory
+        _logger.info("[path_translate] exact match, returning '/shared'")
         return "/shared"
 
     # Path doesn't start with host shared dir - return as-is
+    _logger.warning(
+        "[path_translate] path NOT under shared dir! " "normalized_path='%s', normalized_shared='%s'. Returning as-is.",
+        normalized_host_path,
+        normalized_shared_dir,
+    )
     return host_path
+
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowfile_context")
 
 # Reusable HTTP client for log callbacks (created per execution context)
-_log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar(
-    "flowfile_log_client", default=None
-)
+_log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar("flowfile_log_client", default=None)
 
 # Display outputs collector (reset at start of each execution)
-_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar(
-    "flowfile_displays", default=[]
-)
+_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar("flowfile_displays", default=[])
 
 
 def _set_context(
@@ -73,16 +86,20 @@ def _set_context(
     flow_id: int = 0,
     source_registration_id: int | None = None,
     log_callback_url: str = "",
+    internal_token: str | None = None,
 ) -> None:
-    _context.set({
-        "node_id": node_id,
-        "input_paths": input_paths,
-        "output_dir": output_dir,
-        "artifact_store": artifact_store,
-        "flow_id": flow_id,
-        "source_registration_id": source_registration_id,
-        "log_callback_url": log_callback_url,
-    })
+    _context.set(
+        {
+            "node_id": node_id,
+            "input_paths": input_paths,
+            "output_dir": output_dir,
+            "artifact_store": artifact_store,
+            "flow_id": flow_id,
+            "source_registration_id": source_registration_id,
+            "log_callback_url": log_callback_url,
+            "internal_token": internal_token,
+        }
+    )
     # Create a reusable HTTP client for log callbacks
     if log_callback_url:
         _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
@@ -105,7 +122,9 @@ def _clear_context() -> None:
 def _get_context_value(key: str) -> Any:
     ctx = _context.get({})
     if key not in ctx:
-        raise RuntimeError(f"flowfile context not initialized (missing '{key}'). This API is only available during /execute.")
+        raise RuntimeError(
+            f"flowfile context not initialized (missing '{key}'). This API is only available during /execute."
+        )
     return ctx[key]
 
 
@@ -202,9 +221,18 @@ _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 def _get_internal_auth_headers() -> dict[str, str]:
     """Get authentication headers for Core API calls.
 
-    Returns headers with X-Internal-Token for service-to-service authentication.
-    The token is shared between Core and Kernel via FLOWFILE_INTERNAL_TOKEN env var.
+    Prefers the token passed via ExecuteRequest context (always fresh),
+    falls back to FLOWFILE_INTERNAL_TOKEN env var for backwards compatibility.
     """
+    # Prefer token from execution context (set per-request by Core)
+    try:
+        ctx = _context.get({})
+        token = ctx.get("internal_token")
+        if token:
+            return {"X-Internal-Token": token}
+    except LookupError:
+        pass
+    # Fall back to env var (set at container creation time)
     token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
     if token:
         return {"X-Internal-Token": token}
@@ -315,13 +343,53 @@ def publish_global(
         resp.raise_for_status()
         target = resp.json()
 
+        import logging as _logging
+
+        _pub_logger = _logging.getLogger(__name__)
+        _pub_logger.info(
+            "[publish_global] prepare-upload response: method=%s, path='%s', " "artifact_id=%s, storage_key='%s'",
+            target.get("method"),
+            target.get("path"),
+            target.get("artifact_id"),
+            target.get("storage_key"),
+        )
+
         # 2. Serialize and write directly to storage
         if target["method"] == "file":
             # Shared filesystem - write to staging path
             # Translate host path to container path if running in Docker
             staging_path = _translate_host_path_to_container(target["path"])
+            _pub_logger.info(
+                "[publish_global] writing to staging_path='%s' (host_path='%s')",
+                staging_path,
+                target["path"],
+            )
+            # Ensure parent directory exists
+            parent = Path(staging_path).parent
+            parent.mkdir(parents=True, exist_ok=True)
+            _pub_logger.info(
+                "[publish_global] parent dir '%s' exists=%s",
+                parent,
+                parent.exists(),
+            )
             sha256 = serialize_to_file(obj, staging_path, serialization_format)
-            size_bytes = os.path.getsize(staging_path)
+            file_exists = os.path.exists(staging_path)
+            size_bytes = os.path.getsize(staging_path) if file_exists else 0
+            _pub_logger.info(
+                "[publish_global] after serialize: file_exists=%s, size_bytes=%s, sha256='%s'",
+                file_exists,
+                size_bytes,
+                sha256,
+            )
+            # List what's actually in the parent directory
+            try:
+                dir_contents = list(parent.iterdir())
+                _pub_logger.info(
+                    "[publish_global] parent dir contents: %s",
+                    [str(f.name) for f in dir_contents],
+                )
+            except Exception as e:
+                _pub_logger.error("[publish_global] cannot list parent dir: %s", e)
         else:
             # S3 presigned URL - upload directly
             blob, sha256 = serialize_to_bytes(obj, serialization_format)
@@ -335,16 +403,21 @@ def publish_global(
             upload_resp.raise_for_status()
 
         # 3. Finalize with Core
+        finalize_body = {
+            "artifact_id": target["artifact_id"],
+            "storage_key": target["storage_key"],
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+        }
         resp = client.post(
             f"{_CORE_URL}/artifacts/finalize",
-            json={
-                "artifact_id": target["artifact_id"],
-                "storage_key": target["storage_key"],
-                "sha256": sha256,
-                "size_bytes": size_bytes,
-            },
+            json=finalize_body,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.text
+            raise RuntimeError(
+                f"Artifact finalize failed ({resp.status_code}): {detail}. " f"Request body: {finalize_body}"
+            )
 
     return target["artifact_id"]
 
@@ -499,6 +572,7 @@ def delete_global_artifact(
 
 # ===== Logging APIs =====
 
+
 def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> None:
     """Send a log message to the FlowFile log viewer.
 
@@ -552,10 +626,12 @@ def log_error(message: str) -> None:
 
 # ===== Display APIs =====
 
+
 def _is_matplotlib_figure(obj: Any) -> bool:
     """Check if obj is a matplotlib Figure (without requiring matplotlib)."""
     try:
         import matplotlib.figure
+
         return isinstance(obj, matplotlib.figure.Figure)
     except ImportError:
         return False
@@ -565,6 +641,7 @@ def _is_plotly_figure(obj: Any) -> bool:
     """Check if obj is a plotly Figure (without requiring plotly)."""
     try:
         import plotly.graph_objects as go
+
         return isinstance(obj, go.Figure)
     except ImportError:
         return False
@@ -574,6 +651,7 @@ def _is_pil_image(obj: Any) -> bool:
     """Check if obj is a PIL Image (without requiring PIL)."""
     try:
         from PIL import Image
+
         return isinstance(obj, Image.Image)
     except ImportError:
         return False
@@ -626,43 +704,53 @@ def display(obj: Any, title: str = "") -> None:
         obj.savefig(buf, format="png", dpi=150, bbox_inches="tight")
         buf.seek(0)
         data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append({
-            "mime_type": "image/png",
-            "data": data,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "image/png",
+                "data": data,
+                "title": title,
+            }
+        )
     elif _is_plotly_figure(obj):
         # Render plotly figure to HTML
         html = obj.to_html(include_plotlyjs="cdn", full_html=False)
-        displays.append({
-            "mime_type": "text/html",
-            "data": html,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/html",
+                "data": html,
+                "title": title,
+            }
+        )
     elif _is_pil_image(obj):
         # Render PIL image to PNG
         buf = io.BytesIO()
         obj.save(buf, format="PNG")
         buf.seek(0)
         data = base64.b64encode(buf.read()).decode("ascii")
-        displays.append({
-            "mime_type": "image/png",
-            "data": data,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "image/png",
+                "data": data,
+                "title": title,
+            }
+        )
     elif _is_html_string(obj):
         # Store HTML string directly
-        displays.append({
-            "mime_type": "text/html",
-            "data": obj,
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/html",
+                "data": obj,
+                "title": title,
+            }
+        )
     else:
         # Fall back to plain text
-        displays.append({
-            "mime_type": "text/plain",
-            "data": str(obj),
-            "title": title,
-        })
+        displays.append(
+            {
+                "mime_type": "text/plain",
+                "data": str(obj),
+                "title": title,
+            }
+        )
 
     _displays.set(displays)

@@ -219,6 +219,26 @@ async def clear_node_artifacts(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/{kernel_id}/clear_namespace")
+async def clear_namespace(
+    kernel_id: str,
+    flow_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Clear the execution namespace for a flow (variables, imports, etc.)."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        await manager.clear_namespace(kernel_id, flow_id)
+        return {"status": "cleared", "kernel_id": kernel_id, "flow_id": flow_id}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/{kernel_id}/artifacts/node/{node_id}")
 async def get_node_artifacts(
     kernel_id: str,

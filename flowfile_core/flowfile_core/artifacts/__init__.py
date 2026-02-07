@@ -68,9 +68,7 @@ def get_storage_backend() -> "ArtifactStorageBackend":
 
             bucket = os.environ.get("FLOWFILE_S3_BUCKET")
             if not bucket:
-                raise ValueError(
-                    "FLOWFILE_S3_BUCKET environment variable is required for S3 storage"
-                )
+                raise ValueError("FLOWFILE_S3_BUCKET environment variable is required for S3 storage")
 
             _backend = S3Storage(
                 bucket=bucket,
@@ -82,9 +80,17 @@ def get_storage_backend() -> "ArtifactStorageBackend":
             from shared.artifact_storage import SharedFilesystemStorage
             from shared.storage_config import storage
 
+            # Both staging and permanent paths are resolved by storage_config
+            # to be under the kernel's shared volume mount, so Docker
+            # containers can access them.  In tests FLOWFILE_SHARED_DIR is
+            # set to the temp shared volume; in production the paths default
+            # to <temp>/kernel_shared/ (matching KernelManager's mount).
+            staging_root = storage.artifact_staging_directory
+            artifacts_root = storage.global_artifacts_directory
+
             _backend = SharedFilesystemStorage(
-                staging_root=storage.artifact_staging_directory,
-                artifacts_root=storage.global_artifacts_directory,
+                staging_root=staging_root,
+                artifacts_root=artifacts_root,
             )
 
     return _backend

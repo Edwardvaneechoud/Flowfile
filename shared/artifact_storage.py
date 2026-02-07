@@ -7,11 +7,11 @@ The Core API never handles blob data directly - all binary data flows between
 kernel and storage backend. Core only manages metadata.
 """
 
+import hashlib
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-import hashlib
-import shutil
 
 
 @dataclass
@@ -23,6 +23,7 @@ class UploadTarget:
         path: Local filesystem path OR presigned URL for upload.
         storage_key: Unique key identifying this blob in storage (e.g., "42/model.joblib").
     """
+
     method: str
     path: str
     storage_key: str
@@ -36,6 +37,7 @@ class DownloadSource:
         method: Storage method - "file" for local filesystem or "s3_presigned" for S3.
         path: Local filesystem path OR presigned URL for download.
     """
+
     method: str
     path: str
 
@@ -160,9 +162,7 @@ class SharedFilesystemStorage(ArtifactStorageBackend):
         actual_sha256 = self._compute_sha256(staging_path)
         if actual_sha256 != expected_sha256:
             staging_path.unlink()  # Clean up failed upload
-            raise ValueError(
-                f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-            )
+            raise ValueError(f"SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}")
 
         # Move to permanent location
         # Use rename for atomicity when on same filesystem, fall back to
@@ -233,10 +233,7 @@ class S3Storage(ArtifactStorageBackend):
         try:
             import boto3
         except ImportError:
-            raise ImportError(
-                "boto3 is required for S3 storage backend. "
-                "Install with: pip install boto3"
-            )
+            raise ImportError("boto3 is required for S3 storage backend. " "Install with: pip install boto3")
 
         self.bucket = bucket
         self.prefix = prefix
