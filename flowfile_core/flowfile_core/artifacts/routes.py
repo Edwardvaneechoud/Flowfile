@@ -13,8 +13,6 @@ IMPORTANT: Core API never handles blob data. All binary data flows directly
 between kernel and storage backend. Core only manages metadata.
 """
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -38,8 +36,6 @@ from flowfile_core.schemas.artifact_schema import (
     PrepareUploadRequest,
     PrepareUploadResponse,
 )
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/artifacts",
@@ -84,14 +80,6 @@ async def prepare_upload(
     """Initiate an artifact upload."""
     try:
         result = service.prepare_upload(body, owner_id=current_user.id)
-        logger.info(
-            "[artifacts] prepare-upload: artifact_id=%s, name='%s', " "storage_key='%s', method=%s, path='%s'",
-            result.artifact_id,
-            body.name,
-            result.storage_key,
-            result.method,
-            result.path,
-        )
         return result
     except FlowNotFoundError:
         raise HTTPException(404, "Source registration not found")
@@ -110,13 +98,6 @@ def finalize_upload(
     service: ArtifactService = Depends(get_artifact_service),
 ):
     """Finalize an artifact upload after blob is written."""
-    logger.info(
-        "[artifacts] finalize: artifact_id=%s, storage_key='%s', sha256='%s', size_bytes=%s",
-        body.artifact_id,
-        body.storage_key,
-        body.sha256,
-        body.size_bytes,
-    )
     try:
         result = service.finalize_upload(
             artifact_id=body.artifact_id,
@@ -124,20 +105,12 @@ def finalize_upload(
             sha256=body.sha256,
             size_bytes=body.size_bytes,
         )
-        logger.info("[artifacts] finalize: success, artifact_id=%s", body.artifact_id)
         return result
     except ArtifactNotFoundError:
-        logger.error("[artifacts] finalize: artifact_id=%s not found", body.artifact_id)
         raise HTTPException(404, "Artifact not found")
     except ArtifactNotActiveError as e:
-        logger.error(
-            "[artifacts] finalize: artifact_id=%s not in pending state (status=%s)",
-            body.artifact_id,
-            e.status,
-        )
         raise HTTPException(400, f"Artifact not in pending state: {e.status}")
     except ArtifactUploadError as e:
-        logger.error("[artifacts] finalize: artifact_id=%s upload error: %s", body.artifact_id, e)
         raise HTTPException(400, str(e))
 
 
