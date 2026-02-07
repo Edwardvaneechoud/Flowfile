@@ -56,9 +56,20 @@
           <span class="detail-label">SHA-256</span>
           <span class="detail-value mono sha">{{ artifact.sha256 }}</span>
         </div>
+        <div v-if="sourceFlowName" class="detail-row">
+          <span class="detail-label">Source Flow</span>
+          <span
+            class="detail-value flow-link"
+            @click="emit('navigate-to-flow', artifact.source_registration_id!)"
+          >{{ sourceFlowName }}</span>
+        </div>
+        <div v-else-if="artifact.source_registration_id" class="detail-row">
+          <span class="detail-label">Source Flow</span>
+          <span class="detail-value mono">ID {{ artifact.source_registration_id }}</span>
+        </div>
         <div v-if="artifact.source_node_id" class="detail-row">
           <span class="detail-label">Source Node</span>
-          <span class="detail-value">{{ artifact.source_node_id }}</span>
+          <span class="detail-value">Node {{ artifact.source_node_id }}</span>
         </div>
       </div>
     </div>
@@ -112,12 +123,27 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { GlobalArtifact } from "../../types";
 
-defineProps<{
+const props = defineProps<{
   artifact: GlobalArtifact;
   versions: GlobalArtifact[];
 }>();
+
+const emit = defineEmits<{
+  (e: "navigate-to-flow", registrationId: number): void;
+}>();
+
+const catalogStore = useCatalogStore();
+
+const sourceFlowName = computed((): string | null => {
+  const regId = props.artifact.source_registration_id;
+  if (regId === null) return null;
+  const flow = catalogStore.allFlows.find((f) => f.id === regId);
+  return flow?.name ?? null;
+});
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
@@ -285,6 +311,16 @@ function formatSize(bytes: number | null): string {
 .detail-value.sha {
   font-size: 11px;
   color: var(--color-text-muted);
+}
+
+.detail-value.flow-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium);
+}
+
+.detail-value.flow-link:hover {
+  text-decoration: underline;
 }
 
 /* ========== Tags ========== */

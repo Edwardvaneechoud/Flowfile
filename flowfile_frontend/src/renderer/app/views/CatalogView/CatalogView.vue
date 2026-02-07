@@ -122,6 +122,7 @@
           v-else-if="catalogStore.selectedArtifact"
           :artifact="catalogStore.selectedArtifact"
           :versions="selectedArtifactVersions"
+          @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
