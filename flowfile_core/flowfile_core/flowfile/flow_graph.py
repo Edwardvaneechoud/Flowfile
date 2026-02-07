@@ -1175,7 +1175,6 @@ class FlowGraph:
 
             # Execute on kernel (synchronous — no async boundary issues)
             reg_id = self._flow_settings.source_registration_id
-            node_logger.info(f"[source_registration_id] Sending to kernel: {reg_id}")
             # Pass the internal auth token so the kernel can call Core API
             # (e.g. for global artifact upload). This is more reliable than
             # env vars because it survives core restarts and pre-existing containers.

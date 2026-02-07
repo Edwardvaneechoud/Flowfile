@@ -254,31 +254,15 @@ def _run_and_track(flow, user_id: int | None):
     # (e.g. publish_global) can reference the catalog registration.
     if flow.flow_settings.source_registration_id is None:
         flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-        logger.info(
-            f"[source_registration_id] flow '{flow_name}': resolving from "
-            f"path={flow.flow_settings.path}, save_location={flow.flow_settings.save_location}"
-        )
         if flow_path:
             try:
                 with get_db_context() as db:
                     reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
                     if reg:
                         flow.flow_settings.source_registration_id = reg.id
-                        logger.info(f"[source_registration_id] flow '{flow_name}': resolved to {reg.id}")
-                    else:
-                        logger.warning(
-                            f"[source_registration_id] flow '{flow_name}': "
-                            f"no registration found for flow_path='{flow_path}'"
-                        )
             except Exception as exc:
                 logger.warning(f"Could not resolve source_registration_id for flow '{flow_name}': {exc}")
-        else:
-            logger.warning(f"[source_registration_id] flow '{flow_name}': no flow_path available, cannot resolve")
-    else:
-        logger.info(
-            f"[source_registration_id] flow '{flow_name}': "
-            f"already set to {flow.flow_settings.source_registration_id}"
-        )
+        logger.debug(f"source_registration_id for flow '{flow_name}': {flow.flow_settings.source_registration_id}")
 
     run_info = flow.run_graph()
     if run_info is None:
