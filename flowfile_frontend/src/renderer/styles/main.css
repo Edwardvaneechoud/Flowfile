@@ -539,7 +539,11 @@ button {
 }
 
 .cm-editor .cm-activeLine {
-  background-color: var(--color-background-hover) !important;
+  background-color: rgba(240, 247, 255, 0.5) !important;
+}
+
+[data-theme="dark"] .cm-editor .cm-activeLine {
+  background-color: rgba(30, 58, 95, 0.5) !important;
 }
 
 .cm-editor .cm-selectionBackground {
