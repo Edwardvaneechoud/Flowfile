@@ -120,6 +120,7 @@
           v-else-if="catalogStore.selectedFlow"
           :flow="catalogStore.selectedFlow"
           :runs="catalogStore.flowRuns"
+          :artifacts="catalogStore.flowArtifacts"
           @view-run="catalogStore.loadRunDetail($event)"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
