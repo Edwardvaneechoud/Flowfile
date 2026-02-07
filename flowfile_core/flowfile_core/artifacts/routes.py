@@ -23,8 +23,8 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.artifacts.service import ArtifactService
+from flowfile_core.auth.jwt import get_user_or_internal_service
 from flowfile_core.catalog.exceptions import FlowNotFoundError
-from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.artifact_schema import (
     ArtifactDeleteResponse,
@@ -79,7 +79,8 @@ async def prepare_upload(
 ):
     """Initiate an artifact upload."""
     try:
-        return service.prepare_upload(body, owner_id=current_user.id)
+        result = service.prepare_upload(body, owner_id=current_user.id)
+        return result
     except FlowNotFoundError:
         raise HTTPException(404, "Source registration not found")
     except NamespaceNotFoundError:
@@ -90,10 +91,7 @@ async def prepare_upload(
     "/finalize",
     response_model=FinalizeUploadResponse,
     summary="Finalize artifact upload",
-    description=(
-        "Step 2 of upload: Verify blob exists and SHA-256 matches, "
-        "then activate the artifact."
-    ),
+    description=("Step 2 of upload: Verify blob exists and SHA-256 matches, " "then activate the artifact."),
 )
 def finalize_upload(
     body: FinalizeUploadRequest,
@@ -101,12 +99,13 @@ def finalize_upload(
 ):
     """Finalize an artifact upload after blob is written."""
     try:
-        return service.finalize_upload(
+        result = service.finalize_upload(
             artifact_id=body.artifact_id,
             storage_key=body.storage_key,
             sha256=body.sha256,
             size_bytes=body.size_bytes,
         )
+        return result
     except ArtifactNotFoundError:
         raise HTTPException(404, "Artifact not found")
     except ArtifactNotActiveError as e:
@@ -130,9 +129,7 @@ def list_artifacts(
     namespace_id: int | None = Query(None, description="Filter by namespace"),
     tags: list[str] | None = Query(None, description="Filter by tags (AND logic)"),
     name_contains: str | None = Query(None, description="Filter by name substring"),
-    python_type_contains: str | None = Query(
-        None, description="Filter by Python type substring"
-    ),
+    python_type_contains: str | None = Query(None, description="Filter by Python type substring"),
     limit: int = Query(100, ge=1, le=500, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     service: ArtifactService = Depends(get_artifact_service),

@@ -68,6 +68,66 @@ export const flowfileCompletionVals = [
     apply: "list_artifacts()",
   },
 
+  // Global Artifact functions
+  {
+    label: "publish_global",
+    type: "function",
+    info: "Persist a Python object to the global artifact store (survives across sessions).",
+    detail: 'flowfile.publish_global("name", obj, description?, tags?, namespace_id?, fmt?)',
+    apply: 'publish_global("name", obj)',
+  },
+  {
+    label: "get_global",
+    type: "function",
+    info: "Retrieve a Python object from the global artifact store.",
+    detail: 'flowfile.get_global("name", version?, namespace_id?)',
+    apply: 'get_global("name")',
+  },
+  {
+    label: "list_global_artifacts",
+    type: "function",
+    info: "List available global artifacts with optional namespace/tag filters.",
+    detail: "flowfile.list_global_artifacts(namespace_id?, tags?)",
+    apply: "list_global_artifacts()",
+  },
+  {
+    label: "delete_global_artifact",
+    type: "function",
+    info: "Delete a global artifact by name, optionally a specific version.",
+    detail: 'flowfile.delete_global_artifact("name", version?, namespace_id?)',
+    apply: 'delete_global_artifact("name")',
+  },
+
+  // Logging functions
+  {
+    label: "log",
+    type: "function",
+    info: "Send a log message to the FlowFile log viewer.",
+    detail: 'flowfile.log("message", level?)',
+    apply: 'log("message")',
+  },
+  {
+    label: "log_info",
+    type: "function",
+    info: "Send an INFO log message to the FlowFile log viewer.",
+    detail: 'flowfile.log_info("message")',
+    apply: 'log_info("message")',
+  },
+  {
+    label: "log_warning",
+    type: "function",
+    info: "Send a WARNING log message to the FlowFile log viewer.",
+    detail: 'flowfile.log_warning("message")',
+    apply: 'log_warning("message")',
+  },
+  {
+    label: "log_error",
+    type: "function",
+    info: "Send an ERROR log message to the FlowFile log viewer.",
+    detail: 'flowfile.log_error("message")',
+    apply: 'log_error("message")',
+  },
+
   // Polars basics (also useful in python_script context)
   { label: "pl", type: "variable", info: "Polars main module" },
   { label: "col", type: "function", info: "Polars column selector" },

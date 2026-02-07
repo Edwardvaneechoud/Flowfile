@@ -110,6 +110,7 @@ class TestPublishGlobal:
 
         # Mock finalize response
         finalize_response = MagicMock()
+        finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
@@ -158,6 +159,7 @@ class TestPublishGlobal:
         prepare_response.raise_for_status = MagicMock()
 
         finalize_response = MagicMock()
+        finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
@@ -198,6 +200,7 @@ class TestPublishGlobal:
         prepare_response.raise_for_status = MagicMock()
 
         finalize_response = MagicMock()
+        finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]
@@ -579,6 +582,7 @@ class TestGlobalArtifactIntegration:
 
         # Setup finalize response
         finalize_response = MagicMock()
+        finalize_response.status_code = 200
         finalize_response.raise_for_status = MagicMock()
 
         mock_client.post.side_effect = [prepare_response, finalize_response]

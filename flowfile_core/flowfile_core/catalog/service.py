@@ -30,12 +30,14 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    GlobalArtifact,
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
+    GlobalArtifactOut,
     NamespaceTree,
 )
 
@@ -56,9 +58,7 @@ class CatalogService:
     # Private helpers
     # ------------------------------------------------------------------ #
 
-    def _enrich_flow_registration(
-        self, flow: FlowRegistration, user_id: int
-    ) -> FlowRegistrationOut:
+    def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         """Attach favourite/follow flags and run stats to a single registration.
 
         Note: For bulk operations, prefer ``_bulk_enrich_flows`` to avoid N+1 queries.
@@ -67,6 +67,7 @@ class CatalogService:
         is_follow = self.repo.get_follow(user_id, flow.id) is not None
         run_count = self.repo.count_run_for_flow(flow.id)
         last_run = self.repo.last_run_for_flow(flow.id)
+        artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -82,11 +83,10 @@ class CatalogService:
             last_run_at=last_run.started_at if last_run else None,
             last_run_success=last_run.success if last_run else None,
             file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+            artifact_count=artifact_count,
         )
 
-    def _bulk_enrich_flows(
-        self, flows: list[FlowRegistration], user_id: int
-    ) -> list[FlowRegistrationOut]:
+    def _bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
         """Enrich multiple flows with favourites, follows, and run stats in bulk.
 
         Uses 3 queries total instead of 4×N, dramatically improving performance
@@ -97,10 +97,11 @@ class CatalogService:
 
         flow_ids = [f.id for f in flows]
 
-        # Bulk fetch all enrichment data (3 queries total)
+        # Bulk fetch all enrichment data (4 queries total)
         fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
         follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
         run_stats = self.repo.bulk_get_run_stats(flow_ids)
+        artifact_counts = self.repo.bulk_get_artifact_counts(flow_ids)
 
         result: list[FlowRegistrationOut] = []
         for flow in flows:
@@ -121,6 +122,7 @@ class CatalogService:
                     last_run_at=last_run.started_at if last_run else None,
                     last_run_success=last_run.success if last_run else None,
                     file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+                    artifact_count=artifact_counts.get(flow.id, 0),
                 )
             )
         return result
@@ -141,6 +143,42 @@ class CatalogService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             has_snapshot=run.flow_snapshot is not None,
+        )
+
+    @staticmethod
+    def _artifact_to_out(artifact: GlobalArtifact) -> GlobalArtifactOut:
+        """Convert a GlobalArtifact ORM instance to its Pydantic output schema."""
+        tags: list[str] = []
+        if hasattr(artifact, "tags") and artifact.tags:
+            if isinstance(artifact.tags, list):
+                tags = artifact.tags
+            elif isinstance(artifact.tags, str):
+                import json
+
+                try:
+                    tags = json.loads(artifact.tags)
+                except (json.JSONDecodeError, TypeError):
+                    tags = [t.strip() for t in artifact.tags.split(",") if t.strip()]
+
+        return GlobalArtifactOut(
+            id=artifact.id,
+            name=artifact.name,
+            version=artifact.version,
+            status=artifact.status,
+            description=getattr(artifact, "description", None),
+            python_type=getattr(artifact, "python_type", None),
+            python_module=getattr(artifact, "python_module", None),
+            serialization_format=getattr(artifact, "serialization_format", None),
+            size_bytes=getattr(artifact, "size_bytes", None),
+            sha256=getattr(artifact, "sha256", None),
+            tags=tags,
+            namespace_id=artifact.namespace_id,
+            source_registration_id=getattr(artifact, "source_registration_id", None),
+            source_flow_id=getattr(artifact, "source_flow_id", None),
+            source_node_id=getattr(artifact, "source_node_id", None),
+            owner_id=getattr(artifact, "owner_id", None),
+            created_at=getattr(artifact, "created_at", None),
+            updated_at=getattr(artifact, "updated_at", None),
         )
 
     # ------------------------------------------------------------------ #
@@ -225,9 +263,7 @@ class CatalogService:
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
         if children > 0 or flows > 0:
-            raise NamespaceNotEmptyError(
-                namespace_id=namespace_id, children=children, flows=flows
-            )
+            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows)
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -257,16 +293,23 @@ class CatalogService:
         # Collect all flows first, then bulk-enrich them
         all_flows: list[FlowRegistration] = []
         namespace_flow_map: dict[int, list[FlowRegistration]] = {}
+        namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
 
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
             namespace_flow_map[cat.id] = cat_flows
             all_flows.extend(cat_flows)
+            namespace_artifact_map[cat.id] = [
+                self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
+            ]
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
                 namespace_flow_map[schema.id] = schema_flows
                 all_flows.extend(schema_flows)
+                namespace_artifact_map[schema.id] = [
+                    self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
+                ]
 
         # Bulk enrich all flows at once
         enriched = self._bulk_enrich_flows(all_flows, user_id)
@@ -292,6 +335,7 @@ class CatalogService:
                         updated_at=schema.updated_at,
                         children=[],
                         flows=flow_outs,
+                        artifacts=namespace_artifact_map.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -308,6 +352,7 @@ class CatalogService:
                     updated_at=cat.updated_at,
                     children=children,
                     flows=root_flow_outs,
+                    artifacts=namespace_artifact_map.get(cat.id, []),
                 )
             )
         return result
@@ -415,15 +460,27 @@ class CatalogService:
             raise FlowNotFoundError(registration_id=registration_id)
         return self._enrich_flow_registration(flow, user_id)
 
-    def list_flows(
-        self, user_id: int, namespace_id: int | None = None
-    ) -> list[FlowRegistrationOut]:
+    def list_flows(self, user_id: int, namespace_id: int | None = None) -> list[FlowRegistrationOut]:
         """List flows, optionally filtered by namespace, enriched with user context.
 
         Uses bulk enrichment to avoid N+1 queries.
         """
         flows = self.repo.list_flows(namespace_id=namespace_id)
         return self._bulk_enrich_flows(flows, user_id)
+
+    def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifactOut]:
+        """List all active artifacts produced by a registered flow.
+
+        Raises
+        ------
+        FlowNotFoundError
+            If the flow doesn't exist.
+        """
+        flow = self.repo.get_flow(registration_id)
+        if flow is None:
+            raise FlowNotFoundError(registration_id=registration_id)
+        artifacts = self.repo.list_artifacts_for_flow(registration_id)
+        return [self._artifact_to_out(a) for a in artifacts]
 
     # ------------------------------------------------------------------ #
     # Run operations
@@ -436,9 +493,7 @@ class CatalogService:
         offset: int = 0,
     ) -> list[FlowRunOut]:
         """List run summaries (without snapshots)."""
-        runs = self.repo.list_runs(
-            registration_id=registration_id, limit=limit, offset=offset
-        )
+        runs = self.repo.list_runs(registration_id=registration_id, limit=limit, offset=offset)
         return [self._run_to_out(r) for r in runs]
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
@@ -657,6 +712,7 @@ class CatalogService:
         total_flows = self.repo.count_all_flows()
         total_runs = self.repo.count_runs()
         total_favs = self.repo.count_favorites(user_id)
+        total_artifacts = self.repo.count_all_active_artifacts()
 
         recent_runs = self.repo.list_runs(limit=10, offset=0)
         recent_out = [self._run_to_out(r) for r in recent_runs]
@@ -675,6 +731,7 @@ class CatalogService:
             total_flows=total_flows,
             total_runs=total_runs,
             total_favorites=total_favs,
+            total_artifacts=total_artifacts,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
         )
