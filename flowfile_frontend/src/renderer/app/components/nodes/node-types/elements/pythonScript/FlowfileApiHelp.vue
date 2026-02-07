@@ -2,7 +2,7 @@
   <div class="modal-overlay" @click="$emit('close')">
     <div class="modal-container" @click.stop>
       <div class="modal-header">
-        <h3 class="modal-title">FlowFile Python API Reference</h3>
+        <h3 class="modal-title">FlowFile Kernel API Reference</h3>
         <button class="modal-close" aria-label="Close" @click="$emit('close')">
           <i class="fa-solid fa-times"></i>
         </button>
@@ -11,23 +11,23 @@
         <section class="api-section">
           <h4>Data I/O</h4>
           <div class="api-item">
-            <code>flowfile.read_input()</code>
+            <code>ff_kernel.read_input()</code>
             <p>Read the main input as a Polars LazyFrame.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_input("left")</code>
+            <code>ff_kernel.read_input("left")</code>
             <p>Read a named input connection.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_inputs()</code>
+            <code>ff_kernel.read_inputs()</code>
             <p>Read all inputs as a dict of LazyFrame lists (one per connection).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_output(df)</code>
+            <code>ff_kernel.publish_output(df)</code>
             <p>Write the main output DataFrame.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_output(df, "secondary")</code>
+            <code>ff_kernel.publish_output(df, "secondary")</code>
             <p>Write a named output DataFrame.</p>
           </div>
         </section>
@@ -40,19 +40,19 @@
             the same kernel.
           </p>
           <div class="api-item">
-            <code>flowfile.publish_artifact("model", obj)</code>
+            <code>ff_kernel.publish_artifact("model", obj)</code>
             <p>Store a Python object as a named artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_artifact("model")</code>
+            <code>ff_kernel.read_artifact("model")</code>
             <p>Retrieve a previously published artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.delete_artifact("model")</code>
+            <code>ff_kernel.delete_artifact("model")</code>
             <p>Remove an artifact from kernel memory.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_artifacts()</code>
+            <code>ff_kernel.list_artifacts()</code>
             <p>List all available artifacts in the kernel.</p>
           </div>
         </section>
@@ -64,11 +64,11 @@
             output panel.
           </p>
           <div class="api-item">
-            <code>flowfile.display(obj)</code>
+            <code>ff_kernel.display(obj)</code>
             <p>Display a rich object in the output panel.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.display(fig, "My Chart")</code>
+            <code>ff_kernel.display(fig, "My Chart")</code>
             <p>Display with an optional title.</p>
           </div>
         </section>
@@ -81,27 +81,27 @@
             to use global artifacts.
           </p>
           <div class="api-item">
-            <code>flowfile.publish_global("model", obj)</code>
+            <code>ff_kernel.publish_global("model", obj)</code>
             <p>Persist a Python object to the global artifact store.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_global("model", obj, description="...", tags=["ml"])</code>
+            <code>ff_kernel.publish_global("model", obj, description="...", tags=["ml"])</code>
             <p>Publish with optional description, tags, namespace, and format.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.get_global("model")</code>
+            <code>ff_kernel.get_global("model")</code>
             <p>Retrieve a Python object from the global artifact store.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.get_global("model", version=2)</code>
+            <code>ff_kernel.get_global("model", version=2)</code>
             <p>Retrieve a specific version of a global artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_global_artifacts()</code>
+            <code>ff_kernel.list_global_artifacts()</code>
             <p>List all available global artifacts (with optional namespace/tag filters).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.delete_global_artifact("model")</code>
+            <code>ff_kernel.delete_global_artifact("model")</code>
             <p>Delete a global artifact by name (optionally a specific version).</p>
           </div>
         </section>
@@ -112,19 +112,19 @@
             Send log messages to the FlowFile log viewer for debugging and monitoring.
           </p>
           <div class="api-item">
-            <code>flowfile.log("message")</code>
+            <code>ff_kernel.log("message")</code>
             <p>Send a log message (default level: INFO).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_info("message")</code>
+            <code>ff_kernel.log_info("message")</code>
             <p>Send an INFO log message.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_warning("message")</code>
+            <code>ff_kernel.log_warning("message")</code>
             <p>Send a WARNING log message.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.log_error("message")</code>
+            <code>ff_kernel.log_error("message")</code>
             <p>Send an ERROR log message.</p>
           </div>
         </section>
@@ -136,9 +136,9 @@
             <h5>Basic Transform</h5>
             <pre><code>import polars as pl
 
-df = flowfile.read_input()
+df = ff_kernel.read_input()
 df = df.filter(pl.col("age") > 18)
-flowfile.publish_output(df)</code></pre>
+ff_kernel.publish_output(df)</code></pre>
           </div>
 
           <div class="pattern">
@@ -146,23 +146,23 @@ flowfile.publish_output(df)</code></pre>
             <pre><code>import polars as pl
 from sklearn.ensemble import RandomForestClassifier
 
-df = flowfile.read_input().collect()
+df = ff_kernel.read_input().collect()
 X = df.select(["feature_1", "feature_2"]).to_numpy()
 y = df.get_column("target").to_numpy()
 
 model = RandomForestClassifier()
 model.fit(X, y)
 
-flowfile.publish_artifact("model", model)
-flowfile.publish_output(flowfile.read_input())</code></pre>
+ff_kernel.publish_artifact("model", model)
+ff_kernel.publish_output(ff_kernel.read_input())</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Apply a Model</h5>
             <pre><code>import polars as pl
 
-model = flowfile.read_artifact("model")
-df = flowfile.read_input().collect()
+model = ff_kernel.read_artifact("model")
+df = ff_kernel.read_input().collect()
 
 X = df.select(["feature_1", "feature_2"]).to_numpy()
 predictions = model.predict(X)
@@ -170,30 +170,30 @@ predictions = model.predict(X)
 result = df.with_columns(
     pl.Series("prediction", predictions)
 )
-flowfile.publish_output(result.lazy())</code></pre>
+ff_kernel.publish_output(result.lazy())</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Publish a Global Artifact</h5>
             <pre><code>from sklearn.ensemble import RandomForestClassifier
 
-model = flowfile.read_artifact("model")
-flowfile.publish_global("rf_model", model,
+model = ff_kernel.read_artifact("model")
+ff_kernel.publish_global("rf_model", model,
     description="Trained random forest",
     tags=["ml", "production"])
-flowfile.log_info("Model published to catalog")</code></pre>
+ff_kernel.log_info("Model published to catalog")</code></pre>
           </div>
 
           <div class="pattern">
             <h5>Multiple Inputs</h5>
             <pre><code>import polars as pl
 
-inputs = flowfile.read_inputs()
+inputs = ff_kernel.read_inputs()
 # inputs is a dict: {"main": [LazyFrame, ...]}
 # Each connected input is a separate LazyFrame in the list
 df1, df2 = inputs["main"]
 combined = pl.concat([df1, df2])
-flowfile.publish_output(combined)</code></pre>
+ff_kernel.publish_output(combined)</code></pre>
           </div>
         </section>
       </div>

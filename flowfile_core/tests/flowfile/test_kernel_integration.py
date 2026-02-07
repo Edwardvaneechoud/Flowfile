@@ -127,7 +127,7 @@ class TestKernelRuntime:
                 kernel_id,
                 ExecuteRequest(
                     node_id=3,
-                    code='flowfile.publish_artifact("my_dict", {"a": 1, "b": 2})',
+                    code='ff_kernel.publish_artifact("my_dict", {"a": 1, "b": 2})',
                     input_paths={},
                     output_dir="/shared/test_artifact",
                 ),
@@ -152,9 +152,9 @@ class TestKernelRuntime:
 
         code = """
 import polars as pl
-df = flowfile.read_input()
+df = ff_kernel.read_input()
 df = df.with_columns((pl.col("x") * pl.col("y")).alias("product"))
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
 
         result: ExecuteResult = _run(
@@ -196,11 +196,11 @@ flowfile.publish_output(df)
         )
 
         code = """
-inputs = flowfile.read_inputs()
+inputs = ff_kernel.read_inputs()
 left = inputs["left"][0].collect()
 right = inputs["right"][0].collect()
 merged = left.join(right, on="id")
-flowfile.publish_output(merged)
+ff_kernel.publish_output(merged)
 """
         result = _run(
             manager.execute(
@@ -299,8 +299,8 @@ class TestPythonScriptNode:
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -360,9 +360,9 @@ flowfile.publish_output(df)
 
             code = """
 import polars as pl
-df = flowfile.read_input().collect()
+df = ff_kernel.read_input().collect()
 df = df.with_columns((pl.col("val") * 10).alias("val_x10"))
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -464,9 +464,9 @@ class TestArtifactContextIntegration:
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("my_model", {"accuracy": 0.95})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("my_model", {"accuracy": 0.95})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -513,9 +513,9 @@ flowfile.publish_output(df)
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_publish = """
-df = flowfile.read_input()
-flowfile.publish_artifact("trained_model", {"type": "RF"})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("trained_model", {"type": "RF"})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -531,9 +531,9 @@ flowfile.publish_output(df)
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_consume = """
-df = flowfile.read_input()
-model = flowfile.read_artifact("trained_model")
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+model = ff_kernel.read_artifact("trained_model")
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -579,9 +579,9 @@ flowfile.publish_output(df)
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("run_artifact", [1, 2, 3])
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("run_artifact", [1, 2, 3])
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -637,10 +637,10 @@ flowfile.publish_output(df)
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", {"type": "classifier"})
-flowfile.publish_artifact("encoder", {"type": "label_encoder"})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", {"type": "classifier"})
+ff_kernel.publish_artifact("encoder", {"type": "label_encoder"})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -688,9 +688,9 @@ flowfile.publish_output(df)
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("ctx_model", {"version": 1})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("ctx_model", {"version": 1})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -750,12 +750,12 @@ flowfile.publish_output(df)
 import numpy as np
 import polars as pl
 
-df = flowfile.read_input().collect()
+df = ff_kernel.read_input().collect()
 X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
 y_vals = df["y"].to_numpy()
 coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]
-flowfile.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
-flowfile.publish_output(df)
+ff_kernel.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -774,13 +774,13 @@ flowfile.publish_output(df)
 import numpy as np
 import polars as pl
 
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("linear_model")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("linear_model")
 coeffs = np.array(model["coefficients"])
 X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
 predictions = X @ coeffs
 result = df.with_columns(pl.Series("predicted_y", predictions))
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -845,9 +845,9 @@ flowfile.publish_output(result)
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_a = """
-df = flowfile.read_input()
-flowfile.publish_artifact("artifact_model", {"version": 1, "weights": [0.5]})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("artifact_model", {"version": 1, "weights": [0.5]})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -863,11 +863,11 @@ flowfile.publish_output(df)
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_b = """
-df = flowfile.read_input()
-model = flowfile.read_artifact("artifact_model")
+df = ff_kernel.read_input()
+model = ff_kernel.read_artifact("artifact_model")
 assert model["version"] == 1, f"Expected v1, got {model}"
-flowfile.delete_artifact("artifact_model")
-flowfile.publish_output(df)
+ff_kernel.delete_artifact("artifact_model")
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -883,9 +883,9 @@ flowfile.publish_output(df)
             node_promise_4 = input_schema.NodePromise(flow_id=1, node_id=4, node_type="python_script")
             graph.add_node_promise(node_promise_4)
             code_c = """
-df = flowfile.read_input()
-flowfile.publish_artifact("artifact_model", {"version": 2, "weights": [0.9]})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("artifact_model", {"version": 2, "weights": [0.9]})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -901,10 +901,10 @@ flowfile.publish_output(df)
             node_promise_5 = input_schema.NodePromise(flow_id=1, node_id=5, node_type="python_script")
             graph.add_node_promise(node_promise_5)
             code_d = """
-df = flowfile.read_input()
-model = flowfile.read_artifact("artifact_model")
+df = ff_kernel.read_input()
+model = ff_kernel.read_artifact("artifact_model")
 assert model["version"] == 2, f"Expected v2, got {model}"
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -957,9 +957,9 @@ flowfile.publish_output(df)
             node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
             graph.add_node_promise(node_promise_2)
             code_publish = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", "v1")
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", "v1")
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -975,9 +975,9 @@ flowfile.publish_output(df)
             node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script")
             graph.add_node_promise(node_promise_3)
             code_dup = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", "v2")
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", "v2")
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1040,10 +1040,10 @@ flowfile.publish_output(df)
 
             code = """
 import polars as pl
-df = flowfile.read_input().collect()
+df = ff_kernel.read_input().collect()
 # Should contain all 4 rows from both inputs
 assert len(df) == 4, f"Expected 4 rows, got {len(df)}"
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1115,10 +1115,10 @@ flowfile.publish_output(df)
 
             code = """
 import polars as pl
-df = flowfile.read_first().collect()
+df = ff_kernel.read_first().collect()
 # read_first should return only the first input (2 rows, not 4)
 assert len(df) == 2, f"Expected 2 rows from read_first, got {len(df)}"
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1204,12 +1204,12 @@ class TestDebugModeArtifactPersistence:
 import numpy as np
 import polars as pl
 
-df = flowfile.read_input().collect()
+df = ff_kernel.read_input().collect()
 X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
 y_vals = df["y"].to_numpy()
 coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]
-flowfile.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
-flowfile.publish_output(df)
+ff_kernel.publish_artifact("linear_model", {"coefficients": coeffs.tolist()})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1233,13 +1233,13 @@ flowfile.publish_output(df)
 import numpy as np
 import polars as pl
 
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("linear_model")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("linear_model")
 coeffs = np.array(model["coefficients"])
 X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
 predictions = X @ coeffs
 result = df.with_columns(pl.Series("predicted_y", predictions))
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1270,8 +1270,8 @@ flowfile.publish_output(result)
 import numpy as np
 import polars as pl
 
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("linear_model")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("linear_model")
 coeffs = np.array(model["coefficients"])
 X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])
 predictions = X @ coeffs
@@ -1280,7 +1280,7 @@ result = df.with_columns(
     pl.Series("predicted_y", predictions),
     pl.Series("residual", residuals),
 )
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1360,10 +1360,10 @@ flowfile.publish_output(result)
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
             producer_code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", {"type": "linear", "coeff": 2.0})
-flowfile.publish_artifact("scaler", {"mean": 20.0, "std": 10.0})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", {"type": "linear", "coeff": 2.0})
+ff_kernel.publish_artifact("scaler", {"mean": 20.0, "std": 10.0})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1384,13 +1384,13 @@ flowfile.publish_output(df)
             )
             consumer_code_v1 = """
 import polars as pl
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("model")
-scaler = flowfile.read_artifact("scaler")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("model")
+scaler = ff_kernel.read_artifact("scaler")
 result = df.with_columns(
     (pl.col("val") * model["coeff"]).alias("scaled"),
 )
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1411,15 +1411,15 @@ flowfile.publish_output(result)
             # Change the consumer's code — also use the scaler now
             consumer_code_v2 = """
 import polars as pl
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("model")
-scaler = flowfile.read_artifact("scaler")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("model")
+scaler = ff_kernel.read_artifact("scaler")
 normalized = (pl.col("val") - scaler["mean"]) / scaler["std"]
 result = df.with_columns(
     (pl.col("val") * model["coeff"]).alias("scaled"),
     normalized.alias("normalized"),
 )
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1478,9 +1478,9 @@ flowfile.publish_output(result)
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
             code_v1 = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", {"version": 1})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", {"version": 1})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1500,10 +1500,10 @@ flowfile.publish_output(df)
                 input_schema.NodePromise(flow_id=1, node_id=3, node_type="python_script"),
             )
             consumer_code = """
-df = flowfile.read_input()
-model = flowfile.read_artifact("model")
+df = ff_kernel.read_input()
+model = ff_kernel.read_artifact("model")
 print(f"model version: {model['version']}")
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1526,9 +1526,9 @@ flowfile.publish_output(df)
 
             # Change the PRODUCER (Node 2) — publish v2 of the artifact
             code_v2 = """
-df = flowfile.read_input()
-flowfile.publish_artifact("model", {"version": 2})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("model", {"version": 2})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1587,9 +1587,9 @@ flowfile.publish_output(df)
                 input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"),
             )
             producer_code = """
-df = flowfile.read_input()
-flowfile.publish_artifact("linear_model", {"coefficients": [1.0, 2.0, 3.0]})
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_artifact("linear_model", {"coefficients": [1.0, 2.0, 3.0]})
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1610,12 +1610,12 @@ flowfile.publish_output(df)
             )
             consumer_code_v1 = """
 import polars as pl
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("linear_model")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("linear_model")
 coeffs = model["coefficients"]
 result = df.with_columns(pl.lit(coeffs[0]).alias("c0"))
-flowfile.publish_output(result)
-flowfile.delete_artifact("linear_model")
+ff_kernel.publish_output(result)
+ff_kernel.delete_artifact("linear_model")
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1640,15 +1640,15 @@ flowfile.delete_artifact("linear_model")
             # Change the consumer's code (node 3) — still deletes the artifact
             consumer_code_v2 = """
 import polars as pl
-df = flowfile.read_input().collect()
-model = flowfile.read_artifact("linear_model")
+df = ff_kernel.read_input().collect()
+model = ff_kernel.read_artifact("linear_model")
 coeffs = model["coefficients"]
 result = df.with_columns(
     pl.lit(coeffs[0]).alias("c0"),
     pl.lit(coeffs[1]).alias("c1"),
 )
-flowfile.publish_output(result)
-flowfile.delete_artifact("linear_model")
+ff_kernel.publish_output(result)
+ff_kernel.delete_artifact("linear_model")
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(
@@ -1791,8 +1791,8 @@ class TestKernelAutoRestart:
             graph.add_node_promise(node_promise_2)
 
             code = """
-df = flowfile.read_input()
-flowfile.publish_output(df)
+df = ff_kernel.read_input()
+ff_kernel.publish_output(df)
 """
             graph.add_python_script(
                 input_schema.NodePythonScript(

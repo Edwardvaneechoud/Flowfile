@@ -96,12 +96,12 @@ class TestExecuteEndpoint:
         assert data["success"] is True
         assert data["execution_time_ms"] > 0
 
-    def test_flowfile_module_available(self, client: TestClient):
+    def test_ff_kernel_module_available(self, client: TestClient):
         resp = client.post(
             "/execute",
             json={
                 "node_id": 6,
-                "code": "print(type(flowfile).__name__)",
+                "code": "print(type(ff_kernel).__name__)",
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -125,9 +125,9 @@ class TestExecuteWithParquet:
 
         code = (
             "import polars as pl\n"
-            "df = flowfile.read_input()\n"
+            "df = ff_kernel.read_input()\n"
             "df = df.collect().with_columns((pl.col('x') * pl.col('y')).alias('product'))\n"
-            "flowfile.publish_output(df)\n"
+            "ff_kernel.publish_output(df)\n"
         )
 
         resp = client.post(
@@ -164,11 +164,11 @@ class TestExecuteWithParquet:
         )
 
         code = (
-            "inputs = flowfile.read_inputs()\n"
+            "inputs = ff_kernel.read_inputs()\n"
             "left = inputs['left'][0].collect()\n"
             "right = inputs['right'][0].collect()\n"
             "merged = left.join(right, on='id')\n"
-            "flowfile.publish_output(merged)\n"
+            "ff_kernel.publish_output(merged)\n"
         )
 
         resp = client.post(
@@ -202,8 +202,8 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [3, 4]}).write_parquet(str(input_dir / "main_1.parquet"))
 
         code = (
-            "df = flowfile.read_input().collect()\n"
-            "flowfile.publish_output(df)\n"
+            "df = ff_kernel.read_input().collect()\n"
+            "ff_kernel.publish_output(df)\n"
         )
 
         resp = client.post(
@@ -238,8 +238,8 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [30, 40]}).write_parquet(str(input_dir / "b.parquet"))
 
         code = (
-            "df = flowfile.read_first().collect()\n"
-            "flowfile.publish_output(df)\n"
+            "df = ff_kernel.read_first().collect()\n"
+            "ff_kernel.publish_output(df)\n"
         )
 
         resp = client.post(
@@ -272,8 +272,8 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "main.parquet"))
 
         code = (
-            "lf = flowfile.read_input()\n"
-            "flowfile.publish_output(lf)\n"
+            "lf = ff_kernel.read_input()\n"
+            "ff_kernel.publish_output(lf)\n"
         )
 
         resp = client.post(
@@ -298,7 +298,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 20,
-                "code": 'flowfile.publish_artifact("my_dict", {"a": 1})',
+                "code": 'ff_kernel.publish_artifact("my_dict", {"a": 1})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -315,8 +315,8 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 21,
                 "code": (
-                    'flowfile.publish_artifact("item_a", [1, 2])\n'
-                    'flowfile.publish_artifact("item_b", "hello")\n'
+                    'ff_kernel.publish_artifact("item_a", [1, 2])\n'
+                    'ff_kernel.publish_artifact("item_b", "hello")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -337,7 +337,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 22,
-                "code": 'flowfile.publish_artifact("tmp", 42)',
+                "code": 'ff_kernel.publish_artifact("tmp", 42)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -356,7 +356,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 23,
-                "code": 'flowfile.publish_artifact("x", 1)',
+                "code": 'ff_kernel.publish_artifact("x", 1)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -371,7 +371,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", 1)',
+                "code": 'ff_kernel.publish_artifact("model", 1)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -383,7 +383,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 25,
-                "code": 'flowfile.publish_artifact("model", 2)',
+                "code": 'ff_kernel.publish_artifact("model", 2)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -399,7 +399,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 26,
-                "code": 'flowfile.publish_artifact("temp", 99)',
+                "code": 'ff_kernel.publish_artifact("temp", 99)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -409,7 +409,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 27,
-                "code": 'flowfile.delete_artifact("temp")',
+                "code": 'ff_kernel.delete_artifact("temp")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -429,7 +429,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", "v1")',
+                "code": 'ff_kernel.publish_artifact("model", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -443,7 +443,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 24,
-                "code": 'flowfile.publish_artifact("model", "v2")',
+                "code": 'ff_kernel.publish_artifact("model", "v2")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -457,7 +457,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = ff_kernel.read_artifact("model"); print(v)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -472,7 +472,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 28,
-                "code": 'flowfile.publish_artifact("model", "v1")',
+                "code": 'ff_kernel.publish_artifact("model", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -483,8 +483,8 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 29,
                 "code": (
-                    'flowfile.delete_artifact("model")\n'
-                    'flowfile.publish_artifact("model", "v2")\n'
+                    'ff_kernel.delete_artifact("model")\n'
+                    'ff_kernel.publish_artifact("model", "v2")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -506,7 +506,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 30,
                 "code": (
-                    'v = flowfile.read_artifact("model")\n'
+                    'v = ff_kernel.read_artifact("model")\n'
                     'print(v)\n'
                 ),
                 "flow_id": 1,
@@ -526,7 +526,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 40,
-                "code": 'flowfile.publish_artifact("model", {"v": 1})',
+                "code": 'ff_kernel.publish_artifact("model", {"v": 1})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -536,7 +536,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 41,
-                "code": 'flowfile.publish_artifact("scaler", {"v": 2})',
+                "code": 'ff_kernel.publish_artifact("scaler", {"v": 2})',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -561,7 +561,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 42,
-                "code": 'flowfile.publish_artifact("keep_me", 42)',
+                "code": 'ff_kernel.publish_artifact("keep_me", 42)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -578,7 +578,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 43,
-                "code": 'flowfile.publish_artifact("reuse", "v1")',
+                "code": 'ff_kernel.publish_artifact("reuse", "v1")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -589,7 +589,7 @@ class TestClearNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 43,
-                "code": 'flowfile.publish_artifact("reuse", "v2")',
+                "code": 'ff_kernel.publish_artifact("reuse", "v2")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -606,8 +606,8 @@ class TestNodeArtifactsEndpoint:
             json={
                 "node_id": 50,
                 "code": (
-                    'flowfile.publish_artifact("a", 1)\n'
-                    'flowfile.publish_artifact("b", 2)\n'
+                    'ff_kernel.publish_artifact("a", 1)\n'
+                    'ff_kernel.publish_artifact("b", 2)\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -618,7 +618,7 @@ class TestNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 51,
-                "code": 'flowfile.publish_artifact("c", 3)',
+                "code": 'ff_kernel.publish_artifact("c", 3)',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -657,12 +657,12 @@ class TestDisplayOutputs:
         assert data["display_outputs"] == []
 
     def test_display_output_explicit(self, client: TestClient):
-        """Execute flowfile.display() should return a display output."""
+        """Execute ff_kernel.display() should return a display output."""
         resp = client.post(
             "/execute",
             json={
                 "node_id": 61,
-                "code": 'flowfile.display("hello")',
+                "code": 'ff_kernel.display("hello")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -675,12 +675,12 @@ class TestDisplayOutputs:
         assert data["display_outputs"][0]["data"] == "hello"
 
     def test_display_output_html(self, client: TestClient):
-        """Execute flowfile.display() with HTML should return HTML mime type."""
+        """Execute ff_kernel.display() with HTML should return HTML mime type."""
         resp = client.post(
             "/execute",
             json={
                 "node_id": 62,
-                "code": 'flowfile.display("<b>bold</b>")',
+                "code": 'ff_kernel.display("<b>bold</b>")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -698,7 +698,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 63,
-                "code": 'flowfile.display("data", title="My Chart")',
+                "code": 'ff_kernel.display("data", title="My Chart")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -716,9 +716,9 @@ class TestDisplayOutputs:
             json={
                 "node_id": 64,
                 "code": (
-                    'flowfile.display("first")\n'
-                    'flowfile.display("second")\n'
-                    'flowfile.display("third")\n'
+                    'ff_kernel.display("first")\n'
+                    'ff_kernel.display("second")\n'
+                    'ff_kernel.display("third")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -739,7 +739,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 65,
-                "code": 'flowfile.display("from first call")',
+                "code": 'ff_kernel.display("from first call")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -751,7 +751,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 66,
-                "code": 'flowfile.display("from second call")',
+                "code": 'ff_kernel.display("from second call")',
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -769,7 +769,7 @@ class TestDisplayOutputs:
             json={
                 "node_id": 67,
                 "code": (
-                    'flowfile.display("before error")\n'
+                    'ff_kernel.display("before error")\n'
                     'raise ValueError("oops")\n'
                 ),
                 "flow_id": 1,
@@ -900,7 +900,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("model", "flow1_model")',
+                "code": 'ff_kernel.publish_artifact("model", "flow1_model")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -912,7 +912,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("model", "flow2_model")',
+                "code": 'ff_kernel.publish_artifact("model", "flow2_model")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -925,7 +925,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = ff_kernel.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -938,7 +938,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = ff_kernel.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -953,7 +953,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("secret", "hidden")',
+                "code": 'ff_kernel.publish_artifact("secret", "hidden")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -964,7 +964,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 2,
-                "code": 'flowfile.read_artifact("secret")',
+                "code": 'ff_kernel.read_artifact("secret")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -981,7 +981,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1v1")',
+                "code": 'ff_kernel.publish_artifact("model", "f1v1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -992,7 +992,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f2v1")',
+                "code": 'ff_kernel.publish_artifact("model", "f2v1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -1004,7 +1004,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1v2")',
+                "code": 'ff_kernel.publish_artifact("model", "f1v2")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -1017,7 +1017,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 99,
-                "code": 'v = flowfile.read_artifact("model"); print(v)',
+                "code": 'v = ff_kernel.read_artifact("model"); print(v)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,
@@ -1032,7 +1032,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 1,
-                "code": 'flowfile.publish_artifact("a", 1)',
+                "code": 'ff_kernel.publish_artifact("a", 1)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 10,
@@ -1042,7 +1042,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 2,
-                "code": 'flowfile.publish_artifact("b", 2)',
+                "code": 'ff_kernel.publish_artifact("b", 2)',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 20,
@@ -1065,7 +1065,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f1")',
+                "code": 'ff_kernel.publish_artifact("model", "f1")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 1,
@@ -1075,7 +1075,7 @@ class TestFlowIsolation:
             "/execute",
             json={
                 "node_id": 5,
-                "code": 'flowfile.publish_artifact("model", "f2")',
+                "code": 'ff_kernel.publish_artifact("model", "f2")',
                 "input_paths": {},
                 "output_dir": "",
                 "flow_id": 2,

@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import time
+import warnings
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -169,19 +170,19 @@ try:
     _mpl.use('Agg')
     import matplotlib.pyplot as _plt
     _original_show = _plt.show
-    def _flowfile_show(*args, **kwargs):
+    def _ff_kernel_show(*args, **kwargs):
         import matplotlib.pyplot as __plt
         for _fig_num in __plt.get_fignums():
-            flowfile.display(__plt.figure(_fig_num))
+            ff_kernel.display(__plt.figure(_fig_num))
         __plt.close('all')
-    _plt.show = _flowfile_show
+    _plt.show = _ff_kernel_show
 except ImportError:
     pass
 """
 
 
 def _maybe_wrap_last_expression(code: str) -> str:
-    """If the last statement is a bare expression, wrap it in flowfile.display().
+    """If the last statement is a bare expression, wrap it in ff_kernel.display().
 
     This provides Jupyter-like behavior where the result of the last expression
     is automatically displayed.
@@ -218,7 +219,32 @@ def _maybe_wrap_last_expression(code: str) -> str:
     prefix = "\n".join(lines[: last.lineno - 1])
     if prefix:
         prefix += "\n"
-    return prefix + f"flowfile.display({last_expr_text})\n"
+    return prefix + f"ff_kernel.display({last_expr_text})\n"
+
+
+class _DeprecatedFlowfileAlias:
+    """Proxy that warns on first use, then delegates to ff_kernel."""
+
+    def __init__(self, target):
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_warned", False)
+
+    def _warn_once(self):
+        if not object.__getattribute__(self, "_warned"):
+            warnings.warn(
+                "'flowfile' is deprecated in kernel scripts, use 'ff_kernel' instead",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            object.__setattr__(self, "_warned", True)
+
+    def __getattr__(self, name):
+        self._warn_once()
+        return getattr(object.__getattribute__(self, "_target"), name)
+
+    def __repr__(self):
+        self._warn_once()
+        return repr(object.__getattribute__(self, "_target"))
 
 
 class ExecuteRequest(BaseModel):
@@ -314,11 +340,12 @@ async def execute(request: ExecuteRequest):
         # Variables defined in one cell will be available in subsequent cells
         exec_globals = _get_namespace(request.flow_id)
 
-        # Always update flowfile reference (context changes between executions)
+        # Always update ff_kernel reference (context changes between executions)
         # Include __name__ and __builtins__ so classes defined in user code
         # get __module__ = "__main__" instead of "builtins", enabling cloudpickle
         # to serialize them correctly.
-        exec_globals["flowfile"] = flowfile_client
+        exec_globals["ff_kernel"] = flowfile_client
+        exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
 

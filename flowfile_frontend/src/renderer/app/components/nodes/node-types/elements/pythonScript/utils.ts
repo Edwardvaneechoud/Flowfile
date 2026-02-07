@@ -2,11 +2,11 @@ import type { NodePythonScript, PythonScriptInput } from "../../../../../types/n
 
 export const DEFAULT_PYTHON_SCRIPT_CODE = `import polars as pl
 
-df = flowfile.read_input()
+df = ff_kernel.read_input()
 
 # Your transformation here
 
-flowfile.publish_output(df)
+ff_kernel.publish_output(df)
 `;
 
 export const createPythonScriptNode = (
