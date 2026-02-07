@@ -32,7 +32,9 @@
         :key="child.id"
         :node="child"
         :selected-flow-id="selectedFlowId"
+        :selected-artifact-id="selectedArtifactId"
         @select-flow="$emit('selectFlow', $event)"
+        @select-artifact="$emit('selectArtifact', $event)"
         @toggle-favorite="$emit('toggleFavorite', $event)"
         @toggle-follow="$emit('toggleFollow', $event)"
         @register-flow="$emit('registerFlow', $event)"
@@ -71,6 +73,19 @@
           ></span>
         </div>
       </div>
+
+      <!-- Artifacts under this namespace -->
+      <div
+        v-for="artifact in node.artifacts"
+        :key="'a-' + artifact.id"
+        class="tree-artifact"
+        :class="{ selected: selectedArtifactId === artifact.id }"
+        @click.stop="$emit('selectArtifact', artifact.id)"
+      >
+        <i class="fa-solid fa-cube artifact-icon"></i>
+        <span class="artifact-name">{{ artifact.name }}</span>
+        <span class="artifact-version">v{{ artifact.version }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -82,10 +97,12 @@ import type { NamespaceTree } from "../../types";
 const props = defineProps<{
   node: NamespaceTree;
   selectedFlowId: number | null;
+  selectedArtifactId: number | null;
 }>();
 
 defineEmits<{
   selectFlow: [id: number];
+  selectArtifact: [id: number];
   toggleFavorite: [id: number];
   toggleFollow: [id: number];
   registerFlow: [namespaceId: number];
@@ -107,9 +124,9 @@ watch(() => props.selectedFlowId, (flowId) => {
 });
 
 const totalFlows = computed(() => {
-  let count = props.node.flows.length;
+  let count = props.node.flows.length + (props.node.artifacts?.length ?? 0);
   for (const child of props.node.children) {
-    count += child.flows.length;
+    count += child.flows.length + (child.artifacts?.length ?? 0);
   }
   return count;
 });
@@ -269,5 +286,50 @@ const totalFlows = computed(() => {
   font-size: 11px;
   color: #f59e0b;
   flex-shrink: 0;
+}
+
+/* ========== Artifact Items ========== */
+.tree-artifact {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-artifact:hover {
+  background: var(--color-background-hover);
+}
+
+.tree-artifact.selected {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+}
+
+.tree-artifact .artifact-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.tree-artifact .artifact-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artifact-version {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-background-tertiary);
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 18px;
+  flex-shrink: 0;
+  font-family: monospace;
 }
 </style>

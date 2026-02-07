@@ -46,7 +46,9 @@
               :key="node.id"
               :node="node"
               :selected-flow-id="catalogStore.selectedFlowId"
-              @select-flow="catalogStore.selectFlow($event)"
+              :selected-artifact-id="catalogStore.selectedArtifactId"
+              @select-flow="selectFlow($event)"
+              @select-artifact="selectArtifact($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-follow="catalogStore.toggleFollow($event)"
               @register-flow="openRegisterFlow($event)"
@@ -114,6 +116,11 @@
           @close="catalogStore.selectedRunId = null; catalogStore.selectedRunDetail = null"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
+        />
+        <!-- Artifact detail view -->
+        <ArtifactDetailPanel
+          v-else-if="catalogStore.selectedArtifact"
+          :artifact="catalogStore.selectedArtifact"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -212,6 +219,7 @@ import { FlowApi } from "../../api/flow.api";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
+import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
@@ -272,6 +280,16 @@ const registerFlowNamespaceId = ref<number | null>(null);
 const newFlowName = ref("");
 const newFlowPath = ref("");
 const newFlowDesc = ref("");
+
+function selectFlow(flowId: number) {
+  catalogStore.clearArtifactSelection();
+  catalogStore.selectFlow(flowId);
+}
+
+function selectArtifact(artifactId: number) {
+  catalogStore.selectedFlowId = null;
+  catalogStore.selectArtifact(artifactId);
+}
 
 function openCreateSchema(parentId: number) {
   createSchemaParentId.value = parentId;
