@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits } from "vue";
+import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits, watch } from "vue";
 import {
   VueFlow,
   NodeTypesObject,
@@ -145,13 +145,14 @@ const loadFlow = async () => {
   await importFlow(vueFlowInput);
   await nextTick();
   restoreViewport();
-  // Fetch history state after loading flow
+  // Fetch history state and artifact data after loading flow
   try {
     const historyState = await FlowApi.getHistoryStatus(flowStore.flowId);
     flowStore.updateHistoryState(historyState);
   } catch (error) {
     console.error("Failed to fetch history state:", error);
   }
+  flowStore.fetchArtifacts();
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -536,6 +537,16 @@ onMounted(async () => {
 
   nodeStore.setVueFlowInstance(instance);
   loadFlow();
+
+  // Refresh artifact data when flow execution completes
+  watch(
+    () => editorStore.isRunning,
+    (running, wasRunning) => {
+      if (!running && wasRunning) {
+        flowStore.fetchArtifacts();
+      }
+    },
+  );
 });
 
 onUnmounted(() => {

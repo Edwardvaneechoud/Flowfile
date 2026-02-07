@@ -1750,3 +1750,107 @@ def test_fetch_before_run_debug():
 
     assert len(example_data_after_run) > 0, "There should be data after fetch operation"
 
+
+# ---------------------------------------------------------------------------
+# FlowGraph — ArtifactContext integration
+# ---------------------------------------------------------------------------
+
+
+class TestFlowGraphArtifactContext:
+    """Tests for ArtifactContext integration on FlowGraph."""
+
+    def test_flowgraph_has_artifact_context(self):
+        """FlowGraph initializes with an ArtifactContext."""
+        from flowfile_core.flowfile.artifacts import ArtifactContext
+
+        graph = create_graph()
+        assert hasattr(graph, "artifact_context")
+        assert isinstance(graph.artifact_context, ArtifactContext)
+
+    def test_get_upstream_node_ids_direct(self):
+        """Returns direct upstream dependencies."""
+        data = [{"a": 1}]
+        graph = create_graph()
+        add_manual_input(graph, data, node_id=1)
+        # Add node 2 depending on node 1
+        node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type="sample")
+        graph.add_node_promise(node_promise)
+        graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=2, depending_on_id=1))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        upstream = graph._get_upstream_node_ids(2)
+        assert 1 in upstream
+
+    def test_get_upstream_node_ids_transitive(self):
+        """Returns transitive upstream dependencies (1 -> 2 -> 3)."""
+        data = [{"a": 1}]
+        graph = create_graph()
+        add_manual_input(graph, data, node_id=1)
+
+        # Node 2 depends on 1
+        node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="sample")
+        graph.add_node_promise(node_promise_2)
+        graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=2, depending_on_id=1))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        # Node 3 depends on 2
+        node_promise_3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type="sample")
+        graph.add_node_promise(node_promise_3)
+        graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=3, depending_on_id=2))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+        upstream = graph._get_upstream_node_ids(3)
+        assert 1 in upstream
+        assert 2 in upstream
+
+    def test_get_upstream_node_ids_unknown_returns_empty(self):
+        """Unknown node returns empty list."""
+        graph = create_graph()
+        assert graph._get_upstream_node_ids(999) == []
+
+    def test_get_required_kernel_ids_no_python_nodes(self):
+        """Returns empty set when no python_script nodes exist."""
+        data = [{"a": 1}]
+        graph = create_graph()
+        add_manual_input(graph, data, node_id=1)
+        assert graph._get_required_kernel_ids() == set()
+
+    def test_get_required_kernel_ids_with_python_nodes(self):
+        """Returns kernel IDs from python_script nodes."""
+        data = [{"a": 1}]
+        graph = create_graph()
+        add_manual_input(graph, data, node_id=1)
+
+        node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+        graph.add_node_promise(node_promise)
+        graph.add_python_script(
+            input_schema.NodePythonScript(
+                flow_id=1,
+                node_id=2,
+                depending_on_id=1,
+                python_script_input=input_schema.PythonScriptInput(
+                    code='print("hi")',
+                    kernel_id="ml_kernel",
+                ),
+            )
+        )
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        assert "ml_kernel" in graph._get_required_kernel_ids()
+
+    def test_run_graph_clears_artifact_context(self):
+        """Artifact context is cleared at flow start."""
+        data = [{"a": 1}]
+        graph = create_graph()
+        add_manual_input(graph, data, node_id=1)
+
+        # Pre-populate artifact_context
+        graph.artifact_context.record_published(99, "test", [{"name": "old"}])
+        assert len(graph.artifact_context.get_published_by_node(99)) == 1
+
+        # Run graph
+        graph.run_graph()
+
+        # Context should be cleared
+        assert graph.artifact_context.get_published_by_node(99) == []
+

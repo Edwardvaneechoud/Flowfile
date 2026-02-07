@@ -529,6 +529,44 @@ def test_get_node_data_not_run():
     assert node_data_parsed.main_output.data == [], "Node data should be empty"
 
 
+def test_python_script_node_data_before_run():
+    """Opening a python_script node before running should return instantly
+    with a predicted schema from the input, not trigger execution."""
+    flow_id = create_flow_with_manual_input()  # node 1: manual_input with columns ['name', 'city']
+
+    # Add python_script node
+    add_node(flow_id, 2, node_type='python_script', pos_x=200, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(flow_id, connection)
+
+    # Configure python_script with some code
+    settings = input_schema.NodePythonScript(
+        flow_id=flow_id,
+        node_id=2,
+        pos_x=200,
+        pos_y=0,
+        depending_on_ids=[1],
+        python_script_input=input_schema.PythonScriptInput(
+            code='df = flowfile.read_input()\nflowfile.publish_output(df)',
+            kernel_id='some-kernel',
+        ),
+    )
+    r = client.post("/update_settings/", json=settings.model_dump(), params={"node_type": "python_script"})
+    assert r.status_code == 200
+
+    # Request node data — this is what the frontend does when you click the node
+    response = client.get("/node", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200
+
+    node_data = output_model.NodeData(**response.json())
+
+    # The predicted schema should include the input columns (name, city)
+    assert node_data.main_output is not None
+    assert node_data.main_output.columns == ['name', 'city'], 'Predicted schema should pass through input columns'
+    # Data should be empty since node hasn't run
+    assert node_data.main_output.data == [], "Node data should be empty before run"
+
+
 def test_get_node_data_after_run():
     flow_id = create_flow_with_manual_input()
     flow = flow_file_handler.get_flow(flow_id)
@@ -547,6 +585,47 @@ def test_get_node_data_after_run():
                                                  {'name': 'Jane', 'city': 'Los Angeles'},
                                                  {'name': 'Edward', 'city': 'Chicago'},
                                                  {'name': 'Courtney', 'city': 'Chicago'}], "Node data should be filled"
+
+
+def test_node_upstream_ids_two_independent_chains():
+    """The /flow/node_upstream_ids endpoint should return only
+    transitive upstream node IDs, not nodes from independent chains."""
+    flow_id = ensure_clean_flow()
+
+    # Chain A: node 1 (manual_input) → node 2 (select)
+    add_node_placeholder('manual_input', node_id=1, flow_id=flow_id)
+    input_file = input_schema.NodeManualInput(
+        flow_id=flow_id, node_id=1,
+        raw_data_format=input_schema.RawData.from_pylist([{'x': 1}]),
+    )
+    client.post("/update_settings/", json=input_file.model_dump(), params={"node_type": "manual_input"})
+    add_node(flow_id, 2, node_type='select', pos_x=200, pos_y=0)
+    connect_node(flow_id, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Chain B: node 3 (manual_input) → node 4 (select)
+    add_node_placeholder('manual_input', node_id=3, flow_id=flow_id)
+    input_file_b = input_schema.NodeManualInput(
+        flow_id=flow_id, node_id=3,
+        raw_data_format=input_schema.RawData.from_pylist([{'y': 2}]),
+    )
+    client.post("/update_settings/", json=input_file_b.model_dump(), params={"node_type": "manual_input"})
+    add_node(flow_id, 4, node_type='select', pos_x=400, pos_y=0)
+    connect_node(flow_id, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    # Node 2 should only see node 1 as upstream
+    r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 2})
+    assert r.status_code == 200
+    assert set(r.json()["upstream_node_ids"]) == {1}
+
+    # Node 4 should only see node 3 as upstream
+    r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 4})
+    assert r.status_code == 200
+    assert set(r.json()["upstream_node_ids"]) == {3}
+
+    # Start node (node 1) has no upstream
+    r = client.get("/flow/node_upstream_ids", params={"flow_id": flow_id, "node_id": 1})
+    assert r.status_code == 200
+    assert r.json()["upstream_node_ids"] == []
 
 
 def create_slow_flow() -> FlowId:

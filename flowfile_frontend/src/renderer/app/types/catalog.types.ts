@@ -19,6 +19,7 @@ export interface CatalogNamespace {
 export interface NamespaceTree extends CatalogNamespace {
   children: NamespaceTree[];
   flows: FlowRegistration[];
+  artifacts: GlobalArtifact[];
 }
 
 export interface NamespaceCreate {
@@ -51,6 +52,7 @@ export interface FlowRegistration {
   last_run_at: string | null;
   last_run_success: boolean | null;
   file_exists: boolean;
+  artifact_count: number;
 }
 
 export interface FlowRegistrationCreate {
@@ -92,6 +94,32 @@ export interface FlowRunDetail extends FlowRun {
 }
 
 // ============================================================================
+// Global Artifact
+// ============================================================================
+
+/** A global artifact stored in the catalog. */
+export interface GlobalArtifact {
+  id: number;
+  name: string;
+  version: number;
+  status: string; // "active" | "deleted"
+  description: string | null;
+  python_type: string | null;
+  python_module: string | null;
+  serialization_format: string | null; // "pickle" | "joblib" | "parquet"
+  size_bytes: number | null;
+  sha256: string | null;
+  tags: string[];
+  namespace_id: number | null;
+  source_registration_id: number | null;
+  source_flow_id: number | null;
+  source_node_id: number | null;
+  owner_id: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+// ============================================================================
 // Catalog Stats
 // ============================================================================
 
@@ -100,6 +128,7 @@ export interface CatalogStats {
   total_flows: number;
   total_runs: number;
   total_favorites: number;
+  total_artifacts: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];
 }

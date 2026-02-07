@@ -140,5 +140,6 @@ class Status(BaseModel):
 class RawLogInput(BaseModel):
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None

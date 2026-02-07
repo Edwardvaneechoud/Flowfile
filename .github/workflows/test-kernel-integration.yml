@@ -1,0 +1,91 @@
+name: Kernel Integration Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'kernel_runtime/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/flowfile_core/artifacts/**'
+      - 'flowfile_core/tests/flowfile/test_kernel*.py'
+      - 'flowfile_core/tests/flowfile/test_global_artifacts*.py'
+      - 'flowfile_core/tests/kernel_fixtures.py'
+      - '.github/workflows/test-kernel-integration.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'kernel_runtime/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/flowfile_core/artifacts/**'
+      - 'flowfile_core/tests/flowfile/test_kernel*.py'
+      - 'flowfile_core/tests/flowfile/test_global_artifacts*.py'
+      - 'flowfile_core/tests/kernel_fixtures.py'
+      - '.github/workflows/test-kernel-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  kernel-tests:
+    name: Kernel Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Build kernel Docker image
+        run: |
+          docker build -t flowfile-kernel -f kernel_runtime/Dockerfile kernel_runtime/
+          docker images | grep flowfile-kernel
+
+      - name: Run kernel integration tests
+        run: |
+          poetry run pytest flowfile_core/tests -m kernel -vv --tb=long --log-cli-level=INFO
+        timeout-minutes: 20
+        env:
+          # Set test mode to avoid conflicts
+          TEST_MODE: "1"
+          # Generate internal token for kernel <-> Core auth
+          FLOWFILE_INTERNAL_TOKEN: ${{ github.run_id }}-test-token
+
+      - name: Clean up Docker resources
+        if: always()
+        run: |
+          # Remove kernel containers
+          docker ps -a --filter "name=flowfile-kernel" -q | xargs -r docker rm -f
+          # Remove kernel image
+          docker images --filter "reference=flowfile-kernel" -q | xargs -r docker rmi -f || true
+          # Prune
+          docker system prune -f
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker containers ==="
+          docker ps -a
+          echo ""
+          echo "=== Kernel container logs ==="
+          docker ps -a --filter "name=flowfile-kernel" --format "{{.Names}}" | while read name; do
+            echo "--- Logs for $name ---"
+            docker logs "$name" 2>&1 || true
+          done
