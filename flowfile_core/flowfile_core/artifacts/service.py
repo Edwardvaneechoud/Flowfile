@@ -277,9 +277,10 @@ class ArtifactService:
         """
         query = self.db.query(GlobalArtifact).filter_by(
             name=name,
-            namespace_id=namespace_id,
             status="active",
         )
+        if namespace_id is not None:
+            query = query.filter_by(namespace_id=namespace_id)
 
         if version is not None:
             artifact = query.filter_by(version=version).first()
@@ -327,23 +328,17 @@ class ArtifactService:
             ArtifactNotFoundError: If artifact doesn't exist.
         """
         # Get latest version
-        latest = (
-            self.db.query(GlobalArtifact)
-            .filter_by(name=name, namespace_id=namespace_id, status="active")
-            .order_by(GlobalArtifact.version.desc())
-            .first()
-        )
+        query = self.db.query(GlobalArtifact).filter_by(name=name, status="active")
+        if namespace_id is not None:
+            query = query.filter_by(namespace_id=namespace_id)
+
+        latest = query.order_by(GlobalArtifact.version.desc()).first()
 
         if not latest:
             raise ArtifactNotFoundError(name=name)
 
         # Get all versions
-        versions = (
-            self.db.query(GlobalArtifact)
-            .filter_by(name=name, namespace_id=namespace_id, status="active")
-            .order_by(GlobalArtifact.version.desc())
-            .all()
-        )
+        versions = query.order_by(GlobalArtifact.version.desc()).all()
 
         version_infos = [
             ArtifactVersionInfo(
@@ -508,12 +503,10 @@ class ArtifactService:
         Raises:
             ArtifactNotFoundError: If no artifacts found.
         """
-        artifacts = (
-            self.db.query(GlobalArtifact)
-            .filter_by(name=name, namespace_id=namespace_id)
-            .filter(GlobalArtifact.status != "deleted")
-            .all()
-        )
+        query = self.db.query(GlobalArtifact).filter_by(name=name).filter(GlobalArtifact.status != "deleted")
+        if namespace_id is not None:
+            query = query.filter_by(namespace_id=namespace_id)
+        artifacts = query.all()
 
         if not artifacts:
             raise ArtifactNotFoundError(name=name)
