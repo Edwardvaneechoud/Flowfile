@@ -62,6 +62,7 @@ services:
     volumes:
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
+      - flowfile-kernel-shared:/shared
     networks:
       - flowfile-network
 

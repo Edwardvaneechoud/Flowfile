@@ -1156,6 +1156,10 @@ class FlowGraph:
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
+            # Clean output directory to prevent stale files from previous runs
+            for stale_file in Path(output_dir).glob("*.parquet"):
+                stale_file.unlink()
+
             # Write inputs to parquet — supports N inputs under "main"
             input_paths: dict[str, list[str]] = {}
             main_paths: list[str] = []
