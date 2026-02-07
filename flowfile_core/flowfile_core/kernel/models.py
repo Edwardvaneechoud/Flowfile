@@ -65,24 +65,28 @@ class ExecuteRequest(BaseModel):
     source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
+    internal_token: str | None = None  # Core→kernel auth token for artifact API calls
 
 
 class ClearNodeArtifactsRequest(BaseModel):
     """Request to selectively clear artifacts owned by specific node IDs."""
+
     node_ids: list[int]
     flow_id: int | None = None
 
 
 class ClearNodeArtifactsResult(BaseModel):
     """Result of a selective artifact clear operation."""
+
     status: str = "cleared"
     removed: list[str] = Field(default_factory=list)
 
 
 class DisplayOutput(BaseModel):
     """A single display output from code execution."""
+
     mime_type: str  # "image/png", "text/html", "text/plain"
-    data: str       # base64 for images, raw HTML for text/html, plain text otherwise
+    data: str  # base64 for images, raw HTML for text/html, plain text otherwise
     title: str = ""
 
 
@@ -113,12 +117,14 @@ class RecoveryStatus(BaseModel):
 
 class ArtifactIdentifier(BaseModel):
     """Identifies a specific artifact by flow_id and name."""
+
     flow_id: int
     name: str
 
 
 class CleanupRequest(BaseModel):
     """Request to clean up old persisted artifacts."""
+
     max_age_hours: float | None = None
     artifact_names: list[ArtifactIdentifier] | None = Field(
         default=None,
@@ -133,6 +139,7 @@ class CleanupResult(BaseModel):
 
 class ArtifactPersistenceInfo(BaseModel):
     """Persistence configuration and stats for a kernel."""
+
     enabled: bool
     recovery_mode: str = "lazy"
     kernel_id: str | None = None

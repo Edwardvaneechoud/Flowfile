@@ -7,6 +7,7 @@ import type {
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
+  GlobalArtifact,
   NamespaceTree,
 } from "../types";
 
@@ -20,6 +21,10 @@ interface CatalogState {
   selectedFlowId: number | null;
   selectedRunId: number | null;
   selectedRunDetail: FlowRunDetail | null;
+  selectedArtifactId: number | null;
+  selectedArtifact: GlobalArtifact | null;
+  flowArtifacts: GlobalArtifact[];
+  loadingArtifacts: boolean;
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -36,6 +41,10 @@ export const useCatalogStore = defineStore("catalog", {
     selectedFlowId: null,
     selectedRunId: null,
     selectedRunDetail: null,
+    selectedArtifactId: null,
+    selectedArtifact: null,
+    flowArtifacts: [],
+    loadingArtifacts: false,
     activeTab: "catalog",
     loading: false,
     error: null,
@@ -145,12 +154,52 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    async loadFlowArtifacts(registrationId: number) {
+      this.loadingArtifacts = true;
+      try {
+        this.flowArtifacts = await CatalogApi.getFlowArtifacts(registrationId);
+      } catch {
+        this.flowArtifacts = [];
+      } finally {
+        this.loadingArtifacts = false;
+      }
+    },
+
+    selectArtifact(artifactId: number) {
+      this.selectedArtifactId = artifactId;
+      this.selectedArtifact =
+        this.flowArtifacts.find((a) => a.id === artifactId) ??
+        this.findArtifactInTree(artifactId) ??
+        null;
+    },
+
+    clearArtifactSelection() {
+      this.selectedArtifactId = null;
+      this.selectedArtifact = null;
+    },
+
+    /** Walk the namespace tree to find an artifact by ID. */
+    findArtifactInTree(artifactId: number): GlobalArtifact | null {
+      for (const cat of this.tree) {
+        for (const a of cat.artifacts) {
+          if (a.id === artifactId) return a;
+        }
+        for (const schema of cat.children) {
+          for (const a of schema.artifacts) {
+            if (a.id === artifactId) return a;
+          }
+        }
+      }
+      return null;
+    },
+
     selectFlow(flowId: number | null) {
       this.selectedFlowId = flowId;
       this.selectedRunId = null;
       this.selectedRunDetail = null;
       if (flowId !== null) {
         this.loadRuns(flowId);
+        this.loadFlowArtifacts(flowId);
       }
     },
 
