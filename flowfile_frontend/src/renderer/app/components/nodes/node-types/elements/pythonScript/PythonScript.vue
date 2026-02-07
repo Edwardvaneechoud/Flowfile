@@ -175,6 +175,7 @@ import type { NodePythonScript, NotebookCell } from "../../../../../types/node.t
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
+import { FlowApi } from "../../../../../api/flow.api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
@@ -272,7 +273,17 @@ const loadArtifacts = async () => {
 
   artifactsLoading.value = true;
   try {
-    const response = await KernelApi.getArtifacts(kernelId);
+    const flowId = nodePythonScript.value?.flow_id;
+    const currentNodeId = nodePythonScript.value?.node_id;
+
+    // Fetch kernel artifacts and upstream node IDs in parallel
+    const [response, upstreamIds] = await Promise.all([
+      KernelApi.getArtifacts(kernelId),
+      flowId != null && currentNodeId != null
+        ? FlowApi.getNodeUpstreamIds(Number(flowId), currentNodeId)
+        : Promise.resolve([] as number[]),
+    ]);
+
     // The kernel /artifacts endpoint returns a dict of artifact name -> metadata
     // Each entry has: type_name, module, node_id, created_at, size_bytes
     const allArtifacts: ArtifactInfo[] = Object.entries(response).map(
@@ -283,17 +294,18 @@ const loadArtifacts = async () => {
       }),
     );
 
-    // Split artifacts: "available" = published by other nodes, "published" = by this node
-    const currentNodeId = nodePythonScript.value?.node_id;
+    // Use the DAG-aware upstream set to filter available artifacts.
+    // Only artifacts published by actual upstream nodes are reachable.
+    const upstreamSet = new Set(upstreamIds);
     if (currentNodeId != null) {
       availableArtifacts.value = allArtifacts.filter(
-        (a) => a.node_id !== currentNodeId,
+        (a) => a.node_id != null && upstreamSet.has(a.node_id),
       );
       publishedArtifacts.value = allArtifacts.filter(
         (a) => a.node_id === currentNodeId,
       );
     } else {
-      availableArtifacts.value = allArtifacts;
+      availableArtifacts.value = [];
       publishedArtifacts.value = [];
     }
   } catch {

@@ -1082,6 +1082,19 @@ def get_flow_artifacts(flow_id: int):
     }
 
 
+@router.get('/flow/node_upstream_ids', tags=['editor'])
+def get_node_upstream_ids(flow_id: int, node_id: int):
+    """Return the transitive upstream node IDs for a given node.
+
+    Used by the frontend to determine which artifacts are actually
+    reachable (via the DAG) from a specific python_script node.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    return {"upstream_node_ids": flow._get_upstream_node_ids(node_id)}
+
+
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)
 def get_graphic_walker_input(flow_id: int, node_id: int):
     """Gets the data and configuration for the Graphic Walker data exploration tool."""
