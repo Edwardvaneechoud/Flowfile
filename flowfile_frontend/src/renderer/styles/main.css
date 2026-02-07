@@ -515,10 +515,12 @@ button {
 .cm-editor {
   background-color: var(--color-background-secondary) !important;
   color: var(--color-text-primary) !important;
+  cursor: default !important;
 }
 
 .cm-editor .cm-content {
   caret-color: var(--color-text-primary) !important;
+  cursor: text !important;
 }
 
 .cm-editor .cm-cursor,
