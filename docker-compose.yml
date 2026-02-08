@@ -74,8 +74,8 @@ services:
   #   docker compose build flowfile-kernel
   flowfile-kernel:
     build:
-      context: .
-      dockerfile: kernel_runtime/Dockerfile
+      context: kernel_runtime
+      dockerfile: Dockerfile
     image: flowfile-kernel
     entrypoint: ["true"]
     restart: "no"
