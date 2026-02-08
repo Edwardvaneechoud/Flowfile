@@ -1236,7 +1236,10 @@ class FlowGraph:
                     artifact_names=result.artifacts_deleted,
                 )
 
-            # Read output
+            # Read output — eagerly load into memory rather than using
+            # pl.scan_parquet (lazy).  The output lives on a Docker shared
+            # volume which may become inaccessible by the time the lazy frame
+            # is materialised during "store sample".
             output_path = os.path.join(output_dir, "main.parquet")
             output_exists = os.path.exists(output_path)
             node_logger.info(
@@ -1244,7 +1247,8 @@ class FlowGraph:
                 f"output_dir contents={os.listdir(output_dir) if os.path.isdir(output_dir) else 'N/A'}"
             )
             if output_exists:
-                return FlowDataEngine(pl.scan_parquet(output_path))
+                df = pl.read_parquet(output_path)
+                return FlowDataEngine(df.lazy())
 
             # No output published, pass through first input
             return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
