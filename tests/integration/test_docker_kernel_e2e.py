@@ -275,3 +275,7 @@ class TestDockerKernelE2E:
         assert "predicted_y" in node3_columns, (
             f"predicted_y column not found in node 3 schema. Columns: {node3_columns}"
         )
+
+
+if __name__ == "__main__":
+    pytest.main(["-m", "docker_integration", "-v", __file__])

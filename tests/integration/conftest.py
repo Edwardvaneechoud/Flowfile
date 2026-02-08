@@ -36,7 +36,9 @@ def _is_port_free(port: int) -> bool:
 
 
 def _compose(*args: str, env: dict | None = None, timeout: int = 300) -> subprocess.CompletedProcess:
+    breakpoint()
     merged_env = {**os.environ, **(env or {})}
+    breakpoint()
     return subprocess.run(
         ["docker", "compose", "-f", COMPOSE_FILE, *args],
         capture_output=True,
@@ -124,8 +126,9 @@ def compose_services():
     build_core = _compose("build", "flowfile-core", "flowfile-worker", timeout=600)
     if build_core.returncode != 0:
         pytest.skip(f"Could not build core/worker images:\n{build_core.stderr}")
-
+    breakpoint()
     build_kernel = _compose("--profile", "kernel", "build", "flowfile-kernel", timeout=600)
+    breakpoint()
     if build_kernel.returncode != 0:
         pytest.skip(f"Could not build kernel image:\n{build_kernel.stderr}")
 
