@@ -171,7 +171,7 @@ def _import_flow(client: httpx.Client) -> int:
     avoiding reliance on bind-mounted ``saved_flows`` directories.
     """
     flow_json_str = json.dumps(FLOW_JSON)
-
+    breakpoint()
     # Find the core container
     result = subprocess.run(
         ["docker", "compose", "-f", COMPOSE_FILE, "ps", "-q", "flowfile-core"],
@@ -223,6 +223,7 @@ class TestDockerKernelE2E:
         - Assert node 3's output contains a ``predicted_y`` column
         """
         # Step 8: import the flow
+        breakpoint()
         flow_id = _import_flow(auth_client)
 
         # Step 9: run the flow
