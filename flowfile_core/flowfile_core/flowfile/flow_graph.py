@@ -1153,6 +1153,11 @@ class FlowGraph:
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
 
+            node_logger.info(
+                f"[kernel] shared_base={shared_base}, input_dir={input_dir}, "
+                f"kernel_volume={manager._kernel_volume}, kernel_volume_type={manager._kernel_volume_type}"
+            )
+
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
             self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
@@ -1167,13 +1172,15 @@ class FlowGraph:
                 # This prevents "File must end with PAR1" errors from race conditions
                 with open(local_path, "rb") as f:
                     os.fsync(f.fileno())
+                file_size = os.path.getsize(local_path)
+                node_logger.info(f"[kernel] Wrote {local_path} ({file_size} bytes)")
                 main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
             input_paths["main"] = main_paths
 
             # Build the callback URL so the kernel can stream logs in real time.
             # In Docker-in-Docker mode the kernel is on the same Docker network
             # as core, so it can reach core by service name instead of host.docker.internal.
-            if os.environ.get("FLOWFILE_KERNEL_VOLUME"):
+            if manager._kernel_volume:
                 log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
             else:
                 log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
@@ -1231,7 +1238,12 @@ class FlowGraph:
 
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
-            if os.path.exists(output_path):
+            output_exists = os.path.exists(output_path)
+            node_logger.info(
+                f"[kernel] output_path={output_path}, exists={output_exists}, "
+                f"output_dir contents={os.listdir(output_dir) if os.path.isdir(output_dir) else 'N/A'}"
+            )
+            if output_exists:
                 return FlowDataEngine(pl.scan_parquet(output_path))
 
             # No output published, pass through first input
