@@ -173,6 +173,7 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
         self.kernel_id = kernel_id or "_default"
         self.input_var = "input_df" if analysis.input_mode == "single" else "inputs"
         self._last_output_expr: ast.expr | None = None
+        self._unsupported_markers: dict[str, str] = {}
         # Track which publish_output call is the last one
         if analysis.output_exprs:
             self._last_output_expr = analysis.output_exprs[-1]
@@ -285,6 +286,13 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
                 )
             return node
 
+        # Unsupported calls → replace with a marker that becomes a comment
+        if _is_flowfile_call(call):
+            source = ast.unparse(node.value)
+            marker = f"__FLOWFILE_UNSUPPORTED_{len(self._unsupported_markers)}__"
+            self._unsupported_markers[marker] = source
+            return ast.Expr(value=ast.Name(id=marker, ctx=ast.Load()))
+
         return node
 
     @staticmethod
@@ -344,7 +352,7 @@ def rewrite_flowfile_calls(
     code: str,
     analysis: FlowfileUsageAnalysis,
     kernel_id: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     """Rewrite flowfile.* API calls in user code to plain Python.
 
     This removes/replaces flowfile API calls but does NOT add function
@@ -357,7 +365,10 @@ def rewrite_flowfile_calls(
         kernel_id: The kernel ID for scoping artifact operations.
 
     Returns:
-        The rewritten source code with flowfile calls replaced.
+        Tuple of (rewritten source code, unsupported call markers dict).
+        Markers are placeholder variable names mapped to the original source
+        of unsupported flowfile calls. Callers should replace them with
+        comments after all AST processing is complete.
     """
     tree = ast.parse(code)
     rewriter = _FlowfileCallRewriter(analysis, kernel_id=kernel_id)
@@ -365,7 +376,9 @@ def rewrite_flowfile_calls(
     # Remove None nodes (deleted statements)
     new_tree.body = [node for node in new_tree.body if node is not None]
     ast.fix_missing_locations(new_tree)
-    return ast.unparse(new_tree)
+    result = ast.unparse(new_tree)
+
+    return result, rewriter._unsupported_markers
 
 
 def extract_imports(code: str) -> list[str]:
@@ -424,6 +437,7 @@ def build_function_code(
     analysis: FlowfileUsageAnalysis,
     input_vars: dict[str, str],
     kernel_id: str | None = None,
+    unsupported_markers: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Assemble rewritten code into a function definition and call.
 
@@ -434,6 +448,8 @@ def build_function_code(
         analysis: The flowfile usage analysis.
         input_vars: Mapping of input names to variable names from upstream nodes.
         kernel_id: The kernel ID (used to scope return expressions).
+        unsupported_markers: Marker→source mapping from rewrite_flowfile_calls.
+            These are replaced with comments in the final output.
 
     Returns:
         Tuple of (function_definition, call_code).
@@ -517,6 +533,11 @@ def build_function_code(
     # Assemble function definition
     indented_body = textwrap.indent("\n".join(body_lines), "    ")
     func_def = f"def {func_name}({param_str}) -> {return_type}:\n{indented_body}"
+
+    # Replace unsupported-call markers with comments
+    if unsupported_markers:
+        for marker, source in unsupported_markers.items():
+            func_def = func_def.replace(marker, f"# {source}  # not supported outside kernel runtime")
 
     # Build call
     arg_str = ", ".join(args)

@@ -164,28 +164,28 @@ class TestRewriteFlowfileCalls:
     def test_read_input_replaced(self):
         code = "df = flowfile.read_input()"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "flowfile" not in result
         assert "input_df" in result
 
     def test_read_input_with_collect(self):
         code = "df = flowfile.read_input().collect()"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "flowfile" not in result
         assert "input_df.collect()" in result
 
     def test_read_inputs_replaced(self):
         code = 'dfs = flowfile.read_inputs()\ndf = dfs["main"]'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "flowfile" not in result
         assert "inputs" in result
 
     def test_publish_output_removed(self):
         code = "x = 1\nflowfile.publish_output(df)\ny = 2"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "publish_output" not in result
         assert "x = 1" in result
         assert "y = 2" in result
@@ -193,7 +193,7 @@ class TestRewriteFlowfileCalls:
     def test_publish_artifact_becomes_assignment(self):
         code = 'flowfile.publish_artifact("model", clf)'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
         assert "k1" in result
@@ -202,7 +202,7 @@ class TestRewriteFlowfileCalls:
     def test_read_artifact_becomes_subscript(self):
         code = 'model = flowfile.read_artifact("model")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
         assert "k1" in result
@@ -211,7 +211,7 @@ class TestRewriteFlowfileCalls:
     def test_delete_artifact_becomes_del(self):
         code = 'flowfile.delete_artifact("model")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "del _artifacts" in result
         assert "k1" in result
@@ -219,7 +219,7 @@ class TestRewriteFlowfileCalls:
     def test_list_artifacts_becomes_kernel_dict(self):
         code = "arts = flowfile.list_artifacts()"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
         assert "flowfile" not in result
         assert "_artifacts" in result
         assert "k1" in result
@@ -227,50 +227,61 @@ class TestRewriteFlowfileCalls:
     def test_default_kernel_id_when_none(self):
         code = 'flowfile.publish_artifact("model", clf)'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id=None)
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id=None)
         assert "_default" in result
 
     def test_artifacts_scoped_to_kernel(self):
         """Verify artifact access includes the kernel_id key."""
         code = 'model = flowfile.read_artifact("model")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis, kernel_id="my_kernel")
+        result, _ = rewrite_flowfile_calls(code, analysis, kernel_id="my_kernel")
         assert "my_kernel" in result
         assert "model" in result
 
     def test_log_becomes_print(self):
         code = 'flowfile.log("hello")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "print" in result
         assert "flowfile" not in result
 
     def test_log_with_level_becomes_print(self):
         code = 'flowfile.log("hello", "ERROR")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "print" in result
 
     def test_log_info_becomes_print(self):
         code = 'flowfile.log_info("processing")'
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "print" in result
         assert "INFO" in result
 
     def test_non_flowfile_code_unchanged(self):
         code = "x = 1 + 2\ny = x * 3"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "x = 1 + 2" in result
         assert "y = x * 3" in result
 
     def test_chained_collect(self):
         code = "df = flowfile.read_input().collect()\nresult = df.select(['a'])"
         analysis = analyze_flowfile_usage(code)
-        result = rewrite_flowfile_calls(code, analysis)
+        result, _ = rewrite_flowfile_calls(code, analysis)
         assert "input_df.collect()" in result
         assert "result = df.select" in result
+
+    def test_unsupported_call_returns_marker(self):
+        """Unsupported calls should produce markers for comment replacement."""
+        code = "flowfile.publish_global('model', obj)\nx = 1"
+        analysis = analyze_flowfile_usage(code)
+        result, markers = rewrite_flowfile_calls(code, analysis)
+        assert len(markers) == 1
+        marker = list(markers.keys())[0]
+        assert marker in result
+        source = list(markers.values())[0]
+        assert "publish_global" in source
 
 
 # ---------------------------------------------------------------------------

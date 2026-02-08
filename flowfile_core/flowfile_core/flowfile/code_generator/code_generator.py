@@ -1183,11 +1183,12 @@ class FlowGraphToPolarsConverter:
             self._add_kernel_requirements(kernel_id, user_imports)
 
         # 6. Rewrite the code (kernel_id scopes artifact access)
-        rewritten = rewrite_flowfile_calls(code, analysis, kernel_id=kernel_id)
+        rewritten, unsupported_markers = rewrite_flowfile_calls(code, analysis, kernel_id=kernel_id)
 
         # 7. Build and emit the function
         func_def, call_code = build_function_code(
-            node_id, rewritten, analysis, input_vars, kernel_id=kernel_id
+            node_id, rewritten, analysis, input_vars,
+            kernel_id=kernel_id, unsupported_markers=unsupported_markers,
         )
 
         self._add_code(f"# --- Node {node_id}: python_script ---")
