@@ -1,5 +1,3 @@
-import os
-
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import (
     ArtifactIdentifier,
@@ -49,11 +47,10 @@ def get_kernel_manager() -> KernelManager:
     if _manager is None:
         from shared.storage_config import storage
 
-        if os.environ.get("FLOWFILE_MODE") == "docker":
-            # In Docker mode the kernel shared named volume is mounted at
-            # the same path as storage.shared_directory (typically /shared).
-            shared_path = str(storage.shared_directory)
-        else:
-            shared_path = str(storage.temp_directory / "kernel_shared")
+        # Use a sub-directory of the standard temp/internal_storage tree.
+        # In Docker mode this resolves to /app/internal_storage/temp/kernel_shared
+        # which is on the flowfile-internal-storage volume already shared
+        # between core, worker, and (via KernelManager) kernel containers.
+        shared_path = str(storage.temp_directory / "kernel_shared")
         _manager = KernelManager(shared_volume_path=shared_path)
     return _manager

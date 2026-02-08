@@ -1174,7 +1174,7 @@ class FlowGraph:
                     os.fsync(f.fileno())
                 file_size = os.path.getsize(local_path)
                 node_logger.info(f"[kernel] Wrote {local_path} ({file_size} bytes)")
-                main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
+                main_paths.append(manager.to_kernel_path(local_path))
             input_paths["main"] = main_paths
 
             # Build the callback URL so the kernel can stream logs in real time.
@@ -1201,7 +1201,7 @@ class FlowGraph:
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
-                output_dir=f"/shared/{flow_id}/{node_id}/outputs",
+                output_dir=manager.to_kernel_path(output_dir),
                 flow_id=flow_id,
                 source_registration_id=reg_id,
                 log_callback_url=log_callback_url,

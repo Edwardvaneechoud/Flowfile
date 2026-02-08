@@ -146,19 +146,16 @@ class FlowfileStorage:
 
     @property
     def shared_directory(self) -> Path:
-        """Directory shared between core and kernel containers.
+        """Directory shared between core, worker, and kernel containers.
 
-        In Docker mode, this maps to /shared inside containers.
-        In local mode, this is ~/.flowfile/shared on the host.
+        Lives under internal storage so it's on the same volume that
+        core and worker already share (flowfile-internal-storage).
         Can be overridden via FLOWFILE_SHARED_DIR environment variable.
         """
         shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
         if shared_dir:
             return Path(shared_dir)
-        if _is_docker_mode():
-            return Path("/shared")
-        else:
-            return self.base_directory / "shared"
+        return self.temp_directory / "kernel_shared"
 
     @property
     def global_artifacts_directory(self) -> Path:
@@ -172,11 +169,8 @@ class FlowfileStorage:
         shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
         if shared_dir:
             return Path(shared_dir) / "global_artifacts"
-        if _is_docker_mode():
-            return self.user_data_directory / "global_artifacts"
-        else:
-            # Must match KernelManager default shared volume path
-            return self.temp_directory / "kernel_shared" / "global_artifacts"
+        # Must match KernelManager default shared volume path
+        return self.temp_directory / "kernel_shared" / "global_artifacts"
 
     @property
     def artifact_staging_directory(self) -> Path:
@@ -189,10 +183,7 @@ class FlowfileStorage:
         shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
         if shared_dir:
             return Path(shared_dir) / "artifact_staging"
-        if _is_docker_mode():
-            return Path("/shared") / "artifact_staging"
-        else:
-            return self.temp_directory / "kernel_shared" / "artifact_staging"
+        return self.temp_directory / "kernel_shared" / "artifact_staging"
 
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
