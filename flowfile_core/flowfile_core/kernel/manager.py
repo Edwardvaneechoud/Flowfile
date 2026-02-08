@@ -176,6 +176,27 @@ class KernelManager:
         # Local mode: host shared_volume → /shared inside kernel
         return local_path.replace(self._shared_volume, "/shared", 1)
 
+    def normalize_frontend_paths(self, request: "ExecuteRequest") -> None:
+        """Translate ``/shared/`` paths from the frontend to kernel-visible paths.
+
+        The frontend always constructs input/output paths with a ``/shared/``
+        prefix (the convention for local mode where the host dir is bind-mounted
+        at ``/shared``).  In Docker-in-Docker mode the volume is mounted at the
+        same absolute path as the core, so we replace the ``/shared/`` prefix
+        with ``self._shared_volume``.  In local mode paths are already correct.
+        """
+        if not self._kernel_volume:
+            # Local mode: /shared/ is the actual mount target — nothing to do
+            return
+        # DinD mode: replace /shared/ with the real shared volume path
+        for key, paths in request.input_paths.items():
+            request.input_paths[key] = [
+                self._shared_volume + p[len("/shared"):] if p.startswith("/shared/") else p
+                for p in paths
+            ]
+        if request.output_dir and request.output_dir.startswith("/shared/"):
+            request.output_dir = self._shared_volume + request.output_dir[len("/shared"):]
+
     def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
         """Build Docker ``containers.run()`` keyword arguments.
 
