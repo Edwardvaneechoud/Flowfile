@@ -35,6 +35,11 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
+      # SECURITY: The Docker socket gives this container the ability to
+      # create and manage other containers on the host (used for kernel
+      # management).  In production, consider using a Docker socket proxy
+      # (e.g. tecnativa/docker-socket-proxy) to restrict API access to
+      # only the endpoints needed (containers, volumes).
       - /var/run/docker.sock:/var/run/docker.sock
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage

@@ -176,26 +176,45 @@ class KernelManager:
         # Local mode: host shared_volume → /shared inside kernel
         return local_path.replace(self._shared_volume, "/shared", 1)
 
-    def normalize_frontend_paths(self, request: "ExecuteRequest") -> None:
-        """Translate ``/shared/`` paths from the frontend to kernel-visible paths.
+    def resolve_node_paths(self, request: "ExecuteRequest") -> None:
+        """Populate ``input_paths`` and ``output_dir`` from ``flow_id``/``node_id``.
 
-        The frontend always constructs input/output paths with a ``/shared/``
-        prefix (the convention for local mode where the host dir is bind-mounted
-        at ``/shared``).  In Docker-in-Docker mode the volume is mounted at the
-        same absolute path as the core, so we replace the ``/shared/`` prefix
-        with ``self._shared_volume``.  In local mode paths are already correct.
+        When the frontend sends only ``flow_id`` and ``node_id`` (without
+        pre-built filesystem paths), this method resolves the actual paths
+        on the shared volume and translates them for the kernel container.
+        If ``input_paths`` is already populated (e.g. from ``flow_graph.py``),
+        this is a no-op.
         """
-        if not self._kernel_volume:
-            # Local mode: /shared/ is the actual mount target — nothing to do
+        if request.input_paths or not request.flow_id or not request.node_id:
             return
-        # DinD mode: replace /shared/ with the real shared volume path
-        for key, paths in request.input_paths.items():
-            request.input_paths[key] = [
-                self._shared_volume + p[len("/shared"):] if p.startswith("/shared/") else p
-                for p in paths
-            ]
-        if request.output_dir and request.output_dir.startswith("/shared/"):
-            request.output_dir = self._shared_volume + request.output_dir[len("/shared"):]
+
+        input_dir = os.path.join(
+            self._shared_volume,
+            str(request.flow_id),
+            str(request.node_id),
+            "inputs",
+        )
+        output_dir = os.path.join(
+            self._shared_volume,
+            str(request.flow_id),
+            str(request.node_id),
+            "outputs",
+        )
+
+        # Discover parquet files in the input directory
+        if os.path.isdir(input_dir):
+            parquet_files = sorted(
+                f for f in os.listdir(input_dir) if f.endswith(".parquet")
+            )
+            if parquet_files:
+                request.input_paths = {
+                    "main": [
+                        self.to_kernel_path(os.path.join(input_dir, f))
+                        for f in parquet_files
+                    ]
+                }
+
+        request.output_dir = self.to_kernel_path(output_dir)
 
     def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
         """Build Docker ``containers.run()`` keyword arguments.

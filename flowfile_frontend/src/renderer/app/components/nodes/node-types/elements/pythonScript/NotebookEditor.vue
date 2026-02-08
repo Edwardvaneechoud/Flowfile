@@ -115,20 +115,10 @@ const runCell = async (cellId: string): Promise<boolean> => {
 
   executingCellId.value = cellId;
   try {
-    // Build input paths client-side from dependingOnIds
-    const inputPaths: Record<string, string[]> = {};
-    if (props.dependingOnIds.length > 0) {
-      inputPaths["main"] = props.dependingOnIds.map((_, idx) =>
-        `/shared/${props.flowId}/${props.nodeId}/inputs/main_${idx}.parquet`
-      );
-    }
-    const outputDir = `/shared/${props.flowId}/${props.nodeId}/outputs`;
-
+    // Send only logical identifiers — the backend resolves filesystem paths
     const result = await KernelApi.executeCell(props.kernelId, {
       node_id: props.nodeId,
       code: codeToRun,
-      input_paths: inputPaths,
-      output_dir: outputDir,
       flow_id: props.flowId,
     });
 

@@ -137,7 +137,7 @@ async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Dep
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
-        manager.normalize_frontend_paths(request)
+        manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -158,7 +158,7 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
     try:
         # Force interactive mode for cell execution
         request.interactive = True
-        manager.normalize_frontend_paths(request)
+        manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
