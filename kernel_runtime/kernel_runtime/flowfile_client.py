@@ -17,55 +17,26 @@ from kernel_runtime.artifact_store import ArtifactStore
 def _translate_host_path_to_container(host_path: str) -> str:
     """Translate a host filesystem path to the container's /shared mount.
 
-    When running in Docker, the host's shared directory is mounted at /shared.
-    Core API returns paths using the host's perspective, so we need to translate
-    them for the kernel container.
+    When running in local mode, the host's shared directory is mounted at
+    /shared inside the kernel container.  Core API returns paths using the
+    host's perspective, so we swap the prefix.
 
-    NOTE: Uses PurePosixPath for path manipulation WITHOUT filesystem access.
-    This is critical because inside the container, host paths don't exist,
-    so Path.resolve() would fail or produce incorrect results.
-
-    Example:
-        Host: /var/folders/.../kernel_test_shared_xyz/artifact_staging/1_test.pkl
-        Container: /shared/artifact_staging/1_test.pkl
+    In Docker-in-Docker mode ``FLOWFILE_HOST_SHARED_DIR`` is not set and
+    the path is returned unchanged (same volume, same mount path).
     """
-    import logging as _logging
-
-    _logger = _logging.getLogger(__name__)
-
     host_shared_dir = os.environ.get("FLOWFILE_HOST_SHARED_DIR")
-    _logger.info(
-        "[path_translate] input='%s', FLOWFILE_HOST_SHARED_DIR='%s'",
-        host_path,
-        host_shared_dir,
-    )
     if not host_shared_dir:
-        _logger.info("[path_translate] no host shared dir set, returning as-is: '%s'", host_path)
         return host_path
 
-    # Normalize paths to handle trailing slashes consistently
-    # Use os.path.normpath for string normalization without filesystem access
     normalized_host_path = os.path.normpath(host_path)
     normalized_shared_dir = os.path.normpath(host_shared_dir)
 
-    # Check if the host path starts with the shared directory
-    # We need to be careful about partial matches (e.g., /shared vs /shared2)
     if normalized_host_path.startswith(normalized_shared_dir + os.sep):
-        # Extract relative path after the shared directory prefix
         relative_path = normalized_host_path[len(normalized_shared_dir) + 1 :]
-        result = f"/shared/{relative_path}"
-        _logger.info("[path_translate] translated: '%s' -> '%s'", host_path, result)
-        return result
+        return f"/shared/{relative_path}"
     elif normalized_host_path == normalized_shared_dir:
-        _logger.info("[path_translate] exact match, returning '/shared'")
         return "/shared"
 
-    # Path doesn't start with host shared dir - return as-is
-    _logger.warning(
-        "[path_translate] path NOT under shared dir! " "normalized_path='%s', normalized_shared='%s'. Returning as-is.",
-        normalized_host_path,
-        normalized_shared_dir,
-    )
     return host_path
 
 
@@ -344,53 +315,13 @@ def publish_global(
         resp.raise_for_status()
         target = resp.json()
 
-        import logging as _logging
-
-        _pub_logger = _logging.getLogger(__name__)
-        _pub_logger.info(
-            "[publish_global] prepare-upload response: method=%s, path='%s', " "artifact_id=%s, storage_key='%s'",
-            target.get("method"),
-            target.get("path"),
-            target.get("artifact_id"),
-            target.get("storage_key"),
-        )
-
         # 2. Serialize and write directly to storage
         if target["method"] == "file":
-            # Shared filesystem - write to staging path
-            # Translate host path to container path if running in Docker
+            # Shared filesystem - translate host path for local Docker mode
             staging_path = _translate_host_path_to_container(target["path"])
-            _pub_logger.info(
-                "[publish_global] writing to staging_path='%s' (host_path='%s')",
-                staging_path,
-                target["path"],
-            )
-            # Ensure parent directory exists
-            parent = Path(staging_path).parent
-            parent.mkdir(parents=True, exist_ok=True)
-            _pub_logger.info(
-                "[publish_global] parent dir '%s' exists=%s",
-                parent,
-                parent.exists(),
-            )
+            Path(staging_path).parent.mkdir(parents=True, exist_ok=True)
             sha256 = serialize_to_file(obj, staging_path, serialization_format)
-            file_exists = os.path.exists(staging_path)
-            size_bytes = os.path.getsize(staging_path) if file_exists else 0
-            _pub_logger.info(
-                "[publish_global] after serialize: file_exists=%s, size_bytes=%s, sha256='%s'",
-                file_exists,
-                size_bytes,
-                sha256,
-            )
-            # List what's actually in the parent directory
-            try:
-                dir_contents = list(parent.iterdir())
-                _pub_logger.info(
-                    "[publish_global] parent dir contents: %s",
-                    [str(f.name) for f in dir_contents],
-                )
-            except Exception as e:
-                _pub_logger.error("[publish_global] cannot list parent dir: %s", e)
+            size_bytes = os.path.getsize(staging_path)
         else:
             # S3 presigned URL - upload directly
             blob, sha256 = serialize_to_bytes(obj, serialization_format)
