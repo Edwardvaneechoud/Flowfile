@@ -146,14 +146,6 @@ class KernelManager:
                 mount_type = best.get("Type", "volume")
                 dest = best["Destination"]
                 name = best.get("Name") if mount_type == "volume" else best.get("Source")
-                logger.info(
-                    "Volume for %s: Name=%s, Type=%s, Destination=%s, Source=%s",
-                    path,
-                    best.get("Name"),
-                    mount_type,
-                    dest,
-                    best.get("Source"),
-                )
                 return name, mount_type, dest
 
             logger.warning("No mount covers path %s in container %s", path, hostname)
@@ -202,13 +194,6 @@ class KernelManager:
             # all file paths are identical in core, worker, and kernel.
             mount_type = self._kernel_volume_type or "volume"
             mount_target = self._kernel_mount_target or "/app/internal_storage"
-            logger.info(
-                "Kernel '%s' mount: type=%s, source=%s, target=%s",
-                kernel_id,
-                mount_type,
-                self._kernel_volume,
-                mount_target,
-            )
             run_kwargs["mounts"] = [
                 docker.types.Mount(
                     target=mount_target,

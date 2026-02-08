@@ -1153,11 +1153,6 @@ class FlowGraph:
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
 
-            node_logger.info(
-                f"[kernel] shared_base={shared_base}, input_dir={input_dir}, "
-                f"kernel_volume={manager._kernel_volume}, kernel_volume_type={manager._kernel_volume_type}"
-            )
-
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
@@ -1172,8 +1167,6 @@ class FlowGraph:
                 # This prevents "File must end with PAR1" errors from race conditions
                 with open(local_path, "rb") as f:
                     os.fsync(f.fileno())
-                file_size = os.path.getsize(local_path)
-                node_logger.info(f"[kernel] Wrote {local_path} ({file_size} bytes)")
                 main_paths.append(manager.to_kernel_path(local_path))
             input_paths["main"] = main_paths
 
@@ -1238,12 +1231,7 @@ class FlowGraph:
 
             # Read output
             output_path = os.path.join(output_dir, "main.parquet")
-            output_exists = os.path.exists(output_path)
-            node_logger.info(
-                f"[kernel] output_path={output_path}, exists={output_exists}, "
-                f"output_dir contents={os.listdir(output_dir) if os.path.isdir(output_dir) else 'N/A'}"
-            )
-            if output_exists:
+            if os.path.exists(output_path):
                 return FlowDataEngine(pl.scan_parquet(output_path))
 
             # No output published, pass through first input
