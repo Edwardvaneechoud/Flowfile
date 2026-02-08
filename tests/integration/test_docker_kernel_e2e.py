@@ -15,17 +15,42 @@ Requirements:
 import json
 import os
 import subprocess
+import tempfile
 import time
 
 import httpx
 import pytest
 
-from tests.integration.conftest import (
-    COMPOSE_FILE,
-    CORE_URL,
-    _dump_compose_logs,
-    _dump_kernel_logs,
-)
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+COMPOSE_FILE = os.path.join(REPO_ROOT, "docker-compose.yml")
+CORE_URL = "http://localhost:63578"
+
+
+def _dump_compose_logs(services: list[str]) -> str:
+    """Capture docker compose logs for debugging on failure."""
+    output_parts: list[str] = []
+    for svc in services:
+        result = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "logs", "--tail=100", svc],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output_parts.append(f"\n{'=' * 60}\n{svc} logs:\n{'=' * 60}\n{result.stdout}")
+        if result.stderr:
+            output_parts.append(result.stderr)
+    return "\n".join(output_parts)
+
+
+def _dump_kernel_logs(kernel_id: str) -> str:
+    """Capture kernel container logs for debugging."""
+    result = subprocess.run(
+        ["docker", "logs", f"flowfile-kernel-{kernel_id}", "--tail=100"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return f"\n{'=' * 60}\nkernel ({kernel_id}) logs:\n{'=' * 60}\n{result.stdout}\n{result.stderr}"
 
 pytestmark = pytest.mark.docker_integration
 
@@ -159,8 +184,6 @@ def _import_flow(client: httpx.Client) -> int:
         pytest.fail("Could not find flowfile-core container")
 
     # Create a temp file locally, then docker cp it into the container
-    import tempfile
-
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(flow_json_str)
         tmp_path = f.name

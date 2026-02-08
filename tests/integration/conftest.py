@@ -7,7 +7,6 @@ operations happen once per test module.
 
 import os
 import secrets
-import shutil
 import socket
 import subprocess
 import tempfile
