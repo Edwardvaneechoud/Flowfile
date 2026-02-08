@@ -50,7 +50,7 @@ const startStreamingLogs = async () => {
     }
 
     // Create URL with token as query parameter
-    const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`);
+    const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`, window.location.origin);
     url.searchParams.append("access_token", token);
 
     const eventSource = new EventSource(url.toString());
