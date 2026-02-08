@@ -28,31 +28,22 @@ _internal_token: str | None = None
 
 
 def get_internal_token() -> str:
-    """Get the internal service token from environment.
+    """Get or auto-generate the internal service token.
 
-    This token is used for kernel → Core communication and MUST be explicitly
-    set via environment variable FLOWFILE_INTERNAL_TOKEN in Docker/production
-    deployments, since Core and Kernel run in separate containers.
+    This token is used for kernel → Core communication.  It can be set
+    explicitly via the ``FLOWFILE_INTERNAL_TOKEN`` environment variable
+    (recommended for production) or will be auto-generated on first use.
 
-    In Electron mode (single process), auto-generates if not set.
-
-    Raises:
-        ValueError: If FLOWFILE_INTERNAL_TOKEN is not set in Docker mode.
+    Auto-generation is safe because Core controls kernel container
+    creation and passes the token via ``_build_kernel_env`` and the
+    per-request ``ExecuteRequest.internal_token`` field.
     """
     global _internal_token
     if _internal_token is None:
         _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
         if not _internal_token:
-            # Only auto-generate in Electron mode (single process)
-            if os.environ.get("FLOWFILE_MODE") == "electron":
-                _internal_token = secrets.token_hex(32)
-                os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
-            else:
-                raise ValueError(
-                    "FLOWFILE_INTERNAL_TOKEN environment variable must be set in Docker mode. "
-                    "This token is used for kernel → Core authentication and must be shared "
-                    "between containers via docker-compose environment variables."
-                )
+            _internal_token = secrets.token_hex(32)
+            os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
     return _internal_token
 
 

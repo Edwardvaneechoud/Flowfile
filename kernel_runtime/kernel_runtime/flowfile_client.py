@@ -176,8 +176,9 @@ def publish_output(df: pl.LazyFrame | pl.DataFrame, name: str = "main") -> None:
     os.makedirs(output_dir, exist_ok=True)
     output_path = Path(output_dir) / f"{name}.parquet"
     if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-    df.write_parquet(str(output_path))
+        df.sink_parquet(str(output_path))
+    else:
+        df.write_parquet(str(output_path))
     # Ensure the file is fully flushed to disk before the host reads it
     # This prevents "File must end with PAR1" errors from race conditions
     with open(output_path, "rb") as f:
