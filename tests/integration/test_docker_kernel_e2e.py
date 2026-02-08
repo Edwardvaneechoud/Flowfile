@@ -172,16 +172,13 @@ def _import_flow(client: httpx.Client) -> int:
     """
     flow_json_str = json.dumps(FLOW_JSON)
 
-    # Find the core container
-    result = subprocess.run(
+    # Get the core container ID (container is already healthy at this point)
+    container_id = subprocess.run(
         ["docker", "compose", "-f", COMPOSE_FILE, "ps", "-q", "flowfile-core"],
         capture_output=True,
         text=True,
         timeout=10,
-    )
-    container_id = result.stdout.strip()
-    if not container_id:
-        pytest.fail("Could not find flowfile-core container")
+    ).stdout.strip()
 
     # Create a temp file locally, then docker cp it into the container
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
