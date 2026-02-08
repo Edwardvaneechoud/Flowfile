@@ -359,7 +359,13 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
-        env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
+        # FLOWFILE_HOST_SHARED_DIR tells the kernel how to translate Core
+        # API paths to container paths.  Only needed in local mode where the
+        # shared dir is bind-mounted at /shared.  In Docker-in-Docker mode
+        # the volume is mounted at the *same* path in core, worker and
+        # kernel, so no translation is required and the variable is omitted.
+        if not self._kernel_volume:
+            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
