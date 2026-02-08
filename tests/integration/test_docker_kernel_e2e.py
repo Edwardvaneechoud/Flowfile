@@ -171,17 +171,14 @@ def _import_flow(client: httpx.Client) -> int:
     avoiding reliance on bind-mounted ``saved_flows`` directories.
     """
     flow_json_str = json.dumps(FLOW_JSON)
-    breakpoint()
-    # Find the core container
-    result = subprocess.run(
+
+    # Get the core container ID (container is already healthy at this point)
+    container_id = subprocess.run(
         ["docker", "compose", "-f", COMPOSE_FILE, "ps", "-q", "flowfile-core"],
         capture_output=True,
         text=True,
         timeout=10,
-    )
-    container_id = result.stdout.strip()
-    if not container_id:
-        pytest.fail("Could not find flowfile-core container")
+    ).stdout.strip()
 
     # Create a temp file locally, then docker cp it into the container
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -189,7 +186,8 @@ def _import_flow(client: httpx.Client) -> int:
         tmp_path = f.name
 
     try:
-        dest_path = "/tmp/kernel_test_flow.json"
+        # Place inside /app (the container's WORKDIR) so it passes path validation
+        dest_path = "/app/kernel_test_flow.json"
         cp_result = subprocess.run(
             ["docker", "cp", tmp_path, f"{container_id}:{dest_path}"],
             capture_output=True,
@@ -223,7 +221,6 @@ class TestDockerKernelE2E:
         - Assert node 3's output contains a ``predicted_y`` column
         """
         # Step 8: import the flow
-        breakpoint()
         flow_id = _import_flow(auth_client)
 
         # Step 9: run the flow
@@ -276,7 +273,3 @@ class TestDockerKernelE2E:
         assert "predicted_y" in node3_columns, (
             f"predicted_y column not found in node 3 schema. Columns: {node3_columns}"
         )
-
-
-if __name__ == "__main__":
-    pytest.main(["-m", "docker_integration", "-v", __file__])
