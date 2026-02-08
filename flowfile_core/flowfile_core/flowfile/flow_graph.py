@@ -1155,7 +1155,7 @@ class FlowGraph:
 
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
-
+            self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
             # Write inputs to parquet — supports N inputs under "main"
             input_paths: dict[str, list[str]] = {}
             main_paths: list[str] = []
