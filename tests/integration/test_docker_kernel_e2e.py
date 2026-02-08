@@ -226,7 +226,6 @@ class TestDockerKernelE2E:
         # Step 9: run the flow
         resp = auth_client.post("/flow/run/", params={"flow_id": flow_id})
         assert resp.status_code == 200, f"Failed to start flow: {resp.text}"
-
         # Poll until finished (200 = done, 202 = still running)
         deadline = time.monotonic() + 180
         run_info = None
@@ -262,14 +261,17 @@ class TestDockerKernelE2E:
 
         # Find node 3's schema in the vue flow data
         node3 = next(
-            (n for n in vue_data.get("nodes", []) if n.get("id") == "3"),
+            (n for n in vue_data.get("node_inputs", []) if n.get("id") == 3),
             None,
         )
         assert node3 is not None, "Node 3 not found in flow data"
 
-        node3_columns = [
-            col["name"] for col in node3.get("data", {}).get("schema", [])
-        ]
-        assert "predicted_y" in node3_columns, (
-            f"predicted_y column not found in node 3 schema. Columns: {node3_columns}"
-        )
+        node_data_resp = auth_client.get("/node/data", params={"flow_id":1, "node_id": 3})
+        node_data_resp.raise_for_status()
+        node_data = node_data_resp.json()
+        assert node_data["columns"] == ["x1", "x2", "y", "predicted_y"]
+        assert len(node_data["data"]) == 4
+
+
+if __name__ == "__main__":
+    pytest.main(["-m", "docker_integration", "-v", __file__])
