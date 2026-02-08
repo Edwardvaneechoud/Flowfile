@@ -180,7 +180,7 @@ def compose_services():
                 pytest.fail(f"Core service did not become healthy.{logs}")
 
             log.info("Waiting for worker to become healthy (%s)...", WORKER_URL)
-            if not _wait_for_service(WORKER_URL, "worker", timeout=120):
+            if not _wait_for_service(WORKER_URL, "worker", path="/docs", timeout=120):
                 logs = _dump_compose_logs(["flowfile-worker"])
                 pytest.fail(f"Worker service did not become healthy.{logs}")
 
