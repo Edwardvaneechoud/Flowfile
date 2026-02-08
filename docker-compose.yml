@@ -25,6 +25,8 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
+      # Internal token for kernel → Core authentication (shared with kernel containers)
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       # Master key for encrypting secrets - if not set, setup screen will prompt to configure
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - WORKER_HOST=flowfile-worker

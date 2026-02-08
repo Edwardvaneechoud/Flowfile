@@ -28,22 +28,26 @@ _internal_token: str | None = None
 
 
 def get_internal_token() -> str:
-    """Get or auto-generate the internal service token.
+    """Get the internal service token used for kernel → Core auth.
 
-    This token is used for kernel → Core communication.  It can be set
-    explicitly via the ``FLOWFILE_INTERNAL_TOKEN`` environment variable
-    (recommended for production) or will be auto-generated on first use.
+    In Docker mode the token MUST be set via the
+    ``FLOWFILE_INTERNAL_TOKEN`` environment variable (configured in
+    docker-compose.yml, same pattern as ``JWT_SECRET_KEY``).
 
-    Auto-generation is safe because Core controls kernel container
-    creation and passes the token via ``_build_kernel_env`` and the
-    per-request ``ExecuteRequest.internal_token`` field.
+    In Electron mode (single-process) it is auto-generated if absent.
     """
     global _internal_token
     if _internal_token is None:
         _internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
         if not _internal_token:
-            _internal_token = secrets.token_hex(32)
-            os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+            if os.environ.get("FLOWFILE_MODE") == "electron":
+                _internal_token = secrets.token_hex(32)
+                os.environ["FLOWFILE_INTERNAL_TOKEN"] = _internal_token
+            else:
+                raise ValueError(
+                    "FLOWFILE_INTERNAL_TOKEN environment variable must be set in Docker mode. "
+                    "Add it to docker-compose.yml alongside JWT_SECRET_KEY."
+                )
     return _internal_token
 
 
