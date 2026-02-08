@@ -30,15 +30,12 @@ services:
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
-      # Kernel Docker-in-Docker: named volume and network for kernel containers
-      - FLOWFILE_KERNEL_VOLUME=flowfile-kernel-shared
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
-      - flowfile-kernel-shared:/shared
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
       - flowfile-network
@@ -87,10 +84,3 @@ networks:
 volumes:
   flowfile-internal-storage:
     driver: local
-  flowfile-kernel-shared:
-    driver: local
-    # Explicit name so the Docker API (used by KernelManager to create
-    # kernel containers) resolves the same volume as Compose.  Without
-    # this, Compose would prefix the project name (e.g. "myproj_flowfile-
-    # kernel-shared") while KernelManager looks for "flowfile-kernel-shared".
-    name: flowfile-kernel-shared

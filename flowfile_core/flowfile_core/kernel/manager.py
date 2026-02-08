@@ -61,49 +61,33 @@ class KernelManager:
             os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
         )
 
-        # Discover the actual volume mounted at /shared in this container.
-        # This is more reliable than relying on a manually-set env var because
-        # Docker Compose may prefix volume names with the project name.
+        # In Docker mode, discover the volume that covers _shared_volume
+        # (e.g. flowfile-internal-storage mounted at /app/internal_storage).
+        # Kernel containers will mount the same volume at the same path so
+        # all file paths are identical across core, worker, and kernel.
         self._kernel_volume: str | None = None
         self._kernel_volume_type: str | None = None
+        self._kernel_mount_target: str | None = None  # mount point inside containers
         if _is_docker_mode():
-            discovered_name, discovered_type = self._discover_shared_mount()
-            if discovered_name:
-                self._kernel_volume = discovered_name
-                self._kernel_volume_type = discovered_type
+            vol_name, vol_type, mount_dest = self._discover_volume_for_path(self._shared_volume)
+            if vol_name:
+                self._kernel_volume = vol_name
+                self._kernel_volume_type = vol_type
+                self._kernel_mount_target = mount_dest
                 logger.info(
-                    "Auto-discovered shared mount for /shared: name=%s, type=%s",
-                    discovered_name,
-                    discovered_type,
+                    "Docker-in-Docker mode: volume=%s (type=%s) at %s covers shared_path=%s, network=%s",
+                    vol_name,
+                    vol_type,
+                    mount_dest,
+                    self._shared_volume,
+                    self._docker_network,
                 )
             else:
-                # Fall back to the env var
-                env_vol = os.environ.get("FLOWFILE_KERNEL_VOLUME")
-                if env_vol:
-                    self._kernel_volume = env_vol
-                    self._kernel_volume_type = "volume"
-                    logger.warning(
-                        "Could not auto-discover /shared mount; using FLOWFILE_KERNEL_VOLUME=%s",
-                        env_vol,
-                    )
-
-        if self._kernel_volume:
-            logger.info(
-                "Docker-in-Docker mode: kernel_volume=%s (type=%s), docker_network=%s, shared_path=%s",
-                self._kernel_volume,
-                self._kernel_volume_type,
-                self._docker_network,
-                self._shared_volume,
-            )
-            # Verify the shared volume is accessible from this container
-            try:
-                test_file = os.path.join(self._shared_volume, ".volume_test")
-                with open(test_file, "w") as f:
-                    f.write("ok")
-                os.remove(test_file)
-                logger.info("Shared volume at %s is writable", self._shared_volume)
-            except OSError as exc:
-                logger.error("Shared volume at %s is NOT writable: %s", self._shared_volume, exc)
+                logger.warning(
+                    "Could not discover volume for shared_path=%s; "
+                    "kernel containers will use bind mounts (local mode only)",
+                    self._shared_volume,
+                )
 
         self._restore_kernels_from_db()
         self._reclaim_running_containers()
@@ -137,43 +121,45 @@ class KernelManager:
             logger.debug("Could not auto-detect Docker network: %s", exc)
         return None
 
-    def _discover_shared_mount(self) -> tuple[str | None, str | None]:
-        """Discover the Docker mount for /shared on this container.
+    def _discover_volume_for_path(self, path: str) -> tuple[str | None, str | None, str | None]:
+        """Find which Docker volume/bind covers *path* in this container.
 
-        Inspects the current container's mounts to find the exact volume
-        name (or bind source) used for the /shared path.  Returns
-        ``(source_or_name, mount_type)`` or ``(None, None)`` if not found.
+        Inspects the current container's mounts and returns the one whose
+        ``Destination`` is a prefix of *path* (longest match wins).
 
-        This is essential for Docker-in-Docker: Compose may prefix volume
-        names with the project name, so the env var ``FLOWFILE_KERNEL_VOLUME``
-        might not match the real volume name.  By inspecting the actual mount,
-        we guarantee kernel containers use the exact same volume.
+        Returns ``(source_or_name, mount_type, destination)`` or
+        ``(None, None, None)`` if no mount covers the path.
         """
         try:
             hostname = socket.gethostname()
             container = self._docker.containers.get(hostname)
             mounts = container.attrs.get("Mounts", [])
             logger.debug("Container %s mounts: %s", hostname, mounts)
+
+            best: dict | None = None
             for mount in mounts:
-                if mount.get("Destination") == "/shared":
-                    mount_type = mount.get("Type", "volume")
-                    if mount_type == "volume":
-                        name = mount.get("Name")
-                    else:
-                        # bind mount — use the host Source path
-                        name = mount.get("Source")
-                    logger.info(
-                        "Found /shared mount: Name=%s, Type=%s, Source=%s, Driver=%s",
-                        mount.get("Name"),
-                        mount_type,
-                        mount.get("Source"),
-                        mount.get("Driver"),
-                    )
-                    return name, mount_type
-            logger.warning("No mount found for /shared in container %s", hostname)
+                dest = mount.get("Destination", "")
+                if path.startswith(dest) and (best is None or len(dest) > len(best.get("Destination", ""))):
+                    best = mount
+
+            if best:
+                mount_type = best.get("Type", "volume")
+                dest = best["Destination"]
+                name = best.get("Name") if mount_type == "volume" else best.get("Source")
+                logger.info(
+                    "Volume for %s: Name=%s, Type=%s, Destination=%s, Source=%s",
+                    path,
+                    best.get("Name"),
+                    mount_type,
+                    dest,
+                    best.get("Source"),
+                )
+                return name, mount_type, dest
+
+            logger.warning("No mount covers path %s in container %s", path, hostname)
         except Exception as exc:
             logger.warning("Could not inspect container mounts: %s", exc)
-        return None, None
+        return None, None, None
 
     def _kernel_url(self, kernel: KernelInfo) -> str:
         """Return the base URL for communicating with a kernel container.
@@ -184,6 +170,19 @@ class KernelManager:
         if self._docker_network:
             return f"http://flowfile-kernel-{kernel.id}:9999"
         return f"http://localhost:{kernel.port}"
+
+    def to_kernel_path(self, local_path: str) -> str:
+        """Translate a local filesystem path to the path visible inside a kernel container.
+
+        In Docker-in-Docker mode the volume is mounted at the same path in all
+        containers, so paths are identical.  In local mode the host directory is
+        bind-mounted at ``/shared`` inside the kernel, so we swap the prefix.
+        """
+        if self._kernel_volume:
+            # Same volume, same mount point — no translation needed
+            return local_path
+        # Local mode: host shared_volume → /shared inside kernel
+        return local_path.replace(self._shared_volume, "/shared", 1)
 
     def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
         """Build Docker ``containers.run()`` keyword arguments.
@@ -199,19 +198,20 @@ class KernelManager:
         }
 
         if self._kernel_volume:
-            # Docker-in-Docker: mount the same volume/bind that this
-            # container uses for /shared.  The type and source were
-            # discovered by _discover_shared_mount() at startup.
+            # Docker-in-Docker: mount the same volume at the same path so
+            # all file paths are identical in core, worker, and kernel.
             mount_type = self._kernel_volume_type or "volume"
+            mount_target = self._kernel_mount_target or "/app/internal_storage"
             logger.info(
-                "Kernel '%s' mount: type=%s, source=%s, target=/shared",
+                "Kernel '%s' mount: type=%s, source=%s, target=%s",
                 kernel_id,
                 mount_type,
                 self._kernel_volume,
+                mount_target,
             )
             run_kwargs["mounts"] = [
                 docker.types.Mount(
-                    target="/shared",
+                    target=mount_target,
                     source=self._kernel_volume,
                     type=mount_type,
                     read_only=False,
@@ -374,12 +374,11 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
-        # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
         env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
-        env["PERSISTENCE_PATH"] = "/shared/artifacts"
+        env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
         env["RECOVERY_MODE"] = kernel.recovery_mode.value
         return env
 
