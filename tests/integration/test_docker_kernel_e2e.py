@@ -222,7 +222,7 @@ class TestDockerKernelE2E:
         """
         # Step 8: import the flow
         flow_id = _import_flow(auth_client)
-
+        breakpoint()
         # Step 9: run the flow
         resp = auth_client.post("/flow/run/", params={"flow_id": flow_id})
         assert resp.status_code == 200, f"Failed to start flow: {resp.text}"
@@ -258,15 +258,13 @@ class TestDockerKernelE2E:
         )
         resp.raise_for_status()
         vue_data = resp.json()
-
+        edges = vue_data["node_edges"]
+        final_node_ids = list({e["target"] for e in edges} - {e["source"] for e in edges})
+        assert len(final_node_ids) == 1, "Expected exactly one final node"
+        node_3 = int(final_node_ids[0])
         # Find node 3's schema in the vue flow data
-        node3 = next(
-            (n for n in vue_data.get("node_inputs", []) if n.get("id") == 3),
-            None,
-        )
-        assert node3 is not None, "Node 3 not found in flow data"
-
-        node_data_resp = auth_client.get("/node/data", params={"flow_id":1, "node_id": 3})
+        assert node_3 is not None, "Node 3 not found in flow data"
+        node_data_resp = auth_client.get("/node/data", params={"flow_id": flow_id, "node_id": node_3})
         node_data_resp.raise_for_status()
         node_data = node_data_resp.json()
         assert node_data["columns"] == ["x1", "x2", "y", "predicted_y"]
