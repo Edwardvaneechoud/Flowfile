@@ -5,6 +5,7 @@ import socket
 import time
 
 import docker
+import docker.types
 import httpx
 
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -31,6 +32,11 @@ _HEALTH_TIMEOUT = 120
 _HEALTH_POLL_INTERVAL = 2
 
 
+def _is_docker_mode() -> bool:
+    """Check if running in Docker mode based on FLOWFILE_MODE."""
+    return os.environ.get("FLOWFILE_MODE") == "docker"
+
+
 def _is_port_available(port: int) -> bool:
     """Check whether a TCP port is free on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -47,12 +53,206 @@ class KernelManager:
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
         self._shared_volume = shared_volume_path or str(storage.cache_directory)
+
+        # Docker-in-Docker settings: when core itself runs in a container,
+        # kernel containers must use a named volume (not a bind mount) and
+        # connect to the same Docker network for service discovery.
+        self._docker_network: str | None = (
+            os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
+        )
+
+        # In Docker mode, discover the volume that covers _shared_volume
+        # (e.g. flowfile-internal-storage mounted at /app/internal_storage).
+        # Kernel containers will mount the same volume at the same path so
+        # all file paths are identical across core, worker, and kernel.
+        self._kernel_volume: str | None = None
+        self._kernel_volume_type: str | None = None
+        self._kernel_mount_target: str | None = None  # mount point inside containers
+        if _is_docker_mode():
+            vol_name, vol_type, mount_dest = self._discover_volume_for_path(self._shared_volume)
+            if vol_name:
+                self._kernel_volume = vol_name
+                self._kernel_volume_type = vol_type
+                self._kernel_mount_target = mount_dest
+                logger.info(
+                    "Docker-in-Docker mode: volume=%s (type=%s) at %s covers shared_path=%s, network=%s",
+                    vol_name,
+                    vol_type,
+                    mount_dest,
+                    self._shared_volume,
+                    self._docker_network,
+                )
+            else:
+                logger.warning(
+                    "Could not discover volume for shared_path=%s; "
+                    "kernel containers will use bind mounts (local mode only)",
+                    self._shared_volume,
+                )
+
         self._restore_kernels_from_db()
         self._reclaim_running_containers()
 
     @property
     def shared_volume_path(self) -> str:
         return self._shared_volume
+
+    # ------------------------------------------------------------------
+    # Docker-in-Docker helpers
+    # ------------------------------------------------------------------
+
+    def _detect_docker_network(self) -> str | None:
+        """Auto-detect the Docker network this container is connected to.
+
+        When core runs inside Docker, we inspect the current container's
+        network settings and return the first user-defined network.  This
+        allows kernel containers to be attached to the same network without
+        requiring an explicit FLOWFILE_DOCKER_NETWORK env var.
+        """
+        if not _is_docker_mode():
+            return None
+        try:
+            hostname = socket.gethostname()
+            container = self._docker.containers.get(hostname)
+            networks = container.attrs["NetworkSettings"]["Networks"]
+            for name in networks:
+                if name not in ("bridge", "host", "none"):
+                    return name
+        except Exception as exc:
+            logger.debug("Could not auto-detect Docker network: %s", exc)
+        return None
+
+    def _discover_volume_for_path(self, path: str) -> tuple[str | None, str | None, str | None]:
+        """Find which Docker volume/bind covers *path* in this container.
+
+        Inspects the current container's mounts and returns the one whose
+        ``Destination`` is a prefix of *path* (longest match wins).
+
+        Returns ``(source_or_name, mount_type, destination)`` or
+        ``(None, None, None)`` if no mount covers the path.
+        """
+        try:
+            hostname = socket.gethostname()
+            container = self._docker.containers.get(hostname)
+            mounts = container.attrs.get("Mounts", [])
+            logger.debug("Container %s mounts: %s", hostname, mounts)
+
+            best: dict | None = None
+            for mount in mounts:
+                dest = mount.get("Destination", "")
+                if path.startswith(dest) and (best is None or len(dest) > len(best.get("Destination", ""))):
+                    best = mount
+
+            if best:
+                mount_type = best.get("Type", "volume")
+                dest = best["Destination"]
+                name = best.get("Name") if mount_type == "volume" else best.get("Source")
+                return name, mount_type, dest
+
+            logger.warning("No mount covers path %s in container %s", path, hostname)
+        except Exception as exc:
+            logger.warning("Could not inspect container mounts: %s", exc)
+        return None, None, None
+
+    def _kernel_url(self, kernel: KernelInfo) -> str:
+        """Return the base URL for communicating with a kernel container.
+
+        In Docker-in-Docker mode, use the container name on the shared
+        Docker network.  Otherwise, use localhost with the mapped host port.
+        """
+        if self._docker_network:
+            return f"http://flowfile-kernel-{kernel.id}:9999"
+        return f"http://localhost:{kernel.port}"
+
+    def to_kernel_path(self, local_path: str) -> str:
+        """Translate a local filesystem path to the path visible inside a kernel container.
+
+        In Docker-in-Docker mode the volume is mounted at the same path in all
+        containers, so paths are identical.  In local mode the host directory is
+        bind-mounted at ``/shared`` inside the kernel, so we swap the prefix.
+        """
+        if self._kernel_volume:
+            # Same volume, same mount point — no translation needed
+            return local_path
+        # Local mode: host shared_volume → /shared inside kernel
+        return local_path.replace(self._shared_volume, "/shared", 1)
+
+    def resolve_node_paths(self, request: "ExecuteRequest") -> None:
+        """Populate ``input_paths`` and ``output_dir`` from ``flow_id``/``node_id``.
+
+        When the frontend sends only ``flow_id`` and ``node_id`` (without
+        pre-built filesystem paths), this method resolves the actual paths
+        on the shared volume and translates them for the kernel container.
+        If ``input_paths`` is already populated (e.g. from ``flow_graph.py``),
+        this is a no-op.
+        """
+        if request.input_paths or not request.flow_id or not request.node_id:
+            return
+
+        input_dir = os.path.join(
+            self._shared_volume,
+            str(request.flow_id),
+            str(request.node_id),
+            "inputs",
+        )
+        output_dir = os.path.join(
+            self._shared_volume,
+            str(request.flow_id),
+            str(request.node_id),
+            "outputs",
+        )
+
+        # Discover parquet files in the input directory
+        if os.path.isdir(input_dir):
+            parquet_files = sorted(
+                f for f in os.listdir(input_dir) if f.endswith(".parquet")
+            )
+            if parquet_files:
+                request.input_paths = {
+                    "main": [
+                        self.to_kernel_path(os.path.join(input_dir, f))
+                        for f in parquet_files
+                    ]
+                }
+
+        request.output_dir = self.to_kernel_path(output_dir)
+
+    def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
+        """Build Docker ``containers.run()`` keyword arguments.
+
+        Adapts volume mounts and networking for local vs Docker-in-Docker.
+        """
+        run_kwargs: dict = {
+            "detach": True,
+            "name": f"flowfile-kernel-{kernel_id}",
+            "environment": env,
+            "mem_limit": f"{kernel.memory_gb}g",
+            "nano_cpus": int(kernel.cpu_cores * 1e9),
+        }
+
+        if self._kernel_volume:
+            # Docker-in-Docker: mount the same volume at the same path so
+            # all file paths are identical in core, worker, and kernel.
+            mount_type = self._kernel_volume_type or "volume"
+            mount_target = self._kernel_mount_target or "/app/internal_storage"
+            run_kwargs["mounts"] = [
+                docker.types.Mount(
+                    target=mount_target,
+                    source=self._kernel_volume,
+                    type=mount_type,
+                    read_only=False,
+                )
+            ]
+            if self._docker_network:
+                run_kwargs["network"] = self._docker_network
+        else:
+            # Local: bind-mount a host directory and map ports.
+            run_kwargs["volumes"] = {
+                self._shared_volume: {"bind": "/shared", "mode": "rw"},
+            }
+            run_kwargs["ports"] = {"9999/tcp": kernel.port}
+            run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
+
+        return run_kwargs
 
     # ------------------------------------------------------------------
     # Database persistence helpers
@@ -123,27 +323,28 @@ class KernelManager:
                 continue
             kernel_id = name[len("flowfile-kernel-") :]
 
-            # Determine which host port is mapped
-            port = None
-            try:
-                bindings = container.attrs["NetworkSettings"]["Ports"].get("9999/tcp")
-                if bindings:
-                    port = int(bindings[0]["HostPort"])
-            except (KeyError, IndexError, TypeError, ValueError):
-                pass
+            if kernel_id in self._kernels:
+                # Determine which host port is mapped (not available in DinD mode)
+                port = None
+                if not self._kernel_volume:
+                    try:
+                        bindings = container.attrs["NetworkSettings"]["Ports"].get("9999/tcp")
+                        if bindings:
+                            port = int(bindings[0]["HostPort"])
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        pass
 
-            if port is not None and kernel_id in self._kernels:
                 # Kernel was restored from DB — update with runtime info
                 self._kernels[kernel_id].container_id = container.id
-                self._kernels[kernel_id].port = port
+                if port is not None:
+                    self._kernels[kernel_id].port = port
                 self._kernels[kernel_id].state = KernelState.IDLE
                 logger.info(
-                    "Reclaimed running kernel '%s' on port %d (container %s)",
+                    "Reclaimed running kernel '%s' (container %s)",
                     kernel_id,
-                    port,
                     container.short_id,
                 )
-            elif port is not None and kernel_id not in self._kernels:
+            else:
                 # Orphan container with no DB record — stop it
                 logger.warning(
                     "Found orphan kernel container '%s' with no database record, stopping it",
@@ -175,8 +376,14 @@ class KernelManager:
         """
         packages_str = " ".join(kernel.packages)
         env = {"KERNEL_PACKAGES": packages_str}
-        # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker
-        core_url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578")
+        # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
+        # In Docker-in-Docker mode the kernel is on the same Docker network
+        # as core, so it can reach core by service name.
+        if self._docker_network:
+            default_core_url = "http://flowfile-core:63578"
+        else:
+            default_core_url = "http://host.docker.internal:63578"
+        core_url = os.environ.get("FLOWFILE_CORE_URL", default_core_url)
         env["FLOWFILE_CORE_URL"] = core_url
         # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
         # Use get_internal_token() instead of reading env directly so that in
@@ -192,12 +399,17 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
-        # FLOWFILE_HOST_SHARED_DIR: host path for path translation (container has /shared)
-        env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
+        # FLOWFILE_HOST_SHARED_DIR tells the kernel how to translate Core
+        # API paths to container paths.  Only needed in local mode where the
+        # shared dir is bind-mounted at /shared.  In Docker-in-Docker mode
+        # the volume is mounted at the *same* path in core, worker and
+        # kernel, so no translation is required and the variable is omitted.
+        if not self._kernel_volume:
+            env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
-        env["PERSISTENCE_PATH"] = "/shared/artifacts"
+        env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
         env["RECOVERY_MODE"] = kernel.recovery_mode.value
         return env
 
@@ -205,7 +417,9 @@ class KernelManager:
         if config.id in self._kernels:
             raise ValueError(f"Kernel '{config.id}' already exists")
 
-        port = self._allocate_port()
+        # In Docker-in-Docker mode we don't map host ports — kernels are
+        # reached via container name on the shared Docker network.
+        port = None if self._kernel_volume else self._allocate_port()
         kernel = KernelInfo(
             id=config.id,
             name=config.name,
@@ -222,7 +436,7 @@ class KernelManager:
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
         self._persist_kernel(kernel, user_id)
-        logger.info("Created kernel '%s' on port %d for user %d", config.id, port, user_id)
+        logger.info("Created kernel '%s' on port %s for user %d", config.id, port, user_id)
         return kernel
 
     async def start_kernel(self, kernel_id: str) -> KernelInfo:
@@ -241,8 +455,8 @@ class KernelManager:
             )
             raise RuntimeError(kernel.error_message)
 
-        # Allocate a port if the kernel doesn't have one yet (e.g. restored from DB)
-        if kernel.port is None:
+        # Allocate a port if needed (local mode only, not needed for DinD)
+        if kernel.port is None and not self._kernel_volume:
             kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
@@ -250,16 +464,7 @@ class KernelManager:
 
         try:
             env = self._build_kernel_env(kernel_id, kernel)
-            run_kwargs: dict = {
-                "detach": True,
-                "name": f"flowfile-kernel-{kernel_id}",
-                "ports": {"9999/tcp": kernel.port},
-                "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": env,
-                "mem_limit": f"{kernel.memory_gb}g",
-                "nano_cpus": int(kernel.cpu_cores * 1e9),
-                "extra_hosts": {"host.docker.internal": "host-gateway"},
-            }
+            run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
             container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
             kernel.container_id = container.id
             await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
@@ -294,7 +499,7 @@ class KernelManager:
             ) if flow_logger else None
             raise RuntimeError(kernel.error_message)
 
-        if kernel.port is None:
+        if kernel.port is None and not self._kernel_volume:
             kernel.port = self._allocate_port()
 
         kernel.state = KernelState.STARTING
@@ -302,16 +507,7 @@ class KernelManager:
 
         try:
             env = self._build_kernel_env(kernel_id, kernel)
-            run_kwargs: dict = {
-                "detach": True,
-                "name": f"flowfile-kernel-{kernel_id}",
-                "ports": {"9999/tcp": kernel.port},
-                "volumes": {self._shared_volume: {"bind": "/shared", "mode": "rw"}},
-                "environment": env,
-                "mem_limit": f"{kernel.memory_gb}g",
-                "nano_cpus": int(kernel.cpu_cores * 1e9),
-                "extra_hosts": {"host.docker.internal": "host-gateway"},
-            }
+            run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
             container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
@@ -365,7 +561,7 @@ class KernelManager:
 
         kernel.state = KernelState.EXECUTING
         try:
-            url = f"http://localhost:{kernel.port}/execute"
+            url = f"{self._kernel_url(kernel)}/execute"
             async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 response = await client.post(url, json=request.model_dump())
                 response.raise_for_status()
@@ -385,7 +581,7 @@ class KernelManager:
 
         kernel.state = KernelState.EXECUTING
         try:
-            url = f"http://localhost:{kernel.port}/execute"
+            url = f"{self._kernel_url(kernel)}/execute"
             with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
                 response = client.post(url, json=request.model_dump())
                 response.raise_for_status()
@@ -399,7 +595,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             await self._ensure_running(kernel_id)
 
-        url = f"http://localhost:{kernel.port}/clear"
+        url = f"{self._kernel_url(kernel)}/clear"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.post(url)
             response.raise_for_status()
@@ -410,7 +606,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id)
 
-        url = f"http://localhost:{kernel.port}/clear"
+        url = f"{self._kernel_url(kernel)}/clear"
         with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
             response = client.post(url)
             response.raise_for_status()
@@ -426,7 +622,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             await self._ensure_running(kernel_id)
 
-        url = f"http://localhost:{kernel.port}/clear_node_artifacts"
+        url = f"{self._kernel_url(kernel)}/clear_node_artifacts"
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
@@ -447,7 +643,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
-        url = f"http://localhost:{kernel.port}/clear_node_artifacts"
+        url = f"{self._kernel_url(kernel)}/clear_node_artifacts"
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
@@ -462,7 +658,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             await self._ensure_running(kernel_id)
 
-        url = f"http://localhost:{kernel.port}/clear_namespace"
+        url = f"{self._kernel_url(kernel)}/clear_namespace"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.post(url, params={"flow_id": flow_id})
             response.raise_for_status()
@@ -473,7 +669,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             await self._ensure_running(kernel_id)
 
-        url = f"http://localhost:{kernel.port}/artifacts/node/{node_id}"
+        url = f"{self._kernel_url(kernel)}/artifacts/node/{node_id}"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -489,7 +685,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
-        url = f"http://localhost:{kernel.port}/recover"
+        url = f"{self._kernel_url(kernel)}/recover"
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             response = await client.post(url)
             response.raise_for_status()
@@ -501,7 +697,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
-        url = f"http://localhost:{kernel.port}/recovery-status"
+        url = f"{self._kernel_url(kernel)}/recovery-status"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -513,7 +709,7 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
-        url = f"http://localhost:{kernel.port}/cleanup"
+        url = f"{self._kernel_url(kernel)}/cleanup"
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
             response = await client.post(url, json=request.model_dump())
             response.raise_for_status()
@@ -525,11 +721,23 @@ class KernelManager:
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
-        url = f"http://localhost:{kernel.port}/persistence"
+        url = f"{self._kernel_url(kernel)}/persistence"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.get(url)
             response.raise_for_status()
             return ArtifactPersistenceInfo(**response.json())
+
+    async def list_kernel_artifacts(self, kernel_id: str) -> list:
+        """List all artifacts in a running kernel."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"{self._kernel_url(kernel)}/artifacts"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
 
     # ------------------------------------------------------------------
     # Queries
@@ -612,7 +820,7 @@ class KernelManager:
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
-        url = f"http://localhost:{kernel.port}/health"
+        url = f"{self._kernel_url(kernel)}/health"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
 
@@ -633,7 +841,7 @@ class KernelManager:
     def _wait_for_healthy_sync(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         """Synchronous version of _wait_for_healthy."""
         kernel = self._get_kernel_or_raise(kernel_id)
-        url = f"http://localhost:{kernel.port}/health"
+        url = f"{self._kernel_url(kernel)}/health"
         deadline = time.monotonic() + timeout
 
         while time.monotonic() < deadline:

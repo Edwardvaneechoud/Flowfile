@@ -15,7 +15,9 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 ENV KERNEL_PACKAGES=""
-VOLUME ["/shared"]
+# Note: /shared is mounted at runtime via docker.types.Mount — do NOT use
+# a VOLUME directive here as it can create an anonymous volume that shadows
+# the explicit named-volume mount in Docker-in-Docker setups.
 EXPOSE 9999
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s \

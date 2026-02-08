@@ -53,7 +53,5 @@ export interface ExecuteResult {
 export interface ExecuteCellRequest {
   node_id: number;
   code: string;
-  input_paths: Record<string, string[]>;
-  output_dir: string;
   flow_id: number;
 }

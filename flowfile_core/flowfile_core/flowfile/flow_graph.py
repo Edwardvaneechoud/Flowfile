@@ -1155,7 +1155,7 @@ class FlowGraph:
 
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
-
+            self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
             # Write inputs to parquet — supports N inputs under "main"
             input_paths: dict[str, list[str]] = {}
             main_paths: list[str] = []
@@ -1167,11 +1167,16 @@ class FlowGraph:
                 # This prevents "File must end with PAR1" errors from race conditions
                 with open(local_path, "rb") as f:
                     os.fsync(f.fileno())
-                main_paths.append(f"/shared/{flow_id}/{node_id}/inputs/{filename}")
+                main_paths.append(manager.to_kernel_path(local_path))
             input_paths["main"] = main_paths
 
-            # Build the callback URL so the kernel can stream logs in real time
-            log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+            # Build the callback URL so the kernel can stream logs in real time.
+            # In Docker-in-Docker mode the kernel is on the same Docker network
+            # as core, so it can reach core by service name instead of host.docker.internal.
+            if manager._kernel_volume:
+                log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
+            else:
+                log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
 
             # Execute on kernel (synchronous — no async boundary issues)
             reg_id = self._flow_settings.source_registration_id
@@ -1189,7 +1194,7 @@ class FlowGraph:
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
-                output_dir=f"/shared/{flow_id}/{node_id}/outputs",
+                output_dir=manager.to_kernel_path(output_dir),
                 flow_id=flow_id,
                 source_registration_id=reg_id,
                 log_callback_url=log_callback_url,
