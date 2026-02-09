@@ -136,12 +136,12 @@
             are accessible from all FlowFile services and persist across kernel executions.
           </p>
           <div class="api-item">
-            <code>flowfile.shared_location("test_file.csv")</code>
+            <code>flowfile.get_shared_location("test_file.csv")</code>
             <p>Returns the absolute path for a file in the shared directory.
                Parent directories are created automatically.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.shared_location("subdir/report.parquet")</code>
+            <code>flowfile.get_shared_location("subdir/report.parquet")</code>
             <p>Supports nested paths — subdirectories are created as needed.</p>
           </div>
         </section>
@@ -208,8 +208,8 @@ flowfile.log_info("Model published to catalog")</code></pre>
 df = flowfile.read_input().collect()
 
 # Write to the shared directory (accessible from all services)
-df.write_csv(flowfile.shared_location("exports/output.csv"))
-df.write_parquet(flowfile.shared_location("exports/output.parquet"))</code></pre>
+df.write_csv(flowfile.get_shared_location("exports/output.csv"))
+df.write_parquet(flowfile.get_shared_location("exports/output.parquet"))</code></pre>
           </div>
 
           <div class="pattern">

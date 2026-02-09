@@ -505,7 +505,7 @@ def delete_global_artifact(
 # ===== File Utilities =====
 
 
-def shared_location(filename: str) -> str:
+def get_shared_location(filename: str) -> str:
     """Return the absolute path for a file in the shared directory.
 
     The shared directory is accessible from all FlowFile services (core,
@@ -524,8 +524,8 @@ def shared_location(filename: str) -> str:
 
     Examples::
 
-        df.write_csv(flowfile.shared_location("test_file.csv"))
-        df.write_csv(flowfile.shared_location("reports/monthly.csv"))
+        df.write_csv(flowfile.get_shared_location("test_file.csv"))
+        df.write_csv(flowfile.get_shared_location("reports/monthly.csv"))
     """
     base = os.environ.get("FLOWFILE_KERNEL_SHARED_DIR", "/shared")
     full_path = os.path.join(base, "user_files", filename)
