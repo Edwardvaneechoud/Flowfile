@@ -55,3 +55,9 @@ export interface ExecuteCellRequest {
   code: string;
   flow_id: number;
 }
+
+export interface KernelMemoryInfo {
+  used_bytes: number;
+  limit_bytes: number;
+  usage_percent: number;
+}

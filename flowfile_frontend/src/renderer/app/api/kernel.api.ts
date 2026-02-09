@@ -5,6 +5,7 @@ import type {
   ExecuteResult,
   KernelConfig,
   KernelInfo,
+  KernelMemoryInfo,
 } from "../types";
 
 const API_BASE_URL = "/kernels";
@@ -119,6 +120,17 @@ export class KernelApi {
       console.error("API Error: Failed to clear namespace:", error);
       const errorMsg = (error as any).response?.data?.detail || "Failed to clear namespace";
       throw new Error(errorMsg);
+    }
+  }
+
+  static async getMemoryStats(kernelId: string): Promise<KernelMemoryInfo | null> {
+    try {
+      const response = await axios.get<KernelMemoryInfo>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/memory`,
+      );
+      return response.data;
+    } catch {
+      return null;
     }
   }
 }
