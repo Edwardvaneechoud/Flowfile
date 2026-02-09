@@ -771,10 +771,15 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/memory"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return KernelMemoryInfo(**response.json())
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return KernelMemoryInfo(**response.json())
+        except (httpx.HTTPError, OSError) as exc:
+            raise RuntimeError(
+                f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}"
+            ) from exc
 
     async def list_kernel_artifacts(self, kernel_id: str) -> list:
         """List all artifacts in a running kernel."""

@@ -338,3 +338,6 @@ async def get_memory_stats(kernel_id: str, current_user=Depends(get_current_acti
         return await manager.get_memory_stats(kernel_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.debug("Memory stats unavailable for kernel '%s': %s", kernel_id, exc)
+        raise HTTPException(status_code=502, detail=f"Memory stats unavailable: {exc}") from exc
