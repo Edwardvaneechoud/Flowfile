@@ -12,6 +12,7 @@ import httpx
 import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.schemas import ArtifactInfo, GlobalArtifactInfo
 
 
 def _translate_host_path_to_container(host_path: str) -> str:
@@ -177,10 +178,11 @@ def delete_artifact(name: str) -> None:
     store.delete(name, flow_id=flow_id)
 
 
-def list_artifacts() -> dict:
+def list_artifacts() -> list[ArtifactInfo]:
     store: ArtifactStore = _get_context_value("artifact_store")
     flow_id: int = _get_context_value("flow_id")
-    return store.list_all(flow_id=flow_id)
+    raw = store.list_all(flow_id=flow_id)
+    return [ArtifactInfo.model_validate(v) for v in raw.values()]
 
 
 # ===== Global Artifacts APIs =====
@@ -428,7 +430,7 @@ def get_global(
 def list_global_artifacts(
     namespace_id: int | None = None,
     tags: list[str] | None = None,
-) -> list[dict]:
+) -> list[GlobalArtifactInfo]:
     """List available global artifacts.
 
     Args:
@@ -436,13 +438,13 @@ def list_global_artifacts(
         tags: Filter by tags (AND logic - all tags must match).
 
     Returns:
-        List of artifact metadata dictionaries.
+        List of :class:`GlobalArtifactInfo` objects.
 
     Example:
         >>> import flowfile
         >>> artifacts = flowfile.list_global_artifacts(tags=["ml"])
         >>> for a in artifacts:
-        ...     print(f"{a['name']} v{a['version']} - {a['python_type']}")
+        ...     print(f"{a.name} v{a.version} - {a.python_type}")
     """
     params = {}
     if namespace_id is not None:
@@ -454,7 +456,7 @@ def list_global_artifacts(
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.get(f"{_CORE_URL}/artifacts/", params=params)
         resp.raise_for_status()
-        return resp.json()
+        return [GlobalArtifactInfo.model_validate(item) for item in resp.json()]
 
 
 def delete_global_artifact(
