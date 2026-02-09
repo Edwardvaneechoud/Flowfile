@@ -346,4 +346,19 @@ export class FlowApi {
     });
     return response.data.upstream_node_ids;
   }
+
+  /**
+   * Reset a Python Script node to a clean slate.
+   * Clears execution state, artifact metadata, kernel artifacts (best-effort),
+   * cache files, and invalidates downstream nodes.
+   */
+  static async resetPythonScriptNode(
+    flowId: number,
+    nodeId: number,
+  ): Promise<Record<string, any>> {
+    const response = await axios.post<Record<string, any>>("/node/reset_python_script", null, {
+      params: { flow_id: flowId, node_id: nodeId },
+    });
+    return response.data;
+  }
 }

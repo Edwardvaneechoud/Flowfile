@@ -333,7 +333,7 @@ def _run_and_track(flow, user_id: int | None):
 
     if not tracking_succeeded:
         logger.error(
-            f"Run tracking failed for flow '{flow_name}'. " "Check database connectivity and FlowRun table schema."
+            f"Run tracking failed for flow '{flow_name}'. Check database connectivity and FlowRun table schema."
         )
 
 
@@ -1004,6 +1004,88 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
     return list(node.get_all_dependent_node_ids())
 
 
+@router.post("/node/reset_python_script", tags=["editor"])
+async def reset_python_script_node(flow_id: int, node_id: int):
+    """Reset a Python Script node to a clean slate.
+
+    This endpoint:
+    1. Resets the node's execution state (marks it as not-run)
+    2. Clears artifact metadata for the node in the flow's ArtifactContext
+    3. Attempts to clear kernel-side artifacts for the node (best-effort)
+    4. Deletes the shared-volume I/O directories (parquet cache) for the node
+    5. Invalidates all downstream nodes so they re-execute on the next run
+    """
+    import shutil
+
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, f"Node {node_id} not found in flow {flow_id}")
+
+    cleaned = {
+        "execution_state_reset": False,
+        "artifact_metadata_cleared": False,
+        "kernel_artifacts_cleared": False,
+        "cache_files_deleted": False,
+        "downstream_nodes_invalidated": [],
+    }
+
+    # 1. Reset execution state for this node
+    node._execution_state.reset()
+    node.node_stats.has_run_with_current_setup = False
+    cleaned["execution_state_reset"] = True
+
+    # 2. Collect downstream node IDs and invalidate them
+    downstream_ids = list(node.get_all_dependent_node_ids())
+    for dep_id in downstream_ids:
+        dep_node = flow.get_node(dep_id)
+        if dep_node is not None:
+            dep_node._execution_state.reset()
+            dep_node.node_stats.has_run_with_current_setup = False
+    cleaned["downstream_nodes_invalidated"] = downstream_ids
+
+    # 3. Clear artifact metadata for this node (and downstream) in ArtifactContext
+    node_ids_to_clear = {node_id} | set(downstream_ids)
+    flow.artifact_context.clear_nodes(node_ids_to_clear)
+    cleaned["artifact_metadata_cleared"] = True
+
+    # 4. Try to clear kernel-side artifacts (best-effort; kernel may be down)
+    kernel_id = None
+    if node.setting_input and hasattr(node.setting_input, "python_script_input"):
+        kernel_id = node.setting_input.python_script_input.kernel_id
+    if kernel_id:
+        try:
+            from flowfile_core.kernel import get_kernel_manager
+
+            manager = get_kernel_manager()
+            await manager.clear_node_artifacts(kernel_id, [node_id], flow_id=flow_id)
+            cleaned["kernel_artifacts_cleared"] = True
+        except Exception as exc:
+            logger.warning(
+                "Could not clear kernel artifacts for node %s (kernel=%s): %s",
+                node_id,
+                kernel_id,
+                exc,
+            )
+
+    # 5. Delete shared-volume I/O cache directories for this node
+    try:
+        from flowfile_core.kernel import get_kernel_manager
+
+        manager = get_kernel_manager()
+        shared_base = manager.shared_volume_path
+        node_dir = os.path.join(shared_base, str(flow_id), str(node_id))
+        if os.path.isdir(node_dir):
+            shutil.rmtree(node_dir, ignore_errors=True)
+            cleaned["cache_files_deleted"] = True
+    except Exception as exc:
+        logger.warning("Could not delete cache files for node %s: %s", node_id, exc)
+
+    return cleaned
+
+
 @router.get("/import_flow/", tags=["editor"], response_model=int)
 def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""
@@ -1082,7 +1164,7 @@ def get_flow_artifacts(flow_id: int):
     }
 
 
-@router.get('/flow/node_upstream_ids', tags=['editor'])
+@router.get("/flow/node_upstream_ids", tags=["editor"])
 def get_node_upstream_ids(flow_id: int, node_id: int):
     """Return the transitive upstream node IDs for a given node.
 
@@ -1091,7 +1173,7 @@ def get_node_upstream_ids(flow_id: int, node_id: int):
     """
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
-        raise HTTPException(404, 'Could not find the flow')
+        raise HTTPException(404, "Could not find the flow")
     return {"upstream_node_ids": flow._get_upstream_node_ids(node_id)}
 
 

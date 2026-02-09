@@ -99,6 +99,14 @@
           <div class="code-header">
             <label class="setting-label">Code</label>
             <div class="code-header-actions">
+              <button
+                class="icon-button reset-button"
+                title="Reset Node — clear editor, kernel artifacts, cache, and downstream state"
+                :disabled="isResetting"
+                @click="confirmResetNode"
+              >
+                <i :class="isResetting ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrow-rotate-left'"></i>
+              </button>
               <button class="icon-button" title="Expand Editor" @click="showExpandedEditor = true">
                 <i class="fa-solid fa-expand"></i>
               </button>
@@ -168,6 +176,7 @@
 <script lang="ts" setup>
 import { ref, computed, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
+import { ElMessageBox, ElMessage } from "element-plus";
 
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -338,6 +347,65 @@ const syncCellsToNode = () => {
     cells.value.map(c => c.code).filter(Boolean).join("\n\n");
 };
 
+// ─── Reset Node ─────────────────────────────────────────────────────────────
+
+const isResetting = ref(false);
+
+const confirmResetNode = async () => {
+  try {
+    await ElMessageBox.confirm(
+      "This will clear the editor back to its default code, flush all kernel artifacts for this node, " +
+        "delete cached intermediate results, and invalidate all downstream nodes. This cannot be undone.",
+      "Reset Node",
+      {
+        confirmButtonText: "Reset",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+    await resetNode();
+  } catch {
+    // User cancelled — do nothing
+  }
+};
+
+const resetNode = async () => {
+  if (!nodePythonScript.value) return;
+
+  isResetting.value = true;
+  try {
+    const flowId = Number(nodePythonScript.value.flow_id);
+    const nodeId = nodePythonScript.value.node_id;
+
+    // Call backend to reset execution state, artifacts, cache, downstream
+    await FlowApi.resetPythonScriptNode(flowId, nodeId);
+
+    // Reset the editor to default code
+    cells.value = [
+      {
+        id: crypto.randomUUID(),
+        code: DEFAULT_PYTHON_SCRIPT_CODE,
+        output: null,
+      },
+    ];
+    syncCellsToNode();
+
+    // Clear artifact display
+    availableArtifacts.value = [];
+    publishedArtifacts.value = [];
+
+    // Refresh artifacts from kernel (will show empty now)
+    loadArtifacts();
+
+    ElMessage.success("Node has been reset");
+  } catch (error) {
+    console.error("Failed to reset node:", error);
+    ElMessage.error("Failed to reset node");
+  } finally {
+    isResetting.value = false;
+  }
+};
+
 // ─── Node settings composable ───────────────────────────────────────────────
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -444,6 +512,16 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .icon-button:hover {
   color: var(--el-color-primary);
   background: var(--el-fill-color-light);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-button.reset-button:hover:not(:disabled) {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9, #fef0f0);
 }
 
 /* ─── Setting blocks ─────────────────────────────────────────────────────── */
