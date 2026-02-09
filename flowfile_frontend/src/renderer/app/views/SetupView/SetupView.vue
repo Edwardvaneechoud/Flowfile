@@ -108,7 +108,21 @@ const handleGenerateKey = async () => {
 
 const copyToClipboard = async (text: string, flagRef: typeof copied) => {
   try {
-    await navigator.clipboard.writeText(text);
+    // navigator.clipboard is only available in secure contexts (HTTPS or localhost).
+    // When accessing Docker deployment over plain HTTP from another machine, fall back
+    // to the legacy execCommand approach.
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
     flagRef.value = true;
     setTimeout(() => {
       flagRef.value = false;
