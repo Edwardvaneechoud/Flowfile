@@ -222,7 +222,7 @@ class TestDockerKernelE2E:
         """
         # Step 8: import the flow
         flow_id = _import_flow(auth_client)
-        breakpoint()
+
         # Step 9: run the flow
         resp = auth_client.post("/flow/run/", params={"flow_id": flow_id})
         assert resp.status_code == 200, f"Failed to start flow: {resp.text}"

@@ -68,7 +68,7 @@ jobs:
 
       - name: Run Docker Kernel E2E tests
         run: |
-          poetry run pytest -m docker_integration -vv --tb=long --log-cli-level=INFO
+          poetry run pytest tests/integration -m docker_integration -vv --tb=long --log-cli-level=INFO
         timeout-minutes: 15
 
       - name: Clean up Docker resources
