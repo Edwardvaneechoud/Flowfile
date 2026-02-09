@@ -619,3 +619,39 @@ class TestGlobalArtifactIntegration:
         retrieved = get_global("test_roundtrip")
 
         assert retrieved == original_obj
+
+
+# ---------------------------------------------------------------------------
+# Interactive mode Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPublishGlobalInteractiveMode:
+    """Tests that publish_global is skipped in interactive mode."""
+
+    @pytest.fixture(autouse=True)
+    def set_interactive_context(self):
+        """Set up flowfile context in interactive mode (no source_registration_id)."""
+        _set_context(
+            node_id=1,
+            input_paths={},
+            output_dir="/tmp/output",
+            artifact_store=MagicMock(),
+            flow_id=1,
+            source_registration_id=None,
+            interactive=True,
+        )
+        yield
+        _clear_context()
+
+    def test_publish_global_skips_in_interactive_mode(self, capsys):
+        """Should skip publish_global and return -1 in interactive mode."""
+        result = publish_global("test", {"key": "value"})
+        assert result == -1
+        captured = capsys.readouterr()
+        assert "not available in interactive mode" in captured.out
+
+    def test_publish_global_no_http_calls_in_interactive_mode(self, mock_httpx_client):
+        """Should not make any HTTP calls when skipping in interactive mode."""
+        publish_global("test", {"key": "value"})
+        mock_httpx_client.assert_not_called()
