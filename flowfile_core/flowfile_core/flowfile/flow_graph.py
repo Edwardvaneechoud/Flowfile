@@ -1157,16 +1157,24 @@ class FlowGraph:
             os.makedirs(output_dir, exist_ok=True)
             self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
             # Write inputs to parquet — supports N inputs under "main"
+            # Offload collect() to the worker process so core stays lightweight
             input_paths: dict[str, list[str]] = {}
             main_paths: list[str] = []
             for idx, ft in enumerate(flowfile_tables):
                 filename = f"main_{idx}.parquet"
                 local_path = os.path.join(input_dir, filename)
-                ft.data_frame.collect().write_parquet(local_path)
-                # Ensure the file is fully flushed to disk before the kernel reads it
-                # This prevents "File must end with PAR1" errors from race conditions
-                with open(local_path, "rb") as f:
-                    os.fsync(f.fileno())
+                fetcher = ExternalDfFetcher(
+                    flow_id=flow_id,
+                    node_id=node_id,
+                    lf=ft.data_frame,
+                    wait_on_completion=True,
+                    operation_type="write_parquet",
+                    kwargs={"output_path": local_path},
+                )
+                if fetcher.has_error:
+                    raise RuntimeError(
+                        f"Failed to write parquet for input {idx}: {fetcher.error_description}"
+                    )
                 main_paths.append(manager.to_kernel_path(local_path))
             input_paths["main"] = main_paths
 

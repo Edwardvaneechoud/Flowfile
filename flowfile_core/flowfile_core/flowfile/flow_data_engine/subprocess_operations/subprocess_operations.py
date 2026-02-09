@@ -1,5 +1,6 @@
 # Standard library imports
 import io
+import json
 import threading
 from base64 import b64decode
 from time import sleep
@@ -33,7 +34,12 @@ from flowfile_core.utils.arrow_reader import read
 
 
 def trigger_df_operation(
-    flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = "store"
+    flow_id: int,
+    node_id: int | str,
+    lf: pl.LazyFrame,
+    file_ref: str,
+    operation_type: OperationType = "store",
+    kwargs: dict | None = None,
 ) -> Status:
     # Send raw bytes directly - no base64 encoding overhead
     headers = {
@@ -43,6 +49,8 @@ def trigger_df_operation(
         "X-Flow-Id": str(flow_id),
         "X-Node-Id": str(node_id),
     }
+    if kwargs:
+        headers["X-Kwargs"] = json.dumps(kwargs)
     v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers)
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
@@ -555,6 +563,7 @@ class ExternalDfFetcher(BaseFetcher):
         wait_on_completion: bool = True,
         operation_type: OperationType = "store",
         offload_to_worker: bool = True,
+        kwargs: dict | None = None,
     ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
@@ -566,6 +575,7 @@ class ExternalDfFetcher(BaseFetcher):
                 flow_id=flow_id,
                 node_id=node_id,
                 lf_bytes=lf.serialize(),
+                kwargs=kwargs,
                 blocking=wait_on_completion,
             )
             return
@@ -574,7 +584,8 @@ class ExternalDfFetcher(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
-            lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id
+            lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id,
+            kwargs=kwargs,
         )
         self.running = r.status == "Processing"
         if wait_on_completion:
