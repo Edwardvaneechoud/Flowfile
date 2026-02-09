@@ -90,7 +90,12 @@ export const flowfileCompletionVals = [
     detail: "flowfile.list_global_artifacts(namespace_id?, tags?)",
     apply: "list_global_artifacts()",
   },
-  {label: "get_shared_location",},
+  {label: "get_shared_location",
+    type: "function",
+    info: "Get the shared location to make objects available to other processes",
+    detail: "flowfile.get_shared_location()->str",
+    apply: "get_shared_location()",
+  },
   {
     label: "delete_global_artifact",
     type: "function",
