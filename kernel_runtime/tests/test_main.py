@@ -837,6 +837,49 @@ class TestDisplayOutputs:
         assert data["display_outputs"] == []
 
 
+class TestPublishGlobalInteractiveExecution:
+    """publish_global should be silently skipped when running interactively."""
+
+    def test_publish_global_skipped_in_interactive_mode(self, client: TestClient):
+        """Calling publish_global in interactive mode should succeed without error."""
+        code = 'result = flowfile.publish_global("my_model", {"key": "value"})\nprint(result)'
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 80,
+                "code": code,
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+                "source_registration_id": None,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert "not available in interactive mode" in data["stdout"]
+        assert "-1" in data["stdout"]
+
+    def test_publish_global_still_works_in_flow_mode_with_registration(self, client: TestClient):
+        """publish_global in non-interactive mode without source_registration_id should still raise."""
+        code = 'flowfile.publish_global("my_model", {"key": "value"})'
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 81,
+                "code": code,
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": False,
+                "source_registration_id": None,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is False
+        assert "source_registration_id is required" in data["error"]
+
+
 class TestContextCleanup:
     def test_context_cleared_after_success(self, client: TestClient):
         """After a successful /execute, the flowfile context should be cleared."""
