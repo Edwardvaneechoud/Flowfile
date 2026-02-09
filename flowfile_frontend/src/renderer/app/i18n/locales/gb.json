@@ -339,6 +339,7 @@
     "databaseManager": "Database Connection Manager",
     "cloudConnectionManager": "Cloud Connection Manager",
     "kernelManager": "Kernel Manager",
+    "fileManager": "File Manager",
     "admin": "User Management",
     "popovers": "Popovers",
     "chat": "Chat",

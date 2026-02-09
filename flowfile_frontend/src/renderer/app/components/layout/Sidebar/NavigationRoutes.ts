@@ -6,6 +6,7 @@ export interface INavigationRoute {
   disabled?: boolean;
   requiresAdmin?: boolean;
   hideInElectron?: boolean;
+  dockerOnly?: boolean;
 }
 
 export default {
@@ -69,6 +70,14 @@ export default {
       meta: {
         icon: "fa-solid fa-puzzle-piece",
       },
+    },
+    {
+      name: "fileManager",
+      displayName: "menu.fileManager",
+      meta: {
+        icon: "fa-solid fa-folder-open",
+      },
+      dockerOnly: true,
     },
     {
       name: "admin",

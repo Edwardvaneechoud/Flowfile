@@ -77,6 +77,12 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../pages/NodeDesigner.vue"),
       },
       {
+        name: "fileManager",
+        path: "fileManager",
+        component: () => import("../views/FileManagerView/FileManagerView.vue"),
+        meta: { dockerOnly: true },
+      },
+      {
         name: "admin",
         path: "admin",
         component: () => import("../views/AdminView/AdminView.vue"),
@@ -141,6 +147,12 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (hideInElectron && authService.isInElectronMode()) {
+    next({ name: "designer" });
+    return;
+  }
+
+  const dockerOnly = to.matched.some((record) => record.meta.dockerOnly);
+  if (dockerOnly && authService.isInElectronMode()) {
     next({ name: "designer" });
     return;
   }
