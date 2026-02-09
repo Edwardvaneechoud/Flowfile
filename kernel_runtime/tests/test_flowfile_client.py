@@ -420,3 +420,40 @@ class TestSharedLocation:
 
         result = flowfile_client.shared_location("no_context.csv")
         assert "no_context.csv" in result
+
+    def test_write_parquet_roundtrip(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        """Write a Polars DataFrame to shared_location and read it back."""
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", str(tmp_dir / "shared"))
+
+        df = pl.DataFrame({"id": [1, 2, 3], "value": [10.5, 20.0, 30.1]})
+        path = flowfile_client.shared_location("output.parquet")
+        df.write_parquet(path)
+
+        result = pl.read_parquet(path)
+        assert result.shape == (3, 2)
+        assert result["id"].to_list() == [1, 2, 3]
+        assert result["value"].to_list() == [10.5, 20.0, 30.1]
+
+    def test_write_parquet_nested_path(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        """Write parquet into a nested subdirectory via shared_location."""
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", str(tmp_dir / "shared"))
+
+        df = pl.DataFrame({"name": ["alice", "bob"], "score": [95, 87]})
+        path = flowfile_client.shared_location("exports/daily/scores.parquet")
+        df.write_parquet(path)
+
+        result = pl.read_parquet(path)
+        assert result["name"].to_list() == ["alice", "bob"]
+
+    def test_write_csv_and_parquet_same_dir(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        """Write both CSV and Parquet to the same shared subdirectory."""
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", str(tmp_dir / "shared"))
+
+        df = pl.DataFrame({"x": [1, 2], "y": [3, 4]})
+        csv_path = flowfile_client.shared_location("reports/data.csv")
+        parquet_path = flowfile_client.shared_location("reports/data.parquet")
+        df.write_csv(csv_path)
+        df.write_parquet(parquet_path)
+
+        assert pl.read_csv(csv_path).shape == (2, 2)
+        assert pl.read_parquet(parquet_path)["x"].to_list() == [1, 2]
