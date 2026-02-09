@@ -6,7 +6,7 @@ A FastAPI-based Python code execution kernel that runs in isolated Docker contai
 
 The kernel runtime provides:
 - Isolated Python code execution via REST API
-- Built-in `flowfile` module for data I/O and artifact management
+- Built-in `ff_kernel` module for data I/O and artifact management
 - Parquet-based data exchange using Polars LazyFrames
 - Thread-safe in-memory artifact storage
 - Multi-flow support with artifact isolation
@@ -86,7 +86,7 @@ curl -X POST http://localhost:9999/execute \
   -H "Content-Type: application/json" \
   -d '{
     "node_id": "node_1",
-    "code": "import polars as pl\ndf = flowfile.read_input()\nresult = df.collect()\nflowfile.publish_output(result)",
+    "code": "import polars as pl\ndf = ff_kernel.read_input()\nresult = df.collect()\nff_kernel.publish_output(result)",
     "input_paths": {"main": ["/shared/input.parquet"]},
     "output_dir": "/shared/output",
     "flow_id": 1
@@ -134,24 +134,24 @@ curl -X POST http://localhost:9999/clear_node_artifacts \
   -d '{"node_ids": ["node_1", "node_2"], "flow_id": 1}'
 ```
 
-## Using the `flowfile` Module
+## Using the `ff_kernel` Module
 
-When code is executed, the `flowfile` module is automatically injected into the namespace. Here's how to use it:
+When code is executed, the `ff_kernel` module is automatically injected into the namespace. Here's how to use it:
 
 ### Reading Input Data
 
 ```python
 # Read the main input as a LazyFrame
-df = flowfile.read_input()
+df = ff_kernel.read_input()
 
 # Read a named input
-df = flowfile.read_input(name="customers")
+df = ff_kernel.read_input(name="customers")
 
 # Read only the first file of an input
-df = flowfile.read_first(name="main")
+df = ff_kernel.read_first(name="main")
 
 # Read all inputs as a dictionary
-inputs = flowfile.read_inputs()
+inputs = ff_kernel.read_inputs()
 # Returns: {"main": LazyFrame, "customers": LazyFrame, ...}
 ```
 
@@ -160,10 +160,10 @@ inputs = flowfile.read_inputs()
 ```python
 # Publish a DataFrame or LazyFrame
 result = df.collect()
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 
 # Publish with a custom name
-flowfile.publish_output(result, name="cleaned_data")
+ff_kernel.publish_output(result, name="cleaned_data")
 ```
 
 ### Artifact Management
@@ -173,28 +173,28 @@ Artifacts allow you to store Python objects in memory for use across executions:
 ```python
 # Store an artifact
 model = train_model(data)
-flowfile.publish_artifact("trained_model", model)
+ff_kernel.publish_artifact("trained_model", model)
 
 # Retrieve an artifact
-model = flowfile.read_artifact("trained_model")
+model = ff_kernel.read_artifact("trained_model")
 
 # List all artifacts in current flow
-artifacts = flowfile.list_artifacts()
+artifacts = ff_kernel.list_artifacts()
 
 # Delete an artifact
-flowfile.delete_artifact("trained_model")
+ff_kernel.delete_artifact("trained_model")
 ```
 
 ### Logging
 
 ```python
 # General logging
-flowfile.log("Processing started", level="INFO")
+ff_kernel.log("Processing started", level="INFO")
 
 # Convenience methods
-flowfile.log_info("Step 1 complete")
-flowfile.log_warning("Missing values detected")
-flowfile.log_error("Failed to process record")
+ff_kernel.log_info("Step 1 complete")
+ff_kernel.log_warning("Missing values detected")
+ff_kernel.log_error("Failed to process record")
 ```
 
 ## Complete Example
@@ -203,7 +203,7 @@ flowfile.log_error("Failed to process record")
 import polars as pl
 
 # Read input data
-df = flowfile.read_input()
+df = ff_kernel.read_input()
 
 # Transform the data
 result = (
@@ -214,13 +214,13 @@ result = (
     .collect()
 )
 
-flowfile.log_info(f"Processed {result.height} categories")
+ff_kernel.log_info(f"Processed {result.height} categories")
 
 # Store intermediate result as artifact
-flowfile.publish_artifact("category_totals", result)
+ff_kernel.publish_artifact("category_totals", result)
 
 # Write output
-flowfile.publish_output(result)
+ff_kernel.publish_output(result)
 ```
 
 ## Pre-installed Packages
@@ -264,7 +264,7 @@ kernel_runtime/
 ├── pyproject.toml       # Project configuration
 ├── kernel_runtime/
 │   ├── main.py          # FastAPI application and endpoints
-│   ├── flowfile_client.py  # The flowfile module for code execution
+│   ├── flowfile_client.py  # The ff_kernel module for code execution
 │   └── artifact_store.py   # Thread-safe artifact storage
 └── tests/               # Test suite
 ```
