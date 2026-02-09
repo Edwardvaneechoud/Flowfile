@@ -305,6 +305,7 @@ async def execute(request: ExecuteRequest):
             source_registration_id=request.source_registration_id,
             log_callback_url=request.log_callback_url,
             internal_token=request.internal_token,
+            interactive=request.interactive,
         )
 
         # Reset display outputs for this execution

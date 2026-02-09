@@ -58,6 +58,7 @@ def _set_context(
     source_registration_id: int | None = None,
     log_callback_url: str = "",
     internal_token: str | None = None,
+    interactive: bool = False,
 ) -> None:
     _context.set(
         {
@@ -69,6 +70,7 @@ def _set_context(
             "source_registration_id": source_registration_id,
             "log_callback_url": log_callback_url,
             "internal_token": internal_token,
+            "interactive": interactive,
         }
     )
     # Create a reusable HTTP client for log callbacks
@@ -278,13 +280,21 @@ def publish_global(
         flow_id = _get_context_value("flow_id")
         node_id = _get_context_value("node_id")
         source_registration_id = _get_context_value("source_registration_id")
+        interactive = _context.get({}).get("interactive", False)
     except RuntimeError:
         # Context not available - allow publish without lineage
         flow_id = None
         node_id = None
         source_registration_id = None
+        interactive = False
 
     if source_registration_id is None:
+        if interactive:
+            print(  # noqa: T201
+                "[flowfile] publish_global is not available in interactive mode. "
+                "It requires a registered catalog flow. Skipping."
+            )
+            return -1
         raise RuntimeError(
             "source_registration_id is required for publish_global. "
             "This artifact must be produced by a registered catalog flow."
