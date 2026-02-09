@@ -1,5 +1,6 @@
 """Tests for kernel_runtime.flowfile_client."""
 
+import os
 from pathlib import Path
 
 import polars as pl
@@ -366,3 +367,56 @@ class TestDisplayTypeDetection:
         """Without PIL installed, should return False."""
         result = flowfile_client._is_pil_image("not an image")
         assert result is False
+
+
+class TestSharedLocation:
+    """Tests for flowfile.shared_location()."""
+
+    def test_returns_path_under_user_files(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        shared_dir = str(tmp_dir / "shared")
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", shared_dir)
+
+        result = flowfile_client.shared_location("test_file.csv")
+        assert result == os.path.join(shared_dir, "user_files", "test_file.csv")
+
+    def test_creates_parent_directories(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        shared_dir = str(tmp_dir / "shared")
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", shared_dir)
+
+        result = flowfile_client.shared_location("other_dir/test_file.csv")
+        expected = os.path.join(shared_dir, "user_files", "other_dir", "test_file.csv")
+        assert result == expected
+        assert os.path.isdir(os.path.dirname(result))
+
+    def test_nested_subdirectories(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        shared_dir = str(tmp_dir / "shared")
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", shared_dir)
+
+        result = flowfile_client.shared_location("a/b/c/deep_file.parquet")
+        expected = os.path.join(shared_dir, "user_files", "a", "b", "c", "deep_file.parquet")
+        assert result == expected
+        assert os.path.isdir(os.path.dirname(result))
+
+    def test_defaults_to_shared_when_env_not_set(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("FLOWFILE_KERNEL_SHARED_DIR", raising=False)
+
+        result = flowfile_client.shared_location("test.csv")
+        assert result == os.path.join("/shared", "user_files", "test.csv")
+
+    def test_file_is_writable(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        shared_dir = str(tmp_dir / "shared")
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", shared_dir)
+
+        path = flowfile_client.shared_location("writable_test.csv")
+        with open(path, "w") as f:
+            f.write("col1,col2\n1,2\n")
+        assert os.path.isfile(path)
+
+    def test_does_not_require_execution_context(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        """shared_location works without _set_context() being called."""
+        shared_dir = str(tmp_dir / "shared")
+        monkeypatch.setenv("FLOWFILE_KERNEL_SHARED_DIR", shared_dir)
+        flowfile_client._clear_context()
+
+        result = flowfile_client.shared_location("no_context.csv")
+        assert "no_context.csv" in result

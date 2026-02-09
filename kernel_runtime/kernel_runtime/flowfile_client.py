@@ -502,6 +502,38 @@ def delete_global_artifact(
             resp.raise_for_status()
 
 
+# ===== File Utilities =====
+
+
+def shared_location(filename: str) -> str:
+    """Return the absolute path for a file in the shared directory.
+
+    The shared directory is accessible from all FlowFile services (core,
+    worker, kernel) and persists across kernel executions.  Use this to
+    write files that should be readable by other services or that should
+    survive container restarts.
+
+    Parent directories are created automatically.
+
+    Args:
+        filename: Relative filename or path, e.g. ``"test_file.csv"`` or
+                  ``"other_dir/test_file.csv"``.
+
+    Returns:
+        Absolute path as a string, ready to pass to file-writing functions.
+
+    Examples::
+
+        df.write_csv(flowfile.shared_location("test_file.csv"))
+        df.write_csv(flowfile.shared_location("reports/monthly.csv"))
+    """
+    base = os.environ.get("FLOWFILE_KERNEL_SHARED_DIR", "/shared")
+    full_path = os.path.join(base, "user_files", filename)
+    parent = os.path.dirname(full_path)
+    os.makedirs(parent, exist_ok=True)
+    return full_path
+
+
 # ===== Logging APIs =====
 
 

@@ -130,6 +130,23 @@
         </section>
 
         <section class="api-section">
+          <h4>File Utilities</h4>
+          <p class="section-description">
+            Convenience helpers for working with files on the shared volume. Files written here
+            are accessible from all FlowFile services and persist across kernel executions.
+          </p>
+          <div class="api-item">
+            <code>flowfile.shared_location("test_file.csv")</code>
+            <p>Returns the absolute path for a file in the shared directory.
+               Parent directories are created automatically.</p>
+          </div>
+          <div class="api-item">
+            <code>flowfile.shared_location("subdir/report.parquet")</code>
+            <p>Supports nested paths — subdirectories are created as needed.</p>
+          </div>
+        </section>
+
+        <section class="api-section">
           <h4>Common Patterns</h4>
 
           <div class="pattern">
@@ -182,6 +199,17 @@ flowfile.publish_global("rf_model", model,
     description="Trained random forest",
     tags=["ml", "production"])
 flowfile.log_info("Model published to catalog")</code></pre>
+          </div>
+
+          <div class="pattern">
+            <h5>Write to Shared Directory</h5>
+            <pre><code>import polars as pl
+
+df = flowfile.read_input().collect()
+
+# Write to the shared directory (accessible from all services)
+df.write_csv(flowfile.shared_location("exports/output.csv"))
+df.write_parquet(flowfile.shared_location("exports/output.parquet"))</code></pre>
           </div>
 
           <div class="pattern">
