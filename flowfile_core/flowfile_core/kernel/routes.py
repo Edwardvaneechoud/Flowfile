@@ -128,6 +128,21 @@ async def stop_kernel(kernel_id: str, current_user=Depends(get_current_active_us
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@router.post("/{kernel_id}/restart", response_model=KernelInfo)
+async def restart_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Restart a kernel container, preserving configuration but clearing all in-memory artifacts."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.restart_kernel(kernel_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/{kernel_id}/execute", response_model=ExecuteResult)
 async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Depends(get_current_active_user)):
     manager = _get_manager()

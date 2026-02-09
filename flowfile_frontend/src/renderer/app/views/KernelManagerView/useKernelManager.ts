@@ -56,6 +56,16 @@ export function useKernelManager() {
     }
   };
 
+  const restartKernel = async (kernelId: string) => {
+    actionInProgress.value[kernelId] = true;
+    try {
+      await KernelApi.restart(kernelId);
+      await loadKernels();
+    } finally {
+      actionInProgress.value[kernelId] = false;
+    }
+  };
+
   const deleteKernel = async (kernelId: string) => {
     actionInProgress.value[kernelId] = true;
     try {
@@ -112,6 +122,7 @@ export function useKernelManager() {
     createKernel,
     startKernel,
     stopKernel,
+    restartKernel,
     deleteKernel,
     isActionInProgress,
   };

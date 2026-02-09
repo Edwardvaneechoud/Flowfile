@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class KernelState(str, Enum):
     STOPPED = "stopped"
     STARTING = "starting"
+    RESTARTING = "restarting"
     IDLE = "idle"
     EXECUTING = "executing"
     ERROR = "error"

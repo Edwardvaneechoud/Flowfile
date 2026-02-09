@@ -62,6 +62,7 @@
             :busy="isActionInProgress(kernel.id)"
             @start="handleStart"
             @stop="handleStop"
+            @restart="handleRestart"
             @delete="confirmDelete"
           />
         </div>
@@ -114,6 +115,7 @@ const {
   createKernel,
   startKernel,
   stopKernel,
+  restartKernel,
   deleteKernel,
   isActionInProgress,
 } = useKernelManager();
@@ -147,6 +149,14 @@ const handleStop = async (kernelId: string) => {
     await stopKernel(kernelId);
   } catch (error: any) {
     alert(`Error: ${error.message || "Failed to stop kernel."}`);
+  }
+};
+
+const handleRestart = async (kernelId: string) => {
+  try {
+    await restartKernel(kernelId);
+  } catch (error: any) {
+    alert(`Error: ${error.message || "Failed to restart kernel."}`);
   }
 };
 
