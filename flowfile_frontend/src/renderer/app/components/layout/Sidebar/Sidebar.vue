@@ -50,6 +50,8 @@ const items = computed(() => {
   return NavigationRoutes.routes.filter((route) => {
     // Hide routes marked as hideInElectron when in Electron mode
     if (route.hideInElectron && isElectron) return false;
+    // Hide routes marked as dockerOnly when in Electron mode
+    if (route.dockerOnly && isElectron) return false;
     // Show route if it doesn't require admin, or if user is admin
     return !route.requiresAdmin || isAdmin;
   });

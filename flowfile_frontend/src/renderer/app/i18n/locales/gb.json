@@ -338,6 +338,7 @@
     "nodeDesigner": "Node Designer",
     "databaseManager": "Database Connection Manager",
     "cloudConnectionManager": "Cloud Connection Manager",
+    "fileManager": "File Manager",
     "admin": "User Management",
     "popovers": "Popovers",
     "chat": "Chat",
