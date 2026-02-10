@@ -397,11 +397,15 @@ class TestSharedLocation:
         assert result == expected
         assert os.path.isdir(os.path.dirname(result))
 
-    def test_defaults_to_shared_when_env_not_set(self, monkeypatch: pytest.MonkeyPatch):
+    def test_defaults_to_shared_when_env_not_set(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("FLOWFILE_KERNEL_SHARED_DIR", raising=False)
+        # Patch os.makedirs to avoid PermissionError on /shared in CI
+        created = []
+        monkeypatch.setattr(os, "makedirs", lambda p, exist_ok=False: created.append(p))
 
         result = flowfile_client.get_shared_location("test.csv")
         assert result == os.path.join("/shared", "user_files", "test.csv")
+        assert created == [os.path.join("/shared", "user_files")]
 
     def test_file_is_writable(self, tmp_dir: Path, monkeypatch: pytest.MonkeyPatch):
         shared_dir = str(tmp_dir / "shared")
