@@ -530,6 +530,48 @@ class KernelManager:
         kernel.container_id = None
         logger.info("Stopped kernel '%s'", kernel_id)
 
+    async def restart_kernel(self, kernel_id: str) -> KernelInfo:
+        """Stop and restart a kernel container, preserving configuration.
+
+        All in-memory artifacts are cleared (they do not survive a restart).
+        The kernel configuration (packages, memory/CPU limits) is preserved.
+        If the restart fails, the error message includes container logs.
+        """
+        kernel = self._get_kernel_or_raise(kernel_id)
+        kernel.state = KernelState.RESTARTING
+        kernel.error_message = None
+
+        try:
+            # Stop and remove the existing container
+            self._cleanup_container(kernel_id)
+            kernel.container_id = None
+
+            # Re-allocate port if needed (local mode only)
+            if kernel.port is None and not self._kernel_volume:
+                kernel.port = self._allocate_port()
+
+            # Start a fresh container with the same configuration
+            env = self._build_kernel_env(kernel_id, kernel)
+            run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
+            container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
+            kernel.container_id = container.id
+            await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
+            kernel.state = KernelState.IDLE
+            logger.info("Restarted kernel '%s' (container %s)", kernel_id, container.short_id)
+        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
+            kernel.state = KernelState.ERROR
+            # Try to capture container logs for diagnostics
+            logs = self._get_container_logs(kernel_id)
+            if logs:
+                kernel.error_message = f"Restart failed: {exc}\n\nContainer logs:\n{logs}"
+            else:
+                kernel.error_message = f"Restart failed: {exc}"
+            logger.error("Failed to restart kernel '%s': %s", kernel_id, exc)
+            self._cleanup_container(kernel_id)
+            raise RuntimeError(kernel.error_message) from exc
+
+        return kernel
+
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
@@ -871,6 +913,18 @@ class KernelManager:
             pass
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
             logger.warning("Error cleaning up container for kernel '%s': %s", kernel_id, exc)
+
+    def _get_container_logs(self, kernel_id: str, tail: int = 50) -> str:
+        """Retrieve the last *tail* lines of logs from the kernel container."""
+        kernel = self._kernels.get(kernel_id)
+        if kernel is None or kernel.container_id is None:
+            return ""
+        try:
+            container = self._docker.containers.get(kernel.container_id)
+            return container.logs(tail=tail).decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.debug("Could not retrieve logs for kernel '%s': %s", kernel_id, exc)
+            return ""
 
     async def _wait_for_healthy(self, kernel_id: str, timeout: int = _HEALTH_TIMEOUT) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)

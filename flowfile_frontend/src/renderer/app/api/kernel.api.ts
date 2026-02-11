@@ -76,6 +76,19 @@ export class KernelApi {
     }
   }
 
+  static async restart(kernelId: string): Promise<KernelInfo> {
+    try {
+      const response = await axios.post<KernelInfo>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/restart`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to restart kernel:", error);
+      const errorMsg = (error as any).response?.data?.detail || "Failed to restart kernel";
+      throw new Error(errorMsg);
+    }
+  }
+
   static async getArtifacts(kernelId: string): Promise<Record<string, any>> {
     try {
       const response = await axios.get<Record<string, any>>(

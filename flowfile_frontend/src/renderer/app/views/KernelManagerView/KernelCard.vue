@@ -73,6 +73,14 @@
         <i class="fa-solid fa-play"></i> Start
       </button>
       <button
+        v-if="kernel.state === 'idle' || kernel.state === 'executing' || kernel.state === 'error'"
+        class="btn btn-warning btn-sm"
+        :disabled="busy"
+        @click="$emit('restart', kernel.id)"
+      >
+        <i class="fa-solid fa-arrows-rotate"></i> Restart
+      </button>
+      <button
         v-if="kernel.state === 'idle' || kernel.state === 'executing'"
         class="btn btn-secondary btn-sm"
         :disabled="busy"
@@ -82,7 +90,7 @@
       </button>
       <button
         class="btn btn-danger btn-sm"
-        :disabled="busy || kernel.state === 'starting'"
+        :disabled="busy || kernel.state === 'starting' || kernel.state === 'restarting'"
         @click="$emit('delete', kernel.id, kernel.name)"
       >
         <i class="fa-solid fa-trash-alt"></i> Delete
@@ -105,6 +113,7 @@ const props = defineProps<{
 defineEmits<{
   start: [id: string];
   stop: [id: string];
+  restart: [id: string];
   delete: [id: string, name: string];
 }>();
 
@@ -341,5 +350,23 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 .btn-sm {
   padding: var(--spacing-1) var(--spacing-2-5);
   font-size: var(--font-size-xs);
+}
+
+.btn-warning {
+  background-color: var(--color-warning, #e6a23c);
+  color: #fff;
+  border: 1px solid var(--color-warning, #e6a23c);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: opacity var(--transition-base) var(--transition-timing);
+}
+
+.btn-warning:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.btn-warning:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

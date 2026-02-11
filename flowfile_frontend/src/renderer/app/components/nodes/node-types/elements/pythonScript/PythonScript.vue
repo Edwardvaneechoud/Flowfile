@@ -34,6 +34,15 @@
                 </span>
               </el-option>
             </el-select>
+            <button
+              v-if="selectedKernelId && (selectedKernelState === 'idle' || selectedKernelState === 'executing' || selectedKernelState === 'error')"
+              class="restart-kernel-btn"
+              :disabled="isRestarting"
+              title="Restart Kernel"
+              @click="handleRestartKernel"
+            >
+              <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin': isRestarting }"></i>
+            </button>
             <router-link :to="{ name: 'kernelManager' }" class="manage-kernels-link">
               Manage Kernels
             </router-link>
@@ -57,6 +66,7 @@
             <template v-if="selectedKernelState === 'stopped'">Start it from the Kernel Manager to execute code.</template>
             <template v-else-if="selectedKernelState === 'error'">Check the Kernel Manager for details.</template>
             <template v-else-if="selectedKernelState === 'starting'">Please wait for it to become idle.</template>
+            <template v-else-if="selectedKernelState === 'restarting'">Please wait for the restart to complete.</template>
             <template v-else-if="selectedKernelState === 'executing'">Please wait for the current execution to finish.</template>
           </div>
         </div>
@@ -307,6 +317,8 @@ const stopKernelPolling = () => {
   }
 };
 
+const isRestarting = ref(false);
+
 const handleKernelChange = (kernelId: string | null) => {
   if (nodePythonScript.value) {
     nodePythonScript.value.python_script_input.kernel_id = kernelId ?? null;
@@ -317,6 +329,22 @@ const handleKernelChange = (kernelId: string | null) => {
   } else {
     stopMemoryPolling();
     memoryInfo.value = null;
+  }
+};
+
+const handleRestartKernel = async () => {
+  if (!selectedKernelId.value || isRestarting.value) return;
+  isRestarting.value = true;
+  try {
+    await KernelApi.restart(selectedKernelId.value);
+    await loadKernels();
+    loadArtifacts();
+  } catch (error: any) {
+    const msg = error.message || "Failed to restart kernel.";
+    console.error("Kernel restart failed:", msg);
+    alert(`Kernel restart failed: ${msg}`);
+  } finally {
+    isRestarting.value = false;
   }
 };
 
@@ -542,6 +570,33 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   flex: 1;
 }
 
+.restart-kernel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  border-radius: 4px;
+  background: var(--el-fill-color-blank, #fff);
+  color: var(--el-text-color-regular, #606266);
+  cursor: pointer;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.restart-kernel-btn:hover:not(:disabled) {
+  color: var(--el-color-warning, #e6a23c);
+  border-color: var(--el-color-warning, #e6a23c);
+}
+
+.restart-kernel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .manage-kernels-link {
   font-size: 0.8rem;
   color: var(--el-color-primary);
@@ -584,6 +639,10 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 
 .kernel-state-dot--error {
   background-color: #f56c6c;
+}
+
+.kernel-state-dot--restarting {
+  background-color: #e6a23c;
 }
 
 .kernel-state-label {

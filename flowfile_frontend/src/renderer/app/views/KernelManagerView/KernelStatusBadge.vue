@@ -17,6 +17,7 @@ const config = computed(() => {
   const map: Record<KernelState, { icon: string; label: string }> = {
     stopped: { icon: "fa-solid fa-circle-stop", label: "Stopped" },
     starting: { icon: "fa-solid fa-spinner fa-spin", label: "Starting" },
+    restarting: { icon: "fa-solid fa-arrows-rotate fa-spin", label: "Restarting" },
     idle: { icon: "fa-solid fa-circle-check", label: "Ready" },
     executing: { icon: "fa-solid fa-gear fa-spin", label: "Executing" },
     error: { icon: "fa-solid fa-circle-exclamation", label: "Error" },
@@ -47,6 +48,11 @@ const label = computed(() => config.value.label);
 }
 
 .status-starting {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.status-restarting {
   background-color: var(--color-warning-light);
   color: var(--color-warning-dark);
 }
