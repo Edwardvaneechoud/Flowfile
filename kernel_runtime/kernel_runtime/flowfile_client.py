@@ -102,11 +102,6 @@ def _get_context_value(key: str) -> Any:
 
 
 def _check_input_available(input_paths: dict[str, list[str]], name: str) -> list[str]:
-    """Validate that *name* exists in *input_paths* and has data.
-
-    Returns the list of paths on success.  Raises a descriptive error when
-    upstream data is missing.
-    """
     if name not in input_paths or not input_paths[name]:
         available = [k for k, v in input_paths.items() if v]
         if not available:

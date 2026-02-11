@@ -84,7 +84,6 @@ class TestReadInput:
             flowfile_client.read_input("nonexistent")
 
     def test_read_input_no_upstream_raises_runtime_error(self, tmp_dir: Path):
-        """When input_paths is empty, raise RuntimeError about upstream nodes."""
         store = ArtifactStore()
         flowfile_client._set_context(
             node_id=1,
@@ -96,7 +95,6 @@ class TestReadInput:
             flowfile_client.read_input()
 
     def test_read_input_empty_paths_raises_runtime_error(self, tmp_dir: Path):
-        """When input_paths has the key but with empty paths list, raise RuntimeError."""
         store = ArtifactStore()
         flowfile_client._set_context(
             node_id=1,
@@ -186,7 +184,6 @@ class TestReadMultipleInputs:
             flowfile_client.read_first("nonexistent")
 
     def test_read_first_no_upstream_raises_runtime_error(self, tmp_dir: Path):
-        """When input_paths is empty, read_first raises RuntimeError."""
         store = ArtifactStore()
         flowfile_client._set_context(
             node_id=1,
