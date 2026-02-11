@@ -176,16 +176,18 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onUnmounted } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
 
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
+import { NodeApi } from "../../../../../api/node.api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
@@ -194,6 +196,7 @@ import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
 // ─── State ──────────────────────────────────────────────────────────────────
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const dataLoaded = ref(false);
 const showEditor = ref(false);
 const showHelp = ref(false);
@@ -382,6 +385,50 @@ const loadArtifacts = async () => {
   }
 };
 
+// ─── Flow run display outputs ────────────────────────────────────────────────
+
+const loadFlowRunDisplayOutputs = async () => {
+  const flowId = nodePythonScript.value?.flow_id;
+  const nodeId = nodePythonScript.value?.node_id;
+  if (flowId == null || nodeId == null) return;
+
+  try {
+    const outputs = await NodeApi.getDisplayOutputs(Number(flowId), nodeId);
+    if (outputs.length > 0 && cells.value.length > 0) {
+      // Attach display outputs to the last cell
+      const lastCell = cells.value[cells.value.length - 1];
+      cells.value = cells.value.map(c =>
+        c.id === lastCell.id
+          ? {
+              ...c,
+              output: {
+                stdout: "",
+                stderr: "",
+                display_outputs: outputs,
+                error: null,
+                execution_time_ms: 0,
+                execution_count: 0,
+              },
+            }
+          : c,
+      );
+    }
+  } catch {
+    // Silently ignore — display outputs are best-effort
+  }
+};
+
+// Watch for flow run completion to refresh display outputs
+watch(
+  () => editorStore.isRunning,
+  (running, wasRunning) => {
+    if (wasRunning && !running && dataLoaded.value) {
+      loadFlowRunDisplayOutputs();
+      loadArtifacts();
+    }
+  },
+);
+
 // ─── Cell sync ──────────────────────────────────────────────────────────────
 
 const handleCellsUpdate = (updatedCells: NotebookCell[]) => {
@@ -457,10 +504,11 @@ const loadNodeData = async (nodeId: number) => {
       showEditor.value = true;
       dataLoaded.value = true;
 
-      // Load kernels, artifacts, and start memory polling
+      // Load kernels, artifacts, display outputs, and start memory polling
       await loadKernels();
       startKernelPolling();
       loadArtifacts();
+      loadFlowRunDisplayOutputs();
       if (selectedKernelId.value) {
         startMemoryPolling();
       }

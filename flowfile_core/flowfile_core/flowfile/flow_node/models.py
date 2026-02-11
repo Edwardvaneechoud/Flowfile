@@ -256,6 +256,7 @@ class NodeResults:
     errors: str | None = None
     warnings: str | None = None
     analysis_data_generator: Callable[[], pa.Table] | None = None
+    display_outputs: list[dict] | None = None
 
     def __init__(self):
         self._resulting_data = None
@@ -265,6 +266,7 @@ class NodeResults:
         self.warnings = None
         self.example_data_generator = None
         self.analysis_data_generator = None
+        self.display_outputs = None
 
     def get_example_data(self) -> pa.Table | None:
         """
@@ -294,3 +296,4 @@ class NodeResults:
         """Resets all result attributes to their default, empty state."""
         self._resulting_data = None
         self.run_time = -1
+        self.display_outputs = None

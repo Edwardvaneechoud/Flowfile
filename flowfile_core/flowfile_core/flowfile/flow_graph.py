@@ -1218,6 +1218,15 @@ class FlowGraph:
                 for line in result.stderr.strip().splitlines():
                     node_logger.warning(f"[stderr] {line}")
 
+            # Store display outputs on the node so the frontend can retrieve them
+            if result.display_outputs:
+                node = self.get_node(node_id)
+                if node is not None:
+                    node.results.display_outputs = [
+                        {"mime_type": d.mime_type, "data": d.data, "title": d.title}
+                        for d in result.display_outputs
+                    ]
+
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
 

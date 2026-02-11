@@ -868,6 +868,21 @@ def get_node(flow_id: int, node_id: int, get_data: bool = False):
     return v
 
 
+@router.get("/node/display_outputs", tags=["editor"])
+def get_node_display_outputs(flow_id: int, node_id: int):
+    """Retrieves display outputs (images, HTML, text) from the last flow execution of a python_script node."""
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Node not found")
+    display_outputs = node.results.display_outputs
+    if display_outputs is None:
+        return []
+    return display_outputs
+
+
 @router.post("/node/description/", tags=["editor"])
 def update_description_node(flow_id: int, node_id: int, description: str = Body(...)):
     """Updates the description text for a specific node."""
