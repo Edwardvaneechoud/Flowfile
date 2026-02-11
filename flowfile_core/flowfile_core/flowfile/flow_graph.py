@@ -500,8 +500,9 @@ class FlowGraph:
             determine_insertion_order,
         )
 
-        # Preserve the current flow_id
+        # Preserve the current flow_id and source_registration_id
         original_flow_id = self._flow_id
+        original_source_registration_id = self._flow_settings.source_registration_id
 
         # Convert snapshot to FlowInformation
         flow_info = _flowfile_data_to_flow_information(snapshot)
@@ -512,10 +513,12 @@ class FlowGraph:
         self._flow_starts.clear()
         self._results = None
 
-        # Restore flow settings (preserve original flow_id)
+        # Restore flow settings (preserve original flow_id and source_registration_id)
         self._flow_settings = flow_info.flow_settings
         self._flow_settings.flow_id = original_flow_id
         self._flow_id = original_flow_id
+        if self._flow_settings.source_registration_id is None:
+            self._flow_settings.source_registration_id = original_source_registration_id
         self.__name__ = flow_info.flow_name or self.__name__
 
         # Determine node insertion order
@@ -2809,6 +2812,7 @@ class FlowGraph:
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
+            source_registration_id=self.flow_settings.source_registration_id,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

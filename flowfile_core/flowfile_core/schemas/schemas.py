@@ -203,6 +203,7 @@ class FlowfileSettings(BaseModel):
     auto_save: bool = False
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
+    source_registration_id: int | None = None
 
 
 class FlowfileNode(BaseModel):
