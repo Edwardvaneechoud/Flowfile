@@ -136,6 +136,7 @@ class FlowNode:
         self._schema_callback = None
         self._state_needs_reset = False
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
+        self._kernel_cancel_context = None  # (kernel_id, KernelManager) set during kernel execution
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
@@ -1089,7 +1090,13 @@ class FlowNode:
 
         if self._fetch_cached_df is not None:
             self._fetch_cached_df.cancel()
-            self.node_stats.is_canceled = True
+        elif self._kernel_cancel_context is not None:
+            kernel_id, manager = self._kernel_cancel_context
+            logger.info("Cancelling kernel execution for kernel '%s'", kernel_id)
+            try:
+                manager.interrupt_execution_sync(kernel_id)
+            except Exception:
+                logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
         else:
             logger.warning("No external process to cancel")
         self.node_stats.is_canceled = True

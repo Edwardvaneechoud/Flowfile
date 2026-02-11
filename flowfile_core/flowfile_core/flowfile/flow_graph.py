@@ -1208,7 +1208,13 @@ class FlowGraph:
                 log_callback_url=log_callback_url,
                 internal_token=internal_token,
             )
-            result = manager.execute_sync(kernel_id, request, self.flow_logger)
+            # Set cancel context so FlowNode.cancel() can interrupt kernel execution
+            node = self.get_node(node_id)
+            node._kernel_cancel_context = (kernel_id, manager)
+            try:
+                result = manager.execute_sync(kernel_id, request, self.flow_logger)
+            finally:
+                node._kernel_cancel_context = None
 
             # Forward captured stdout/stderr to the flow logger
             if result.stdout:

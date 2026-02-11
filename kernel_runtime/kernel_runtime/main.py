@@ -3,6 +3,7 @@ import contextlib
 import io
 import logging
 import os
+import signal
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -54,6 +55,27 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Execution cancellation support
+# ---------------------------------------------------------------------------
+_is_executing = False
+
+
+def _cancel_signal_handler(signum, frame):
+    """Handle SIGUSR1 by raising KeyboardInterrupt during code execution.
+
+    When the kernel is executing user code via exec(), sending SIGUSR1 to the
+    container will trigger this handler. If execution is in progress, a
+    KeyboardInterrupt is raised to abort the running code. The /execute
+    endpoint catches it and returns a cancellation response.
+    """
+    if _is_executing:
+        logger.warning("Received SIGUSR1 during execution, raising KeyboardInterrupt")
+        raise KeyboardInterrupt("Execution cancelled by user")
+    else:
+        logger.info("Received SIGUSR1 but no execution in progress, ignoring")
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +174,13 @@ def _setup_persistence() -> None:
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _setup_persistence()
+    # Register SIGUSR1 handler for execution cancellation.
+    # Only works in the main thread (signal.signal requirement); in test
+    # environments the lifespan may run in a secondary thread.
+    try:
+        signal.signal(signal.SIGUSR1, _cancel_signal_handler)
+    except ValueError:
+        logger.info("Cannot register SIGUSR1 handler (not in main thread)")
     yield
 
 
@@ -295,6 +324,7 @@ async def execute(request: ExecuteRequest):
 
     artifacts_before = set(artifact_store.list_all(flow_id=request.flow_id).keys())
 
+    global _is_executing
     try:
         flowfile_client._set_context(
             node_id=request.node_id,
@@ -332,8 +362,12 @@ async def execute(request: ExecuteRequest):
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
 
-            # Execute user code
-            exec(user_code, exec_globals)  # noqa: S102
+            # Execute user code (with cancel support via SIGUSR1)
+            _is_executing = True
+            try:
+                exec(user_code, exec_globals)  # noqa: S102
+            finally:
+                _is_executing = False
 
         # Collect display outputs
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
@@ -358,6 +392,18 @@ async def execute(request: ExecuteRequest):
             stderr=stderr_buf.getvalue(),
             execution_time_ms=elapsed,
         )
+    except KeyboardInterrupt:
+        _is_executing = False
+        display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
+        elapsed = (time.perf_counter() - start) * 1000
+        return ExecuteResponse(
+            success=False,
+            display_outputs=display_outputs,
+            stdout=stdout_buf.getvalue(),
+            stderr=stderr_buf.getvalue(),
+            error="Execution cancelled by user",
+            execution_time_ms=elapsed,
+        )
     except Exception as exc:
         # Still collect any display outputs that were generated before the error
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
@@ -371,6 +417,7 @@ async def execute(request: ExecuteRequest):
             execution_time_ms=elapsed,
         )
     finally:
+        _is_executing = False
         flowfile_client._clear_context()
 
 
