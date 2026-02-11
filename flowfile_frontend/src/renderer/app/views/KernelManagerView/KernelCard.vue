@@ -18,12 +18,29 @@
         <span class="kernel-card__resource" title="CPU cores">
           <i class="fa-solid fa-microchip"></i> {{ kernel.cpu_cores }} CPU
         </span>
-        <span class="kernel-card__resource" title="Memory">
+        <span class="kernel-card__resource" title="Memory limit">
           <i class="fa-solid fa-memory"></i> {{ kernel.memory_gb }} GB
         </span>
         <span v-if="kernel.gpu" class="kernel-card__resource" title="GPU enabled">
           <i class="fa-solid fa-display"></i> GPU
         </span>
+      </div>
+
+      <!-- Live memory usage bar -->
+      <div v-if="memoryInfo && memoryInfo.limit_bytes > 0" class="kernel-card__memory-bar">
+        <div class="kernel-card__memory-header">
+          <span class="kernel-card__memory-label">Memory</span>
+          <span class="kernel-card__memory-value" :class="`memory-level--${memoryLevel}`">
+            {{ memoryDisplay }} ({{ memoryInfo.usage_percent }}%)
+          </span>
+        </div>
+        <div class="kernel-card__memory-track">
+          <div
+            class="kernel-card__memory-fill"
+            :class="`memory-level--${memoryLevel}`"
+            :style="{ width: `${Math.min(memoryInfo.usage_percent, 100)}%` }"
+          ></div>
+        </div>
       </div>
 
       <div v-if="kernel.packages.length > 0" class="kernel-card__packages">
@@ -76,12 +93,13 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { KernelInfo } from "../../types";
+import type { KernelInfo, KernelMemoryInfo } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
 
 const props = defineProps<{
   kernel: KernelInfo;
   busy: boolean;
+  memoryInfo: KernelMemoryInfo | null;
 }>();
 
 defineEmits<{
@@ -93,6 +111,25 @@ defineEmits<{
 const maxPackagesShown = 5;
 
 const displayedPackages = computed(() => props.kernel.packages.slice(0, maxPackagesShown));
+
+const formatBytes = (bytes: number): string => {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+};
+
+const memoryDisplay = computed(() => {
+  if (!props.memoryInfo || props.memoryInfo.limit_bytes === 0) return null;
+  const used = formatBytes(props.memoryInfo.used_bytes);
+  const limit = formatBytes(props.memoryInfo.limit_bytes);
+  return `${used} / ${limit}`;
+});
+
+const memoryLevel = computed((): "normal" | "warning" | "critical" => {
+  if (!props.memoryInfo) return "normal";
+  if (props.memoryInfo.usage_percent >= 95) return "critical";
+  if (props.memoryInfo.usage_percent >= 80) return "warning";
+  return "normal";
+});
 </script>
 
 <style scoped>
@@ -213,6 +250,67 @@ const displayedPackages = computed(() => props.kernel.packages.slice(0, maxPacka
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   font-style: italic;
+}
+
+/* ─── Memory bar ─────────────────────────────────────────────────────── */
+
+.kernel-card__memory-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.kernel-card__memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-2xs);
+}
+
+.kernel-card__memory-label {
+  color: var(--color-text-muted);
+}
+
+.kernel-card__memory-value {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-medium);
+}
+
+.kernel-card__memory-track {
+  height: 4px;
+  background-color: var(--color-background-tertiary);
+  border-radius: var(--border-radius-full);
+  overflow: hidden;
+}
+
+.kernel-card__memory-fill {
+  height: 100%;
+  border-radius: var(--border-radius-full);
+  transition: width 0.3s ease;
+}
+
+.kernel-card__memory-fill.memory-level--normal {
+  background-color: var(--color-success, #67c23a);
+}
+
+.kernel-card__memory-fill.memory-level--warning {
+  background-color: var(--color-warning, #e6a23c);
+}
+
+.kernel-card__memory-fill.memory-level--critical {
+  background-color: var(--color-danger, #f56c6c);
+}
+
+.memory-level--normal {
+  color: var(--color-success-hover, #529b2e);
+}
+
+.memory-level--warning {
+  color: var(--color-warning-dark, #b88230);
+}
+
+.memory-level--critical {
+  color: var(--color-danger, #f56c6c);
 }
 
 .kernel-card__error {

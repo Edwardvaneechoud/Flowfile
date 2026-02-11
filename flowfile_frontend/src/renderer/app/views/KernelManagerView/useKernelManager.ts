@@ -1,9 +1,10 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import type { Ref } from "vue";
 import { KernelApi } from "../../api/kernel.api";
-import type { DockerStatus, KernelInfo, KernelConfig } from "../../types";
+import type { DockerStatus, KernelInfo, KernelConfig, KernelMemoryInfo } from "../../types";
 
 const POLL_INTERVAL_MS = 5000;
+const MEMORY_POLL_INTERVAL_MS = 3000;
 
 export function useKernelManager() {
   const kernels: Ref<KernelInfo[]> = ref([]);
@@ -11,7 +12,9 @@ export function useKernelManager() {
   const errorMessage: Ref<string | null> = ref(null);
   const dockerStatus: Ref<DockerStatus | null> = ref(null);
   const actionInProgress: Ref<Record<string, boolean>> = ref({});
+  const memoryStats: Ref<Record<string, KernelMemoryInfo | null>> = ref({});
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
 
   const checkDockerStatus = async () => {
     dockerStatus.value = await KernelApi.getDockerStatus();
@@ -70,6 +73,20 @@ export function useKernelManager() {
     return !!actionInProgress.value[kernelId];
   };
 
+  const loadMemoryStats = async () => {
+    const running = kernels.value.filter(
+      (k) => k.state === "idle" || k.state === "executing",
+    );
+    const results: Record<string, KernelMemoryInfo | null> = {};
+    await Promise.all(
+      running.map(async (k) => {
+        results[k.id] = await KernelApi.getMemoryStats(k.id);
+      }),
+    );
+    // Remove stats for kernels that are no longer running
+    memoryStats.value = results;
+  };
+
   const startPolling = () => {
     stopPolling();
     pollTimer = setInterval(async () => {
@@ -79,6 +96,7 @@ export function useKernelManager() {
         // Silently ignore poll errors to avoid spamming the user
       }
     }, POLL_INTERVAL_MS);
+    memoryPollTimer = setInterval(loadMemoryStats, MEMORY_POLL_INTERVAL_MS);
   };
 
   const stopPolling = () => {
@@ -86,12 +104,17 @@ export function useKernelManager() {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    if (memoryPollTimer !== null) {
+      clearInterval(memoryPollTimer);
+      memoryPollTimer = null;
+    }
   };
 
   onMounted(async () => {
     await checkDockerStatus();
     try {
       await loadKernels();
+      loadMemoryStats();
     } catch {
       // Error already captured in errorMessage
     }
@@ -108,6 +131,7 @@ export function useKernelManager() {
     errorMessage,
     dockerStatus,
     actionInProgress,
+    memoryStats,
     loadKernels,
     createKernel,
     startKernel,

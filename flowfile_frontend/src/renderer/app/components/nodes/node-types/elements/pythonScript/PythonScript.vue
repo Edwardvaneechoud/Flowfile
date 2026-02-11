@@ -39,6 +39,13 @@
             </router-link>
           </div>
 
+          <!-- Memory usage -->
+          <div v-if="memoryDisplay" class="kernel-memory" :class="`kernel-memory--${memoryLevel}`">
+            <i class="fa-solid fa-memory"></i>
+            <span class="kernel-memory__text">{{ memoryDisplay }}</span>
+            <span class="kernel-memory__percent">({{ memoryInfo!.usage_percent }}%)</span>
+          </div>
+
           <!-- Kernel warnings -->
           <div v-if="!selectedKernelId" class="kernel-warning">
             <i class="fa-solid fa-triangle-exclamation"></i>
@@ -141,6 +148,9 @@
                 :class="`kernel-state-dot--${selectedKernelState}`"
               ></span>
               {{ kernels.find(k => k.id === selectedKernelId)?.name }}
+              <span v-if="memoryDisplay" class="kernel-indicator__memory" :class="`kernel-memory--${memoryLevel}`">
+                {{ memoryDisplay }}
+              </span>
             </span>
             <button class="icon-button" title="API Reference" @click="showHelp = true">
               <i class="fa-solid fa-circle-question"></i>
@@ -173,7 +183,7 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
-import type { KernelInfo } from "../../../../../types/kernel.types";
+import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -199,6 +209,10 @@ const kernelsLoading = ref(false);
 const selectedKernelId = ref<string | null>(null);
 let kernelPollTimer: ReturnType<typeof setInterval> | null = null;
 
+// Memory stats
+const memoryInfo = ref<KernelMemoryInfo | null>(null);
+let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
+
 // Artifact state
 interface ArtifactInfo {
   name: string;
@@ -217,6 +231,52 @@ const selectedKernelState = computed(() => {
   const kernel = kernels.value.find((k) => k.id === selectedKernelId.value);
   return kernel?.state ?? null;
 });
+
+const formatBytes = (bytes: number): string => {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+};
+
+const memoryDisplay = computed(() => {
+  if (!memoryInfo.value || memoryInfo.value.limit_bytes === 0) return null;
+  const used = formatBytes(memoryInfo.value.used_bytes);
+  const limit = formatBytes(memoryInfo.value.limit_bytes);
+  return `${used} / ${limit}`;
+});
+
+const memoryLevel = computed((): "normal" | "warning" | "critical" => {
+  if (!memoryInfo.value) return "normal";
+  if (memoryInfo.value.usage_percent >= 95) return "critical";
+  if (memoryInfo.value.usage_percent >= 80) return "warning";
+  return "normal";
+});
+
+const loadMemoryStats = async () => {
+  const kernelId = selectedKernelId.value;
+  if (!kernelId) {
+    memoryInfo.value = null;
+    return;
+  }
+  const kernel = kernels.value.find((k) => k.id === kernelId);
+  if (!kernel || (kernel.state !== "idle" && kernel.state !== "executing")) {
+    memoryInfo.value = null;
+    return;
+  }
+  memoryInfo.value = await KernelApi.getMemoryStats(kernelId);
+};
+
+const startMemoryPolling = () => {
+  stopMemoryPolling();
+  loadMemoryStats();
+  memoryPollTimer = setInterval(loadMemoryStats, 3000);
+};
+
+const stopMemoryPolling = () => {
+  if (memoryPollTimer !== null) {
+    clearInterval(memoryPollTimer);
+    memoryPollTimer = null;
+  }
+};
 
 const loadKernels = async () => {
   kernelsLoading.value = true;
@@ -252,6 +312,12 @@ const handleKernelChange = (kernelId: string | null) => {
     nodePythonScript.value.python_script_input.kernel_id = kernelId ?? null;
   }
   loadArtifacts();
+  if (kernelId) {
+    startMemoryPolling();
+  } else {
+    stopMemoryPolling();
+    memoryInfo.value = null;
+  }
 };
 
 // ─── Artifact helpers ───────────────────────────────────────────────────────
@@ -391,10 +457,13 @@ const loadNodeData = async (nodeId: number) => {
       showEditor.value = true;
       dataLoaded.value = true;
 
-      // Load kernels and artifacts
+      // Load kernels, artifacts, and start memory polling
       await loadKernels();
       startKernelPolling();
       loadArtifacts();
+      if (selectedKernelId.value) {
+        startMemoryPolling();
+      }
     }
   } catch (error) {
     console.error("Failed to load node data:", error);
@@ -405,6 +474,7 @@ const loadNodeData = async (nodeId: number) => {
 
 onUnmounted(() => {
   stopKernelPolling();
+  stopMemoryPolling();
 });
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });
@@ -519,6 +589,49 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .kernel-state-label {
   font-size: 0.8rem;
   color: var(--el-text-color-secondary);
+}
+
+/* ─── Memory usage ────────────────────────────────────────────────────── */
+
+.kernel-memory {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  font-family: var(--el-font-family, monospace);
+}
+
+.kernel-memory--normal {
+  color: var(--el-color-success-dark-2, #529b2e);
+  background-color: var(--el-color-success-light-9, #f0f9eb);
+}
+
+.kernel-memory--warning {
+  color: var(--el-color-warning-dark-2, #b88230);
+  background-color: var(--el-color-warning-light-9, #fdf6ec);
+}
+
+.kernel-memory--critical {
+  color: var(--el-color-danger-dark-2, #c45656);
+  background-color: var(--el-color-danger-light-9, #fef0f0);
+}
+
+.kernel-memory__text {
+  font-weight: 500;
+}
+
+.kernel-memory__percent {
+  opacity: 0.7;
+}
+
+.kernel-indicator__memory {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: var(--el-font-family, monospace);
 }
 
 .kernel-warning {

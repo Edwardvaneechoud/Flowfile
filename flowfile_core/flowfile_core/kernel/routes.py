@@ -14,6 +14,7 @@ from flowfile_core.kernel.models import (
     ExecuteResult,
     KernelConfig,
     KernelInfo,
+    KernelMemoryInfo,
     RecoveryStatus,
 )
 
@@ -322,3 +323,21 @@ async def get_persistence_info(kernel_id: str, current_user=Depends(get_current_
         return await manager.get_persistence_info(kernel_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{kernel_id}/memory", response_model=KernelMemoryInfo)
+async def get_memory_stats(kernel_id: str, current_user=Depends(get_current_active_user)):
+    """Get current memory usage for a running kernel container."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.get_memory_stats(kernel_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.debug("Memory stats unavailable for kernel '%s': %s", kernel_id, exc)
+        raise HTTPException(status_code=502, detail=f"Memory stats unavailable: {exc}") from exc

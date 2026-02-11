@@ -519,6 +519,54 @@ async def persistence_info():
     }
 
 
+class MemoryInfo(BaseModel):
+    """Container memory usage information read from cgroup fs."""
+
+    used_bytes: int = 0
+    limit_bytes: int = 0
+    usage_percent: float = 0.0
+
+
+def _read_cgroup_memory() -> MemoryInfo:
+    """Read memory usage from the Linux cgroup filesystem.
+
+    Supports both cgroup v2 (``/sys/fs/cgroup/memory.current``) and
+    cgroup v1 (``/sys/fs/cgroup/memory/memory.usage_in_bytes``).
+    """
+    used: int = 0
+    limit: int = 0
+
+    # cgroup v2 paths
+    v2_current = Path("/sys/fs/cgroup/memory.current")
+    v2_max = Path("/sys/fs/cgroup/memory.max")
+    # cgroup v1 paths
+    v1_current = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    v1_max = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+
+    try:
+        if v2_current.exists():
+            used = int(v2_current.read_text().strip())
+            max_text = v2_max.read_text().strip()
+            limit = 0 if max_text == "max" else int(max_text)
+        elif v1_current.exists():
+            used = int(v1_current.read_text().strip())
+            limit_text = v1_max.read_text().strip()
+            limit_val = int(limit_text)
+            # v1 uses a very large sentinel (PAGE_COUNTER_MAX) for "no limit"
+            limit = 0 if limit_val >= (1 << 62) else limit_val
+    except (OSError, ValueError) as exc:
+        logger.debug("Could not read cgroup memory stats: %s", exc)
+
+    percent = (used / limit * 100.0) if limit > 0 else 0.0
+    return MemoryInfo(used_bytes=used, limit_bytes=limit, usage_percent=round(percent, 1))
+
+
+@app.get("/memory", response_model=MemoryInfo)
+async def memory_stats():
+    """Return current container memory usage from cgroup filesystem."""
+    return _read_cgroup_memory()
+
+
 @app.get("/health")
 async def health():
     persistence_status = "enabled" if _persistence is not None else "disabled"

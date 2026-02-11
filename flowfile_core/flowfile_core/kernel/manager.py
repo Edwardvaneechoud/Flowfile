@@ -18,6 +18,7 @@ from flowfile_core.kernel.models import (
     ExecuteResult,
     KernelConfig,
     KernelInfo,
+    KernelMemoryInfo,
     KernelState,
     RecoveryStatus,
 )
@@ -554,6 +555,18 @@ class KernelManager:
     # Execution
     # ------------------------------------------------------------------
 
+    def _check_oom_killed(self, kernel_id: str) -> bool:
+        """Check if the kernel container was killed due to an out-of-memory condition."""
+        kernel = self._kernels.get(kernel_id)
+        if kernel is None or kernel.container_id is None:
+            return False
+        try:
+            container = self._docker.containers.get(kernel.container_id)
+            state = container.attrs.get("State", {})
+            return state.get("OOMKilled", False)
+        except (docker.errors.NotFound, docker.errors.APIError):
+            return False
+
     async def execute(self, kernel_id: str, request: ExecuteRequest) -> ExecuteResult:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
@@ -566,6 +579,17 @@ class KernelManager:
                 response = await client.post(url, json=request.model_dump())
                 response.raise_for_status()
                 return ExecuteResult(**response.json())
+        except (httpx.HTTPError, OSError):
+            if self._check_oom_killed(kernel_id):
+                kernel.state = KernelState.ERROR
+                kernel.error_message = "Kernel ran out of memory"
+                oom_msg = (
+                    f"Kernel ran out of memory. The container exceeded its {kernel.memory_gb} GB "
+                    "memory limit and was terminated. Consider increasing the kernel's memory "
+                    "allocation or reducing your data size."
+                )
+                return ExecuteResult(success=False, error=oom_msg)
+            raise
         finally:
             # Only return to IDLE if we haven't been stopped/errored in the meantime
             if kernel.state == KernelState.EXECUTING:
@@ -586,6 +610,19 @@ class KernelManager:
                 response = client.post(url, json=request.model_dump())
                 response.raise_for_status()
                 return ExecuteResult(**response.json())
+        except (httpx.HTTPError, OSError):
+            if self._check_oom_killed(kernel_id):
+                kernel.state = KernelState.ERROR
+                kernel.error_message = "Kernel ran out of memory"
+                oom_msg = (
+                    f"Kernel ran out of memory. The container exceeded its {kernel.memory_gb} GB "
+                    "memory limit and was terminated. Consider increasing the kernel's memory "
+                    "allocation or reducing your data size."
+                )
+                if flow_logger:
+                    flow_logger.error(oom_msg)
+                return ExecuteResult(success=False, error=oom_msg)
+            raise
         finally:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
@@ -726,6 +763,23 @@ class KernelManager:
             response = await client.get(url)
             response.raise_for_status()
             return ArtifactPersistenceInfo(**response.json())
+
+    async def get_memory_stats(self, kernel_id: str) -> KernelMemoryInfo:
+        """Get current memory usage from a running kernel container."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
+
+        url = f"{self._kernel_url(kernel)}/memory"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return KernelMemoryInfo(**response.json())
+        except (httpx.HTTPError, OSError) as exc:
+            raise RuntimeError(
+                f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}"
+            ) from exc
 
     async def list_kernel_artifacts(self, kernel_id: str) -> list:
         """List all artifacts in a running kernel."""

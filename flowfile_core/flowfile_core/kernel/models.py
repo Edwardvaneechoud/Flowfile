@@ -148,3 +148,11 @@ class ArtifactPersistenceInfo(BaseModel):
     in_memory_count: int = 0
     disk_usage_bytes: int = 0
     artifacts: dict = Field(default_factory=dict)
+
+
+class KernelMemoryInfo(BaseModel):
+    """Memory usage stats for a running kernel container."""
+
+    used_bytes: int = 0
+    limit_bytes: int = 0
+    usage_percent: float = 0.0

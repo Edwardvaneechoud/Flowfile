@@ -60,6 +60,7 @@
             :key="kernel.id"
             :kernel="kernel"
             :busy="isActionInProgress(kernel.id)"
+            :memory-info="memoryStats[kernel.id] ?? null"
             @start="handleStart"
             @stop="handleStop"
             @delete="confirmDelete"
@@ -111,6 +112,7 @@ const {
   isLoading,
   errorMessage,
   dockerStatus,
+  memoryStats,
   createKernel,
   startKernel,
   stopKernel,
