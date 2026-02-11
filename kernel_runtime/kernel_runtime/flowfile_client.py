@@ -101,6 +101,17 @@ def _get_context_value(key: str) -> Any:
     return ctx[key]
 
 
+def _check_input_available(input_paths: dict[str, list[str]], name: str) -> list[str]:
+    if name not in input_paths or not input_paths[name]:
+        available = [k for k, v in input_paths.items() if v]
+        if not available:
+            raise RuntimeError(
+                "Upstream nodes did not run yet. Make sure you run the flow before calling read_input()."
+            )
+        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
+    return input_paths[name]
+
+
 def read_input(name: str = "main") -> pl.LazyFrame:
     """Read all input files for *name* and return them as a single LazyFrame.
 
@@ -109,10 +120,7 @@ def read_input(name: str = "main") -> pl.LazyFrame:
     automatically by Polars.
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
-    if name not in input_paths:
-        available = list(input_paths.keys())
-        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
-    paths = input_paths[name]
+    paths = _check_input_available(input_paths, name)
     if len(paths) == 1:
         return pl.scan_parquet(paths[0])
     return pl.scan_parquet(paths)
@@ -125,10 +133,8 @@ def read_first(name: str = "main") -> pl.LazyFrame:
     ``input_paths[name][0]``.
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
-    if name not in input_paths:
-        available = list(input_paths.keys())
-        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
-    return pl.scan_parquet(input_paths[name][0])
+    paths = _check_input_available(input_paths, name)
+    return pl.scan_parquet(paths[0])
 
 
 def read_inputs() -> dict[str, list[pl.LazyFrame]]:
