@@ -336,6 +336,11 @@ class CustomNodeBase(BaseModel):
     number_of_inputs: int = 1
     number_of_outputs: int = 1
 
+    # Kernel execution configuration
+    use_kernel: bool = False
+    required_packages: list[str] = []
+    kernel_code: str = ""
+
     # Display properties in the UI
     node_group: str | None = "custom"
     title: str | None = "Custom Node"
@@ -419,6 +424,9 @@ class CustomNodeBase(BaseModel):
             "node_group": self.node_group,
             "title": self.title,
             "intro": self.intro,
+            "use_kernel": self.use_kernel,
+            "required_packages": self.required_packages,
+            "kernel_code": self.kernel_code,
         }
 
         if self.settings_schema:

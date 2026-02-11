@@ -60,11 +60,20 @@ export function useNodeValidation() {
     });
 
     // Validate Python code syntax (basic check)
-    if (!processCode.includes("def process")) {
-      errors.push({ field: "process_code", message: "Process method definition is missing" });
-    }
-    if (!processCode.includes("return")) {
-      errors.push({ field: "process_code", message: "Process method must return a value" });
+    if (nodeMetadata.use_kernel) {
+      if (!processCode.includes("flowfile.publish_output")) {
+        errors.push({
+          field: "process_code",
+          message: "Kernel code must call flowfile.publish_output() to produce output",
+        });
+      }
+    } else {
+      if (!processCode.includes("def process")) {
+        errors.push({ field: "process_code", message: "Process method definition is missing" });
+      }
+      if (!processCode.includes("return")) {
+        errors.push({ field: "process_code", message: "Process method must return a value" });
+      }
     }
 
     return errors;

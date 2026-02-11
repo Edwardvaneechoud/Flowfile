@@ -300,17 +300,39 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
                                 result["metadata"]["number_of_inputs"] = value
                             elif attr_name == "number_of_outputs":
                                 result["metadata"]["number_of_outputs"] = value
+                            elif attr_name == "use_kernel" and isinstance(value, bool):
+                                result["metadata"]["use_kernel"] = value
+                            elif attr_name == "kernel_code" and isinstance(value, str):
+                                result["metadata"]["kernel_code"] = value
 
-                    # Extract process method
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef) and item.name == "process":
-                            # Get the source code of the process method
-                            start_line = item.lineno - 1
-                            end_line = item.end_lineno if hasattr(item, 'end_lineno') else start_line + 20
-                            lines = content.split('\n')
-                            process_lines = lines[start_line:end_line]
-                            result["processCode"] = '\n'.join(process_lines)
-                            break
+                        # Parse list values (e.g. required_packages)
+                        if attr_name == "required_packages":
+                            list_node = None
+                            if isinstance(item, ast.AnnAssign) and item.value:
+                                list_node = item.value
+                            elif isinstance(item, ast.Assign):
+                                list_node = item.value
+                            if isinstance(list_node, ast.List):
+                                packages = []
+                                for elt in list_node.elts:
+                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                        packages.append(elt.value)
+                                result["metadata"]["required_packages"] = packages
+
+                    # Extract process code
+                    if result["metadata"].get("use_kernel"):
+                        # Kernel mode: processCode is the kernel_code attribute
+                        result["processCode"] = result["metadata"].get("kernel_code", "")
+                    else:
+                        # Lazy mode: extract the process method source
+                        for item in node.body:
+                            if isinstance(item, ast.FunctionDef) and item.name == "process":
+                                start_line = item.lineno - 1
+                                end_line = item.end_lineno if hasattr(item, 'end_lineno') else start_line + 20
+                                lines = content.split('\n')
+                                process_lines = lines[start_line:end_line]
+                                result["processCode"] = '\n'.join(process_lines)
+                                break
 
                     break
 

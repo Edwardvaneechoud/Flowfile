@@ -805,6 +805,7 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeUserDefined extends NodeMultiInput {
   settings: any;
+  kernel_id: string | null;
 }
 
 export interface NodeFormula extends NodeSingleInput {

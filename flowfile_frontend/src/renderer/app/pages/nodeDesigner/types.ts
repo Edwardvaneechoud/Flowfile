@@ -64,6 +64,8 @@ export interface NodeMetadata {
   number_of_inputs: number;
   number_of_outputs: number;
   node_icon: string;
+  use_kernel: boolean;
+  required_packages: string[];
 }
 
 /** Available component definition for the palette */

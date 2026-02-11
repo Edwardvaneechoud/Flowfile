@@ -135,37 +135,64 @@ export function useCodeGeneration() {
       settingsCode += `    pass\n`;
     }
 
-    // Extract process method body
-    let processBody = processCode;
-    const defMatch = processBody.match(/def\s+process\s*\([^)]*\)\s*->\s*[^:]+:\n?/);
-    if (defMatch) {
-      processBody = processBody.substring(defMatch[0].length);
-    }
+    // Generate node class — kernel vs lazy mode
+    let nodeCode: string;
 
-    // Dedent and re-indent
-    const lines = processBody.split("\n");
-    const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
-    let minIndent = 0;
-    if (nonEmptyLines.length > 0) {
-      minIndent = Math.min(
-        ...nonEmptyLines.map((line) => {
-          const match = line.match(/^(\s*)/);
-          return match ? match[1].length : 0;
-        }),
-      );
-    }
+    if (nodeMetadata.use_kernel) {
+      // Kernel mode: store kernel_code as a triple-quoted string, stub process()
+      const escapedKernelCode = processCode.replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"');
+      const formattedPackages = nodeMetadata.required_packages
+        .map((p) => `"${p}"`)
+        .join(", ");
 
-    const reindentedLines = lines.map((line) => {
-      if (line.trim().length === 0) {
-        return "";
+      nodeCode = `
+
+class ${nodeName}(CustomNodeBase):
+    node_name: str = "${nodeMetadata.node_name}"
+    node_category: str = "${nodeMetadata.node_category}"
+    node_icon: str = "${nodeMetadata.node_icon || "user-defined-icon.png"}"
+    title: str = "${nodeMetadata.title || nodeMetadata.node_name}"
+    intro: str = "${nodeMetadata.intro || "A custom node for data processing"}"
+    number_of_inputs: int = ${nodeMetadata.number_of_inputs}
+    number_of_outputs: int = ${nodeMetadata.number_of_outputs}
+    use_kernel: bool = True
+    required_packages: list[str] = [${formattedPackages}]
+    kernel_code: str = """${escapedKernelCode}"""
+    settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
+
+    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+        raise NotImplementedError("This node executes in a kernel")
+`;
+    } else {
+      // Standard lazy mode: extract and re-indent process method body
+      let processBody = processCode;
+      const defMatch = processBody.match(/def\s+process\s*\([^)]*\)\s*->\s*[^:]+:\n?/);
+      if (defMatch) {
+        processBody = processBody.substring(defMatch[0].length);
       }
-      const dedented = line.length >= minIndent ? line.substring(minIndent) : line.trimStart();
-      return "        " + dedented;
-    });
-    processBody = reindentedLines.join("\n");
 
-    // Generate node class
-    const nodeCode = `
+      const lines = processBody.split("\n");
+      const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+      let minIndent = 0;
+      if (nonEmptyLines.length > 0) {
+        minIndent = Math.min(
+          ...nonEmptyLines.map((line) => {
+            const match = line.match(/^(\s*)/);
+            return match ? match[1].length : 0;
+          }),
+        );
+      }
+
+      const reindentedLines = lines.map((line) => {
+        if (line.trim().length === 0) {
+          return "";
+        }
+        const dedented = line.length >= minIndent ? line.substring(minIndent) : line.trimStart();
+        return "        " + dedented;
+      });
+      processBody = reindentedLines.join("\n");
+
+      nodeCode = `
 
 class ${nodeName}(CustomNodeBase):
     node_name: str = "${nodeMetadata.node_name}"
@@ -180,6 +207,7 @@ class ${nodeName}(CustomNodeBase):
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
 ${processBody}
 `;
+    }
 
     // Add SecretStr import if SecretStr is used in the process code
     const secretStrImport = processCode.includes("SecretStr")

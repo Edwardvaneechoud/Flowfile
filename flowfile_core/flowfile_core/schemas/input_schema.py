@@ -1168,3 +1168,4 @@ class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
     settings: Any
+    kernel_id: str | None = None

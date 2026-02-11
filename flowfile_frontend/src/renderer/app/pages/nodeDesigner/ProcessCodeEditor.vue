@@ -1,15 +1,21 @@
 <template>
   <div class="code-editor-section">
     <div class="code-editor-header">
-      <h4>Process Method</h4>
+      <h4>{{ useKernel ? "Kernel Code" : "Process Method" }}</h4>
       <button class="help-btn" title="Show help" @click="showHelp = true">
         <i class="fa-solid fa-circle-question"></i>
         <span>Help</span>
       </button>
     </div>
     <p class="code-hint">
-      Write your data transformation logic. Access settings via
-      <code>self.settings_schema.section_name.component_name.value</code>
+      <template v-if="useKernel">
+        Use <code>flowfile.read_input()</code> and <code>flowfile.publish_output()</code>.
+        Settings are injected as Python variables.
+      </template>
+      <template v-else>
+        Write your data transformation logic. Access settings via
+        <code>self.settings_schema.section_name.component_name.value</code>
+      </template>
     </p>
     <div class="code-editor-wrapper">
       <Codemirror
@@ -37,6 +43,7 @@ import ProcessCodeHelpModal from "./ProcessCodeHelpModal.vue";
 defineProps<{
   modelValue: string;
   extensions: Extension[];
+  useKernel: boolean;
 }>();
 
 const emit = defineEmits<{

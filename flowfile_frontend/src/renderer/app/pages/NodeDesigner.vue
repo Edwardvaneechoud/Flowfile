@@ -111,6 +111,38 @@
                 <IconSelector v-model="nodeMetadata.node_icon" />
               </div>
             </div>
+
+            <!-- Kernel Execution -->
+            <div class="kernel-section">
+              <div class="kernel-toggle">
+                <label class="toggle-label">
+                  <input
+                    type="checkbox"
+                    v-model="nodeMetadata.use_kernel"
+                    @change="handleKernelToggle"
+                  />
+                  <span>Execute in Kernel</span>
+                </label>
+                <span class="kernel-hint">Run in a Docker container with custom packages</span>
+              </div>
+
+              <div v-if="nodeMetadata.use_kernel" class="kernel-config">
+                <div class="form-field">
+                  <label for="required-packages">Required Packages</label>
+                  <input
+                    id="required-packages"
+                    :value="nodeMetadata.required_packages.join(', ')"
+                    type="text"
+                    class="form-input"
+                    placeholder="scikit-learn, numpy, torch"
+                    @input="handlePackagesInput"
+                  />
+                  <span class="field-hint">
+                    Comma-separated list. At runtime, select a kernel with these packages installed.
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Sections -->
@@ -150,7 +182,11 @@
           </div>
 
           <!-- Python Code Editor -->
-          <ProcessCodeEditor v-model="processCode" :extensions="autocompletion.extensions" />
+          <ProcessCodeEditor
+            v-model="processCode"
+            :extensions="autocompletion.extensions"
+            :use-kernel="nodeMetadata.use_kernel"
+          />
         </div>
       </div>
 
@@ -222,6 +258,7 @@ import {
   toSnakeCase,
 } from "./nodeDesigner/composables";
 import type { DesignerComponent } from "./nodeDesigner/types";
+import { defaultProcessCode, defaultKernelCode } from "./nodeDesigner/constants";
 
 // Initialize composables - destructure for proper TypeScript support
 const {
@@ -265,6 +302,28 @@ onMounted(() => {
 // Event handlers
 function handleNew() {
   storage.clearSessionStorage();
+}
+
+function handleKernelToggle() {
+  const isDefault =
+    processCode.value === defaultProcessCode || processCode.value === defaultKernelCode;
+  if (nodeMetadata.use_kernel) {
+    if (isDefault || confirm("Switch to kernel code template? Current code will be replaced.")) {
+      processCode.value = defaultKernelCode;
+    }
+  } else {
+    if (isDefault || confirm("Switch back to process method template? Current code will be replaced.")) {
+      processCode.value = defaultProcessCode;
+    }
+  }
+}
+
+function handlePackagesInput(event: Event) {
+  const input = (event.target as HTMLInputElement).value;
+  nodeMetadata.required_packages = input
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
 }
 
 function handlePreview() {
@@ -476,6 +535,47 @@ function handleInsertVariable(code: string) {
 
 .icon-field {
   grid-column: span 2;
+}
+
+/* Kernel Execution */
+.kernel-section {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  background: var(--bg-secondary, #f8f9fa);
+}
+
+.kernel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.kernel-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #6c757d);
+}
+
+.kernel-config {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.field-hint {
+  font-size: 0.7rem;
+  color: var(--text-secondary, #6c757d);
+  margin-top: 0.25rem;
 }
 
 /* Sections */

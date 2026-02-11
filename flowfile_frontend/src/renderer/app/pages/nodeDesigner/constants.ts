@@ -29,6 +29,16 @@ export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> p
 
     return lf`;
 
+/** Default kernel code template */
+export const defaultKernelCode = `# Read input data
+lf = flowfile.read_input()
+
+# Your transformation logic here
+# Example: lf = lf.filter(pl.col("column") > 0)
+
+# Publish output
+flowfile.publish_output(lf)`;
+
 /** Default node metadata */
 export const defaultNodeMetadata = {
   node_name: "",
@@ -38,6 +48,8 @@ export const defaultNodeMetadata = {
   number_of_inputs: 1,
   number_of_outputs: 1,
   node_icon: "user-defined-icon.png",
+  use_kernel: false,
+  required_packages: [] as string[],
 };
 
 /** Get component icon by type */

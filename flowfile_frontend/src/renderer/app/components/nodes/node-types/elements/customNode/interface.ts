@@ -130,6 +130,9 @@ export interface CustomNodeSchema {
   intro?: string;
   node_type: NodeTypeLiteral;
   transform_type: TransformTypeLiteral;
+  use_kernel: boolean;
+  required_packages: string[];
+  kernel_code: string;
 }
 
 // --- API function to fetch the schema ---
