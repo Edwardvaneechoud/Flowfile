@@ -103,6 +103,10 @@ export const useFlowStore = defineStore('flow', () => {
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
 
+  // Output callbacks for embeddable mode
+  type OutputCallback = (data: { nodeId: number; content: string; fileName: string; mimeType: string }) => void
+  const outputCallbacks = new Set<OutputCallback>()
+
   // Preview cache state (for lazy loading)
   const previewCache = ref<Map<number, {
     data: any;
@@ -1590,6 +1594,13 @@ result
               mime_type,
               row_count
             )
+            // Notify output callbacks (for embeddable mode)
+            outputCallbacks.forEach(cb => cb({
+              nodeId,
+              content,
+              fileName: file_name,
+              mimeType: mime_type
+            }))
             // Create result without content - just metadata
             result = {
               success: outputResult.success,
@@ -2282,6 +2293,10 @@ result
     importFromFlowfile,
     downloadFlowfile,
     loadFlowfile,
-    validateFlowfileData
+    validateFlowfileData,
+
+    // Output callbacks (for embeddable mode)
+    onOutput: (cb: OutputCallback) => { outputCallbacks.add(cb) },
+    offOutput: (cb: OutputCallback) => { outputCallbacks.delete(cb) }
   }
 })

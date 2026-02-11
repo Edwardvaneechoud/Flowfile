@@ -46,21 +46,22 @@
     <div ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
+          v-if="effectiveToolbar.showRun"
           class="action-btn run-btn"
           @click="handleRunFlow"
           :disabled="isExecuting"
           title="Run Flow (Ctrl+E)"
         >
-          <span class="material-icons btn-icon">play_arrow</span>
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           <span class="btn-text">{{ isExecuting ? 'Running...' : 'Run' }}</span>
         </button>
-        <div class="toolbar-divider"></div>
-        <button class="action-btn" @click="handleSaveFlow" title="Save Flow">
-          <span class="material-icons btn-icon">save</span>
+        <div v-if="effectiveToolbar.showRun" class="toolbar-divider"></div>
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save Flow">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           <span class="btn-text">Save</span>
         </button>
-        <button class="action-btn" @click="triggerLoadFlow" title="Load Flow">
-          <span class="material-icons btn-icon">folder_open</span>
+        <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="triggerLoadFlow" title="Load Flow">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           <span class="btn-text">Open</span>
         </button>
         <input
@@ -70,19 +71,20 @@
           @change="handleLoadFlow"
           style="display: none"
         />
-        <DemoButton v-if="hasSeenDemo" />
+        <DemoButton v-if="effectiveToolbar.showDemo && hasSeenDemo" />
         <button
+          v-if="effectiveToolbar.showCodeGen"
           class="action-btn"
           :class="{ active: showCodeGenerator }"
           title="Generate Python Code"
           @click="showCodeGenerator = true"
         >
-          <span class="material-icons btn-icon">code</span>
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           <span class="btn-text">Generate code</span>
         </button>
-        <div class="toolbar-divider"></div>
-        <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
-          <span class="material-icons btn-icon">delete</span>
+        <div v-if="effectiveToolbar.showClear" class="toolbar-divider"></div>
+        <button v-if="effectiveToolbar.showClear" class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           <span class="btn-text">Clear</span>
         </button>
       </div>
@@ -169,7 +171,7 @@
             <span class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
             <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
             <button class="auto-size-btn" @click="autoSizeColumns" title="Auto-size columns">
-              <span class="material-icons" style="font-size: 14px;">fit_screen</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
             </button>
           </div>
           <div class="preview-grid-container">
@@ -229,7 +231,9 @@ import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
 import { storeToRefs } from 'pinia'
-import type { NodeSettings, FlowEdge, ColumnSchema } from '../types'
+import type { NodeSettings, FlowEdge, ColumnSchema, NodeResult } from '../types'
+import type { ToolbarConfig, NodeCategoryConfig } from '../lib/types'
+import { iconUrls } from '../utils/iconUrls'
 
 // AG Grid imports
 import { AgGridVue } from '@ag-grid-community/vue3'
@@ -266,6 +270,29 @@ import DemoButton from './DemoButton.vue'
 import LayoutControls from './common/LayoutControls.vue'
 import { useDemo } from '../composables/useDemo'
 
+// Props for embeddable configuration
+const props = withDefaults(defineProps<{
+  toolbarConfig?: ToolbarConfig
+  nodeCategoriesConfig?: NodeCategoryConfig[]
+  readonly?: boolean
+}>(), {
+  readonly: false
+})
+
+const emit = defineEmits<{
+  (e: 'execution-complete', results: Map<number, NodeResult>): void
+  (e: 'output', data: { nodeId: number; content: string; fileName: string; mimeType: string }): void
+}>()
+
+// Merge toolbar config with defaults (all visible by default)
+const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
+  showRun: props.toolbarConfig?.showRun !== false,
+  showSaveLoad: props.toolbarConfig?.showSaveLoad !== false,
+  showClear: props.toolbarConfig?.showClear !== false,
+  showCodeGen: props.toolbarConfig?.showCodeGen !== false,
+  showDemo: props.toolbarConfig?.showDemo ?? true
+}))
+
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 
@@ -287,9 +314,9 @@ const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
 }
 
-// Get icon URL
+// Get icon URL - uses explicit imports for library build compatibility
 function getIconUrl(iconFile: string): string {
-  return new URL(`../assets/icons/${iconFile}`, import.meta.url).href
+  return iconUrls[iconFile] || new URL(`../assets/icons/${iconFile}`, import.meta.url).href
 }
 
 // Node definition interface
@@ -669,6 +696,7 @@ function autoSizeColumns() {
 // Toolbar handlers
 async function handleRunFlow() {
   await flowStore.executeFlow()
+  emit('execution-complete', nodeResults.value)
 }
 
 function handleSaveFlow() {
@@ -723,9 +751,19 @@ function handleKeyDown(event: KeyboardEvent) {
   }
 }
 
-// Register keyboard shortcuts
+// Output callback for embeddable mode
+function handleOutputCallback(data: { nodeId: number; content: string; fileName: string; mimeType: string }) {
+  emit('output', data)
+}
+
+// Register keyboard shortcuts and output callbacks
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
+
+  // Register output callback if the store supports it
+  if (flowStore.onOutput) {
+    flowStore.onOutput(handleOutputCallback)
+  }
 
   // Wait for DOM to be fully rendered
   await nextTick()
@@ -738,6 +776,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  // Unregister output callback
+  if (flowStore.offOutput) {
+    flowStore.offOutput(handleOutputCallback)
+  }
 })
 </script>
 

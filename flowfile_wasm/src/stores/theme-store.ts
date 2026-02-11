@@ -5,6 +5,8 @@ export type ThemeMode = "light" | "dark" | "system";
 interface ThemeState {
   mode: ThemeMode;
   systemPreference: "light" | "dark";
+  /** When true, theme is applied only to store state (not to document.documentElement) */
+  embedded: boolean;
 }
 
 const THEME_STORAGE_KEY = "flowfile-theme-preference";
@@ -30,6 +32,7 @@ export const useThemeStore = defineStore("theme", {
   state: (): ThemeState => ({
     mode: getSavedTheme(),
     systemPreference: getSystemPreference(),
+    embedded: false,
   }),
 
   getters: {
@@ -53,6 +56,15 @@ export const useThemeStore = defineStore("theme", {
 
   actions: {
     /**
+     * Mark this store as operating in embedded mode.
+     * In embedded mode, applyTheme only updates store state
+     * and does NOT modify document.documentElement.
+     */
+    setEmbedded(value: boolean) {
+      this.embedded = value;
+    },
+
+    /**
      * Sets the theme mode and persists to localStorage
      */
     setTheme(mode: ThemeMode) {
@@ -70,11 +82,16 @@ export const useThemeStore = defineStore("theme", {
     },
 
     /**
-     * Applies the current theme to the document
+     * Applies the current theme to the document (or just updates state in embedded mode)
      */
     applyTheme() {
       const theme = this.effectiveTheme;
-      document.documentElement.setAttribute("data-theme", theme);
+      // In embedded mode, the FlowfileEditor wrapper component
+      // reads effectiveTheme and applies data-theme to its own root div.
+      // We skip modifying the global document element.
+      if (!this.embedded) {
+        document.documentElement.setAttribute("data-theme", theme);
+      }
     },
 
     /**
