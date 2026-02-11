@@ -83,6 +83,30 @@ class TestReadInput:
         with pytest.raises(KeyError, match="not found"):
             flowfile_client.read_input("nonexistent")
 
+    def test_read_input_no_upstream_raises_runtime_error(self, tmp_dir: Path):
+        """When input_paths is empty, raise RuntimeError about upstream nodes."""
+        store = ArtifactStore()
+        flowfile_client._set_context(
+            node_id=1,
+            input_paths={},
+            output_dir=str(tmp_dir),
+            artifact_store=store,
+        )
+        with pytest.raises(RuntimeError, match="Upstream nodes did not run yet"):
+            flowfile_client.read_input()
+
+    def test_read_input_empty_paths_raises_runtime_error(self, tmp_dir: Path):
+        """When input_paths has the key but with empty paths list, raise RuntimeError."""
+        store = ArtifactStore()
+        flowfile_client._set_context(
+            node_id=1,
+            input_paths={"main": []},
+            output_dir=str(tmp_dir),
+            artifact_store=store,
+        )
+        with pytest.raises(RuntimeError, match="Upstream nodes did not run yet"):
+            flowfile_client.read_input()
+
     def test_read_inputs_returns_dict(self, ctx: dict):
         inputs = flowfile_client.read_inputs()
         assert isinstance(inputs, dict)
@@ -160,6 +184,18 @@ class TestReadMultipleInputs:
     def test_read_first_missing_name_raises(self, ctx: dict):
         with pytest.raises(KeyError, match="not found"):
             flowfile_client.read_first("nonexistent")
+
+    def test_read_first_no_upstream_raises_runtime_error(self, tmp_dir: Path):
+        """When input_paths is empty, read_first raises RuntimeError."""
+        store = ArtifactStore()
+        flowfile_client._set_context(
+            node_id=1,
+            input_paths={},
+            output_dir=str(tmp_dir),
+            artifact_store=store,
+        )
+        with pytest.raises(RuntimeError, match="Upstream nodes did not run yet"):
+            flowfile_client.read_first()
 
     def test_read_inputs_with_multiple_main_paths(self, tmp_dir: Path):
         """read_inputs should return a list of LazyFrames per name."""
