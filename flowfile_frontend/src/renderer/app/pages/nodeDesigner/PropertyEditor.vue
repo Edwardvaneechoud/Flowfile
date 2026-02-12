@@ -360,7 +360,11 @@
             <i class="fa-solid fa-code"></i>
             Insert Variable
           </button>
-          <span class="field-hint">Add typed variable to process method</span>
+          <span class="field-hint">{{
+            useKernel
+              ? "Add variable comment to kernel code"
+              : "Add typed variable to process method"
+          }}</span>
         </div>
       </div>
 
@@ -380,6 +384,7 @@ import { getComponentIcon } from "./constants";
 const props = defineProps<{
   component: DesignerComponent | null;
   sectionName: string;
+  useKernel?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -423,7 +428,10 @@ function insertVariable() {
   const pyType = getTypeForComponent(props.component.component_type, props.component.multiple);
 
   let code: string;
-  if (props.component.component_type === "SecretSelector") {
+  if (props.useKernel) {
+    // In kernel mode, settings are injected as plain Python variables
+    code = `# ${fieldName} (${pyType}) - injected from settings`;
+  } else if (props.component.component_type === "SecretSelector") {
     code = `    ${fieldName}: ${pyType} = self.settings_schema.${sectionName}.${fieldName}.secret_value`;
   } else {
     code = `    ${fieldName}: ${pyType} = self.settings_schema.${sectionName}.${fieldName}.value`;

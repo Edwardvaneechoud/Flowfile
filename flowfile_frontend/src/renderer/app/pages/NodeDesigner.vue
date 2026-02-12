@@ -208,6 +208,7 @@
       <PropertyEditor
         :component="selectedComponent"
         :section-name="selectedSectionName"
+        :use-kernel="nodeMetadata.use_kernel"
         @update="handlePropertyUpdate"
         @insert-variable="handleInsertVariable"
       />
@@ -429,27 +430,35 @@ const selectedSectionName = computed(() => {
 
 // Insert variable into process code
 function handleInsertVariable(code: string) {
-  // Find the position after "def process..." line to insert the variable
   const lines = processCode.value.split("\n");
   let insertIndex = 1; // Default to after first line
 
-  // Find the first non-empty, non-comment line after the def statement
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed.startsWith("def process")) {
-      insertIndex = i + 1;
-      // Skip any immediate comments after def
-      while (
-        insertIndex < lines.length &&
-        (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
-      ) {
-        insertIndex++;
+  if (nodeMetadata.use_kernel) {
+    // Kernel mode: insert after initial comments/imports at the top
+    insertIndex = 0;
+    while (
+      insertIndex < lines.length &&
+      (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
+    ) {
+      insertIndex++;
+    }
+  } else {
+    // Lazy mode: insert after "def process..." line
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith("def process")) {
+        insertIndex = i + 1;
+        while (
+          insertIndex < lines.length &&
+          (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
+        ) {
+          insertIndex++;
+        }
+        break;
       }
-      break;
     }
   }
 
-  // Insert the variable assignment
   lines.splice(insertIndex, 0, code);
   processCode.value = lines.join("\n");
 }
