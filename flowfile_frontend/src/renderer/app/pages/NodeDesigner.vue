@@ -128,17 +128,31 @@
 
               <div v-if="nodeMetadata.use_kernel" class="kernel-config">
                 <div class="form-field">
-                  <label for="required-packages">Required Packages</label>
-                  <input
-                    id="required-packages"
-                    :value="nodeMetadata.required_packages.join(', ')"
-                    type="text"
-                    class="form-input"
-                    placeholder="scikit-learn, numpy, torch"
-                    @input="handlePackagesInput"
-                  />
+                  <label>Required Packages</label>
+                  <div class="package-input-row">
+                    <input
+                      v-model="newPackageName"
+                      type="text"
+                      class="form-input"
+                      placeholder="e.g. scikit-learn"
+                      @keydown.enter.prevent="addPackage"
+                    />
+                    <button class="add-package-btn" title="Add package" @click="addPackage">
+                      <i class="fa-solid fa-plus"></i>
+                    </button>
+                  </div>
+                  <div v-if="nodeMetadata.required_packages.length > 0" class="package-tags">
+                    <span
+                      v-for="(pkg, idx) in nodeMetadata.required_packages"
+                      :key="idx"
+                      class="package-tag"
+                    >
+                      {{ pkg }}
+                      <button class="remove-tag-btn" @click="removePackage(idx)">&times;</button>
+                    </span>
+                  </div>
                   <span class="field-hint">
-                    Comma-separated list. At runtime, select a kernel with these packages installed.
+                    At runtime, select a kernel with these packages installed.
                   </span>
                 </div>
               </div>
@@ -290,6 +304,9 @@ const storage = useSessionStorage(getState, setState, resetState);
 // Help modal state
 const showHelpModal = ref(false);
 
+// Package input state
+const newPackageName = ref("");
+
 // Setup auto-save and load on mount
 watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveToSessionStorage(), {
   deep: true,
@@ -318,12 +335,16 @@ function handleKernelToggle() {
   }
 }
 
-function handlePackagesInput(event: Event) {
-  const input = (event.target as HTMLInputElement).value;
-  nodeMetadata.required_packages = input
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+function addPackage() {
+  const name = newPackageName.value.trim();
+  if (name && !nodeMetadata.required_packages.includes(name)) {
+    nodeMetadata.required_packages.push(name);
+  }
+  newPackageName.value = "";
+}
+
+function removePackage(index: number) {
+  nodeMetadata.required_packages.splice(index, 1);
 }
 
 function handlePreview() {
@@ -576,6 +597,71 @@ function handleInsertVariable(code: string) {
   font-size: 0.7rem;
   color: var(--text-secondary, #6c757d);
   margin-top: 0.25rem;
+}
+
+.package-input-row {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.package-input-row .form-input {
+  flex: 1;
+}
+
+.add-package-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: var(--color-button-primary, #0891b2);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.add-package-btn:hover {
+  background: var(--color-button-primary-hover, #0e7490);
+}
+
+.package-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.package-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  color: var(--el-color-primary, #409eff);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.remove-tag-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--el-color-primary, #409eff);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.125rem;
+  opacity: 0.7;
+}
+
+.remove-tag-btn:hover {
+  opacity: 1;
+  color: var(--el-color-danger, #f56c6c);
 }
 
 /* Sections */
