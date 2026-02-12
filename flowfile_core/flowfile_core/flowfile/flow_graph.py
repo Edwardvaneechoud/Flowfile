@@ -897,18 +897,30 @@ class FlowGraph:
     ) -> str:
         """Build the Python source sent to the kernel.
 
-        Injects ``import`` statements, flattened settings values as Python
-        variables and finally the user's ``kernel_code``.
+        Injects ``import`` statements, a ``self`` namespace that mirrors
+        the node's settings schema (so ``self.settings_schema.section.field.value``
+        works identically to lazy mode), flattened convenience variables,
+        and finally the user's ``kernel_code``.
         """
         lines: list[str] = ["import polars as pl", "import flowfile", ""]
 
-        # Inject settings as plain Python variables
+        # Inject settings as plain Python variables + a self namespace
         if settings and isinstance(settings, dict):
             lines.append("# Settings (injected from node configuration)")
-            for section_values in settings.values():
+            lines.append("from types import SimpleNamespace as _NS")
+            lines.append("class _V:")
+            lines.append("    def __init__(self, v): self.value = v; self.secret_value = v")
+
+            section_parts: list[str] = []
+            for section_name, section_values in settings.items():
                 if isinstance(section_values, dict):
+                    field_parts: list[str] = []
                     for key, value in section_values.items():
                         lines.append(f"{key} = {repr(value)}")
+                        field_parts.append(f"{key}=_V({repr(value)})")
+                    section_parts.append(f"{section_name}=_NS({', '.join(field_parts)})")
+
+            lines.append(f"self = _NS(settings_schema=_NS({', '.join(section_parts)}))")
             lines.append("")
 
         lines.append("# User code")
