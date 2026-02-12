@@ -122,6 +122,42 @@ class ArtifactService:
         if stale:
             self.db.commit()
 
+        # Dedup: when the same node re-executes, replace its previous
+        # artifact instead of creating an additional version.  This
+        # prevents duplicate entries in the catalog after kernel re-runs.
+        if request.source_node_id is not None:
+            previous = (
+                self.db.query(GlobalArtifact)
+                .filter_by(
+                    name=request.name,
+                    namespace_id=request.namespace_id,
+                    source_node_id=request.source_node_id,
+                    source_registration_id=request.source_registration_id,
+                    status="active",
+                )
+                .all()
+            )
+            for old in previous:
+                if old.storage_key:
+                    try:
+                        self.storage.delete(old.storage_key)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to delete blob for superseded artifact %s v%d: %s",
+                            old.name,
+                            old.version,
+                            exc,
+                        )
+                old.status = "deleted"
+            if previous:
+                self.db.commit()
+                logger.info(
+                    "Superseded %d previous artifact version(s) of '%s' from node %s",
+                    len(previous),
+                    request.name,
+                    request.source_node_id,
+                )
+
         last_error: IntegrityError | None = None
         for attempt in range(_max_retries):
             # Determine next version across ALL statuses to avoid unique-constraint

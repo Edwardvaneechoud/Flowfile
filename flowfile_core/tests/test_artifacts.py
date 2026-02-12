@@ -408,6 +408,66 @@ class TestPrepareUpload:
             ).delete(synchronize_session=False)
             db.commit()
 
+    def test_reupload_from_same_node_supersedes_previous(self, test_registration):
+        """Re-uploading from the same node should soft-delete the old version."""
+        payload = {
+            "name": "reupload_model",
+            "source_registration_id": test_registration,
+            "serialization_format": "pickle",
+            "source_node_id": 5,
+        }
+
+        # First upload
+        resp1 = client.post("/artifacts/prepare-upload", json=payload)
+        assert resp1.status_code == 201
+        self._finalize_artifact(resp1.json())
+        first_id = resp1.json()["artifact_id"]
+
+        # Second upload from the same node
+        resp2 = client.post("/artifacts/prepare-upload", json=payload)
+        assert resp2.status_code == 201
+        self._finalize_artifact(resp2.json())
+        second_id = resp2.json()["artifact_id"]
+
+        # First version should be soft-deleted, second should be active
+        with get_db_context() as db:
+            old = db.get(GlobalArtifact, first_id)
+            assert old.status == "deleted"
+            new = db.get(GlobalArtifact, second_id)
+            assert new.status == "active"
+
+        # Retrieving by name should return the new version only
+        resp = client.get("/artifacts/by-name/reupload_model")
+        assert resp.status_code == 200
+        assert resp.json()["id"] == second_id
+
+    def test_different_nodes_keep_separate_versions(self, test_registration):
+        """Different source_node_ids should NOT supersede each other."""
+        base = {
+            "name": "shared_model",
+            "source_registration_id": test_registration,
+            "serialization_format": "pickle",
+        }
+
+        # Upload from node 10
+        resp1 = client.post("/artifacts/prepare-upload", json={**base, "source_node_id": 10})
+        assert resp1.status_code == 201
+        self._finalize_artifact(resp1.json())
+        id1 = resp1.json()["artifact_id"]
+
+        # Upload from node 20
+        resp2 = client.post("/artifacts/prepare-upload", json={**base, "source_node_id": 20})
+        assert resp2.status_code == 201
+        self._finalize_artifact(resp2.json())
+        id2 = resp2.json()["artifact_id"]
+
+        # Both should still be active
+        with get_db_context() as db:
+            a1 = db.get(GlobalArtifact, id1)
+            a2 = db.get(GlobalArtifact, id2)
+            assert a1.status == "active"
+            assert a2.status == "active"
+
     def _finalize_artifact(self, prepare_response: dict):
         """Helper to finalize an artifact upload."""
         # Create a dummy file for testing
