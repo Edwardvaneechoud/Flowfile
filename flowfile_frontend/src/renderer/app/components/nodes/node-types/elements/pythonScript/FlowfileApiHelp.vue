@@ -52,8 +52,13 @@
             <p>Remove an artifact from kernel memory.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_artifacts()</code>
-            <p>List all available artifacts in the kernel.</p>
+            <code>flowfile.list_artifacts() -> list[ArtifactInfo]</code>
+            <p>
+              List all available artifacts in the kernel. Each item has: <code>.name</code>,
+              <code>.type_name</code>, <code>.module</code>, <code>.node_id</code>,
+              <code>.flow_id</code>, <code>.created_at</code>, <code>.size_bytes</code>,
+              <code>.persisted</code>.
+            </p>
           </div>
         </section>
 
@@ -97,8 +102,14 @@
             <p>Retrieve a specific version of a global artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_global_artifacts()</code>
-            <p>List all available global artifacts (with optional namespace/tag filters).</p>
+            <code>flowfile.list_global_artifacts(namespace_id?, tags?) -> list[GlobalArtifactInfo]</code>
+            <p>
+              List all available global artifacts. Each item has: <code>.id</code>,
+              <code>.name</code>, <code>.version</code>, <code>.status</code>,
+              <code>.python_type</code>, <code>.serialization_format</code>,
+              <code>.size_bytes</code>, <code>.created_at</code>, <code>.tags</code>,
+              <code>.owner_id</code>.
+            </p>
           </div>
           <div class="api-item">
             <code>flowfile.delete_global_artifact("model")</code>
