@@ -804,6 +804,7 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100%;
   position: relative;
+  overflow: hidden;
   background: var(--bg-primary);
 }
 
