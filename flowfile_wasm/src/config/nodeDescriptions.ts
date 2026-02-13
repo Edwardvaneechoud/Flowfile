@@ -64,6 +64,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   output: {
     title: 'Write Data',
     intro: 'Export your data as CSV. Run the flow to prepare the data, then download the file to your computer.'
+  },
+  external_output: {
+    title: 'External Output',
+    intro: 'Send the result data back to the host application via the output callback. Use this to return processed data from the embedded editor.'
   }
 }
 

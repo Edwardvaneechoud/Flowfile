@@ -87,7 +87,7 @@ import { useFlowStore } from '../../stores/flow-store'
 const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
-  external_data: 'external_source.png',
+  external_data: 'external_data.svg',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',
@@ -99,7 +99,8 @@ const iconMap: Record<string, string> = {
   explore_data: 'view.png',
   pivot: 'pivot.png',
   unpivot: 'unpivot.png',
-  output: 'output.png'
+  output: 'output.png',
+  external_output: 'external_output.svg'
 }
 
 interface NodeData {

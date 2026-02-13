@@ -17,6 +17,7 @@ import type {
   NodeSampleSettings,
   NodeReadSettings,
   NodeManualInputSettings,
+  NodeExternalDataSettings,
   NodeOutputSettings,
   PolarsCodeSettings,
   FilterOperator,
@@ -176,6 +177,9 @@ class FlowToPolarsConverter {
       case 'manual_input':
         this.handleManualInput(node.settings as NodeManualInputSettings, varName)
         break
+      case 'external_data':
+        this.handleExternalData(node.settings as NodeExternalDataSettings, varName)
+        break
       case 'filter':
         this.handleFilter(node.settings as NodeFilterSettings, varName, inputVars)
         break
@@ -218,6 +222,9 @@ class FlowToPolarsConverter {
         break
       case 'output':
         this.handleOutput(node.settings as NodeOutputSettings, varName, inputVars)
+        break
+      case 'external_output':
+        this.handleExternalOutput(varName, inputVars)
         break
       default:
         this.unsupportedNodes.push({
@@ -305,6 +312,23 @@ class FlowToPolarsConverter {
       this.addCode(`    "${colName}": ${JSON.stringify(values)},`)
     }
     this.addCode(`})`)
+    this.addCode('')
+  }
+
+  private handleExternalData(settings: NodeExternalDataSettings, varName: string): void {
+    const datasetName = settings.dataset_name || 'external_data'
+    const fileName = `${datasetName}.csv`
+
+    this.addComment(`# External dataset: "${datasetName}"`)
+    this.addComment(`# Replace the path below with the actual location of your "${datasetName}" data`)
+    this.addCode(`${varName} = pl.scan_csv("${fileName}")`)
+    this.addCode('')
+  }
+
+  private handleExternalOutput(varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    this.addComment(`# External output — collect result for downstream use`)
+    this.addCode(`${varName} = ${inputDf}.collect()`)
     this.addCode('')
   }
 

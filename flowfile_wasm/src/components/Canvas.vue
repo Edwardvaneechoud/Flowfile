@@ -267,6 +267,7 @@ import CodeGenerator from './CodeGenerator.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
+import ExternalOutputSettings from './nodes/ExternalOutputSettings.vue'
 import NodeSettingsWrapper from './nodes/NodeSettingsWrapper.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
@@ -345,7 +346,7 @@ const nodeCategories = ref<NodeCategory[]>([
     nodes: [
       { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
-      { type: 'external_data', name: 'External Data', icon: 'external_source.png', inputs: 0, outputs: 1 }
+      { type: 'external_data', name: 'External Data', icon: 'external_data.svg', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -381,7 +382,8 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     nodes: [
       { type: 'explore_data', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
-      { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 }
+      { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 },
+      { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0 }
     ]
   }
 ])
@@ -590,7 +592,8 @@ function getSettingsComponent(type: string) {
     explore_data: PreviewSettings,
     pivot: PivotSettings,
     unpivot: UnpivotSettings,
-    output: OutputSettings
+    output: OutputSettings,
+    external_output: ExternalOutputSettings
   }
   return components[type] || null
 }

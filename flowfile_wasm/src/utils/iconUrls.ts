@@ -17,7 +17,8 @@ import pivot from '../assets/icons/pivot.png'
 import unpivot from '../assets/icons/unpivot.png'
 import view from '../assets/icons/view.png'
 import output from '../assets/icons/output.png'
-import externalSource from '../assets/icons/external_source.png'
+import externalData from '../assets/icons/external_data.svg'
+import externalOutput from '../assets/icons/external_output.svg'
 
 export const iconUrls: Record<string, string> = {
   'input_data.png': inputData,
@@ -34,5 +35,6 @@ export const iconUrls: Record<string, string> = {
   'unpivot.png': unpivot,
   'view.png': view,
   'output.png': output,
-  'external_source.png': externalSource,
+  'external_data.svg': externalData,
+  'external_output.svg': externalOutput,
 }

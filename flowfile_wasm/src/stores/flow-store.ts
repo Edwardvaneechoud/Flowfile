@@ -16,6 +16,7 @@ import type {
   NodeReadSettings,
   NodeManualInputSettings,
   NodeExternalDataSettings,
+  NodeExternalOutputSettings,
   NodeFilterSettings,
   NodeSelectSettings,
   NodeGroupBySettings
@@ -1680,6 +1681,40 @@ result
           break
         }
 
+        case 'external_output': {
+          // External output: execute like output but always emit CSV to callbacks
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          const settings = node.settings as NodeExternalOutputSettings
+          const outputName = settings.output_name || 'result'
+          // Use the same output execution to produce CSV content
+          const extResult = await runPythonWithResult(`
+import json
+result = execute_output(${nodeId}, ${inputId}, json.loads('{"output_settings": {"name": "${outputName}.csv", "directory": ".", "file_type": "csv", "write_mode": "overwrite", "table_settings": {"file_type": "csv", "delimiter": ",", "encoding": "utf-8"}, "polars_method": "sink_csv"}}'))
+result
+`)
+          if (extResult?.success && extResult?.download) {
+            const { content, file_name, mime_type } = extResult.download
+            // Notify output callbacks (primary purpose of this node in embedded mode)
+            outputCallbacks.forEach(cb => cb({
+              nodeId,
+              content,
+              fileName: file_name,
+              mimeType: mime_type
+            }))
+            result = {
+              success: extResult.success,
+              schema: extResult.schema,
+              data: extResult.data
+            }
+          } else {
+            result = extResult
+          }
+          break
+        }
+
         default:
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
@@ -1949,6 +1984,12 @@ result
             }
           }
         } as any
+
+      case 'external_output':
+        return {
+          ...base,
+          output_name: 'result'
+        } as NodeExternalOutputSettings
 
       default:
         return base as NodeSettings

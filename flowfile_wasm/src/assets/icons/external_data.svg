@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- Database/table shape -->
+  <ellipse cx="32" cy="18" rx="18" ry="7" fill="#4299E1" opacity="0.15"/>
+  <ellipse cx="32" cy="18" rx="18" ry="7" stroke="#4299E1" stroke-width="2.5" fill="none"/>
+  <path d="M14 18v12c0 3.866 8.059 7 18 7s18-3.134 18-7V18" stroke="#4299E1" stroke-width="2.5" fill="none"/>
+  <path d="M14 25c0 3.866 8.059 7 18 7s18-3.134 18-7" stroke="#4299E1" stroke-width="2" opacity="0.5"/>
+  <!-- Arrow coming in from outside -->
+  <path d="M6 46h16" stroke="#2B6CB0" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M18 41l6 5-6 5" stroke="#2B6CB0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Plug/connection symbol -->
+  <circle cx="32" cy="46" r="6" fill="#4299E1" opacity="0.2"/>
+  <circle cx="32" cy="46" r="6" stroke="#2B6CB0" stroke-width="2" fill="none"/>
+  <circle cx="32" cy="46" r="2.5" fill="#2B6CB0"/>
+</svg>
