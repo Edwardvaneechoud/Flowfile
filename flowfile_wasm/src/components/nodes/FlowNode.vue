@@ -53,24 +53,26 @@
         <Handle :id="`output-${i - 1}`" type="source" :position="Position.Right" />
       </div>
 
-      <!-- Context Menu (no Teleport so CSS variables from .flowfile-editor-root are inherited) -->
-      <div v-if="menuVisible" ref="menuEl" class="context-menu" :style="contextMenuStyle">
-        <div class="context-menu-item" @click="runNode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-          </svg>
-          <span>Run Now</span>
+      <!-- Context Menu: teleported to Canvas container (inherits CSS vars, avoids VueFlow transform) -->
+      <Teleport v-if="menuVisible" to="#flowfile-context-menu-container">
+        <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="runNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>Run Now</span>
+          </div>
+          <div class="context-menu-divider"></div>
+          <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"></path>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Delete</span>
+          </div>
         </div>
-        <div class="context-menu-divider"></div>
-        <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 6h18"></path>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          <span>Delete</span>
-        </div>
-      </div>
+      </Teleport>
     </div>
   </div>
 </template>

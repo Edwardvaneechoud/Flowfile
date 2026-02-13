@@ -220,6 +220,9 @@
     <!-- Layout Controls Button -->
     <LayoutControls @reset-layout="handleResetLayout" />
 
+    <!-- Teleport target for context menus (inside CSS variable scope, outside VueFlow transforms) -->
+    <div id="flowfile-context-menu-container"></div>
+
   </div>
 </template>
 
