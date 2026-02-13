@@ -303,6 +303,13 @@ export interface NodeManualInputSettings extends NodeBase {
   raw_data_format?: RawData  // Changed from 'raw_data' to match flowfile_core
 }
 
+export interface NodeExternalDataSettings extends NodeBase {
+  /** Name of the external dataset (key into inputData prop) */
+  dataset_name: string
+  /** Schema snapshot saved on export (data itself is NOT saved) */
+  schema_snapshot?: MinimalFieldInfo[]
+}
+
 export interface NodeFilterSettings extends NodeSingleInput {
   filter_input: FilterInput
 }
@@ -359,6 +366,7 @@ export interface NodeOutputSettings extends NodeSingleInput {
 export type NodeSettings =
   | NodeReadSettings
   | NodeManualInputSettings
+  | NodeExternalDataSettings
   | NodeFilterSettings
   | NodeSelectSettings
   | NodeSortSettings
@@ -487,6 +495,7 @@ export const NODE_TYPES = {
   // Input nodes
   read: 'read',  // Matches flowfile_core's 'read' type
   manual_input: 'manual_input',
+  external_data: 'external_data',
 
   // Transform nodes
   filter: 'filter',

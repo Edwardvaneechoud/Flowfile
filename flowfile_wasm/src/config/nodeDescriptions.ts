@@ -13,6 +13,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Manual Input',
     intro: 'Enter data manually in CSV format. Great for creating small datasets or test data.'
   },
+  external_data: {
+    title: 'External Data',
+    intro: 'Load data provided by the host application. Select an available dataset from the dropdown.'
+  },
   filter: {
     title: 'Filter',
     intro: 'Filter rows based on conditions. Use basic mode for simple filters or advanced mode for custom Polars expressions.'

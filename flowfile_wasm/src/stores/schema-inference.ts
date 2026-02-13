@@ -322,7 +322,7 @@ export function inferOutputSchema(
  * Check if a node type is a source node (produces data rather than transforming it)
  */
 export function isSourceNode(nodeType: string): boolean {
-  return nodeType === 'read' || nodeType === 'manual_input'
+  return nodeType === 'read' || nodeType === 'manual_input' || nodeType === 'external_data'
 }
 
 /**

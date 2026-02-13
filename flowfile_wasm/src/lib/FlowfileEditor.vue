@@ -108,10 +108,10 @@ watch(() => props.initialFlow, (flow) => {
   }
 }, { deep: true })
 
-// Watch for inputData prop changes
+// Watch for inputData prop changes — push to store as external datasets
 watch(() => props.inputData, (data) => {
-  if (data && pyodideReady.value) {
-    injectInputData(data)
+  if (data) {
+    pushExternalDatasets(data)
   }
 }, { deep: true })
 
@@ -123,30 +123,23 @@ watch(pyodideReady, (ready) => {
     if (props.initialFlow) {
       flowStore.importFromFlowfile(props.initialFlow)
     }
-    // Inject input data if provided
+    // Push external datasets if provided (re-apply in case flow was just imported)
     if (props.inputData) {
-      injectInputData(props.inputData)
+      pushExternalDatasets(props.inputData)
     }
   }
 })
 
 /**
- * Inject input data into nodes matched by node_reference
+ * Push input data to the flow store as external datasets.
+ * External Data nodes select from these by name.
  */
-function injectInputData(data: InputDataMap) {
+function pushExternalDatasets(data: InputDataMap) {
+  const datasets: Record<string, string> = {}
   for (const [name, config] of Object.entries(data)) {
-    const content = typeof config === 'string' ? config : config.content
-    // Find a node whose node_reference matches the dataset name
-    let targetNodeId: number | null = null
-    flowStore.nodes.forEach((node, id) => {
-      if (node.node_reference === name) {
-        targetNodeId = id
-      }
-    })
-    if (targetNodeId !== null) {
-      flowStore.setFileContent(targetNodeId, content)
-    }
+    datasets[name] = typeof config === 'string' ? config : config.content
   }
+  flowStore.setExternalDatasets(datasets)
 }
 
 function onExecutionComplete(results: Map<number, NodeResult>) {
@@ -159,6 +152,11 @@ function onOutput(data: OutputData) {
 
 onMounted(async () => {
   mounted.value = true
+
+  // Push external datasets immediately so they're available in the UI
+  if (props.inputData) {
+    pushExternalDatasets(props.inputData)
+  }
 
   // Set embedded mode on theme store
   themeStore.setEmbedded(true)
@@ -195,7 +193,7 @@ const api: FlowfileEditorAPI = {
   exportFlow: () => flowStore.exportToFlowfile(),
   importFlow: (data: FlowfileData) => flowStore.importFromFlowfile(data),
   setInputData: (name: string, content: string) => {
-    injectInputData({ [name]: content })
+    pushExternalDatasets({ [name]: content })
   },
   getNodeResult: (nodeId: number) => flowStore.getNodeResult(nodeId),
   clearFlow: () => flowStore.clearFlow(),

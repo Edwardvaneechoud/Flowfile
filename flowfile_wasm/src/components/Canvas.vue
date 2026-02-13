@@ -250,6 +250,7 @@ import FlowNode from './nodes/FlowNode.vue'
 import NodeTitle from './nodes/NodeTitle.vue'
 import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
+import ExternalDataSettings from './nodes/ExternalDataSettings.vue'
 import FilterSettings from './nodes/FilterSettings.vue'
 import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
@@ -340,7 +341,8 @@ const nodeCategories = ref<NodeCategory[]>([
     isOpen: true,
     nodes: [
       { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
-      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 }
+      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 },
+      { type: 'external_data', name: 'External Data', icon: 'external_source.png', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -573,6 +575,7 @@ function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
     read: ReadCsvSettings,
     manual_input: ManualInputSettings,
+    external_data: ExternalDataSettings,
     filter: FilterSettings,
     select: SelectSettings,
     group_by: GroupBySettings,
