@@ -410,8 +410,16 @@ class TestListGlobalArtifacts:
 
         list_response = MagicMock()
         list_response.json.return_value = [
-            {"id": 1, "name": "artifact1", "version": 1},
-            {"id": 2, "name": "artifact2", "version": 1},
+            {
+                "id": 1, "name": "artifact1", "version": 1, "status": "active",
+                "source_registration_id": 1, "serialization_format": "pickle",
+                "created_at": "2026-01-01T00:00:00", "owner_id": 1,
+            },
+            {
+                "id": 2, "name": "artifact2", "version": 1, "status": "active",
+                "source_registration_id": 1, "serialization_format": "pickle",
+                "created_at": "2026-01-01T00:00:00", "owner_id": 1,
+            },
         ]
         list_response.raise_for_status = MagicMock()
 
@@ -420,8 +428,8 @@ class TestListGlobalArtifacts:
         result = list_global_artifacts()
 
         assert len(result) == 2
-        assert result[0]["name"] == "artifact1"
-        assert result[1]["name"] == "artifact2"
+        assert result[0].name == "artifact1"
+        assert result[1].name == "artifact2"
 
     def test_list_with_namespace_filter(self, mock_httpx_client):
         """Should filter by namespace."""
@@ -429,7 +437,13 @@ class TestListGlobalArtifacts:
         mock_httpx_client.return_value.__enter__.return_value = mock_client
 
         list_response = MagicMock()
-        list_response.json.return_value = [{"id": 1, "name": "ns_artifact"}]
+        list_response.json.return_value = [
+            {
+                "id": 1, "name": "ns_artifact", "version": 1, "status": "active",
+                "source_registration_id": 1, "serialization_format": "pickle",
+                "created_at": "2026-01-01T00:00:00", "owner_id": 1,
+            },
+        ]
         list_response.raise_for_status = MagicMock()
 
         mock_client.get.return_value = list_response

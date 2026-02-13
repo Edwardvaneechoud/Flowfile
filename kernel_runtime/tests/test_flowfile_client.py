@@ -267,7 +267,8 @@ class TestArtifacts:
         flowfile_client.publish_artifact("a", 1)
         flowfile_client.publish_artifact("b", [2, 3])
         listing = flowfile_client.list_artifacts()
-        assert set(listing.keys()) == {"a", "b"}
+        names = {item.name for item in listing}
+        assert names == {"a", "b"}
 
     def test_read_missing_artifact_raises(self, ctx: dict):
         with pytest.raises(KeyError, match="not found"):

@@ -235,7 +235,7 @@ print("Published two artifacts")
         # List artifacts
         list_code = '''
 artifacts = flowfile.list_global_artifacts()
-names = [a["name"] for a in artifacts]
+names = [a.name for a in artifacts]
 assert "list_test_a" in names, f"list_test_a not found in {names}"
 assert "list_test_b" in names, f"list_test_b not found in {names}"
 print(f"Found {len(artifacts)} artifacts")
