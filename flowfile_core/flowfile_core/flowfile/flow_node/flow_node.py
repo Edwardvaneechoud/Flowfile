@@ -136,7 +136,7 @@ class FlowNode:
         self._schema_callback = None
         self._state_needs_reset = False
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
-        self._kernel_cancel_context = None  # (kernel_id, KernelManager) set during kernel execution
+        self._kernel_cancel_context = None
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created

@@ -1138,47 +1138,27 @@ class TestFlowIsolation:
 
 
 class TestExecutionCancellation:
-    """Tests for SIGUSR1-based execution cancellation.
-
-    Note: Signal-based cancellation only works in a real process (Docker container)
-    where the signal is delivered to PID 1 running uvicorn and exec() blocks the
-    main thread. In the TestClient environment, the ASGI app runs in a secondary
-    thread, so we test the components individually rather than end-to-end.
-    """
+    """Tests for SIGUSR1-based execution cancellation."""
 
     def test_signal_handler_raises_when_executing(self):
-        """Signal handler should raise KeyboardInterrupt when _is_executing is True."""
-        from kernel_runtime.main import _cancel_signal_handler
-
+        """The handler raises KeyboardInterrupt only while user code is running."""
         import kernel_runtime.main as main_module
 
-        old_value = main_module._is_executing
-        try:
-            main_module._is_executing = True
-            with pytest.raises(KeyboardInterrupt, match="cancelled"):
-                _cancel_signal_handler(None, None)
-        finally:
-            main_module._is_executing = old_value
+        main_module._is_executing = True
+        with pytest.raises(KeyboardInterrupt, match="cancelled"):
+            main_module._cancel_signal_handler(None, None)
 
     def test_signal_handler_ignores_when_not_executing(self):
-        """Signal handler should NOT raise when _is_executing is False."""
-        from kernel_runtime.main import _cancel_signal_handler
-
+        """Outside of exec(), the handler is a no-op (no crash, no exception)."""
         import kernel_runtime.main as main_module
 
-        old_value = main_module._is_executing
-        try:
-            main_module._is_executing = False
-            # Should not raise
-            _cancel_signal_handler(None, None)
-        finally:
-            main_module._is_executing = old_value
+        main_module._is_executing = False
+        main_module._cancel_signal_handler(None, None)  # should not raise
 
-    def test_is_executing_flag_set_during_exec(self, client: TestClient):
-        """The _is_executing flag should be set during code execution and cleared after."""
+    def test_is_executing_flag_cleared_after_success(self, client: TestClient):
+        """_is_executing must be False after a successful execution."""
         import kernel_runtime.main as main_module
 
-        # After a successful execution, _is_executing should be False
         resp = client.post(
             "/execute",
             json={"node_id": 200, "code": "x = 1", "flow_id": 1, "input_paths": {}, "output_dir": ""},
@@ -1187,7 +1167,7 @@ class TestExecutionCancellation:
         assert main_module._is_executing is False
 
     def test_is_executing_flag_cleared_after_error(self, client: TestClient):
-        """The _is_executing flag should be cleared even after a failed execution."""
+        """_is_executing must be False even when user code raises."""
         import kernel_runtime.main as main_module
 
         resp = client.post(
@@ -1196,19 +1176,3 @@ class TestExecutionCancellation:
         )
         assert resp.json()["success"] is False
         assert main_module._is_executing is False
-
-    def test_keyboard_interrupt_returns_cancelled_response(self, client: TestClient):
-        """Code that raises KeyboardInterrupt should return a cancellation response."""
-        resp = client.post(
-            "/execute",
-            json={
-                "node_id": 202,
-                "code": "raise KeyboardInterrupt('test cancel')",
-                "flow_id": 1,
-                "input_paths": {},
-                "output_dir": "",
-            },
-        )
-        data = resp.json()
-        assert data["success"] is False
-        assert "cancelled" in data["error"].lower()

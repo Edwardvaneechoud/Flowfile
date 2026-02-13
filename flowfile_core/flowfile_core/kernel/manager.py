@@ -628,16 +628,12 @@ class KernelManager:
                 kernel.state = KernelState.IDLE
 
     def interrupt_execution_sync(self, kernel_id: str) -> bool:
-        """Send SIGUSR1 to a kernel container to interrupt running code.
-
-        Returns True if the signal was sent successfully, False otherwise.
-        """
+        """Send SIGUSR1 to a kernel container to interrupt running user code."""
         kernel = self._kernels.get(kernel_id)
         if kernel is None or kernel.container_id is None:
             logger.warning("Cannot interrupt kernel '%s': not found or no container", kernel_id)
             return False
         if kernel.state != KernelState.EXECUTING:
-            logger.info("Kernel '%s' is not executing (state=%s), skipping interrupt", kernel_id, kernel.state)
             return False
         try:
             container = self._docker.containers.get(kernel.container_id)
@@ -652,7 +648,7 @@ class KernelManager:
             return False
 
     async def interrupt_execution(self, kernel_id: str) -> bool:
-        """Async version of interrupt_execution_sync."""
+        """Async wrapper around :meth:`interrupt_execution_sync`."""
         return self.interrupt_execution_sync(kernel_id)
 
     async def clear_artifacts(self, kernel_id: str) -> None:

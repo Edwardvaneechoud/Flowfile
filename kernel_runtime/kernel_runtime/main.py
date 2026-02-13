@@ -58,24 +58,17 @@ def _clear_namespace(flow_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Execution cancellation support
+# Execution cancellation via SIGUSR1
 # ---------------------------------------------------------------------------
 _is_executing = False
 
 
 def _cancel_signal_handler(signum, frame):
-    """Handle SIGUSR1 by raising KeyboardInterrupt during code execution.
-
-    When the kernel is executing user code via exec(), sending SIGUSR1 to the
-    container will trigger this handler. If execution is in progress, a
-    KeyboardInterrupt is raised to abort the running code. The /execute
-    endpoint catches it and returns a cancellation response.
-    """
+    """Interrupt running user code when the container receives SIGUSR1."""
     if _is_executing:
-        logger.warning("Received SIGUSR1 during execution, raising KeyboardInterrupt")
+        logger.warning("SIGUSR1 received – interrupting execution")
         raise KeyboardInterrupt("Execution cancelled by user")
-    else:
-        logger.info("Received SIGUSR1 but no execution in progress, ignoring")
+    logger.debug("SIGUSR1 received outside execution, ignoring")
 
 
 # ---------------------------------------------------------------------------
@@ -174,13 +167,10 @@ def _setup_persistence() -> None:
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _setup_persistence()
-    # Register SIGUSR1 handler for execution cancellation.
-    # Only works in the main thread (signal.signal requirement); in test
-    # environments the lifespan may run in a secondary thread.
     try:
         signal.signal(signal.SIGUSR1, _cancel_signal_handler)
     except ValueError:
-        logger.info("Cannot register SIGUSR1 handler (not in main thread)")
+        pass  # not in main thread (e.g. TestClient)
     yield
 
 
