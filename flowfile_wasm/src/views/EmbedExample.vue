@@ -21,7 +21,6 @@
                 v-model="ds.name"
                 class="dataset-name-input"
                 placeholder="dataset_name"
-                @change="refreshInputData"
               />
               <button class="btn-icon-danger" @click="removeDataset(idx)" title="Remove dataset">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -32,7 +31,6 @@
               class="dataset-textarea"
               :placeholder="'name,age,city\nAlice,30,Amsterdam\nBob,25,Berlin'"
               rows="6"
-              @input="refreshInputData"
             ></textarea>
           </div>
         </section>
@@ -108,11 +106,6 @@ const inputData = computed<InputDataMap>(() => {
   }
   return map
 })
-
-function refreshInputData() {
-  // The computed inputData already reacts to changes
-  // This is a no-op placeholder for @input handlers
-}
 
 function addDataset() {
   datasets.push({ name: `dataset_${datasets.length + 1}`, content: '' })

@@ -180,6 +180,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Clean up output callbacks to prevent leaks if host forgets offOutput
+  flowStore.clearOutputCallbacks()
   // Restore non-embedded mode if needed
   themeStore.setEmbedded(false)
 })

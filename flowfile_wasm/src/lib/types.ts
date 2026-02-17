@@ -103,7 +103,7 @@ export interface FlowfileEditorAPI {
   /** Import a flow from FlowfileData */
   importFlow: (data: FlowfileData) => boolean
   /** Set input data for a named dataset (matched by node_reference) */
-  setInputData: (name: string, content: string, options?: { format?: string; delimiter?: string }) => void
+  setInputData: (name: string, content: string) => void
   /** Get the result/preview for a specific node */
   getNodeResult: (nodeId: number) => NodeResult | undefined
   /** Clear the entire flow */

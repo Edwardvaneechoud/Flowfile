@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
 import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
 
@@ -319,8 +319,8 @@ function handleLayoutReset() {
   resetToInitialPosition()
 }
 
-// Compute initial position based on prop
-onMounted(() => {
+// Core initialization logic (extracted so it can be retried after nextTick)
+function initializePosition() {
   const container = getContainerRect()
   const vh = container.height
   const vw = container.width
@@ -328,6 +328,24 @@ onMounted(() => {
   // Initialize viewport tracking for smart resize
   prevViewportWidth = vw
   prevViewportHeight = vh
+
+  return { vw, vh }
+}
+
+// Compute initial position based on prop
+onMounted(() => {
+  let { vw, vh } = initializePosition()
+
+  // If container has zero dimensions (not laid out yet), defer to nextTick
+  if (vw === 0 || vh === 0) {
+    nextTick(() => {
+      const result = initializePosition()
+      if (result.vw > 0 && result.vh > 0) {
+        resetToInitialPosition()
+        saveCurrentState()
+      }
+    })
+  }
 
   // Try to restore saved state first
   if (props.panelId) {

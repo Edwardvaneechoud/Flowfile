@@ -1475,7 +1475,9 @@ result
         }
 
         case 'external_data': {
-          // External data executes exactly like manual_input - data is pre-loaded via setFileContent
+          // Reuses execute_manual_input because the data format is identical (CSV string + settings).
+          // If execute_manual_input ever adds manual-input-specific logic, this should be split
+          // into a dedicated Python function.
           const content = fileContents.value.get(nodeId)
           if (!content) {
             const settings = node.settings as NodeExternalDataSettings
@@ -1689,10 +1691,24 @@ result
           }
           const settings = node.settings as NodeExternalOutputSettings
           const outputName = settings.output_name || 'result'
-          // Use the same output execution to produce CSV content
+          // Build the output settings object and serialize safely via toPythonJson
+          const outputSettings = {
+            output_settings: {
+              name: `${outputName}.csv`,
+              directory: '.',
+              file_type: 'csv',
+              write_mode: 'overwrite',
+              table_settings: {
+                file_type: 'csv',
+                delimiter: ',',
+                encoding: 'utf-8'
+              },
+              polars_method: 'sink_csv'
+            }
+          }
           const extResult = await runPythonWithResult(`
 import json
-result = execute_output(${nodeId}, ${inputId}, json.loads('{"output_settings": {"name": "${outputName}.csv", "directory": ".", "file_type": "csv", "write_mode": "overwrite", "table_settings": {"file_type": "csv", "delimiter": ",", "encoding": "utf-8"}, "polars_method": "sink_csv"}}'))
+result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(outputSettings)}))
 result
 `)
           if (extResult?.success && extResult?.download) {
@@ -2422,6 +2438,8 @@ result
 
     // Output callbacks (for embeddable mode)
     onOutput: (cb: OutputCallback) => { outputCallbacks.add(cb) },
-    offOutput: (cb: OutputCallback) => { outputCallbacks.delete(cb) }
+    offOutput: (cb: OutputCallback) => { outputCallbacks.delete(cb) },
+    /** Remove all output callbacks (useful for cleanup) */
+    clearOutputCallbacks: () => { outputCallbacks.clear() }
   }
 })

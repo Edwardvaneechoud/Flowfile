@@ -316,19 +316,19 @@
   transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
-/* Custom Vue Flow overrides */
-.vue-flow__minimap {
+/* Custom Vue Flow overrides (scoped to editor root to avoid leaking into host) */
+.flowfile-editor-root .vue-flow__minimap {
   transform: scale(75%);
   transform-origin: bottom right;
 }
 
 /* Hide Vue Flow background pattern (dots) */
-.vue-flow__background {
+.flowfile-editor-root .vue-flow__background {
   display: none;
 }
 
 /* Invert edge colors for better visibility */
-.custom-node-flow .vue-flow__edges {
+.flowfile-editor-root .custom-node-flow .vue-flow__edges {
   filter: invert(100%);
 }
 
@@ -343,7 +343,7 @@
    AG Grid Theme Customization (matching flowfile_frontend)
    ========================================================================== */
 
-.ag-theme-balham {
+.flowfile-editor-root .ag-theme-balham {
   max-width: 100%;
   position: relative;
   /* Prevent scroll chaining to parent containers */
@@ -379,80 +379,80 @@
 }
 
 /* AG Grid header styling */
-.ag-theme-balham .ag-header-cell {
+.flowfile-editor-root .ag-theme-balham .ag-header-cell {
   font-weight: var(--font-weight-semibold);
 }
 
 /* AG Grid cell styling */
-.ag-theme-balham .ag-cell {
+.flowfile-editor-root .ag-theme-balham .ag-cell {
   line-height: 30px;
 }
 
 /* AG Grid viewport - prevent scroll chaining to parent containers */
-.ag-theme-balham .ag-body-viewport {
+.flowfile-editor-root .ag-theme-balham .ag-body-viewport {
   overscroll-behavior: contain;
 }
 
 /* AG Grid filter styling */
-.ag-theme-balham .ag-filter-toolpanel-header,
-.ag-theme-balham .ag-filter-toolpanel-search,
-.ag-theme-balham .ag-status-bar,
-.ag-theme-balham .ag-header-row {
+.flowfile-editor-root .ag-theme-balham .ag-filter-toolpanel-header,
+.flowfile-editor-root .ag-theme-balham .ag-filter-toolpanel-search,
+.flowfile-editor-root .ag-theme-balham .ag-status-bar,
+.flowfile-editor-root .ag-theme-balham .ag-header-row {
   font-weight: var(--font-weight-medium);
 }
 
 /* AG Grid pagination panel - ensure dark theme colors */
-.ag-theme-balham .ag-paging-panel {
+.flowfile-editor-root .ag-theme-balham .ag-paging-panel {
   background-color: var(--color-background-secondary);
   border-top: 1px solid var(--color-border-primary);
   color: var(--color-text-primary);
 }
 
-.ag-theme-balham .ag-paging-button {
+.flowfile-editor-root .ag-theme-balham .ag-paging-button {
   color: var(--color-text-primary);
 }
 
-.ag-theme-balham .ag-paging-description {
+.flowfile-editor-root .ag-theme-balham .ag-paging-description {
   color: var(--color-text-secondary);
 }
 
 /* AG Grid filter popup - ensure dark theme colors */
-.ag-theme-balham .ag-popup {
+.flowfile-editor-root .ag-theme-balham .ag-popup {
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
 }
 
-.ag-theme-balham .ag-filter {
+.flowfile-editor-root .ag-theme-balham .ag-filter {
   background-color: var(--color-background-primary);
 }
 
-.ag-theme-balham .ag-menu {
+.flowfile-editor-root .ag-theme-balham .ag-menu {
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
 }
 
-.ag-theme-balham .ag-menu-option {
+.flowfile-editor-root .ag-theme-balham .ag-menu-option {
   color: var(--color-text-primary);
 }
 
-.ag-theme-balham .ag-menu-option:hover {
+.flowfile-editor-root .ag-theme-balham .ag-menu-option:hover {
   background-color: var(--color-background-hover);
 }
 
 /* AG Grid input fields in filter */
-.ag-theme-balham .ag-text-field-input,
-.ag-theme-balham .ag-number-field-input {
+.flowfile-editor-root .ag-theme-balham .ag-text-field-input,
+.flowfile-editor-root .ag-theme-balham .ag-number-field-input {
   background-color: var(--color-background-primary);
   color: var(--color-text-primary);
   border-color: var(--color-border-primary);
 }
 
-.ag-theme-balham .ag-select .ag-picker-field-wrapper {
+.flowfile-editor-root .ag-theme-balham .ag-select .ag-picker-field-wrapper {
   background-color: var(--color-background-primary);
   border-color: var(--color-border-primary);
 }
 
-.ag-theme-balham .ag-picker-field-display {
+.flowfile-editor-root .ag-theme-balham .ag-picker-field-display {
   color: var(--color-text-primary);
 }
 
