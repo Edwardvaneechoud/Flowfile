@@ -1,21 +1,22 @@
 /**
  * Explicit icon imports for library build compatibility.
- * SVG icons are inlined by Vite, avoiding import.meta.url issues in library mode.
+ * Vite inlines these as base64 data URIs when assetsInlineLimit is set.
+ * This avoids import.meta.url issues in library mode.
  */
-import inputData from '../assets/icons/input_data.svg'
-import manualInput from '../assets/icons/manual_input.svg'
-import filter from '../assets/icons/filter.svg'
-import select from '../assets/icons/select.svg'
-import sort from '../assets/icons/sort.svg'
-import polarsCode from '../assets/icons/polars_code.svg'
-import unique from '../assets/icons/unique.svg'
-import sample from '../assets/icons/sample.svg'
-import join from '../assets/icons/join.svg'
-import groupBy from '../assets/icons/group_by.svg'
-import pivot from '../assets/icons/pivot.svg'
-import unpivot from '../assets/icons/unpivot.svg'
-import view from '../assets/icons/view.svg'
-import output from '../assets/icons/output.svg'
+import inputData from '../assets/icons/input_data.png'
+import manualInput from '../assets/icons/manual_input.png'
+import filter from '../assets/icons/filter.png'
+import select from '../assets/icons/select.png'
+import sort from '../assets/icons/sort.png'
+import polarsCode from '../assets/icons/polars_code.png'
+import unique from '../assets/icons/unique.png'
+import sample from '../assets/icons/sample.png'
+import join from '../assets/icons/join.png'
+import groupBy from '../assets/icons/group_by.png'
+import pivot from '../assets/icons/pivot.png'
+import unpivot from '../assets/icons/unpivot.png'
+import view from '../assets/icons/view.png'
+import output from '../assets/icons/output.png'
 import externalData from '../assets/icons/external_data.svg'
 import externalOutput from '../assets/icons/external_output.svg'
 

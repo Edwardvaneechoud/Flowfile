@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <!-- Code brackets -->
-  <path d="M20 16l-12 16 12 16" stroke="#2D3748" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M44 16l12 16-12 16" stroke="#2D3748" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <!-- Slash in the middle -->
-  <line x1="36" y1="14" x2="28" y2="50" stroke="#2D3748" stroke-width="2.5" stroke-linecap="round"/>
-</svg>
