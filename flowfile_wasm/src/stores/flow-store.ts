@@ -15,6 +15,8 @@ import type {
   NodeBase,
   NodeReadSettings,
   NodeManualInputSettings,
+  NodeExternalDataSettings,
+  NodeExternalOutputSettings,
   NodeFilterSettings,
   NodeSelectSettings,
   NodeGroupBySettings
@@ -102,6 +104,13 @@ export const useFlowStore = defineStore('flow', () => {
 
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
+
+  // Output callbacks for embeddable mode
+  type OutputCallback = (data: { nodeId: number; content: string; fileName: string; mimeType: string }) => void
+  const outputCallbacks = new Set<OutputCallback>()
+
+  // External datasets provided by the host application (for embedded mode)
+  const externalDatasets = ref<Map<string, string>>(new Map())
 
   // Preview cache state (for lazy loading)
   const previewCache = ref<Map<number, {
@@ -730,6 +739,41 @@ export const useFlowStore = defineStore('flow', () => {
 
     // Invalidate preview cache
     invalidatePreviewCache(nodeId)
+  }
+
+  /**
+   * Set external datasets available from the host application.
+   * Called by FlowfileEditor when inputData prop changes.
+   */
+  function setExternalDatasets(datasets: Record<string, string>) {
+    externalDatasets.value.clear()
+    for (const [name, content] of Object.entries(datasets)) {
+      externalDatasets.value.set(name, content)
+    }
+
+    // Auto-load data into any external_data nodes that reference these datasets
+    nodes.value.forEach((node, nodeId) => {
+      if (node.type === 'external_data') {
+        const settings = node.settings as NodeExternalDataSettings
+        if (settings.dataset_name && externalDatasets.value.has(settings.dataset_name)) {
+          setFileContent(nodeId, externalDatasets.value.get(settings.dataset_name)!)
+        }
+      }
+    })
+  }
+
+  /**
+   * Get available external dataset names
+   */
+  function getExternalDatasetNames(): string[] {
+    return Array.from(externalDatasets.value.keys())
+  }
+
+  /**
+   * Get content for an external dataset by name
+   */
+  function getExternalDatasetContent(name: string): string | undefined {
+    return externalDatasets.value.get(name)
   }
 
   /**
@@ -1430,6 +1474,29 @@ result
           break
         }
 
+        case 'external_data': {
+          // Reuses execute_manual_input because the data format is identical (CSV string + settings).
+          // If execute_manual_input ever adds manual-input-specific logic, this should be split
+          // into a dedicated Python function.
+          const content = fileContents.value.get(nodeId)
+          if (!content) {
+            const settings = node.settings as NodeExternalDataSettings
+            const dsName = settings.dataset_name
+            return { success: false, error: dsName ? `No data loaded for dataset "${dsName}". Ensure the host provides this dataset.` : 'No dataset selected' }
+          }
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
+import json
+result = execute_manual_input(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
+          break
+        }
+
         case 'filter': {
           const inputId = node.inputIds[0]
           if (!inputId) {
@@ -1590,6 +1657,13 @@ result
               mime_type,
               row_count
             )
+            // Notify output callbacks (for embeddable mode)
+            outputCallbacks.forEach(cb => cb({
+              nodeId,
+              content,
+              fileName: file_name,
+              mimeType: mime_type
+            }))
             // Create result without content - just metadata
             result = {
               success: outputResult.success,
@@ -1605,6 +1679,54 @@ result
             }
           } else {
             result = outputResult
+          }
+          break
+        }
+
+        case 'external_output': {
+          // External output: execute like output but always emit CSV to callbacks
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          const settings = node.settings as NodeExternalOutputSettings
+          const outputName = settings.output_name || 'result'
+          // Build the output settings object and serialize safely via toPythonJson
+          const outputSettings = {
+            output_settings: {
+              name: `${outputName}.csv`,
+              directory: '.',
+              file_type: 'csv',
+              write_mode: 'overwrite',
+              table_settings: {
+                file_type: 'csv',
+                delimiter: ',',
+                encoding: 'utf-8'
+              },
+              polars_method: 'sink_csv'
+            }
+          }
+          const extResult = await runPythonWithResult(`
+import json
+result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(outputSettings)}))
+result
+`)
+          if (extResult?.success && extResult?.download) {
+            const { content, file_name, mime_type } = extResult.download
+            // Notify output callbacks (primary purpose of this node in embedded mode)
+            outputCallbacks.forEach(cb => cb({
+              nodeId,
+              content,
+              fileName: file_name,
+              mimeType: mime_type
+            }))
+            result = {
+              success: extResult.success,
+              schema: extResult.schema,
+              data: extResult.data
+            }
+          } else {
+            result = extResult
           }
           break
         }
@@ -1748,6 +1870,13 @@ result
           }
         } as NodeManualInputSettings
 
+      case 'external_data':
+        return {
+          ...base,
+          dataset_name: '',
+          schema_snapshot: []
+        } as NodeExternalDataSettings
+
       case 'filter':
         return {
           ...base,
@@ -1872,6 +2001,12 @@ result
           }
         } as any
 
+      case 'external_output':
+        return {
+          ...base,
+          output_name: 'result'
+        } as NodeExternalOutputSettings
+
       default:
         return base as NodeSettings
     }
@@ -1904,6 +2039,19 @@ result
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
       // Read description and node_reference from node level (primary) with fallback to settings
+      let settingInput = cleanSettingInput(node.settings)
+
+      // For external_data nodes, save schema snapshot (not the actual data)
+      if (node.type === 'external_data') {
+        const result = nodeResults.value.get(id)
+        if (result?.schema) {
+          settingInput = {
+            ...settingInput,
+            schema_snapshot: result.schema.map(col => ({ name: col.name, data_type: col.data_type }))
+          }
+        }
+      }
+
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
@@ -1915,7 +2063,7 @@ result
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: cleanSettingInput(node.settings)
+        setting_input: settingInput
       }
 
       flowfileNodes.push(flowfileNode)
@@ -2257,6 +2405,10 @@ result
     addEdge,
     removeEdge,
     setFileContent,
+    externalDatasets,
+    setExternalDatasets,
+    getExternalDatasetNames,
+    getExternalDatasetContent,
     selectNode,
     executeNode,
     executeFlow,
@@ -2282,6 +2434,12 @@ result
     importFromFlowfile,
     downloadFlowfile,
     loadFlowfile,
-    validateFlowfileData
+    validateFlowfileData,
+
+    // Output callbacks (for embeddable mode)
+    onOutput: (cb: OutputCallback) => { outputCallbacks.add(cb) },
+    offOutput: (cb: OutputCallback) => { outputCallbacks.delete(cb) },
+    /** Remove all output callbacks (useful for cleanup) */
+    clearOutputCallbacks: () => { outputCallbacks.clear() }
   }
 })

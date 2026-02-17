@@ -7,6 +7,11 @@ const router = createRouter({
       path: '/',
       name: 'app',
       component: () => import('../views/AppPage.vue')
+    },
+    {
+      path: '/embed-example',
+      name: 'embed-example',
+      component: () => import('../views/EmbedExample.vue')
     }
   ]
 })

@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
 import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
 
@@ -87,6 +87,7 @@ const resizeDirection = ref<string | null>(null)
 let prevViewportWidth = window.innerWidth
 let prevViewportHeight = window.innerHeight
 let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let containerResizeObserver: ResizeObserver | null = null
 
 // Edge snap threshold in pixels - if panel is within this distance of an edge, consider it "docked"
 const EDGE_SNAP_THRESHOLD = 10
@@ -94,10 +95,24 @@ const MIN_PANEL_WIDTH = 200
 const MIN_PANEL_HEIGHT = 100
 const MIN_VISIBLE_HEADER = 50 // Minimum header visible for dragging
 
+/**
+ * Get container dimensions. With position: absolute the panel is
+ * positioned relative to .canvas-container instead of the viewport.
+ */
+function getContainerRect(): { width: number; height: number; left: number; top: number } {
+  const parent = panelRef.value?.parentElement
+  if (parent) {
+    const rect = parent.getBoundingClientRect()
+    return { width: rect.width, height: rect.height, left: rect.left, top: rect.top }
+  }
+  return { width: window.innerWidth, height: window.innerHeight, left: 0, top: 0 }
+}
+
 // Save current panel state to storage
 function saveCurrentState() {
   if (!props.panelId) return
 
+  const container = getContainerRect()
   const state: PanelState = {
     width: width.value,
     height: height.value,
@@ -105,9 +120,9 @@ function saveCurrentState() {
     top: top.value,
     isMinimized: isMinimized.value,
     zIndex: zIndex.value,
-    // Save viewport dimensions to detect resize on next load
-    savedViewportWidth: window.innerWidth,
-    savedViewportHeight: window.innerHeight
+    // Save container dimensions to detect resize on next load
+    savedViewportWidth: container.width,
+    savedViewportHeight: container.height
   }
   savePanelState(props.panelId, state)
 }
@@ -130,8 +145,9 @@ function detectDockedEdges(vw: number, vh: number) {
 
 // Smart resize handler - maintains edge docking and proportional positioning
 function handleWindowResizeSmartly() {
-  const newVw = window.innerWidth
-  const newVh = window.innerHeight
+  const container = getContainerRect()
+  const newVw = container.width
+  const newVh = container.height
 
   // Skip if viewport didn't actually change
   if (newVw === prevViewportWidth && newVh === prevViewportHeight) {
@@ -260,8 +276,9 @@ function handleWindowResize() {
 
 // Reset panel to initial position based on initialPosition prop
 function resetToInitialPosition() {
-  const vh = window.innerHeight
-  const vw = window.innerWidth
+  const container = getContainerRect()
+  const vh = container.height
+  const vw = container.width
 
   // Reset to initial dimensions
   width.value = props.initialWidth
@@ -302,14 +319,33 @@ function handleLayoutReset() {
   resetToInitialPosition()
 }
 
-// Compute initial position based on prop
-onMounted(() => {
-  const vh = window.innerHeight
-  const vw = window.innerWidth
+// Core initialization logic (extracted so it can be retried after nextTick)
+function initializePosition() {
+  const container = getContainerRect()
+  const vh = container.height
+  const vw = container.width
 
   // Initialize viewport tracking for smart resize
   prevViewportWidth = vw
   prevViewportHeight = vh
+
+  return { vw, vh }
+}
+
+// Compute initial position based on prop
+onMounted(() => {
+  let { vw, vh } = initializePosition()
+
+  // If container has zero dimensions (not laid out yet), defer to nextTick
+  if (vw === 0 || vh === 0) {
+    nextTick(() => {
+      const result = initializePosition()
+      if (result.vw > 0 && result.vh > 0) {
+        resetToInitialPosition()
+        saveCurrentState()
+      }
+    })
+  }
 
   // Try to restore saved state first
   if (props.panelId) {
@@ -411,6 +447,15 @@ onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   // Listen for layout reset events from LayoutControls
   window.addEventListener('layout-reset', handleLayoutReset)
+
+  // Observe container size changes (handles embedded editor resizing)
+  const parent = panelRef.value?.parentElement
+  if (parent) {
+    containerResizeObserver = new ResizeObserver(() => {
+      handleWindowResize()
+    })
+    containerResizeObserver.observe(parent)
+  }
 })
 
 // Watch for changes to initialTop and update position (only if no saved state)
@@ -420,12 +465,12 @@ watch(() => props.initialTop, (newTop) => {
     return
   }
 
-  const vh = window.innerHeight
+  const container = getContainerRect()
   top.value = newTop
 
   // Adjust height for left/right panels
   if (props.initialPosition === 'left' || props.initialPosition === 'right') {
-    height.value = vh - newTop
+    height.value = container.height - newTop
   }
 })
 
@@ -473,9 +518,10 @@ function onMove(e: MouseEvent) {
 
   const dx = e.clientX - startX.value
   const dy = e.clientY - startY.value
+  const container = getContainerRect()
 
-  left.value = Math.max(0, startLeft.value + dx)
-  top.value = Math.max(0, startTop.value + dy)
+  left.value = Math.max(0, Math.min(startLeft.value + dx, container.width - MIN_VISIBLE_HEADER))
+  top.value = Math.max(0, Math.min(startTop.value + dy, container.height - MIN_VISIBLE_HEADER))
 }
 
 function stopMove() {
@@ -544,6 +590,11 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopResize)
   window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('layout-reset', handleLayoutReset)
+  // Clean up container resize observer
+  if (containerResizeObserver) {
+    containerResizeObserver.disconnect()
+    containerResizeObserver = null
+  }
   // Clear any pending debounce timer
   if (resizeDebounceTimer) {
     clearTimeout(resizeDebounceTimer)
@@ -558,7 +609,7 @@ onUnmounted(() => {
 
 <style scoped>
 .draggable-panel {
-  position: fixed;
+  position: absolute;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
