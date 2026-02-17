@@ -4,9 +4,11 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CloudStorageConnection as DBCloudStorageConnection
 from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
 from flowfile_core.database.models import Secret
+from flowfile_core.database.models import UnityCatalogConnection as DBUnityCatalogConnection
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, store_secret
+from flowfile_core.unity_catalog.schemas import UnityCatalogConnectionInput, UnityCatalogConnectionInterface
 
 
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
@@ -366,4 +368,112 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
 
         # Delete the connection record itself
         db.delete(db_connection)
+        db.commit()
+
+
+# ==================== Unity Catalog Connection Management ====================
+
+
+def store_uc_connection(
+    db: Session, connection: UnityCatalogConnectionInput, user_id: int
+) -> DBUnityCatalogConnection:
+    """Store a Unity Catalog connection in the database."""
+    existing = get_uc_connection(db, connection.connection_name, user_id)
+    if existing:
+        raise ValueError(
+            f"Unity Catalog connection '{connection.connection_name}' already exists for user {user_id}."
+        )
+
+    auth_token_id = None
+    if connection.auth_token is not None:
+        auth_token_id = store_secret(
+            db,
+            SecretInput(
+                name=connection.connection_name + "_uc_auth_token",
+                value=connection.auth_token,
+            ),
+            user_id,
+        ).id
+
+    db_connection = DBUnityCatalogConnection(
+        connection_name=connection.connection_name,
+        server_url=connection.server_url,
+        auth_token_id=auth_token_id,
+        default_catalog=connection.default_catalog,
+        credential_vending_enabled=connection.credential_vending_enabled,
+        user_id=user_id,
+    )
+    db.add(db_connection)
+    db.commit()
+    db.refresh(db_connection)
+    return db_connection
+
+
+def get_uc_connection(db: Session, connection_name: str, user_id: int) -> DBUnityCatalogConnection | None:
+    """Get a UC connection by name and user ID."""
+    return (
+        db.query(DBUnityCatalogConnection)
+        .filter(
+            DBUnityCatalogConnection.connection_name == connection_name,
+            DBUnityCatalogConnection.user_id == user_id,
+        )
+        .first()
+    )
+
+
+def get_uc_connection_with_token(
+    db: Session, connection_name: str, user_id: int
+) -> tuple[DBUnityCatalogConnection, str | None] | None:
+    """Get a UC connection with its decrypted auth token."""
+    db_conn = get_uc_connection(db, connection_name, user_id)
+    if not db_conn:
+        return None
+
+    auth_token: str | None = None
+    if db_conn.auth_token_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_conn.auth_token_id).first()
+        if secret_record:
+            decrypted = decrypt_secret(secret_record.encrypted_value)
+            auth_token = decrypted.get_secret_value()
+
+    return db_conn, auth_token
+
+
+def get_local_uc_connection(
+    connection_name: str, user_id: int
+) -> tuple[DBUnityCatalogConnection, str | None] | None:
+    """Get a UC connection with its decrypted auth token (using local DB context)."""
+    with get_db_context() as db:
+        return get_uc_connection_with_token(db, connection_name, user_id)
+
+
+def get_all_uc_connections_interface(
+    db: Session, user_id: int
+) -> list[UnityCatalogConnectionInterface]:
+    """Get all UC connections for a user (safe for frontend)."""
+    db_connections = (
+        db.query(DBUnityCatalogConnection)
+        .filter(DBUnityCatalogConnection.user_id == user_id)
+        .all()
+    )
+    return [
+        UnityCatalogConnectionInterface(
+            connection_name=conn.connection_name,
+            server_url=conn.server_url,
+            default_catalog=conn.default_catalog,
+            credential_vending_enabled=conn.credential_vending_enabled,
+        )
+        for conn in db_connections
+    ]
+
+
+def delete_uc_connection(db: Session, connection_name: str, user_id: int) -> None:
+    """Delete a UC connection and its associated secret."""
+    db_conn = get_uc_connection(db, connection_name, user_id)
+    if db_conn:
+        if db_conn.auth_token_id:
+            db.query(Secret).filter(Secret.id == db_conn.auth_token_id).delete(
+                synchronize_session=False
+            )
+        db.delete(db_conn)
         db.commit()

@@ -78,6 +78,27 @@ class CloudStorageConnection(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class UnityCatalogConnection(Base):
+    """Stores a connection to a Unity Catalog server."""
+    __tablename__ = "unity_catalog_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    server_url = Column(String, nullable=False)
+    auth_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    default_catalog = Column(String, nullable=True)
+    credential_vending_enabled = Column(Boolean, default=True)
+
+    # Metadata
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("connection_name", "user_id", name="uq_uc_connection_name_user"),
+    )
+
+
 class CloudStoragePermission(Base):
     __tablename__ = "cloud_storage_permissions"
 

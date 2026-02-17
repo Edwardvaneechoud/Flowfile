@@ -1952,6 +1952,215 @@ class FlowGraph:
         self.add_node_to_starting_list(node)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_unity_catalog_reader(self, node_uc_reader: input_schema.NodeUnityCatalogReader) -> None:
+        """Adds a Unity Catalog table reader node to the flow graph.
+
+        Resolves the table's storage location and credentials via UC's credential
+        vending API, then reads the underlying data with Polars.
+
+        Args:
+            node_uc_reader: The settings for the UC table reader node.
+        """
+        node_type = "unity_catalog_reader"
+        logger.info("Adding Unity Catalog reader")
+        uc_settings = node_uc_reader.unity_catalog_settings
+
+        def _func():
+            from flowfile_core.unity_catalog.credential_provider import (
+                build_client_from_connection,
+                resolve_uc_table,
+            )
+            from flowfile_core.flowfile.database_connection_manager.db_connections import (
+                get_local_uc_connection,
+            )
+
+            logger.info("Resolving Unity Catalog table: %s", uc_settings.table_ref.full_name)
+            self.flow_logger.info(f"Resolving UC table: {uc_settings.table_ref.full_name}")
+
+            # Get the UC connection credentials
+            result = get_local_uc_connection(uc_settings.connection_name, node_uc_reader.user_id)
+            if result is None:
+                raise ValueError(f"Unity Catalog connection '{uc_settings.connection_name}' not found")
+            db_conn, auth_token = result
+
+            # Resolve table metadata + temporary credentials
+            client = build_client_from_connection(db_conn.server_url, auth_token)
+            try:
+                resolved = resolve_uc_table(
+                    client,
+                    uc_settings.table_ref.catalog_name,
+                    uc_settings.table_ref.schema_name,
+                    uc_settings.table_ref.table_name,
+                )
+            finally:
+                client.close()
+
+            # Read via Polars using the resolved storage location + credentials
+            fmt = resolved.polars_format
+            location = resolved.storage_location
+            storage_options = resolved.storage_options
+
+            logger.info("Reading UC table from %s (format=%s)", location, fmt)
+
+            import polars as pl
+
+            if fmt == "delta":
+                scan_kwargs = {"source": location}
+                if storage_options:
+                    scan_kwargs["storage_options"] = storage_options
+                lf = pl.scan_delta(**scan_kwargs)
+            elif fmt == "parquet":
+                lf = pl.scan_parquet(location, storage_options=storage_options or None)
+            elif fmt == "csv":
+                lf = pl.scan_csv(location, storage_options=storage_options or None)
+            elif fmt == "json":
+                lf = pl.scan_ndjson(location, storage_options=storage_options or None)
+            else:
+                raise ValueError(f"Unsupported UC table format: {fmt}")
+
+            return FlowDataEngine(
+                lf,
+                number_of_records=6_666_666,
+                optimize_memory=True,
+                streamable=True,
+            )
+
+        node = self.add_node_step(
+            node_id=node_uc_reader.node_id,
+            function=_func,
+            cache_results=node_uc_reader.cache_results,
+            setting_input=node_uc_reader,
+            node_type=node_type,
+        )
+        self.add_node_to_starting_list(node)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_unity_catalog_writer(self, node_uc_writer: input_schema.NodeUnityCatalogWriter) -> None:
+        """Adds a Unity Catalog table writer node to the flow graph.
+
+        Writes data to cloud storage and optionally registers the result
+        as a table in Unity Catalog.
+
+        Args:
+            node_uc_writer: The settings for the UC table writer node.
+        """
+        node_type = "unity_catalog_writer"
+        logger.info("Adding Unity Catalog writer")
+        uc_settings = node_uc_writer.unity_catalog_settings
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.unity_catalog.credential_provider import (
+                build_client_from_connection,
+            )
+            from flowfile_core.unity_catalog.schemas import ColumnInfo, DataSourceFormat
+            from flowfile_core.flowfile.database_connection_manager.db_connections import (
+                get_local_uc_connection,
+            )
+
+            logger.info("Writing to Unity Catalog table: %s", uc_settings.table_ref.full_name)
+            self.flow_logger.info(f"Writing UC table: {uc_settings.table_ref.full_name}")
+
+            # Get the UC connection
+            result = get_local_uc_connection(uc_settings.connection_name, node_uc_writer.user_id)
+            if result is None:
+                raise ValueError(f"Unity Catalog connection '{uc_settings.connection_name}' not found")
+            db_conn, auth_token = result
+
+            client = build_client_from_connection(db_conn.server_url, auth_token)
+            try:
+                # Get temporary write credentials
+                from flowfile_core.unity_catalog.schemas import CredentialOperation
+
+                ref = uc_settings.table_ref
+                storage_location = f"s3://{ref.catalog_name}/{ref.schema_name}/{ref.table_name}"
+                storage_options = {}
+
+                # Try credential vending for the storage path
+                try:
+                    creds = client.get_temporary_path_credentials(
+                        url=storage_location,
+                        operation=CredentialOperation.READ_WRITE,
+                    )
+                    from flowfile_core.unity_catalog.credential_provider import (
+                        _build_storage_options_from_creds,
+                    )
+                    storage_options = _build_storage_options_from_creds(creds)
+                except Exception as exc:
+                    logger.warning("Path credential vending unavailable: %s", exc)
+
+                # Write the data
+                import polars as pl
+
+                df = fl.collect()
+                fmt = uc_settings.data_source_format
+
+                if fmt == DataSourceFormat.DELTA:
+                    from deltalake import write_deltalake
+
+                    write_deltalake(
+                        storage_location,
+                        df.to_arrow(),
+                        mode=uc_settings.write_mode,
+                        storage_options=storage_options or None,
+                    )
+                elif fmt == DataSourceFormat.PARQUET:
+                    df.write_parquet(storage_location)
+                else:
+                    raise ValueError(f"Unsupported write format: {fmt}")
+
+                # Register the table in UC
+                if uc_settings.register_table:
+                    # Build column info from DataFrame schema
+                    polars_to_uc_type = {
+                        "Int8": "BYTE", "Int16": "SHORT", "Int32": "INT", "Int64": "LONG",
+                        "UInt8": "BYTE", "UInt16": "SHORT", "UInt32": "INT", "UInt64": "LONG",
+                        "Float32": "FLOAT", "Float64": "DOUBLE",
+                        "Boolean": "BOOLEAN", "Utf8": "STRING", "String": "STRING",
+                        "Date": "DATE", "Datetime": "TIMESTAMP", "Duration": "LONG",
+                        "Binary": "BINARY", "Null": "STRING",
+                    }
+                    columns = [
+                        ColumnInfo(
+                            name=col_name,
+                            type_name=polars_to_uc_type.get(str(col_dtype), "STRING"),
+                            type_text=str(col_dtype).lower(),
+                            position=i,
+                        )
+                        for i, (col_name, col_dtype) in enumerate(zip(df.columns, df.dtypes))
+                    ]
+
+                    try:
+                        client.register_external_table(
+                            catalog_name=ref.catalog_name,
+                            schema_name=ref.schema_name,
+                            table_name=ref.table_name,
+                            storage_location=storage_location,
+                            columns=columns,
+                            data_source_format=uc_settings.data_source_format,
+                            comment=uc_settings.table_comment,
+                        )
+                        logger.info("Registered table %s in Unity Catalog", ref.full_name)
+                    except Exception as exc:
+                        logger.warning("Table registration failed (table may already exist): %s", exc)
+            finally:
+                client.close()
+
+            return fl
+
+        def schema_callback():
+            pass
+
+        self.add_node_step(
+            node_id=node_uc_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type=node_type,
+            setting_input=node_uc_writer,
+            schema_callback=schema_callback,
+            input_node_ids=[node_uc_writer.depending_on_id],
+        )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_external_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node for a custom external data source.
 

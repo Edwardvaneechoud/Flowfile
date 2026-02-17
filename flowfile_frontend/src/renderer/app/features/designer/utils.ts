@@ -35,6 +35,8 @@ const BUILTIN_ICONS = new Set([
   "text_to_rows.png",
   "union.png",
   "unique.png",
+  "unity_catalog_reader.png",
+  "unity_catalog_writer.png",
   "unpivot.png",
   "user-defined-icon.png",
   "view.png",

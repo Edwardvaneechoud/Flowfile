@@ -57,6 +57,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CloudConnectionView/CloudConnectionView.vue"),
       },
       {
+        name: "unityCatalogManager",
+        path: "unityCatalogManager",
+        component: () => import("../views/UnityCatalogView/UnityCatalogView.vue"),
+      },
+      {
         name: "secretManager",
         path: "secretManager",
         component: () => import("../views/SecretsView/SecretsView.vue"),

@@ -22,6 +22,7 @@ from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.unity_catalog import router as unity_catalog_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from shared.storage_config import storage
@@ -89,6 +90,7 @@ app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
+app.include_router(unity_catalog_router, prefix="/unity_catalog", tags=["unity_catalog"])
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
 

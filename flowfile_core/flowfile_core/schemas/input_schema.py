@@ -17,6 +17,7 @@ from pydantic import (
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.unity_catalog.schemas import UnityCatalogReadSettings, UnityCatalogWriteSettings
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
     NodeFuzzyMatchYaml,
@@ -875,6 +876,33 @@ class NodeCloudStorageWriter(NodeSingleInput):
         """Describes the cloud storage write target."""
         cs = self.cloud_storage_settings
         return f"Write to {cs.resource_path} ({cs.file_format})"
+
+
+class NodeUnityCatalogReader(NodeBase):
+    """Settings for a node that reads a table from Unity Catalog."""
+
+    unity_catalog_settings: UnityCatalogReadSettings = Field(default_factory=UnityCatalogReadSettings)
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        uc = self.unity_catalog_settings
+        ref = uc.table_ref
+        if ref.table_name:
+            return f"UC: {ref.catalog_name}.{ref.schema_name}.{ref.table_name}"
+        return "Unity Catalog Reader"
+
+
+class NodeUnityCatalogWriter(NodeSingleInput):
+    """Settings for a node that writes data and registers it as a table in Unity Catalog."""
+
+    unity_catalog_settings: UnityCatalogWriteSettings = Field(default_factory=UnityCatalogWriteSettings)
+
+    def get_default_description(self) -> str:
+        uc = self.unity_catalog_settings
+        ref = uc.table_ref
+        if ref.table_name:
+            return f"UC Write: {ref.catalog_name}.{ref.schema_name}.{ref.table_name}"
+        return "Unity Catalog Writer"
 
 
 class ExternalSource(BaseModel):

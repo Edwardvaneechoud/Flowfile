@@ -334,6 +334,30 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Cloud Storage Writer",
             drawer_intro="Save data to AWS S3 and other cloud storage",
         ),
+        NodeTemplate(
+            name="Unity Catalog Reader",
+            item="unity_catalog_reader",
+            input=0,
+            output=1,
+            transform_type="other",
+            node_type="input",
+            image="unity_catalog_reader.png",
+            node_group="input",
+            drawer_title="Unity Catalog Reader",
+            drawer_intro="Read tables managed by Unity Catalog with automatic credential vending",
+        ),
+        NodeTemplate(
+            name="Unity Catalog Writer",
+            item="unity_catalog_writer",
+            input=1,
+            output=0,
+            transform_type="other",
+            node_type="output",
+            image="unity_catalog_writer.png",
+            node_group="output",
+            drawer_title="Unity Catalog Writer",
+            drawer_intro="Write data and register as a table in Unity Catalog",
+        ),
     ]
     nodes_list.sort(key=lambda x: x.name)
     nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}

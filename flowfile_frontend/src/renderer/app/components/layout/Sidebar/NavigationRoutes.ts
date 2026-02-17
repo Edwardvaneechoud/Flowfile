@@ -51,6 +51,13 @@ export default {
       },
     },
     {
+      name: "unityCatalogManager",
+      displayName: "menu.unityCatalogManager",
+      meta: {
+        icon: "fa-solid fa-cubes",
+      },
+    },
+    {
       name: "secretManager",
       displayName: "menu.secretManager",
       meta: {
