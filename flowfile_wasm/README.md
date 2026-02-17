@@ -1,117 +1,211 @@
-# Flowfile WASM
+# flowfile-editor
 
-A minimal, browser-based data flow designer using Pyodide and Polars. This is a lightweight version of Flowfile that runs entirely in the browser without any server-side computation.
+An embeddable, browser-based data flow editor powered by [Pyodide](https://pyodide.org/) and [Polars](https://pola.rs/). Design data transformation pipelines visually — all computation runs in the browser via WebAssembly.
 
-## Features
+## Install
 
-- **Browser-Based Execution**: All data processing happens in your browser using WebAssembly
-- **Polars Integration**: Full Polars DataFrame operations via Pyodide
-- **Session Persistence**: Your flow is automatically saved to session storage
-- **14 Essential Nodes**:
-  - **Read CSV**: Load CSV files from your local machine
-  - **Manual Input**: Enter data manually in CSV format
-  - **Filter**: Apply conditional row filtering (basic and advanced modes)
-  - **Select**: Pick, reorder, and rename columns
-  - **Group By**: Aggregate data with various functions (sum, count, mean, min, max, etc.)
-  - **Pivot**: Reshape data from long to wide format
-  - **Unpivot**: Reshape data from wide to long format
-  - **Join**: Combine datasets with different join types (inner, left, right, full, semi, anti)
-  - **Sort**: Order rows by one or more columns
-  - **Polars Code**: Write custom Polars/Python code for advanced transformations
-  - **Unique**: Remove duplicate rows
-  - **Take Sample**: Limit to first N rows
-  - **Preview**: Display results in the browser
-  - **Output**: Download processed data as CSV or Parquet
+```bash
+npm install flowfile-editor
+```
 
-## Getting Started
+**Peer dependencies:** Vue 3.3+ is required. Pinia 2.0+ is optional (the editor creates its own instance if not provided).
 
-### Install Dependencies
+## Quick Start
+
+```vue
+<script setup>
+import { ref } from 'vue'
+import { FlowfileEditor } from 'flowfile-editor'
+import 'flowfile-editor/style.css'
+
+const editorRef = ref()
+</script>
+
+<template>
+  <FlowfileEditor
+    ref="editorRef"
+    height="600px"
+    @ready="console.log('Pyodide loaded')"
+    @output="data => console.log('Output:', data)"
+  />
+</template>
+```
+
+## Plugin Registration (Optional)
+
+If you prefer global registration:
+
+```ts
+import { createApp } from 'vue'
+import { FlowfileEditorPlugin } from 'flowfile-editor'
+import 'flowfile-editor/style.css'
+
+const app = createApp(App)
+app.use(FlowfileEditorPlugin)
+// Now <FlowfileEditor /> is available in all templates
+```
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `height` | `string` | `'100%'` | CSS height of the editor |
+| `width` | `string` | `'100%'` | CSS width of the editor |
+| `readonly` | `boolean` | `false` | Disable editing |
+| `initialFlow` | `FlowfileData` | — | Pre-load a saved flow |
+| `inputData` | `InputDataMap` | — | Provide named datasets for External Data nodes |
+| `theme` | `ThemeConfig` | — | `{ mode: 'light' \| 'dark' \| 'system' }` |
+| `toolbar` | `ToolbarConfig` | — | Show/hide toolbar buttons |
+| `nodeCategories` | `NodeCategoryConfig[]` | — | Control which node types are available |
+| `pyodide` | `PyodideConfig` | — | `{ autoInit: boolean }` |
+
+## Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `ready` | — | Pyodide is initialized and ready |
+| `execution-complete` | `Map<number, NodeResult>` | Flow execution finished |
+| `output` | `OutputData` | An External Output node produced data |
+| `error` | `EditorError` | An error occurred |
+| `loading-status` | `string` | Loading status message changed |
+
+## Programmatic API
+
+Access the API via a template ref:
+
+```vue
+<script setup>
+import { ref } from 'vue'
+import { FlowfileEditor } from 'flowfile-editor'
+import 'flowfile-editor/style.css'
+
+const editor = ref()
+
+async function run() {
+  if (editor.value?.isReady) {
+    await editor.value.executeFlow()
+  }
+}
+</script>
+
+<template>
+  <FlowfileEditor ref="editor" />
+  <button @click="run">Run</button>
+</template>
+```
+
+### API Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `isReady` | `boolean` | Whether Pyodide is initialized |
+| `isExecuting` | `boolean` | Whether a flow is running |
+| `executeFlow()` | `Promise<void>` | Run the entire flow |
+| `executeNode(nodeId)` | `Promise<NodeResult>` | Run a single node |
+| `exportFlow()` | `FlowfileData` | Export the current flow as JSON |
+| `importFlow(data)` | `boolean` | Load a flow from JSON |
+| `setInputData(name, csv)` | `void` | Push a named dataset |
+| `getNodeResult(nodeId)` | `NodeResult \| undefined` | Get a node's result |
+| `clearFlow()` | `void` | Clear all nodes and edges |
+| `initializePyodide()` | `Promise<void>` | Manually init Pyodide (when `autoInit: false`) |
+
+## Providing Input Data
+
+Pass data to External Data nodes via the `inputData` prop or API:
+
+```vue
+<template>
+  <FlowfileEditor :input-data="datasets" />
+</template>
+
+<script setup>
+const datasets = {
+  // Simple string (CSV)
+  customers: 'name,age,city\nAlice,30,Amsterdam\nBob,25,Berlin',
+
+  // Or with metadata
+  orders: {
+    content: 'id,amount\n1,100\n2,250',
+    format: 'csv',
+    delimiter: ','
+  }
+}
+</script>
+```
+
+## Capturing Output
+
+Listen for External Output node results:
+
+```vue
+<template>
+  <FlowfileEditor @output="handleOutput" />
+</template>
+
+<script setup>
+function handleOutput(data) {
+  console.log(data.nodeId)    // Which node produced it
+  console.log(data.content)   // CSV string
+  console.log(data.fileName)  // e.g. "result.csv"
+  console.log(data.mimeType)  // e.g. "text/csv"
+}
+</script>
+```
+
+## CORS Headers
+
+Pyodide requires `SharedArrayBuffer`, which needs these HTTP headers on your page:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Most dev servers can be configured to send these. For Vite:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp'
+    }
+  }
+})
+```
+
+## Available Node Types
+
+**Input:** Read CSV, Manual Input, External Data
+**Transform:** Filter, Select, Group By, Join, Sort, Unique, Take Sample, Pivot, Unpivot, Polars Code
+**Output:** Preview, Output (download), External Output (emits to host)
+
+## TypeScript
+
+All types are exported:
+
+```ts
+import type {
+  FlowfileEditorProps,
+  FlowfileEditorAPI,
+  FlowfileData,
+  InputDataMap,
+  OutputData,
+  NodeResult
+} from 'flowfile-editor'
+```
+
+## Development
 
 ```bash
 cd flowfile_wasm
 npm install
+npm run dev        # Dev server at http://localhost:5174
+npm run build:lib  # Build the library to dist/
+npm run test:run   # Run tests
 ```
 
-### Development
+## License
 
-```bash
-npm run dev
-```
-
-Open http://localhost:5174 in your browser.
-
-### Build for Production
-
-```bash
-npm run build
-```
-
-The output will be in the `dist` folder.
-
-## Usage
-
-1. **Wait for Pyodide to load**: The app will show a loading indicator while Pyodide and Polars are being loaded
-2. **Drag nodes** from the sidebar onto the canvas
-3. **Connect nodes** by dragging from output handles (right side) to input handles (left side)
-4. **Configure nodes** by clicking on them - settings panel will appear on the right
-5. **Run the flow** by clicking the "Run Flow" button in the header
-6. **View results** in the Table Preview panel at the bottom
-
-## Polars Code Node
-
-The Polars Code node allows you to write custom Python/Polars code for advanced transformations. Your code receives `input_df` (a Polars DataFrame) and should produce a result DataFrame.
-
-Example:
-```python
-# Simple transformation
-output_df = input_df.with_columns(
-    pl.col("price") * pl.col("quantity").alias("total")
-)
-
-# Or just return an expression
-input_df.filter(pl.col("status") == "active")
-```
-
-The editor includes autocompletion for Polars functions and your DataFrame columns.
-
-## Technical Details
-
-- **Frontend**: Vue 3 + TypeScript + Vite
-- **Graph Visualization**: Vue Flow
-- **State Management**: Pinia
-- **Code Editor**: CodeMirror 6 with Python syntax highlighting
-- **Python Runtime**: Pyodide 0.27.7
-- **Data Processing**: Polars (via WASM)
-
-## Limitations
-
-- File size limited by browser memory
-- Session storage persistence only (cleared when browser tab is closed)
-- Limited to the 11 essential nodes (compared to the full Flowfile editor)
-
-## Adding New Nodes (AI Context Prompt)
-
-Use this prompt when requesting AI assistance to implement a new node:
-
-```
-Flowfile has two implementations that must stay synchronized:
-
-1. **flowfile_core** (Python/Pydantic) - Server-side engine:
-   - `flowfile_core/schemas/input_schema.py` - Node settings (NodeBase → NodeSingleInput/NodeMultiInput)
-   - `flowfile_core/schemas/transform_schema.py` - Transform models (FilterInput, SelectInput, etc.)
-   - `flowfile_core/configs/node_store/nodes.py` - Node registration, naming, and descriptions (WASM must follow these)
-
-2. **flowfile_wasm** (TypeScript/Vue) - Browser-based lite version:
-   - `flowfile_wasm/src/types/index.ts` - TypeScript interfaces mirroring core schemas
-   - `flowfile_wasm/src/components/nodes/` - Vue settings components (same as `flowfile_frontend/src/renderer/app/components/nodes/`)
-   - `flowfile_wasm/src/stores/flow-store.ts` - Execution logic using Pyodide
-
-**Critical Requirements:**
-- Schemas must be identical between core (Pydantic) and WASM (TypeScript)
-- Field names, types, and defaults must match exactly
-- Calculations must produce identical results
-- Follow the existing code style and layout patterns in each codebase unless technically impossible
-- Reference existing nodes (FilterInput, SelectInput, JoinInput) as implementation patterns
-
-Provide: node type identifier, settings schema for both implementations, transform logic, and Vue settings component.
-```
+See the [Flowfile repository](https://github.com/Edwardvaneechoud/Flowfile) for license details.

@@ -227,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -259,11 +259,11 @@ import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
 import JoinSettings from './nodes/JoinSettings.vue'
 import SortSettings from './nodes/SortSettings.vue'
-import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
+const PolarsCodeSettings = defineAsyncComponent(() => import('./nodes/PolarsCodeSettings.vue'))
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
-import CodeGenerator from './CodeGenerator.vue'
+const CodeGenerator = defineAsyncComponent(() => import('./CodeGenerator.vue'))
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'

@@ -36,8 +36,7 @@ export default defineConfig({
         assetFileNames: 'style.[ext]'
       }
     },
-    cssCodeSplit: false,
-    assetsInlineLimit: 100000  // Inline icon PNGs as base64 data URIs
+    cssCodeSplit: false
   } : {
     target: 'esnext'
   },

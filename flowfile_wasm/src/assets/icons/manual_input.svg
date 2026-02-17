@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- Pen writing on paper -->
+  <rect x="12" y="16" width="28" height="36" rx="2" stroke="#0E9AA7" stroke-width="2.5" fill="#0E9AA7" opacity="0.1"/>
+  <line x1="18" y1="26" x2="34" y2="26" stroke="#0E9AA7" stroke-width="1.5" opacity="0.5" stroke-linecap="round"/>
+  <line x1="18" y1="32" x2="30" y2="32" stroke="#0E9AA7" stroke-width="1.5" opacity="0.5" stroke-linecap="round"/>
+  <line x1="18" y1="38" x2="32" y2="38" stroke="#0E9AA7" stroke-width="1.5" opacity="0.5" stroke-linecap="round"/>
+  <!-- Pen -->
+  <path d="M42 10l10 10-22 22-12 2 2-12z" stroke="#0E9AA7" stroke-width="2.5" stroke-linejoin="round" fill="none"/>
+  <path d="M40 12l10 10" stroke="#0E9AA7" stroke-width="2" stroke-linecap="round"/>
+</svg>
