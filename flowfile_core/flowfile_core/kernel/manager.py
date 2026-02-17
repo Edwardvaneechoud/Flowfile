@@ -407,6 +407,10 @@ class KernelManager:
         # kernel, so no translation is required and the variable is omitted.
         if not self._kernel_volume:
             env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
+        # FLOWFILE_KERNEL_SHARED_DIR tells the kernel the absolute path of
+        # the shared directory *as seen from inside the kernel container*.
+        # Used by flowfile.get_shared_location() to resolve user file paths.
+        env["FLOWFILE_KERNEL_SHARED_DIR"] = self.to_kernel_path(self._shared_volume)
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
