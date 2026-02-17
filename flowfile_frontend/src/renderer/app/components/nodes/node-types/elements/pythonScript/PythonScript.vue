@@ -187,7 +187,6 @@ import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
-import { NodeApi } from "../../../../../api/node.api";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
@@ -388,12 +387,13 @@ const loadArtifacts = async () => {
 // ─── Flow run display outputs ────────────────────────────────────────────────
 
 const loadFlowRunDisplayOutputs = async () => {
+  const kernelId = selectedKernelId.value;
   const flowId = nodePythonScript.value?.flow_id;
   const nodeId = nodePythonScript.value?.node_id;
-  if (flowId == null || nodeId == null) return;
+  if (!kernelId || flowId == null || nodeId == null) return;
 
   try {
-    const outputs = await NodeApi.getDisplayOutputs(Number(flowId), nodeId);
+    const outputs = await KernelApi.getDisplayOutputs(kernelId, Number(flowId), nodeId);
     if (outputs.length > 0 && cells.value.length > 0) {
       // Attach display outputs to the last cell
       const lastCell = cells.value[cells.value.length - 1];

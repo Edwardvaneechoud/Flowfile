@@ -1,6 +1,6 @@
 // Node API Service - Handles all node-related HTTP requests
 import axios from "../services/axios.config";
-import type { NodeData, TableExample, NodeDescriptionResponse, DisplayOutput } from "../types";
+import type { NodeData, TableExample, NodeDescriptionResponse } from "../types";
 
 export class NodeApi {
   /**
@@ -114,20 +114,6 @@ export class NodeApi {
       params: { node_type: nodeType },
     });
     return response.data;
-  }
-
-  /**
-   * Get display outputs from the last flow execution of a python_script node
-   */
-  static async getDisplayOutputs(flowId: number, nodeId: number): Promise<DisplayOutput[]> {
-    try {
-      const response = await axios.get<DisplayOutput[]>("/node/display_outputs", {
-        params: { flow_id: flowId, node_id: nodeId },
-      });
-      return response.data;
-    } catch {
-      return [];
-    }
   }
 
   /**
