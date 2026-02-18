@@ -407,6 +407,10 @@ class KernelManager:
         # kernel, so no translation is required and the variable is omitted.
         if not self._kernel_volume:
             env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
+        # FLOWFILE_KERNEL_SHARED_DIR tells the kernel the absolute path of
+        # the shared directory *as seen from inside the kernel container*.
+        # Used by flowfile.get_shared_location() to resolve user file paths.
+        env["FLOWFILE_KERNEL_SHARED_DIR"] = self.to_kernel_path(self._shared_volume)
         # Persistence settings from kernel config
         env["KERNEL_ID"] = kernel_id
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
@@ -709,6 +713,18 @@ class KernelManager:
         url = f"{self._kernel_url(kernel)}/artifacts/node/{node_id}"
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+
+    async def get_display_outputs(self, kernel_id: str, flow_id: int, node_id: int) -> list[dict]:
+        """Retrieve stored display outputs from the last execution of a node."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            await self._ensure_running(kernel_id)
+
+        url = f"{self._kernel_url(kernel)}/display_outputs"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url, params={"flow_id": flow_id, "node_id": node_id})
             response.raise_for_status()
             return response.json()
 
