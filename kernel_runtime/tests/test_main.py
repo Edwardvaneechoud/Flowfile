@@ -2,6 +2,7 @@
 
 import os
 import threading
+import time
 from pathlib import Path
 
 import polars as pl
@@ -1142,15 +1143,30 @@ class TestExecutionCancellation:
     """Tests for execution cancellation via /interrupt and SIGUSR1."""
 
     def test_signal_handler_interrupts_exec_thread(self):
-        """The SIGUSR1 handler calls _raise_in_exec_thread when a thread is tracked."""
+        """_raise_in_exec_thread injects KeyboardInterrupt into the tracked thread."""
         import kernel_runtime.main as main_module
 
-        # Simulate an executing thread by setting _exec_thread_id to the current thread
+        caught: list[bool] = [False]
+        ready = threading.Event()
+
+        def _target():
+            ready.set()
+            try:
+                # Block until interrupted
+                time.sleep(30)
+            except KeyboardInterrupt:
+                caught[0] = True
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        ready.wait()
+
         with main_module._exec_lock:
-            main_module._exec_thread_id = threading.get_ident()
+            main_module._exec_thread_id = t.ident
         try:
-            # _raise_in_exec_thread should inject KeyboardInterrupt into the current thread
             assert main_module._raise_in_exec_thread() is True
+            t.join(timeout=5)
+            assert caught[0], "KeyboardInterrupt was not raised in the target thread"
         finally:
             with main_module._exec_lock:
                 main_module._exec_thread_id = None
