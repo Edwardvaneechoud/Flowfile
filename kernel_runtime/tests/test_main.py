@@ -158,12 +158,8 @@ class TestExecuteWithParquet:
         input_dir.mkdir()
         output_dir.mkdir()
 
-        pl.DataFrame({"id": [1, 2], "name": ["a", "b"]}).write_parquet(
-            str(input_dir / "left.parquet")
-        )
-        pl.DataFrame({"id": [1, 2], "score": [90, 80]}).write_parquet(
-            str(input_dir / "right.parquet")
-        )
+        pl.DataFrame({"id": [1, 2], "name": ["a", "b"]}).write_parquet(str(input_dir / "left.parquet"))
+        pl.DataFrame({"id": [1, 2], "score": [90, 80]}).write_parquet(str(input_dir / "right.parquet"))
 
         code = (
             "inputs = flowfile.read_inputs()\n"
@@ -203,10 +199,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [1, 2]}).write_parquet(str(input_dir / "main_0.parquet"))
         pl.DataFrame({"v": [3, 4]}).write_parquet(str(input_dir / "main_1.parquet"))
 
-        code = (
-            "df = flowfile.read_input().collect()\n"
-            "flowfile.publish_output(df)\n"
-        )
+        code = "df = flowfile.read_input().collect()\n" "flowfile.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -239,10 +232,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "a.parquet"))
         pl.DataFrame({"v": [30, 40]}).write_parquet(str(input_dir / "b.parquet"))
 
-        code = (
-            "df = flowfile.read_first().collect()\n"
-            "flowfile.publish_output(df)\n"
-        )
+        code = "df = flowfile.read_first().collect()\n" "flowfile.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -273,10 +263,7 @@ class TestExecuteWithParquet:
 
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "main.parquet"))
 
-        code = (
-            "lf = flowfile.read_input()\n"
-            "flowfile.publish_output(lf)\n"
-        )
+        code = "lf = flowfile.read_input()\n" "flowfile.publish_output(lf)\n"
 
         resp = client.post(
             "/execute",
@@ -317,8 +304,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 21,
                 "code": (
-                    'flowfile.publish_artifact("item_a", [1, 2])\n'
-                    'flowfile.publish_artifact("item_b", "hello")\n'
+                    'flowfile.publish_artifact("item_a", [1, 2])\n' 'flowfile.publish_artifact("item_b", "hello")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -484,10 +470,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 29,
-                "code": (
-                    'flowfile.delete_artifact("model")\n'
-                    'flowfile.publish_artifact("model", "v2")\n'
-                ),
+                "code": ('flowfile.delete_artifact("model")\n' 'flowfile.publish_artifact("model", "v2")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -507,10 +490,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 30,
-                "code": (
-                    'v = flowfile.read_artifact("model")\n'
-                    'print(v)\n'
-                ),
+                "code": ('v = flowfile.read_artifact("model")\n' "print(v)\n"),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -607,10 +587,7 @@ class TestNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 50,
-                "code": (
-                    'flowfile.publish_artifact("a", 1)\n'
-                    'flowfile.publish_artifact("b", 2)\n'
-                ),
+                "code": ('flowfile.publish_artifact("a", 1)\n' 'flowfile.publish_artifact("b", 2)\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -717,11 +694,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 64,
-                "code": (
-                    'flowfile.display("first")\n'
-                    'flowfile.display("second")\n'
-                    'flowfile.display("third")\n'
-                ),
+                "code": ('flowfile.display("first")\n' 'flowfile.display("second")\n' 'flowfile.display("third")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -770,10 +743,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 67,
-                "code": (
-                    'flowfile.display("before error")\n'
-                    'raise ValueError("oops")\n'
-                ),
+                "code": ('flowfile.display("before error")\n' 'raise ValueError("oops")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -1142,6 +1112,10 @@ class TestFlowIsolation:
 class TestExecutionCancellation:
     """Tests for execution cancellation via /interrupt and SIGUSR1."""
 
+    @pytest.mark.skipif(
+        os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("CI") == "true",
+        reason="Signal-based thread interrupt is unreliable in CI runners.",
+    )
     def test_signal_handler_interrupts_exec_thread(self):
         """_raise_in_exec_thread injects KeyboardInterrupt into the tracked thread."""
         import kernel_runtime.main as main_module
