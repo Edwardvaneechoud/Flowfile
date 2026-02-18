@@ -2,6 +2,10 @@
   "name": "flowfile-editor",
   "version": "0.1.0",
   "description": "Embeddable browser-based data flow designer using Pyodide and Polars",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Edwardvaneechoud/Flowfile"
+  },
   "type": "module",
   "main": "./dist/flowfile-editor.js",
   "module": "./dist/flowfile-editor.js",
