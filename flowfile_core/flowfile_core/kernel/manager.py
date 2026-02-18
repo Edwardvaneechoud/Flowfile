@@ -716,6 +716,18 @@ class KernelManager:
             response.raise_for_status()
             return response.json()
 
+    async def get_display_outputs(self, kernel_id: str, flow_id: int, node_id: int) -> list[dict]:
+        """Retrieve stored display outputs from the last execution of a node."""
+        kernel = self._get_kernel_or_raise(kernel_id)
+        if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
+            await self._ensure_running(kernel_id)
+
+        url = f"{self._kernel_url(kernel)}/display_outputs"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(url, params={"flow_id": flow_id, "node_id": node_id})
+            response.raise_for_status()
+            return response.json()
+
     # ------------------------------------------------------------------
     # Artifact Persistence & Recovery
     # ------------------------------------------------------------------
