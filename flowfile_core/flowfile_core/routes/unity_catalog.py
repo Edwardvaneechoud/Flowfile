@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from flowfile_core.auth.dependencies import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_uc_connection,
