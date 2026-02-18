@@ -1827,3 +1827,88 @@ flowfile.publish_output(df)
 
         finally:
             _kernel_mod._manager = _prev
+
+
+# ---------------------------------------------------------------------------
+# Tests — cancel python_script node execution
+# ---------------------------------------------------------------------------
+
+
+class TestPythonScriptNodeCancellation:
+    """Verify that cancelling a flow interrupts a running kernel execution."""
+
+    def test_cancel_long_running_kernel_execution(self, kernel_manager: tuple[KernelManager, str]):
+        """
+        Start a python_script node that sleeps for 30 s, cancel the graph
+        after 2 s, and verify the node finishes promptly with is_canceled=True.
+        """
+        import threading
+        import time
+
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        try:
+            graph = _create_graph(flow_id=999)
+
+            # Node 1: trivial input
+            graph.add_node_promise(input_schema.NodePromise(flow_id=999, node_id=1, node_type="manual_input"))
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=999,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist([{"x": 1}]),
+                )
+            )
+
+            # Node 2: python_script that sleeps long enough to be cancelled
+            graph.add_node_promise(input_schema.NodePromise(flow_id=999, node_id=2, node_type="python_script"))
+            code = "import time; time.sleep(30)"
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=999,
+                    node_id=2,
+                    depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(code=code, kernel_id=kernel_id),
+                )
+            )
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            # Run graph in a background thread so we can cancel from here
+            run_info_holder: list[RunInformation | None] = [None]
+
+            def _run_graph():
+                run_info_holder[0] = graph.run_graph()
+
+            t = threading.Thread(target=_run_graph)
+            t.start()
+
+            # Give the kernel time to start executing, then cancel
+            time.sleep(3)
+            graph.cancel()
+
+            # The thread should finish well before the 30 s sleep
+            t.join(timeout=15)
+            assert not t.is_alive(), "Graph execution did not stop after cancel"
+
+            run_info = run_info_holder[0]
+            assert run_info is not None
+
+            # The python_script node should be marked cancelled
+            node = graph.get_node(2)
+            assert node.node_stats.is_canceled is True
+
+            # Kernel should still be usable after the interrupt
+            result = _run(
+                manager.execute(
+                    kernel_id,
+                    ExecuteRequest(node_id=100, code="x = 1 + 1", flow_id=999),
+                )
+            )
+            assert result.success, f"Kernel should still work after cancel: {result.error}"
+
+        finally:
+            _kernel_mod._manager = _prev
