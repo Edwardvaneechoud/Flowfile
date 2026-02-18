@@ -3,10 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 import docker.errors
-import pytest
 
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import KernelInfo, KernelState
+
+import pytest
+
+pytestmark = pytest.mark.kernel
 
 
 def _make_manager(kernel_id="k1", state=KernelState.EXECUTING, container_id="abc123"):
@@ -94,6 +97,7 @@ class TestFlowNodeCancelWithKernel:
         node = _make_node()
         node.cancel()
         assert node.node_stats.is_canceled is True
+
 
     def test_worker_fetcher_takes_priority(self):
         node = _make_node()
