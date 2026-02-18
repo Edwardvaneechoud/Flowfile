@@ -9,6 +9,24 @@
       {{ schema.intro }}
     </div>
     <generic-node-settings v-model="nodeUserDefined">
+      <!-- Kernel selector -->
+      <div class="listbox-wrapper kernel-selector-section">
+        <div class="section-title">Execution</div>
+        <div class="kernel-select-row">
+          <label class="kernel-label" for="kernel-select">Kernel</label>
+          <select id="kernel-select" v-model="selectedKernelId" class="kernel-select">
+            <option :value="null">Local (default)</option>
+            <option v-for="k in availableKernels" :key="k.id" :value="k.id">
+              {{ k.name }}
+              <template v-if="k.packages.length">
+                ({{ k.packages.slice(0, 3).join(", ")
+                }}<template v-if="k.packages.length > 3">...</template>)
+              </template>
+            </option>
+          </select>
+        </div>
+      </div>
+
       <!-- Loop through each section in the settings_schema -->
       <div
         v-for="(section, sectionKey) in schema.settings_schema"
@@ -98,6 +116,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import axios from "axios";
 import { CustomNodeSchema, SectionComponent } from "./interface";
 import { getCustomNodeSchema } from "./interface";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -115,6 +134,14 @@ import ColumnSelector from "./components/ColumnSelector.vue";
 import SecretSelector from "./components/SecretSelector.vue";
 import ColumnActionInput from "./components/ColumnActionInput.vue";
 
+// Kernel info type (matches backend KernelInfo)
+interface KernelInfo {
+  id: string;
+  name: string;
+  state: string;
+  packages: string[];
+}
+
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
 const formData = ref<any>(null);
@@ -126,6 +153,20 @@ const availableColumns = ref<string[]>([]);
 const currentNodeId = ref<number | null>(null);
 const nodeUserDefined = ref<NodeUserDefined | null>(null);
 const columnTypes = ref<FileColumn[]>([]);
+
+// Kernel state
+const availableKernels = ref<KernelInfo[]>([]);
+const selectedKernelId = ref<string | null>(null);
+
+async function fetchKernels() {
+  try {
+    const response = await axios.get("/kernels/");
+    availableKernels.value = response.data || [];
+  } catch {
+    // Kernels endpoint may not be available (no Docker), silently ignore
+    availableKernels.value = [];
+  }
+}
 
 // --- Lifecycle Methods (exposed to parent) ---
 
@@ -139,7 +180,10 @@ const loadNodeData = async (nodeId: number) => {
     if (!inputNodeData) {
       return;
     }
-    const [schemaData] = await Promise.all([getCustomNodeSchema(nodeStore.flow_id, nodeId)]);
+    const [schemaData] = await Promise.all([
+      getCustomNodeSchema(nodeStore.flow_id, nodeId),
+      fetchKernels(),
+    ]);
 
     schema.value = schemaData;
     nodeData.value = inputNodeData;
@@ -148,6 +192,10 @@ const loadNodeData = async (nodeId: number) => {
     if (!nodeData.value?.setting_input.is_setup && nodeUserDefined.value) {
       nodeUserDefined.value.settings = {};
     }
+
+    // Initialize kernel selection: saved setting > schema default > null
+    selectedKernelId.value =
+      nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
 
     if (inputNodeData?.main_input?.columns) {
       availableColumns.value = inputNodeData.main_input.columns;
@@ -175,6 +223,12 @@ const pushNodeData = async () => {
     nodeUserDefined.value.settings = formData.value;
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
+    // Pass the selected kernel to the backend
+    nodeUserDefined.value.kernel_id = selectedKernelId.value;
+    // Preserve output_names from schema if available
+    if (schema.value?.output_names) {
+      nodeUserDefined.value.output_names = schema.value.output_names;
+    }
   }
   nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
@@ -265,5 +319,40 @@ defineExpose({
   background-color: var(--color-background-tertiary, #f1f3f5);
   border-radius: var(--border-radius-md, 6px);
   border-left: 3px solid var(--color-accent, #0891b2);
+}
+
+.kernel-selector-section {
+  margin-bottom: var(--spacing-4, 16px);
+}
+
+.kernel-select-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3, 12px);
+  padding: 0 var(--spacing-4, 16px);
+}
+
+.kernel-label {
+  font-size: var(--font-size-sm, 13px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.kernel-select {
+  flex: 1;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border: 1px solid var(--color-border-primary, #d1d5db);
+  border-radius: var(--border-radius-md, 6px);
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+}
+
+.kernel-select:focus {
+  outline: none;
+  border-color: var(--color-accent, #0891b2);
+  box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
 }
 </style>
