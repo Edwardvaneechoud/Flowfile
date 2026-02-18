@@ -55,6 +55,14 @@ export interface IconInfo {
   is_custom: boolean;
 }
 
+/** Kernel info from the backend */
+export interface KernelInfo {
+  id: string;
+  name: string;
+  state: string;
+  packages: string[];
+}
+
 /** Node metadata for the designer */
 export interface NodeMetadata {
   node_name: string;
@@ -64,6 +72,8 @@ export interface NodeMetadata {
   number_of_inputs: number;
   number_of_outputs: number;
   node_icon: string;
+  kernel_id: string | null;
+  output_names: string[];
 }
 
 /** Available component definition for the palette */

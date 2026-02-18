@@ -29,6 +29,17 @@ export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> p
 
     return lf`;
 
+/** Default process code template for kernel mode */
+export const defaultKernelProcessCode = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    # Get the first input LazyFrame
+    lf = inputs[0]
+
+    # Your transformation logic here
+    # You can use any packages installed on your kernel
+    # Example: lf = lf.filter(pl.col("column") > 0)
+
+    return lf`;
+
 /** Default node metadata */
 export const defaultNodeMetadata = {
   node_name: "",
@@ -38,6 +49,8 @@ export const defaultNodeMetadata = {
   number_of_inputs: 1,
   number_of_outputs: 1,
   node_icon: "user-defined-icon.png",
+  kernel_id: null as string | null,
+  output_names: ["main"],
 };
 
 /** Get component icon by type */

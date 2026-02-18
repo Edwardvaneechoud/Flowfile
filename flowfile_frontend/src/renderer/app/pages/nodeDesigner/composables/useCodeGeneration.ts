@@ -164,6 +164,23 @@ export function useCodeGeneration() {
     });
     processBody = reindentedLines.join("\n");
 
+    // Generate kernel fields if kernel mode is enabled
+    let kernelFields = "";
+    if (nodeMetadata.kernel_id) {
+      kernelFields += `    kernel_id: str = "${nodeMetadata.kernel_id}"\n`;
+      const outputNamesList = (nodeMetadata.output_names || ["main"])
+        .map((n) => `"${n}"`)
+        .join(", ");
+      kernelFields += `    output_names: list[str] = [${outputNamesList}]\n`;
+    }
+
+    // Determine process return type based on output count
+    const outputNames = nodeMetadata.output_names || ["main"];
+    const returnType =
+      nodeMetadata.kernel_id && outputNames.length > 1
+        ? "dict[str, pl.LazyFrame]"
+        : "pl.LazyFrame";
+
     // Generate node class
     const nodeCode = `
 
@@ -175,9 +192,9 @@ class ${nodeName}(CustomNodeBase):
     intro: str = "${nodeMetadata.intro || "A custom node for data processing"}"
     number_of_inputs: int = ${nodeMetadata.number_of_inputs}
     number_of_outputs: int = ${nodeMetadata.number_of_outputs}
-    settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
+${kernelFields}    settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
 
-    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    def process(self, *inputs: pl.LazyFrame) -> ${returnType}:
 ${processBody}
 `;
 

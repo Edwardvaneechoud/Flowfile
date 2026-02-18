@@ -125,6 +125,8 @@ export interface CustomNodeSchema {
   settings_schema: SettingsSchema;
   number_of_inputs: number;
   number_of_outputs: number;
+  kernel_id?: string | null;
+  output_names?: string[];
   node_group?: string;
   title?: string;
   intro?: string;

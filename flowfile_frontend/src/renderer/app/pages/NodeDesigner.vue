@@ -113,6 +113,65 @@
             </div>
           </div>
 
+          <!-- Kernel Execution -->
+          <div class="metadata-section kernel-section">
+            <h4>Execution</h4>
+            <div class="form-grid">
+              <div class="form-field" style="grid-column: span 2">
+                <label for="kernel-select">Kernel</label>
+                <select
+                  id="kernel-select"
+                  v-model="nodeMetadata.kernel_id"
+                  class="form-input"
+                  @change="handleKernelChange"
+                >
+                  <option :value="null">Local (default)</option>
+                  <option
+                    v-for="kernel in availableKernels"
+                    :key="kernel.id"
+                    :value="kernel.id"
+                  >
+                    {{ kernel.name }}
+                    <template v-if="kernel.packages.length">
+                      ({{ kernel.packages.join(", ") }})
+                    </template>
+                  </option>
+                </select>
+              </div>
+              <div v-if="nodeMetadata.kernel_id" class="form-field" style="grid-column: span 2">
+                <label>Output Names</label>
+                <div class="output-names-list">
+                  <div
+                    v-for="(name, index) in nodeMetadata.output_names"
+                    :key="index"
+                    class="output-name-row"
+                  >
+                    <span class="output-handle-label">output-{{ index }}</span>
+                    <input
+                      :value="name"
+                      type="text"
+                      class="form-input"
+                      placeholder="output name"
+                      @input="updateOutputName(index, ($event.target as HTMLInputElement).value)"
+                    />
+                    <button
+                      v-if="nodeMetadata.output_names.length > 1"
+                      class="btn-icon-sm"
+                      title="Remove output"
+                      @click="removeOutputName(index)"
+                    >
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+                  <button class="add-output-btn" @click="addOutputName">
+                    <i class="fa-solid fa-plus"></i>
+                    Add Output
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Sections -->
           <div class="sections-area">
             <div class="sections-header">
@@ -221,7 +280,7 @@ import {
   usePolarsAutocompletion,
   toSnakeCase,
 } from "./nodeDesigner/composables";
-import type { DesignerComponent } from "./nodeDesigner/types";
+import type { DesignerComponent, KernelInfo } from "./nodeDesigner/types";
 
 // Initialize composables - destructure for proper TypeScript support
 const {
@@ -253,6 +312,43 @@ const storage = useSessionStorage(getState, setState, resetState);
 // Help modal state
 const showHelpModal = ref(false);
 
+// Kernel state
+const availableKernels = ref<KernelInfo[]>([]);
+
+async function fetchKernels() {
+  try {
+    const response = await axios.get("/kernels/");
+    availableKernels.value = response.data || [];
+  } catch {
+    // Kernels endpoint may not be available (no Docker), silently ignore
+    availableKernels.value = [];
+  }
+}
+
+function handleKernelChange() {
+  // Sync number_of_outputs with output_names length when kernel mode changes
+  if (nodeMetadata.kernel_id) {
+    nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
+  }
+}
+
+function addOutputName() {
+  const nextIndex = nodeMetadata.output_names.length;
+  nodeMetadata.output_names.push(`output_${nextIndex}`);
+  nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
+}
+
+function removeOutputName(index: number) {
+  if (nodeMetadata.output_names.length > 1) {
+    nodeMetadata.output_names.splice(index, 1);
+    nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
+  }
+}
+
+function updateOutputName(index: number, value: string) {
+  nodeMetadata.output_names[index] = value;
+}
+
 // Setup auto-save and load on mount
 watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveToSessionStorage(), {
   deep: true,
@@ -260,6 +356,7 @@ watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveTo
 
 onMounted(() => {
   storage.loadFromSessionStorage();
+  fetchKernels();
 });
 
 // Event handlers
@@ -537,5 +634,78 @@ function handleInsertVariable(code: string) {
 
 .empty-sections p {
   margin: 0;
+}
+
+/* Kernel section */
+.kernel-section {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--bg-secondary, #f8f9fa);
+}
+
+.output-names-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.output-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.output-handle-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 60px;
+}
+
+.btn-icon-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.btn-icon-sm:hover {
+  background: var(--color-background-danger, #fee2e2);
+  color: var(--color-text-danger, #dc2626);
+  border-color: var(--color-text-danger, #dc2626);
+}
+
+.add-output-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  background: transparent;
+  color: var(--color-button-primary);
+  border: 1px dashed var(--color-button-primary);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  align-self: flex-start;
+}
+
+.add-output-btn:hover {
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
+}
+
+.add-output-btn i {
+  font-size: 0.6875rem;
 }
 </style>

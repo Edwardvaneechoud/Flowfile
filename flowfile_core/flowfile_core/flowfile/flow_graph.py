@@ -843,10 +843,46 @@ class FlowGraph:
     ):
         """Adds a user-defined custom node to the graph.
 
+        When the custom node has a ``kernel_id`` set, the process code is sent
+        to the kernel for execution instead of running locally.  This enables
+        custom nodes to use external packages installed on the kernel.
+
         Args:
             custom_node: The custom node instance to add.
             user_defined_node_settings: The settings for the user-defined node.
         """
+        # Propagate kernel_id from the schema settings if present
+        kernel_id = user_defined_node_settings.kernel_id or custom_node.kernel_id
+        output_names = user_defined_node_settings.output_names or custom_node.output_names
+
+        if kernel_id:
+            _func = self._make_kernel_user_defined_func(
+                custom_node=custom_node,
+                user_defined_node_settings=user_defined_node_settings,
+                kernel_id=kernel_id,
+                output_names=output_names,
+            )
+        else:
+            _func = self._make_local_user_defined_func(
+                custom_node=custom_node,
+                user_defined_node_settings=user_defined_node_settings,
+            )
+
+        self.add_node_step(
+            node_id=user_defined_node_settings.node_id,
+            function=_func,
+            setting_input=user_defined_node_settings,
+            input_node_ids=user_defined_node_settings.depending_on_ids,
+            node_type=custom_node.item,
+        )
+        if custom_node.number_of_inputs == 0:
+            node = self.get_node(user_defined_node_settings.node_id)
+            self.add_node_to_starting_list(node)
+
+    def _make_local_user_defined_func(
+        self, *, custom_node: CustomNodeBase, user_defined_node_settings: input_schema.UserDefinedNode
+    ) -> Callable:
+        """Create the execution function for a locally-executed custom node."""
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             user_id = user_defined_node_settings.user_id
@@ -864,16 +900,138 @@ class FlowGraph:
                 return FlowDataEngine(output)
             return None
 
-        self.add_node_step(
-            node_id=user_defined_node_settings.node_id,
-            function=_func,
-            setting_input=user_defined_node_settings,
-            input_node_ids=user_defined_node_settings.depending_on_ids,
-            node_type=custom_node.item,
-        )
-        if custom_node.number_of_inputs == 0:
-            node = self.get_node(user_defined_node_settings.node_id)
-            self.add_node_to_starting_list(node)
+        return _func
+
+    def _make_kernel_user_defined_func(
+        self,
+        *,
+        custom_node: CustomNodeBase,
+        user_defined_node_settings: input_schema.UserDefinedNode,
+        kernel_id: str,
+        output_names: list[str],
+    ) -> Callable:
+        """Create the execution function for a kernel-executed custom node.
+
+        Follows the same pattern as ``add_python_script``: writes inputs to
+        shared parquet files, generates the kernel code from the custom node's
+        process method, executes on the kernel, and reads back the outputs.
+        """
+
+        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            manager = get_kernel_manager()
+            node_id = user_defined_node_settings.node_id
+            flow_id = self.flow_id
+            node_logger = self.flow_logger.get_node_logger(node_id)
+
+            # Compute available artifacts
+            upstream_ids = self._get_upstream_node_ids(node_id)
+            self.artifact_context.compute_available(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                upstream_node_ids=upstream_ids,
+            )
+
+            # Prepare shared directories
+            shared_base = manager.shared_volume_path
+            input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
+            output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
+            os.makedirs(input_dir, exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Write inputs to parquet
+            input_paths: dict[str, list[str]] = {}
+            main_paths: list[str] = []
+            for idx, ft in enumerate(flow_data_engine):
+                filename = f"main_{idx}.parquet"
+                local_path = os.path.join(input_dir, filename)
+                fetcher = ExternalDfFetcher(
+                    flow_id=flow_id,
+                    node_id=node_id,
+                    lf=ft.data_frame,
+                    wait_on_completion=True,
+                    operation_type="write_parquet",
+                    kwargs={"output_path": local_path},
+                )
+                if fetcher.has_error:
+                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
+                main_paths.append(manager.to_kernel_path(local_path))
+            input_paths["main"] = main_paths
+
+            # Generate the kernel code from the custom node's process method
+            code = custom_node.generate_kernel_code()
+
+            # Build log callback URL
+            if manager._kernel_volume:
+                log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
+            else:
+                log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+
+            # Internal auth token
+            internal_token: str | None = None
+            try:
+                from flowfile_core.auth.jwt import get_internal_token
+
+                internal_token = get_internal_token()
+            except (ValueError, ImportError):
+                pass
+
+            request = ExecuteRequest(
+                node_id=node_id,
+                code=code,
+                input_paths=input_paths,
+                output_dir=manager.to_kernel_path(output_dir),
+                flow_id=flow_id,
+                source_registration_id=self._flow_settings.source_registration_id,
+                log_callback_url=log_callback_url,
+                internal_token=internal_token,
+            )
+            result = manager.execute_sync(kernel_id, request, self.flow_logger)
+
+            # Forward stdout/stderr
+            if result.stdout:
+                for line in result.stdout.strip().splitlines():
+                    node_logger.info(f"[stdout] {line}")
+            if result.stderr:
+                for line in result.stderr.strip().splitlines():
+                    node_logger.warning(f"[stderr] {line}")
+
+            if not result.success:
+                raise RuntimeError(f"Kernel execution failed: {result.error}")
+
+            # Record artifacts
+            if result.artifacts_published:
+                self.artifact_context.record_published(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifacts=[{"name": n} for n in result.artifacts_published],
+                )
+            if result.artifacts_deleted:
+                self.artifact_context.record_deleted(
+                    node_id=node_id,
+                    kernel_id=kernel_id,
+                    artifact_names=result.artifacts_deleted,
+                )
+
+            # Read outputs and populate named outputs on the FlowNode
+            node = self.get_node(node_id)
+            primary_result: FlowDataEngine | None = None
+            for i, name in enumerate(output_names):
+                output_path = os.path.join(output_dir, f"{name}.parquet")
+                if os.path.exists(output_path):
+                    fde = FlowDataEngine(pl.scan_parquet(output_path))
+                    handle = f"output-{i}"
+                    if node is not None:
+                        node._named_outputs[handle] = fde
+                    if i == 0:
+                        primary_result = fde
+
+            if primary_result is not None:
+                return primary_result
+
+            # No output published — pass through first input
+            return flow_data_engine[0] if flow_data_engine else FlowDataEngine(pl.LazyFrame())
+
+        return _func
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
@@ -3085,7 +3243,11 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     if not (from_node and to_node):
         raise HTTPException(404, "Not not available")
     else:
-        to_node.add_node_connection(from_node, node_connection.input_connection.get_node_input_connection_type())
+        to_node.add_node_connection(
+            from_node,
+            node_connection.input_connection.get_node_input_connection_type(),
+            output_handle=node_connection.output_connection.connection_class,
+        )
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):

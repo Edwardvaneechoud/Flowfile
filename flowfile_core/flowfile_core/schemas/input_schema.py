@@ -1168,3 +1168,5 @@ class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
     settings: Any
+    kernel_id: str | None = None
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
