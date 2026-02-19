@@ -44,6 +44,9 @@ export function useCodeGeneration() {
         if (comp.options_source === "incoming_columns") {
           imports.add("IncomingColumns");
         }
+        if (comp.options_source === "available_artifacts") {
+          imports.add("AvailableArtifacts");
+        }
       });
     });
 
@@ -79,6 +82,8 @@ export function useCodeGeneration() {
         ) {
           if (comp.options_source === "incoming_columns") {
             sectionsCode += `        options=IncomingColumns,\n`;
+          } else if (comp.options_source === "available_artifacts") {
+            sectionsCode += `        options=AvailableArtifacts,\n`;
           } else if (comp.options_string) {
             const options = comp.options_string
               .split(",")
@@ -164,10 +169,13 @@ export function useCodeGeneration() {
     });
     processBody = reindentedLines.join("\n");
 
-    // Generate kernel fields if kernel mode is enabled
+    // Generate kernel fields if kernel execution is required
     let kernelFields = "";
-    if (nodeMetadata.kernel_id) {
-      kernelFields += `    kernel_id: str = "${nodeMetadata.kernel_id}"\n`;
+    if (nodeMetadata.requires_kernel) {
+      kernelFields += "    requires_kernel: bool = True\n";
+      if (nodeMetadata.kernel_id) {
+        kernelFields += `    kernel_id: str = "${nodeMetadata.kernel_id}"\n`;
+      }
       const outputNamesList = (nodeMetadata.output_names || ["main"])
         .map((n) => `"${n}"`)
         .join(", ");
@@ -177,7 +185,7 @@ export function useCodeGeneration() {
     // Determine process return type based on output count
     const outputNames = nodeMetadata.output_names || ["main"];
     const returnType =
-      nodeMetadata.kernel_id && outputNames.length > 1
+      nodeMetadata.requires_kernel && outputNames.length > 1
         ? "dict[str, pl.LazyFrame]"
         : "pl.LazyFrame";
 

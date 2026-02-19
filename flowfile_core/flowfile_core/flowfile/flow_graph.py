@@ -851,6 +851,10 @@ class FlowGraph:
             custom_node: The custom node instance to add.
             user_defined_node_settings: The settings for the user-defined node.
         """
+        # Enforce kernel selection when executing a kernel-required custom node
+        if custom_node.requires_kernel and not user_defined_node_settings.kernel_id:
+            raise ValueError("Kernel selection is required to execute this custom node.")
+
         # Propagate kernel_id from the schema settings if present
         kernel_id = user_defined_node_settings.kernel_id or custom_node.kernel_id
         output_names = user_defined_node_settings.output_names or custom_node.output_names
@@ -959,6 +963,7 @@ class FlowGraph:
 
             # Generate the kernel code from the custom node's process method
             code = custom_node.generate_kernel_code()
+            node_logger.info(f"Kernel code generated for execution:\n{code}")
 
             # Build log callback URL
             if manager._kernel_volume:
@@ -1333,9 +1338,7 @@ class FlowGraph:
                     kwargs={"output_path": local_path},
                 )
                 if fetcher.has_error:
-                    raise RuntimeError(
-                        f"Failed to write parquet for input {idx}: {fetcher.error_description}"
-                    )
+                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
                 main_paths.append(manager.to_kernel_path(local_path))
             input_paths["main"] = main_paths
 

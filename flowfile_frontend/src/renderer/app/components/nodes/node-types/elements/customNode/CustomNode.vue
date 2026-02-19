@@ -10,7 +10,7 @@
     </div>
     <generic-node-settings v-model="nodeUserDefined">
       <!-- Kernel selector -->
-      <div class="listbox-wrapper kernel-selector-section">
+      <div v-if="schema.requires_kernel" class="listbox-wrapper kernel-selector-section">
         <div class="section-title">Execution</div>
         <div class="kernel-select-row">
           <label class="kernel-label" for="kernel-select">Kernel</label>
@@ -24,6 +24,9 @@
               </template>
             </option>
           </select>
+        </div>
+        <div v-if="kernelRequiredError" class="kernel-error">
+          Kernel execution is required for this node. Select a kernel to enable it.
         </div>
       </div>
 
@@ -69,6 +72,7 @@
               v-model="formData[sectionKey][componentKey]"
               :schema="component"
               :incoming-columns="availableColumns"
+              :available-artifacts="artifactOptions"
             />
 
             <SingleSelect
@@ -76,6 +80,7 @@
               v-model="formData[sectionKey][componentKey]"
               :schema="component"
               :incoming-columns="availableColumns"
+              :available-artifacts="artifactOptions"
             />
 
             <ToggleSwitch
@@ -153,10 +158,12 @@ const availableColumns = ref<string[]>([]);
 const currentNodeId = ref<number | null>(null);
 const nodeUserDefined = ref<NodeUserDefined | null>(null);
 const columnTypes = ref<FileColumn[]>([]);
+const artifactOptions = ref<string[]>([]);
 
 // Kernel state
 const availableKernels = ref<KernelInfo[]>([]);
 const selectedKernelId = ref<string | null>(null);
+const kernelRequiredError = ref(false);
 
 async function fetchKernels() {
   try {
@@ -168,6 +175,18 @@ async function fetchKernels() {
   }
 }
 
+async function fetchAvailableArtifacts(nodeId: number) {
+  try {
+    const response = await axios.get("/flow/node_available_artifacts", {
+      params: { flow_id: nodeStore.flow_id, node_id: nodeId },
+    });
+    const artifacts = response.data?.artifacts ?? [];
+    artifactOptions.value = artifacts.map((artifact: any) => artifact.name);
+  } catch {
+    artifactOptions.value = [];
+  }
+}
+
 // --- Lifecycle Methods (exposed to parent) ---
 
 const loadNodeData = async (nodeId: number) => {
@@ -176,7 +195,7 @@ const loadNodeData = async (nodeId: number) => {
   currentNodeId.value = nodeId;
 
   try {
-    const inputNodeData = await nodeStore.getNodeData(nodeId, false);
+  const inputNodeData = await nodeStore.getNodeData(nodeId, false);
     if (!inputNodeData) {
       return;
     }
@@ -196,15 +215,19 @@ const loadNodeData = async (nodeId: number) => {
     // Initialize kernel selection: saved setting > schema default > null
     selectedKernelId.value =
       nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
+    kernelRequiredError.value = !!schemaData.requires_kernel && !selectedKernelId.value;
 
-    if (inputNodeData?.main_input?.columns) {
-      availableColumns.value = inputNodeData.main_input.columns;
+    const mainColumns = inputNodeData?.main_input?.columns ?? [];
+    if (mainColumns.length) {
+      availableColumns.value = mainColumns;
       columnTypes.value = inputNodeData.main_input.table_schema;
     } else {
       console.warn(
         `No main_input or columns found for node ${nodeId}. Select components may be empty.`,
       );
     }
+
+    await fetchAvailableArtifacts(nodeId);
 
     initializeFormData(schemaData, inputNodeData?.setting_input);
   } catch (err: any) {
@@ -220,6 +243,7 @@ const pushNodeData = async () => {
     return;
   }
   if (nodeUserDefined.value) {
+    kernelRequiredError.value = !!schema.value?.requires_kernel && !selectedKernelId.value;
     nodeUserDefined.value.settings = formData.value;
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
@@ -354,5 +378,11 @@ defineExpose({
   outline: none;
   border-color: var(--color-accent, #0891b2);
   box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
+}
+
+.kernel-error {
+  padding: var(--spacing-2, 8px) var(--spacing-4, 16px) 0;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-danger, #dc2626);
 }
 </style>

@@ -49,6 +49,7 @@ export const defaultNodeMetadata = {
   number_of_inputs: 1,
   number_of_outputs: 1,
   node_icon: "user-defined-icon.png",
+  requires_kernel: false,
   kernel_id: null as string | null,
   output_names: ["main"],
 };

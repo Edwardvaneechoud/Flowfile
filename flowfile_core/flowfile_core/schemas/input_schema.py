@@ -97,7 +97,7 @@ class OutputFieldConfig(BaseModel):
         "add_missing",  # Add missing fields with defaults, remove extra columns
         "add_missing_keep_extra",  # Add missing fields with defaults, keep all incoming columns
         "raise_on_missing",  # Raise error if any fields are missing
-        "select_only"  # Select only specified fields, skip missing silently
+        "select_only",  # Select only specified fields, skip missing silently
     ] = "select_only"
     fields: list[OutputFieldInfo] = Field(default_factory=list)
     validate_data_types: bool = False  # Enable data type validation without casting
@@ -728,7 +728,9 @@ class NodeManualInput(NodeBase):
             desc = ", ".join(cols)
             if len(self.raw_data_format.columns) > 5:
                 desc += f" (+{len(self.raw_data_format.columns) - 5} more)"
-            num_rows = len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            num_rows = (
+                len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            )
             return f"{len(self.raw_data_format.columns)} cols, {num_rows} rows: {desc}"
         return ""
 

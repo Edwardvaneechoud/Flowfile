@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from flowfile_core.flowfile.node_designer.ui_components import (
     FlowfileInComponent,
+    AvailableArtifacts,
     IncomingColumns,
     SecretSelector,
     Section,
@@ -55,6 +56,11 @@ def _convert_value(value: Any) -> Any:
                 isinstance(component_dict["options"], type) and issubclass(component_dict["options"], IncomingColumns)
             ):
                 component_dict["options"] = {"__type__": "IncomingColumns"}
+            if component_dict["options"] is AvailableArtifacts or (
+                isinstance(component_dict["options"], type)
+                and issubclass(component_dict["options"], AvailableArtifacts)
+            ):
+                component_dict["options"] = {"__type__": "AvailableArtifacts"}
         return component_dict
     elif isinstance(value, BaseModel):
         return to_frontend_schema(value)
@@ -339,6 +345,7 @@ class CustomNodeBase(BaseModel):
     number_of_outputs: int = 1
 
     # Kernel execution configuration
+    requires_kernel: bool = False
     kernel_id: str | None = None
     output_names: list[str] = Field(default_factory=lambda: ["main"])
 
@@ -422,6 +429,7 @@ class CustomNodeBase(BaseModel):
             "node_icon": self.node_icon,
             "number_of_inputs": self.number_of_inputs,
             "number_of_outputs": self.number_of_outputs,
+            "requires_kernel": self.requires_kernel,
             "kernel_id": self.kernel_id,
             "output_names": self.output_names,
             "node_group": self.node_group,
@@ -552,7 +560,7 @@ class CustomNodeBase(BaseModel):
             stripped = line.lstrip()
             if stripped.startswith("return "):
                 indent = line[: len(line) - len(stripped)]
-                expr = stripped[len("return "):]
+                expr = stripped[len("return ") :]
                 transformed_lines.append(f"{indent}result = {expr}")
             elif stripped == "return":
                 # bare return — skip
@@ -578,7 +586,11 @@ class CustomNodeBase(BaseModel):
         # --- Assemble full kernel script ---
         script = f"""\
 import polars as pl
-import flowfile
+
+try:
+    import flowfile as flowfile
+except ModuleNotFoundError:
+    flowfile = globals().get("flowfile")
 
 # --- Settings proxy (auto-generated) ---
 {proxy_code}
@@ -622,9 +634,9 @@ inputs = [flowfile.read_input()]
             input=self.number_of_inputs,
             output=self.number_of_outputs,
             image=self.node_icon,
-            node_group=self.node_group,
-            drawer_title=self.title,
-            drawer_intro=self.intro,
+            node_group=self.node_group or "custom",
+            drawer_title=self.title or "Custom Node",
+            drawer_intro=self.intro or "A custom node for data processing",
             node_type=self.node_type,
             transform_type=self.transform_type,
             custom_node=True,

@@ -105,7 +105,18 @@
                   min="1"
                   max="10"
                   class="form-input"
+                  :disabled="nodeMetadata.requires_kernel"
                 />
+              </div>
+              <div class="form-field">
+                <label class="checkbox-label">
+                  <input
+                    v-model="nodeMetadata.requires_kernel"
+                    type="checkbox"
+                    class="form-checkbox"
+                  />
+                  Require Kernel Execution
+                </label>
               </div>
               <div class="form-field icon-field">
                 <IconSelector v-model="nodeMetadata.node_icon" />
@@ -114,7 +125,7 @@
           </div>
 
           <!-- Kernel Execution -->
-          <div class="metadata-section kernel-section">
+          <div v-if="nodeMetadata.requires_kernel" class="metadata-section kernel-section">
             <h4>Execution</h4>
             <div class="form-grid">
               <div class="form-field" style="grid-column: span 2">
@@ -138,7 +149,11 @@
                   </option>
                 </select>
               </div>
-              <div v-if="nodeMetadata.kernel_id" class="form-field" style="grid-column: span 2">
+              <div
+                v-if="nodeMetadata.kernel_id"
+                class="form-field"
+                style="grid-column: span 2"
+              >
                 <label>Output Names</label>
                 <div class="output-names-list">
                   <div
@@ -167,6 +182,11 @@
                     <i class="fa-solid fa-plus"></i>
                     Add Output
                   </button>
+                </div>
+              </div>
+              <div v-else-if="kernelSelectionRequired" class="form-field" style="grid-column: span 2">
+                <div class="kernel-error">
+                  Kernel execution is required for this node. Select a kernel to enable it.
                 </div>
               </div>
             </div>
@@ -307,6 +327,21 @@ const codeGen = useCodeGeneration();
 const nodeBrowser = useNodeBrowser();
 const autocompletion = usePolarsAutocompletion(() => sections.value);
 
+const kernelSelectionRequired = computed(
+  () => nodeMetadata.requires_kernel && !nodeMetadata.kernel_id,
+);
+
+watch(
+  () => nodeMetadata.requires_kernel,
+  (requiresKernel) => {
+    if (requiresKernel && !nodeMetadata.kernel_id) {
+      nodeMetadata.kernel_id = null;
+      nodeMetadata.output_names = ["main"];
+      nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
+    }
+  },
+);
+
 const storage = useSessionStorage(getState, setState, resetState);
 
 // Help modal state
@@ -333,12 +368,18 @@ function handleKernelChange() {
 }
 
 function addOutputName() {
+  if (kernelSelectionRequired.value) {
+    return;
+  }
   const nextIndex = nodeMetadata.output_names.length;
   nodeMetadata.output_names.push(`output_${nextIndex}`);
   nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
 }
 
 function removeOutputName(index: number) {
+  if (kernelSelectionRequired.value) {
+    return;
+  }
   if (nodeMetadata.output_names.length > 1) {
     nodeMetadata.output_names.splice(index, 1);
     nodeMetadata.number_of_outputs = nodeMetadata.output_names.length;
@@ -707,5 +748,25 @@ function handleInsertVariable(code: string) {
 
 .add-output-btn i {
   font-size: 0.6875rem;
+}
+
+.kernel-error {
+  font-size: 0.8125rem;
+  color: var(--color-text-danger, #dc2626);
+}
+
+.form-checkbox {
+  width: 18px;
+  height: 18px;
+  margin-right: 0.5rem;
+  accent-color: var(--primary-color, #4a6cf7);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary, #6b7280);
 }
 </style>

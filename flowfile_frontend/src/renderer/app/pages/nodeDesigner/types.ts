@@ -72,6 +72,7 @@ export interface NodeMetadata {
   number_of_inputs: number;
   number_of_outputs: number;
   node_icon: string;
+  requires_kernel: boolean;
   kernel_id: string | null;
   output_names: string[];
 }
