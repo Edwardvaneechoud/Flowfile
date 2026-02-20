@@ -22,7 +22,6 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
-from flowfile_core.configs.settings import SERVER_PORT
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -66,7 +65,8 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
-from flowfile_core.kernel import ExecuteRequest, get_kernel_manager
+from flowfile_core.kernel import get_kernel_manager
+from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
@@ -943,61 +943,38 @@ class FlowGraph:
             os.makedirs(output_dir, exist_ok=True)
 
             # Write inputs to parquet
-            input_paths: dict[str, list[str]] = {}
-            main_paths: list[str] = []
-            for idx, ft in enumerate(flow_data_engine):
-                filename = f"main_{idx}.parquet"
-                local_path = os.path.join(input_dir, filename)
-                fetcher = ExternalDfFetcher(
-                    flow_id=flow_id,
-                    node_id=node_id,
-                    lf=ft.data_frame,
-                    wait_on_completion=True,
-                    operation_type="write_parquet",
-                    kwargs={"output_path": local_path},
-                )
-                if fetcher.has_error:
-                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
-                main_paths.append(manager.to_kernel_path(local_path))
-            input_paths["main"] = main_paths
+            input_paths = write_inputs_to_parquet(flow_data_engine, manager, input_dir, flow_id, node_id)
 
             # Generate the kernel code from the custom node's process method
             code = custom_node.generate_kernel_code()
 
-            # Build log callback URL
-            if manager._kernel_volume:
-                log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
-            else:
-                log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
-
-            # Internal auth token
-            internal_token: str | None = None
-            try:
-                from flowfile_core.auth.jwt import get_internal_token
-
-                internal_token = get_internal_token()
-            except (ValueError, ImportError):
-                pass
-
-            request = ExecuteRequest(
+            # Build request and execute on the kernel
+            request = build_execute_request(
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
-                output_dir=manager.to_kernel_path(output_dir),
+                output_dir=output_dir,
                 flow_id=flow_id,
+                manager=manager,
                 source_registration_id=self._flow_settings.source_registration_id,
-                log_callback_url=log_callback_url,
-                internal_token=internal_token,
             )
-            result = manager.execute_sync(kernel_id, request, self.flow_logger)
+
+            node = self.get_node(node_id)
+            cancel_event = threading.Event()
+            if node is not None:
+                node._kernel_cancel_context = (kernel_id, manager)
+                node._kernel_cancel_event = cancel_event
+            try:
+                result = manager.execute_sync(
+                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
+                )
+            finally:
+                if node is not None:
+                    node._kernel_cancel_context = None
+                    node._kernel_cancel_event = None
 
             # Forward stdout/stderr
-            if result.stdout:
-                for line in result.stdout.strip().splitlines():
-                    node_logger.info(f"[stdout] {line}")
-            if result.stderr:
-                for line in result.stderr.strip().splitlines():
-                    node_logger.warning(f"[stderr] {line}")
+            forward_kernel_logs(result, node_logger)
 
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
@@ -1301,98 +1278,62 @@ class FlowGraph:
                 raise ValueError("No kernel selected for python_script node")
 
             manager = get_kernel_manager()
-
             node_id = node_python_script.node_id
             flow_id = self.flow_id
             node_logger = self.flow_logger.get_node_logger(node_id)
 
-            # Compute available artifacts before execution
-            upstream_ids = self._get_upstream_node_ids(node_id)
+            # 1. Make upstream artifacts visible to the kernel
             self.artifact_context.compute_available(
                 node_id=node_id,
                 kernel_id=kernel_id,
-                upstream_node_ids=upstream_ids,
+                upstream_node_ids=self._get_upstream_node_ids(node_id),
             )
 
+            # 2. Write input tables to the shared volume
             shared_base = manager.shared_volume_path
             input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
             output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
-
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
             self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
-            # Write inputs to parquet — supports N inputs under "main"
-            # Offload collect() to the worker process so core stays lightweight
-            input_paths: dict[str, list[str]] = {}
-            main_paths: list[str] = []
-            for idx, ft in enumerate(flowfile_tables):
-                filename = f"main_{idx}.parquet"
-                local_path = os.path.join(input_dir, filename)
-                fetcher = ExternalDfFetcher(
-                    flow_id=flow_id,
-                    node_id=node_id,
-                    lf=ft.data_frame,
-                    wait_on_completion=True,
-                    operation_type="write_parquet",
-                    kwargs={"output_path": local_path},
-                )
-                if fetcher.has_error:
-                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
-                main_paths.append(manager.to_kernel_path(local_path))
-            input_paths["main"] = main_paths
 
-            # Build the callback URL so the kernel can stream logs in real time.
-            # In Docker-in-Docker mode the kernel is on the same Docker network
-            # as core, so it can reach core by service name instead of host.docker.internal.
-            if manager._kernel_volume:
-                log_callback_url = f"http://flowfile-core:{SERVER_PORT}/raw_logs"
-            else:
-                log_callback_url = f"http://host.docker.internal:{SERVER_PORT}/raw_logs"
+            input_paths = write_inputs_to_parquet(flowfile_tables, manager, input_dir, flow_id, node_id)
 
-            # Execute on kernel (synchronous — no async boundary issues)
-            reg_id = self._flow_settings.source_registration_id
-            # Pass the internal auth token so the kernel can call Core API
-            # (e.g. for global artifact upload). This is more reliable than
-            # env vars because it survives core restarts and pre-existing containers.
-            internal_token: str | None = None
-            try:
-                from flowfile_core.auth.jwt import get_internal_token
-
-                internal_token = get_internal_token()
-            except (ValueError, ImportError):
-                pass
-            request = ExecuteRequest(
+            # 3. Build request and execute on the kernel
+            request = build_execute_request(
                 node_id=node_id,
                 code=code,
                 input_paths=input_paths,
-                output_dir=manager.to_kernel_path(output_dir),
+                output_dir=output_dir,
                 flow_id=flow_id,
-                source_registration_id=reg_id,
-                log_callback_url=log_callback_url,
-                internal_token=internal_token,
+                manager=manager,
+                source_registration_id=self._flow_settings.source_registration_id,
             )
-            result = manager.execute_sync(kernel_id, request, self.flow_logger)
 
-            # Forward captured stdout/stderr to the flow logger
-            if result.stdout:
-                for line in result.stdout.strip().splitlines():
-                    node_logger.info(f"[stdout] {line}")
-            if result.stderr:
-                for line in result.stderr.strip().splitlines():
-                    node_logger.warning(f"[stderr] {line}")
+            node = self.get_node(node_id)
+            cancel_event = threading.Event()
+            node._kernel_cancel_context = (kernel_id, manager)
+            node._kernel_cancel_event = cancel_event
+            try:
+                result = manager.execute_sync(
+                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
+                )
+            finally:
+                node._kernel_cancel_context = None
+                node._kernel_cancel_event = None
 
+            # 4. Forward kernel stdout/stderr and check for errors
+            forward_kernel_logs(result, node_logger)
             if not result.success:
                 raise RuntimeError(f"Kernel execution failed: {result.error}")
 
-            # Record published artifacts after successful execution
+            # 5. Record artifact changes
             if result.artifacts_published:
                 self.artifact_context.record_published(
                     node_id=node_id,
                     kernel_id=kernel_id,
                     artifacts=[{"name": n} for n in result.artifacts_published],
                 )
-
-            # Record deleted artifacts after successful execution
             if result.artifacts_deleted:
                 self.artifact_context.record_deleted(
                     node_id=node_id,
@@ -1400,12 +1341,10 @@ class FlowGraph:
                     artifact_names=result.artifacts_deleted,
                 )
 
-            # Read output
+            # 6. Read output parquet or pass through first input
             output_path = os.path.join(output_dir, "main.parquet")
             if os.path.exists(output_path):
                 return FlowDataEngine(pl.scan_parquet(output_path))
-
-            # No output published, pass through first input
             return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
         def schema_callback():

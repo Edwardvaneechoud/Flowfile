@@ -1,6 +1,8 @@
 """Tests for kernel_runtime.main (FastAPI endpoints)."""
 
 import os
+import threading
+import time
 from pathlib import Path
 
 import polars as pl
@@ -156,12 +158,8 @@ class TestExecuteWithParquet:
         input_dir.mkdir()
         output_dir.mkdir()
 
-        pl.DataFrame({"id": [1, 2], "name": ["a", "b"]}).write_parquet(
-            str(input_dir / "left.parquet")
-        )
-        pl.DataFrame({"id": [1, 2], "score": [90, 80]}).write_parquet(
-            str(input_dir / "right.parquet")
-        )
+        pl.DataFrame({"id": [1, 2], "name": ["a", "b"]}).write_parquet(str(input_dir / "left.parquet"))
+        pl.DataFrame({"id": [1, 2], "score": [90, 80]}).write_parquet(str(input_dir / "right.parquet"))
 
         code = (
             "inputs = flowfile.read_inputs()\n"
@@ -201,10 +199,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [1, 2]}).write_parquet(str(input_dir / "main_0.parquet"))
         pl.DataFrame({"v": [3, 4]}).write_parquet(str(input_dir / "main_1.parquet"))
 
-        code = (
-            "df = flowfile.read_input().collect()\n"
-            "flowfile.publish_output(df)\n"
-        )
+        code = "df = flowfile.read_input().collect()\n" "flowfile.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -237,10 +232,7 @@ class TestExecuteWithParquet:
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "a.parquet"))
         pl.DataFrame({"v": [30, 40]}).write_parquet(str(input_dir / "b.parquet"))
 
-        code = (
-            "df = flowfile.read_first().collect()\n"
-            "flowfile.publish_output(df)\n"
-        )
+        code = "df = flowfile.read_first().collect()\n" "flowfile.publish_output(df)\n"
 
         resp = client.post(
             "/execute",
@@ -271,10 +263,7 @@ class TestExecuteWithParquet:
 
         pl.DataFrame({"v": [10, 20]}).write_parquet(str(input_dir / "main.parquet"))
 
-        code = (
-            "lf = flowfile.read_input()\n"
-            "flowfile.publish_output(lf)\n"
-        )
+        code = "lf = flowfile.read_input()\n" "flowfile.publish_output(lf)\n"
 
         resp = client.post(
             "/execute",
@@ -315,8 +304,7 @@ class TestArtifactEndpoints:
             json={
                 "node_id": 21,
                 "code": (
-                    'flowfile.publish_artifact("item_a", [1, 2])\n'
-                    'flowfile.publish_artifact("item_b", "hello")\n'
+                    'flowfile.publish_artifact("item_a", [1, 2])\n' 'flowfile.publish_artifact("item_b", "hello")\n'
                 ),
                 "flow_id": 1,
                 "input_paths": {},
@@ -482,10 +470,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 29,
-                "code": (
-                    'flowfile.delete_artifact("model")\n'
-                    'flowfile.publish_artifact("model", "v2")\n'
-                ),
+                "code": ('flowfile.delete_artifact("model")\n' 'flowfile.publish_artifact("model", "v2")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -505,10 +490,7 @@ class TestArtifactEndpoints:
             "/execute",
             json={
                 "node_id": 30,
-                "code": (
-                    'v = flowfile.read_artifact("model")\n'
-                    'print(v)\n'
-                ),
+                "code": ('v = flowfile.read_artifact("model")\n' "print(v)\n"),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -605,10 +587,7 @@ class TestNodeArtifactsEndpoint:
             "/execute",
             json={
                 "node_id": 50,
-                "code": (
-                    'flowfile.publish_artifact("a", 1)\n'
-                    'flowfile.publish_artifact("b", 2)\n'
-                ),
+                "code": ('flowfile.publish_artifact("a", 1)\n' 'flowfile.publish_artifact("b", 2)\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -715,11 +694,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 64,
-                "code": (
-                    'flowfile.display("first")\n'
-                    'flowfile.display("second")\n'
-                    'flowfile.display("third")\n'
-                ),
+                "code": ('flowfile.display("first")\n' 'flowfile.display("second")\n' 'flowfile.display("third")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -768,10 +743,7 @@ class TestDisplayOutputs:
             "/execute",
             json={
                 "node_id": 67,
-                "code": (
-                    'flowfile.display("before error")\n'
-                    'raise ValueError("oops")\n'
-                ),
+                "code": ('flowfile.display("before error")\n' 'raise ValueError("oops")\n'),
                 "flow_id": 1,
                 "input_paths": {},
                 "output_dir": "",
@@ -1135,6 +1107,80 @@ class TestFlowIsolation:
         # Flow 2's artifact survives
         artifacts_f2 = client.get("/artifacts", params={"flow_id": 2}).json()
         assert "model" in artifacts_f2
+
+
+class TestExecutionCancellation:
+    """Tests for execution cancellation via /interrupt and SIGUSR1."""
+
+    @pytest.mark.skipif(
+        os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("CI") == "true",
+        reason="Signal-based thread interrupt is unreliable in CI runners.",
+    )
+    def test_signal_handler_interrupts_exec_thread(self):
+        """_raise_in_exec_thread injects KeyboardInterrupt into the tracked thread."""
+        import kernel_runtime.main as main_module
+
+        caught: list[bool] = [False]
+        ready = threading.Event()
+
+        def _target():
+            ready.set()
+            try:
+                # Block until interrupted
+                time.sleep(30)
+            except KeyboardInterrupt:
+                caught[0] = True
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        ready.wait()
+
+        with main_module._exec_lock:
+            main_module._exec_thread_id = t.ident
+        try:
+            assert main_module._raise_in_exec_thread() is True
+            t.join(timeout=5)
+            assert caught[0], "KeyboardInterrupt was not raised in the target thread"
+        finally:
+            with main_module._exec_lock:
+                main_module._exec_thread_id = None
+
+    def test_signal_handler_ignores_when_not_executing(self):
+        """Outside of exec(), the handler is a no-op (no crash, no exception)."""
+        import kernel_runtime.main as main_module
+
+        with main_module._exec_lock:
+            main_module._exec_thread_id = None
+        assert main_module._raise_in_exec_thread() is False
+        main_module._cancel_signal_handler(None, None)  # should not raise
+
+    def test_exec_thread_id_cleared_after_success(self, client: TestClient):
+        """_exec_thread_id must be None after a successful execution."""
+        import kernel_runtime.main as main_module
+
+        resp = client.post(
+            "/execute",
+            json={"node_id": 200, "code": "x = 1", "flow_id": 1, "input_paths": {}, "output_dir": ""},
+        )
+        assert resp.json()["success"] is True
+        assert main_module._exec_thread_id is None
+
+    def test_exec_thread_id_cleared_after_error(self, client: TestClient):
+        """_exec_thread_id must be None even when user code raises."""
+        import kernel_runtime.main as main_module
+
+        resp = client.post(
+            "/execute",
+            json={"node_id": 201, "code": "1/0", "flow_id": 1, "input_paths": {}, "output_dir": ""},
+        )
+        assert resp.json()["success"] is False
+        assert main_module._exec_thread_id is None
+
+    def test_interrupt_endpoint_no_execution(self, client: TestClient):
+        """POST /interrupt returns 'no_execution_running' when idle."""
+        resp = client.post("/interrupt")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "no_execution_running"
 
 
 class TestDisplayOutputStore:

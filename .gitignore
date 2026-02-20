@@ -75,3 +75,4 @@ master_key.txt
 *.key
 *.pem
 !requirements*.txt
+test-embed

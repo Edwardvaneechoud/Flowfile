@@ -32,6 +32,7 @@ def _clear_global_state():
     main._recovery_status = {"status": "pending", "recovered": [], "errors": []}
     main._kernel_id = "default"
     main._persistence_path = "/shared/artifacts"
+    main._is_executing = False
     # Detach persistence from artifact store
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
@@ -48,6 +49,7 @@ def _clear_global_state():
     main._recovery_status = {"status": "pending", "recovered": [], "errors": []}
     main._kernel_id = "default"
     main._persistence_path = "/shared/artifacts"
+    main._is_executing = False
     artifact_store._persistence = None
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()

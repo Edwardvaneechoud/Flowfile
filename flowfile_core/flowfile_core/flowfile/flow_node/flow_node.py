@@ -136,6 +136,8 @@ class FlowNode:
         self._schema_callback = None
         self._state_needs_reset = False
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
+        self._kernel_cancel_context = None
+        self._kernel_cancel_event: threading.Event | None = None
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
@@ -215,7 +217,7 @@ class FlowNode:
             return
 
         # Wrap callback with output_field_config support if present and enabled
-        output_field_config = getattr(self._setting_input, 'output_field_config', None)
+        output_field_config = getattr(self._setting_input, "output_field_config", None)
         if output_field_config and output_field_config.enabled:
             f = create_schema_callback_with_output_config(f, output_field_config)
 
@@ -616,7 +618,9 @@ class FlowNode:
                 logger.info(f"get_predicted_schema: node_id={self.node_id} - set predicted_schema from schema_callback")
                 return self.node_schema.predicted_schema
             else:
-                logger.warning(f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema")
+                logger.warning(
+                    f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema"
+                )
         else:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
 
@@ -730,7 +734,9 @@ class FlowNode:
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
                                         input_result = self._resolve_input_result(v)
-                                        self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
+                                        self.print(
+                                            f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}"
+                                        )
                                         input_data.append(input_result)
                                     self.print(f"All {len(input_data)} inputs collected, calling node function")
                                     fl = self._function(*input_data)
@@ -742,7 +748,10 @@ class FlowNode:
                         fl.set_streamable(self.node_settings.streamable)
 
                         # Apply output field configuration if enabled
-                        if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                        if (
+                            hasattr(self._setting_input, "output_field_config")
+                            and self._setting_input.output_field_config
+                        ):
                             try:
                                 fl = apply_output_field_config(fl, self._setting_input.output_field_config)
                             except Exception as e:
@@ -772,7 +781,7 @@ class FlowNode:
 
             # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
             # This ensures schema prediction accounts for output_field_config validation
-            if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+            if hasattr(self._setting_input, "output_field_config") and self._setting_input.output_field_config:
                 if self._setting_input.output_field_config.enabled:
                     fl = apply_output_field_config(fl, self._setting_input.output_field_config)
 
@@ -1133,10 +1142,20 @@ class FlowNode:
 
         if self._fetch_cached_df is not None:
             self._fetch_cached_df.cancel()
-            self.node_stats.is_canceled = True
+        elif self._kernel_cancel_context is not None:
+            kernel_id, manager = self._kernel_cancel_context
+            logger.info("Cancelling kernel execution for kernel '%s'", kernel_id)
+            # Signal the cancel event so execute_sync returns promptly
+            if self._kernel_cancel_event is not None:
+                self._kernel_cancel_event.set()
+            try:
+                manager.interrupt_execution_sync(kernel_id)
+            except Exception:
+                logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
         else:
             logger.warning("No external process to cancel")
         self.node_stats.is_canceled = True
+        self._execution_state.is_canceled = True
 
     def execute_node(
         self,
