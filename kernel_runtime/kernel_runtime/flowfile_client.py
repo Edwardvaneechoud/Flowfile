@@ -12,6 +12,7 @@ import httpx
 import polars as pl
 
 from kernel_runtime.artifact_store import ArtifactStore
+from kernel_runtime.schemas import ArtifactInfo, GlobalArtifactInfo
 
 
 def _translate_host_path_to_container(host_path: str) -> str:
@@ -101,6 +102,17 @@ def _get_context_value(key: str) -> Any:
     return ctx[key]
 
 
+def _check_input_available(input_paths: dict[str, list[str]], name: str) -> list[str]:
+    if name not in input_paths or not input_paths[name]:
+        available = [k for k, v in input_paths.items() if v]
+        if not available:
+            raise RuntimeError(
+                "Upstream nodes did not run yet. Make sure you run the flow before calling read_input()."
+            )
+        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
+    return input_paths[name]
+
+
 def read_input(name: str = "main") -> pl.LazyFrame:
     """Read all input files for *name* and return them as a single LazyFrame.
 
@@ -109,10 +121,7 @@ def read_input(name: str = "main") -> pl.LazyFrame:
     automatically by Polars.
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
-    if name not in input_paths:
-        available = list(input_paths.keys())
-        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
-    paths = input_paths[name]
+    paths = _check_input_available(input_paths, name)
     if len(paths) == 1:
         return pl.scan_parquet(paths[0])
     return pl.scan_parquet(paths)
@@ -125,10 +134,8 @@ def read_first(name: str = "main") -> pl.LazyFrame:
     ``input_paths[name][0]``.
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
-    if name not in input_paths:
-        available = list(input_paths.keys())
-        raise KeyError(f"Input '{name}' not found. Available inputs: {available}")
-    return pl.scan_parquet(input_paths[name][0])
+    paths = _check_input_available(input_paths, name)
+    return pl.scan_parquet(paths[0])
 
 
 def read_inputs() -> dict[str, list[pl.LazyFrame]]:
@@ -177,10 +184,11 @@ def delete_artifact(name: str) -> None:
     store.delete(name, flow_id=flow_id)
 
 
-def list_artifacts() -> dict:
+def list_artifacts() -> list[ArtifactInfo]:
     store: ArtifactStore = _get_context_value("artifact_store")
     flow_id: int = _get_context_value("flow_id")
-    return store.list_all(flow_id=flow_id)
+    raw = store.list_all(flow_id=flow_id)
+    return [ArtifactInfo.model_validate(v) for v in raw.values()]
 
 
 # ===== Global Artifacts APIs =====
@@ -428,7 +436,7 @@ def get_global(
 def list_global_artifacts(
     namespace_id: int | None = None,
     tags: list[str] | None = None,
-) -> list[dict]:
+) -> list[GlobalArtifactInfo]:
     """List available global artifacts.
 
     Args:
@@ -436,13 +444,13 @@ def list_global_artifacts(
         tags: Filter by tags (AND logic - all tags must match).
 
     Returns:
-        List of artifact metadata dictionaries.
+        List of :class:`GlobalArtifactInfo` objects.
 
     Example:
         >>> import flowfile
         >>> artifacts = flowfile.list_global_artifacts(tags=["ml"])
         >>> for a in artifacts:
-        ...     print(f"{a['name']} v{a['version']} - {a['python_type']}")
+        ...     print(f"{a.name} v{a.version} - {a.python_type}")
     """
     params = {}
     if namespace_id is not None:
@@ -454,7 +462,7 @@ def list_global_artifacts(
     with httpx.Client(timeout=30.0, headers=auth_headers) as client:
         resp = client.get(f"{_CORE_URL}/artifacts/", params=params)
         resp.raise_for_status()
-        return resp.json()
+        return [GlobalArtifactInfo.model_validate(item) for item in resp.json()]
 
 
 def delete_global_artifact(
@@ -510,6 +518,38 @@ def delete_global_artifact(
             if resp.status_code == 404:
                 raise KeyError(f"Artifact '{name}' not found")
             resp.raise_for_status()
+
+
+# ===== File Utilities =====
+
+
+def get_shared_location(filename: str) -> str:
+    """Return the absolute path for a file in the shared directory.
+
+    The shared directory is accessible from all FlowFile services (core,
+    worker, kernel) and persists across kernel executions.  Use this to
+    write files that should be readable by other services or that should
+    survive container restarts.
+
+    Parent directories are created automatically.
+
+    Args:
+        filename: Relative filename or path, e.g. ``"test_file.csv"`` or
+                  ``"other_dir/test_file.csv"``.
+
+    Returns:
+        Absolute path as a string, ready to pass to file-writing functions.
+
+    Examples::
+
+        df.write_csv(flowfile.get_shared_location("test_file.csv"))
+        df.write_csv(flowfile.get_shared_location("reports/monthly.csv"))
+    """
+    base = os.environ.get("FLOWFILE_KERNEL_SHARED_DIR", "/shared")
+    full_path = os.path.join(base, "user_files", filename)
+    parent = os.path.dirname(full_path)
+    os.makedirs(parent, exist_ok=True)
+    return full_path
 
 
 # ===== Logging APIs =====

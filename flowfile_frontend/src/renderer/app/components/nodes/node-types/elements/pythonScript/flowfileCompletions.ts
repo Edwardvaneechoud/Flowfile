@@ -63,8 +63,8 @@ export const flowfileCompletionVals = [
   {
     label: "list_artifacts",
     type: "function",
-    info: "List all artifacts available in the kernel.",
-    detail: "flowfile.list_artifacts()",
+    info: "List all artifacts available in the kernel. Returns list[ArtifactInfo] with .name, .type_name, .module, .node_id, .flow_id, .created_at, .size_bytes, .persisted fields.",
+    detail: "flowfile.list_artifacts() -> list[ArtifactInfo]",
     apply: "list_artifacts()",
   },
 
@@ -86,9 +86,15 @@ export const flowfileCompletionVals = [
   {
     label: "list_global_artifacts",
     type: "function",
-    info: "List available global artifacts with optional namespace/tag filters.",
-    detail: "flowfile.list_global_artifacts(namespace_id?, tags?)",
+    info: "List available global artifacts with optional namespace/tag filters. Returns list[GlobalArtifactInfo] with .id, .name, .version, .status, .python_type, .size_bytes, .created_at, .tags, .owner_id fields.",
+    detail: "flowfile.list_global_artifacts(namespace_id?, tags?) -> list[GlobalArtifactInfo]",
     apply: "list_global_artifacts()",
+  },
+  {label: "get_shared_location",
+    type: "function",
+    info: "Get the shared location to make objects available to other processes",
+    detail: "flowfile.get_shared_location()->str",
+    apply: "get_shared_location()",
   },
   {
     label: "delete_global_artifact",

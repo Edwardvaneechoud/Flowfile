@@ -38,6 +38,8 @@ def _clear_global_state():
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()
     artifact_store._persist_pending.clear()
+    # Clear display output store
+    main._display_output_store.clear()
 
     yield
 
@@ -52,6 +54,7 @@ def _clear_global_state():
     artifact_store._lazy_index.clear()
     artifact_store._loading_locks.clear()
     artifact_store._persist_pending.clear()
+    main._display_output_store.clear()
 
 
 @pytest.fixture()

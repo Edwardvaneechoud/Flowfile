@@ -257,6 +257,28 @@ async def get_node_artifacts(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/{kernel_id}/display_outputs")
+async def get_display_outputs(
+    kernel_id: str,
+    flow_id: int,
+    node_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Retrieve display outputs from the last execution of a node."""
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    if kernel.state.value not in ("idle", "executing"):
+        return []
+    try:
+        return await manager.get_display_outputs(kernel_id, flow_id, node_id)
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Artifact Persistence & Recovery endpoints
 # ---------------------------------------------------------------------------

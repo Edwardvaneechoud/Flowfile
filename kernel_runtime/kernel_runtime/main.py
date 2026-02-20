@@ -32,6 +32,13 @@ _namespace_store: dict[int, dict] = {}
 _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
 
+# ---------------------------------------------------------------------------
+# Persistent display output store keyed by (flow_id, node_id)
+# ---------------------------------------------------------------------------
+# Stores display outputs from the most recent execution of each node so they
+# can be retrieved by the frontend after a flow run completes.
+_display_output_store: dict[tuple[int, int], list[dict]] = {}
+
 
 def _evict_oldest_namespace() -> None:
     """Evict the least recently used namespace if at capacity."""
@@ -404,6 +411,11 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         # Collect display outputs
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
+        # Persist display outputs for later retrieval by the frontend
+        _display_output_store[(request.flow_id, request.node_id)] = [
+            d.model_dump() for d in display_outputs
+        ]
+
         # Collect output parquet files
         output_paths: list[str] = []
         if output_dir and Path(output_dir).exists():
@@ -440,6 +452,9 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
     except Exception as exc:
         # Still collect any display outputs that were generated before the error
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
+        _display_output_store[(request.flow_id, request.node_id)] = [
+            d.model_dump() for d in display_outputs
+        ]
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,
@@ -486,6 +501,14 @@ async def clear_namespace(flow_id: int = Query(...)):
     """Clear the execution namespace for a flow (variables, imports, etc.)."""
     _clear_namespace(flow_id)
     return {"status": "cleared", "flow_id": flow_id}
+
+
+@app.get("/display_outputs", response_model=list[DisplayOutput])
+async def get_display_outputs(flow_id: int = Query(...), node_id: int = Query(...)):
+    """Retrieve stored display outputs from the last execution of a node."""
+    key = (flow_id, node_id)
+    stored = _display_output_store.get(key, [])
+    return [DisplayOutput(**d) for d in stored]
 
 
 @app.post("/clear_node_artifacts")

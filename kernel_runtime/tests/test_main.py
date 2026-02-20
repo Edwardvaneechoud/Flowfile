@@ -1181,3 +1181,97 @@ class TestExecutionCancellation:
         resp = client.post("/interrupt")
         assert resp.status_code == 200
         assert resp.json()["status"] == "no_execution_running"
+
+
+class TestDisplayOutputStore:
+    """Tests for the GET /display_outputs endpoint that persists display
+    outputs across executions so the frontend can retrieve them after a
+    flow run."""
+
+    def _execute(self, client: TestClient, code: str, flow_id: int = 1, node_id: int = 1):
+        return client.post(
+            "/execute",
+            json={
+                "node_id": node_id,
+                "code": code,
+                "flow_id": flow_id,
+                "input_paths": {},
+                "output_dir": "",
+            },
+        )
+
+    def test_empty_before_any_execution(self, client: TestClient):
+        """GET /display_outputs returns [] when node has never been executed."""
+        resp = client.get("/display_outputs", params={"flow_id": 1, "node_id": 1})
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_display_outputs_persisted_after_execution(self, client: TestClient):
+        """Display outputs should be retrievable via GET after execution."""
+        self._execute(client, 'flowfile.display("hello")', flow_id=1, node_id=10)
+
+        resp = client.get("/display_outputs", params={"flow_id": 1, "node_id": 10})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["mime_type"] == "text/plain"
+        assert data[0]["data"] == "hello"
+
+    def test_multiple_displays_persisted(self, client: TestClient):
+        """Multiple flowfile.display() calls should all be retrievable."""
+        code = (
+            'flowfile.display("first")\n'
+            'flowfile.display("<b>second</b>")\n'
+            'flowfile.display("third", title="Chart")\n'
+        )
+        self._execute(client, code, flow_id=2, node_id=20)
+
+        resp = client.get("/display_outputs", params={"flow_id": 2, "node_id": 20})
+        data = resp.json()
+        assert len(data) == 3
+        assert data[0]["mime_type"] == "text/plain"
+        assert data[0]["data"] == "first"
+        assert data[1]["mime_type"] == "text/html"
+        assert data[1]["data"] == "<b>second</b>"
+        assert data[2]["title"] == "Chart"
+
+    def test_re_execution_overwrites_previous(self, client: TestClient):
+        """Re-executing the same node should replace its stored outputs."""
+        self._execute(client, 'flowfile.display("old")', flow_id=1, node_id=30)
+        self._execute(client, 'flowfile.display("new")', flow_id=1, node_id=30)
+
+        resp = client.get("/display_outputs", params={"flow_id": 1, "node_id": 30})
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["data"] == "new"
+
+    def test_scoped_by_flow_and_node(self, client: TestClient):
+        """Display outputs are keyed by (flow_id, node_id) independently."""
+        self._execute(client, 'flowfile.display("flow1-node1")', flow_id=1, node_id=1)
+        self._execute(client, 'flowfile.display("flow1-node2")', flow_id=1, node_id=2)
+        self._execute(client, 'flowfile.display("flow2-node1")', flow_id=2, node_id=1)
+
+        r1 = client.get("/display_outputs", params={"flow_id": 1, "node_id": 1}).json()
+        r2 = client.get("/display_outputs", params={"flow_id": 1, "node_id": 2}).json()
+        r3 = client.get("/display_outputs", params={"flow_id": 2, "node_id": 1}).json()
+
+        assert len(r1) == 1 and r1[0]["data"] == "flow1-node1"
+        assert len(r2) == 1 and r2[0]["data"] == "flow1-node2"
+        assert len(r3) == 1 and r3[0]["data"] == "flow2-node1"
+
+    def test_display_outputs_persisted_on_error(self, client: TestClient):
+        """Outputs generated before an error should still be stored."""
+        code = 'flowfile.display("before crash")\nraise RuntimeError("boom")\n'
+        resp = self._execute(client, code, flow_id=3, node_id=40)
+        assert resp.json()["success"] is False
+
+        stored = client.get("/display_outputs", params={"flow_id": 3, "node_id": 40}).json()
+        assert len(stored) == 1
+        assert stored[0]["data"] == "before crash"
+
+    def test_no_displays_stores_empty_list(self, client: TestClient):
+        """Execution with no display() calls should store an empty list."""
+        self._execute(client, 'x = 42', flow_id=4, node_id=50)
+
+        resp = client.get("/display_outputs", params={"flow_id": 4, "node_id": 50})
+        assert resp.json() == []

@@ -1,5 +1,6 @@
 import axios from "../services/axios.config";
 import type {
+  DisplayOutput,
   DockerStatus,
   ExecuteCellRequest,
   ExecuteResult,
@@ -120,6 +121,22 @@ export class KernelApi {
       console.error("API Error: Failed to clear namespace:", error);
       const errorMsg = (error as any).response?.data?.detail || "Failed to clear namespace";
       throw new Error(errorMsg);
+    }
+  }
+
+  static async getDisplayOutputs(
+    kernelId: string,
+    flowId: number,
+    nodeId: number,
+  ): Promise<DisplayOutput[]> {
+    try {
+      const response = await axios.get<DisplayOutput[]>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}/display_outputs`,
+        { params: { flow_id: flowId, node_id: nodeId } },
+      );
+      return response.data;
+    } catch {
+      return [];
     }
   }
 
