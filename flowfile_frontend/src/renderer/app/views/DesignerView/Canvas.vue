@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits, watch } from "vue";
+import {
+  ref,
+  markRaw,
+  onMounted,
+  onUnmounted,
+  defineExpose,
+  nextTick,
+  defineEmits,
+  watch,
+} from "vue";
 import {
   VueFlow,
   NodeTypesObject,

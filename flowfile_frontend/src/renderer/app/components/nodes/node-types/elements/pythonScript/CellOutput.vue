@@ -1,7 +1,7 @@
 <template>
-  <div class="cell-output" v-if="output">
+  <div v-if="output" class="cell-output">
     <!-- Execution meta (time, count) -->
-    <div class="output-meta" v-if="output.execution_count">
+    <div v-if="output.execution_count" class="output-meta">
       [{{ output.execution_count }}] {{ formatTime(output.execution_time_ms) }}
     </div>
 
@@ -11,11 +11,7 @@
     </div>
 
     <!-- Display outputs -->
-    <div
-      v-for="(disp, index) in output.display_outputs"
-      :key="index"
-      class="display-item"
-    >
+    <div v-for="(disp, index) in output.display_outputs" :key="index" class="display-item">
       <div v-if="disp.title" class="display-title">{{ disp.title }}</div>
 
       <!-- Image rendering -->
@@ -106,7 +102,7 @@ const autoResizeIframe = (event: Event) => {
   padding: 0.5rem 0.75rem;
   border-radius: 3px;
   font-size: 0.8rem;
-  font-family: 'Fira Code', monospace;
+  font-family: "Fira Code", monospace;
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -132,7 +128,7 @@ const autoResizeIframe = (event: Event) => {
   padding: 0.5rem 0.75rem;
   border-radius: 3px;
   font-size: 0.8rem;
-  font-family: 'Fira Code', monospace;
+  font-family: "Fira Code", monospace;
   overflow-x: auto;
   white-space: pre-wrap;
   margin: 0;
@@ -141,7 +137,7 @@ const autoResizeIframe = (event: Event) => {
 .output-stdout pre,
 .output-stderr pre {
   font-size: 0.8rem;
-  font-family: 'Fira Code', monospace;
+  font-family: "Fira Code", monospace;
   padding: 0.25rem 0.5rem;
   white-space: pre-wrap;
   max-height: 200px;

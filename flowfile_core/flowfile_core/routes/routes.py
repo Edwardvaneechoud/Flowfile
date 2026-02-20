@@ -1082,7 +1082,7 @@ def get_flow_artifacts(flow_id: int):
     }
 
 
-@router.get('/flow/node_upstream_ids', tags=['editor'])
+@router.get("/flow/node_upstream_ids", tags=["editor"])
 def get_node_upstream_ids(flow_id: int, node_id: int):
     """Return the transitive upstream node IDs for a given node.
 
@@ -1091,8 +1091,33 @@ def get_node_upstream_ids(flow_id: int, node_id: int):
     """
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
-        raise HTTPException(404, 'Could not find the flow')
+        raise HTTPException(404, "Could not find the flow")
     return {"upstream_node_ids": flow._get_upstream_node_ids(node_id)}
+
+
+@router.get("/flow/node_available_artifacts", tags=["editor"])
+def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | None = None):
+    """Return available artifact metadata for a node.
+
+    Used by the frontend to populate artifact selector UI components.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "Could not find the node")
+    resolved_kernel_id = kernel_id or getattr(node.setting_input, "kernel_id", None)
+    if not resolved_kernel_id:
+        return {"artifacts": []}
+
+    upstream_ids = flow._get_upstream_node_ids(node_id)
+    available = flow.artifact_context.compute_available(
+        node_id=node_id,
+        kernel_id=resolved_kernel_id,
+        upstream_node_ids=upstream_ids,
+    )
+    return {"artifacts": [ref.to_dict() for ref in available.values()]}
 
 
 @router.get("/analysis_data/graphic_walker_input", tags=["analysis"], response_model=input_schema.NodeExploreData)

@@ -36,7 +36,9 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Created</span>
-        <span class="meta-value">{{ artifact.created_at ? formatDate(artifact.created_at) : "--" }}</span>
+        <span class="meta-value">{{
+          artifact.created_at ? formatDate(artifact.created_at) : "--"
+        }}</span>
       </div>
     </div>
 
@@ -61,7 +63,8 @@
           <span
             class="detail-value flow-link"
             @click="emit('navigate-to-flow', artifact.source_registration_id!)"
-          >{{ sourceFlowName }}</span>
+            >{{ sourceFlowName }}</span
+          >
         </div>
         <div v-else-if="artifact.source_registration_id" class="detail-row">
           <span class="detail-label">Source Flow</span>

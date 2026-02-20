@@ -113,7 +113,10 @@
         <RunDetailPanel
           v-if="catalogStore.selectedRunDetail"
           :run="catalogStore.selectedRunDetail"
-          @close="catalogStore.selectedRunId = null; catalogStore.selectedRunDetail = null"
+          @close="
+            catalogStore.selectedRunId = null;
+            catalogStore.selectedRunDetail = null;
+          "
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
         />
@@ -148,7 +151,7 @@
     <!-- Create Namespace Modal -->
     <div v-if="showCreateNamespace" class="modal-overlay" @click.self="showCreateNamespace = false">
       <div class="modal-card">
-        <h3>{{ createSchemaParentId ? 'Create Schema' : 'Create Catalog' }}</h3>
+        <h3>{{ createSchemaParentId ? "Create Schema" : "Create Catalog" }}</h3>
         <input
           v-model="newNamespaceName"
           class="input-field"
@@ -161,7 +164,13 @@
           placeholder="Description (optional)"
         />
         <div class="modal-actions">
-          <button class="btn-secondary" @click="showCreateNamespace = false; createSchemaParentId = null">
+          <button
+            class="btn-secondary"
+            @click="
+              showCreateNamespace = false;
+              createSchemaParentId = null;
+            "
+          >
             Cancel
           </button>
           <button class="btn-primary" :disabled="!newNamespaceName.trim()" @click="createNamespace">
@@ -182,7 +191,7 @@
           <div v-if="newFlowPath" class="selected-file-badge">
             <i class="fa-solid fa-file"></i>
             <span>{{ newFlowPath }}</span>
-            <button class="clear-file-btn" @click="newFlowPath = ''" title="Clear">
+            <button class="clear-file-btn" title="Clear" @click="newFlowPath = ''">
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
@@ -262,11 +271,16 @@ const tabs = computed(() => [
 
 const sidebarTitle = computed(() => {
   switch (catalogStore.activeTab) {
-    case "catalog": return "Catalogs";
-    case "favorites": return "Favorites";
-    case "following": return "Following";
-    case "runs": return "Run History";
-    default: return "";
+    case "catalog":
+      return "Catalogs";
+    case "favorites":
+      return "Favorites";
+    case "following":
+      return "Following";
+    case "runs":
+      return "Run History";
+    default:
+      return "";
   }
 });
 
@@ -294,7 +308,11 @@ function selectArtifact(artifactId: number) {
 }
 
 /** Collect all versions of the selected artifact from the tree. */
-function collectArtifactVersions(nodes: NamespaceTree[], name: string, nsId: number | null): GlobalArtifact[] {
+function collectArtifactVersions(
+  nodes: NamespaceTree[],
+  name: string,
+  nsId: number | null,
+): GlobalArtifact[] {
   const result: GlobalArtifact[] = [];
   for (const node of nodes) {
     for (const a of node.artifacts ?? []) {
@@ -398,7 +416,11 @@ async function registerFlow() {
     newFlowName.value = "";
     newFlowPath.value = "";
     newFlowDesc.value = "";
-    await Promise.all([catalogStore.loadTree(), catalogStore.loadAllFlows(), catalogStore.loadStats()]);
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadStats(),
+    ]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to register flow");
   }
@@ -560,9 +582,17 @@ onMounted(async () => {
   transition: opacity var(--transition-fast);
 }
 
-.btn-primary:hover { opacity: 0.9; }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-sm { padding: var(--spacing-1) var(--spacing-3); font-size: var(--font-size-xs); }
+.btn-primary:hover {
+  opacity: 0.9;
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-sm {
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+}
 
 .btn-secondary {
   padding: var(--spacing-2) var(--spacing-4);
@@ -574,12 +604,17 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-.btn-secondary:hover { background: var(--color-background-hover); }
+.btn-secondary:hover {
+  background: var(--color-background-hover);
+}
 
 /* ========== Modal ========== */
 .modal-overlay {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;

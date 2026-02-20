@@ -43,7 +43,10 @@
           class="recent-item clickable"
           @click="$emit('viewRun', run.id)"
         >
-          <span class="status-dot" :class="run.success ? 'success' : (run.success === false ? 'failure' : 'pending')"></span>
+          <span
+            class="status-dot"
+            :class="run.success ? 'success' : run.success === false ? 'failure' : 'pending'"
+          ></span>
           <span class="recent-name">{{ run.flow_name }}</span>
           <span class="recent-time">{{ formatDate(run.started_at) }}</span>
           <span class="recent-duration">{{ formatDuration(run.duration_seconds) }}</span>
@@ -72,7 +75,10 @@
     <div v-if="!stats || (stats.total_flows === 0 && stats.total_runs === 0)" class="welcome">
       <i class="fa-solid fa-folder-tree welcome-icon"></i>
       <h3>Welcome to Flow Catalog</h3>
-      <p>Organize your flows into catalogs and schemas, track run history, and favorite the flows you use most.</p>
+      <p>
+        Organize your flows into catalogs and schemas, track run history, and favorite the flows you
+        use most.
+      </p>
       <div class="welcome-steps">
         <div class="step">
           <span class="step-num">1</span>
@@ -105,8 +111,10 @@ defineEmits<{
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -119,7 +127,9 @@ function formatDuration(seconds: number | null): string {
 </script>
 
 <style scoped>
-.stats-panel { max-width: 900px; }
+.stats-panel {
+  max-width: 900px;
+}
 
 .stats-panel h2 {
   margin: 0 0 var(--spacing-5) 0;
@@ -180,7 +190,11 @@ function formatDuration(seconds: number | null): string {
 }
 
 /* Recent Runs */
-.recent-list { display: flex; flex-direction: column; gap: 2px; }
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .recent-item {
   display: flex;
@@ -191,25 +205,52 @@ function formatDuration(seconds: number | null): string {
   font-size: var(--font-size-sm);
 }
 
-.recent-item:hover { background: var(--color-background-hover); }
-.clickable { cursor: pointer; }
+.recent-item:hover {
+  background: var(--color-background-hover);
+}
+.clickable {
+  cursor: pointer;
+}
 
 .status-dot {
-  width: 8px; height: 8px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--border-radius-full);
   flex-shrink: 0;
 }
 
-.status-dot.success { background: #22c55e; }
-.status-dot.failure { background: #ef4444; }
-.status-dot.pending { background: #eab308; }
+.status-dot.success {
+  background: #22c55e;
+}
+.status-dot.failure {
+  background: #ef4444;
+}
+.status-dot.pending {
+  background: #eab308;
+}
 
-.recent-name { flex: 1; color: var(--color-text-primary); }
-.recent-time { color: var(--color-text-muted); font-size: var(--font-size-xs); }
-.recent-duration { color: var(--color-text-secondary); font-family: monospace; font-size: var(--font-size-xs); min-width: 60px; text-align: right; }
+.recent-name {
+  flex: 1;
+  color: var(--color-text-primary);
+}
+.recent-time {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.recent-duration {
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+  min-width: 60px;
+  text-align: right;
+}
 
 /* Favorites */
-.fav-list { display: flex; flex-direction: column; gap: 2px; }
+.fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .fav-item {
   display: flex;
@@ -220,10 +261,21 @@ function formatDuration(seconds: number | null): string {
   font-size: var(--font-size-sm);
 }
 
-.fav-item:hover { background: var(--color-background-hover); }
-.fav-icon { color: #f59e0b; font-size: 12px; }
-.fav-name { flex: 1; color: var(--color-text-primary); }
-.fav-runs { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.fav-item:hover {
+  background: var(--color-background-hover);
+}
+.fav-icon {
+  color: #f59e0b;
+  font-size: 12px;
+}
+.fav-name {
+  flex: 1;
+  color: var(--color-text-primary);
+}
+.fav-runs {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
 
 /* Welcome */
 .welcome {

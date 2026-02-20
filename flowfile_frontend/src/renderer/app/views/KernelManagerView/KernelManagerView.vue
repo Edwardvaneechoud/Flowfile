@@ -6,11 +6,15 @@
     </div>
 
     <!-- Docker status banners -->
-    <div v-if="dockerStatus && !dockerStatus.available" class="status-banner status-banner--error mb-3">
+    <div
+      v-if="dockerStatus && !dockerStatus.available"
+      class="status-banner status-banner--error mb-3"
+    >
       <i class="fa-solid fa-circle-exclamation"></i>
       <div>
         <strong>Docker is not running.</strong>
-        Kernels require Docker to create and run containers. Please start Docker and reload this page.
+        Kernels require Docker to create and run containers. Please start Docker and reload this
+        page.
       </div>
     </div>
     <div
@@ -20,13 +24,16 @@
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Kernel image not found.</strong>
-        The <code>flowfile-kernel</code> Docker image is not available. Build or pull the image before
-        starting kernels.
+        The <code>flowfile-kernel</code> Docker image is not available. Build or pull the image
+        before starting kernels.
       </div>
     </div>
 
     <!-- API-level error (e.g. network failure) -->
-    <div v-if="errorMessage && (!dockerStatus || dockerStatus.available)" class="status-banner status-banner--error mb-3">
+    <div
+      v-if="errorMessage && (!dockerStatus || dockerStatus.available)"
+      class="status-banner status-banner--error mb-3"
+    >
       <i class="fa-solid fa-circle-exclamation"></i>
       <span>{{ errorMessage }}</span>
     </div>

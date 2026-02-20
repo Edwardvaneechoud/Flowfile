@@ -141,6 +141,10 @@ class FlowNode:
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
+        # Multi-output support: maps output handle (e.g. "output-0") to FlowDataEngine
+        self._named_outputs: dict[str, FlowDataEngine] = {}
+        # Maps source node id -> output handle used in the connection
+        self._input_output_handles: dict[int, str] = {}
 
     @property
     def state_needs_reset(self) -> bool:
@@ -510,13 +514,17 @@ class FlowNode:
         return self._hash
 
     def add_node_connection(
-        self, from_node: "FlowNode", insert_type: Literal["main", "left", "right"] = "main"
+        self,
+        from_node: "FlowNode",
+        insert_type: Literal["main", "left", "right"] = "main",
+        output_handle: str = "output-0",
     ) -> None:
         """Adds a connection from a source node to this node.
 
         Args:
             from_node: The node to connect from.
             insert_type: The type of input to connect to ('main', 'left', 'right').
+            output_handle: The output handle on the source node (e.g. 'output-0', 'output-1').
 
         Raises:
             Exception: If the insert_type is invalid.
@@ -533,6 +541,8 @@ class FlowNode:
             self.node_inputs.left_input = from_node
         else:
             raise Exception("Cannot find the connection")
+        # Track which output handle of the source node this connection uses
+        self._input_output_handles[from_node.node_id] = output_handle
         if self.setting_input.is_setup:
             if hasattr(self.setting_input, "depending_on_id") and insert_type == "main":
                 self.setting_input.depending_on_id = from_node.node_id
@@ -653,6 +663,40 @@ class FlowNode:
         """
         logger.info(f"{self.node_type}, node_id: {self.node_id}: {v}")
 
+    def get_output(self, handle: str = "output-0") -> FlowDataEngine | None:
+        """Get the result for a specific output handle.
+
+        For nodes with multiple outputs (e.g. kernel-based custom nodes),
+        returns the FlowDataEngine associated with the given handle.
+        Falls back to the default ``results.resulting_data`` for single-output nodes.
+
+        Args:
+            handle: The output handle identifier (e.g. ``"output-0"``, ``"output-1"``).
+
+        Returns:
+            The FlowDataEngine for the requested output, or None.
+        """
+        # Ensure the node has been executed first
+        self.get_resulting_data()
+        if handle in self._named_outputs:
+            return self._named_outputs[handle]
+        # Fall back to the default (single) result
+        return self.results.resulting_data
+
+    def _resolve_input_result(self, input_node: "FlowNode") -> FlowDataEngine | None:
+        """Resolve the correct output from an input node based on connection handle.
+
+        Args:
+            input_node: The upstream node to get data from.
+
+        Returns:
+            The FlowDataEngine from the appropriate output handle.
+        """
+        handle = self._input_output_handles.get(input_node.node_id, "output-0")
+        if handle != "output-0" and input_node._named_outputs:
+            return input_node.get_output(handle)
+        return input_node.get_resulting_data()
+
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
 
@@ -689,7 +733,7 @@ class FlowNode:
                                         # concurrently accessing the same upstream LazyFrame.
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
-                                        input_result = v.get_resulting_data()
+                                        input_result = self._resolve_input_result(v)
                                         self.print(
                                             f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}"
                                         )
@@ -1264,6 +1308,8 @@ class FlowNode:
         else:
             logger.warning("Could not find the connection to delete...")
         if deleted:
+            # Clean up the output handle mapping for the removed connection
+            self._input_output_handles.pop(node_id, None)
             self.reset()
         return deleted
 
@@ -1480,32 +1526,35 @@ class FlowNode:
         edges = []
         if self.node_inputs.main_inputs is not None:
             for i, main_input in enumerate(self.node_inputs.main_inputs):
+                source_handle = self._input_output_handles.get(main_input.node_id, "output-0")
                 edges.append(
                     schemas.NodeEdge(
                         id=f"{main_input.node_id}-{self.node_id}-{i}",
                         source=main_input.node_id,
                         target=self.node_id,
-                        sourceHandle="output-0",
+                        sourceHandle=source_handle,
                         targetHandle="input-0",
                     )
                 )
         if self.node_inputs.left_input is not None:
+            left_handle = self._input_output_handles.get(self.node_inputs.left_input.node_id, "output-0")
             edges.append(
                 schemas.NodeEdge(
                     id=f"{self.node_inputs.left_input.node_id}-{self.node_id}-right",
                     source=self.node_inputs.left_input.node_id,
                     target=self.node_id,
-                    sourceHandle="output-0",
+                    sourceHandle=left_handle,
                     targetHandle="input-2",
                 )
             )
         if self.node_inputs.right_input is not None:
+            right_handle = self._input_output_handles.get(self.node_inputs.right_input.node_id, "output-0")
             edges.append(
                 schemas.NodeEdge(
                     id=f"{self.node_inputs.right_input.node_id}-{self.node_id}-left",
                     source=self.node_inputs.right_input.node_id,
                     target=self.node_id,
-                    sourceHandle="output-0",
+                    sourceHandle=right_handle,
                     targetHandle="input-1",
                 )
             )

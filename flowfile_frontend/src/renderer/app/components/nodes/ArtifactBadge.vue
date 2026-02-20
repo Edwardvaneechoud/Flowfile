@@ -22,18 +22,10 @@
       <span class="badge-count">{{ summary.published_count }}</span>
       <div v-if="showPublishTooltip" class="artifact-tooltip">
         <div class="tooltip-header">Published Artifacts</div>
-        <div v-if="summary.kernel_id" class="tooltip-kernel">
-          kernel: {{ summary.kernel_id }}
-        </div>
-        <div
-          v-for="art in summary.published"
-          :key="art.name"
-          class="tooltip-item"
-        >
+        <div v-if="summary.kernel_id" class="tooltip-kernel">kernel: {{ summary.kernel_id }}</div>
+        <div v-for="art in summary.published" :key="art.name" class="tooltip-item">
           <span class="tooltip-name">{{ art.name }}</span>
-          <span v-if="art.type_name" class="tooltip-type">{{
-            art.type_name
-          }}</span>
+          <span v-if="art.type_name" class="tooltip-type">{{ art.type_name }}</span>
         </div>
       </div>
     </div>
@@ -60,18 +52,10 @@
       <span class="badge-count">{{ summary.consumed_count }}</span>
       <div v-if="showConsumeTooltip" class="artifact-tooltip">
         <div class="tooltip-header">Consumed Artifacts</div>
-        <div v-if="summary.kernel_id" class="tooltip-kernel">
-          kernel: {{ summary.kernel_id }}
-        </div>
-        <div
-          v-for="art in summary.consumed"
-          :key="art.name"
-          class="tooltip-item"
-        >
+        <div v-if="summary.kernel_id" class="tooltip-kernel">kernel: {{ summary.kernel_id }}</div>
+        <div v-for="art in summary.consumed" :key="art.name" class="tooltip-item">
           <span class="tooltip-name">{{ art.name }}</span>
-          <span v-if="art.type_name" class="tooltip-type">{{
-            art.type_name
-          }}</span>
+          <span v-if="art.type_name" class="tooltip-type">{{ art.type_name }}</span>
           <span v-if="art.source_node_id != null" class="tooltip-source"
             >from node {{ art.source_node_id }}</span
           >
@@ -101,11 +85,7 @@
       <span class="badge-count">{{ summary.deleted_count }}</span>
       <div v-if="showDeleteTooltip" class="artifact-tooltip">
         <div class="tooltip-header">Deleted Artifacts</div>
-        <div
-          v-for="name in summary.deleted"
-          :key="name"
-          class="tooltip-item"
-        >
+        <div v-for="name in summary.deleted" :key="name" class="tooltip-item">
           <span class="tooltip-name">{{ name }}</span>
         </div>
       </div>

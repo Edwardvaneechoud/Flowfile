@@ -2,16 +2,20 @@
   <div class="notebook-editor">
     <!-- Toolbar -->
     <div class="notebook-toolbar">
-      <button @click="runAllCells" :disabled="!kernelId || isAnyExecuting" title="Run All Cells">
+      <button :disabled="!kernelId || isAnyExecuting" title="Run All Cells" @click="runAllCells">
         <i class="fa-solid fa-play"></i> Run All
       </button>
-      <button @click="clearAllOutputs" title="Clear All Outputs">
+      <button title="Clear All Outputs" @click="clearAllOutputs">
         <i class="fa-solid fa-eraser"></i> Clear
       </button>
-      <button @click="restartKernel" :disabled="!kernelId || isAnyExecuting" title="Restart Kernel (clear all variables)">
+      <button
+        :disabled="!kernelId || isAnyExecuting"
+        title="Restart Kernel (clear all variables)"
+        @click="restartKernel"
+      >
         <i class="fa-solid fa-rotate-right"></i> Restart
       </button>
-      <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? 's' : '' }}</span>
+      <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? "s" : "" }}</span>
     </div>
 
     <!-- Cell list -->
@@ -56,7 +60,7 @@ interface Props {
 
 const props = defineProps<Props>();
 const emit = defineEmits<{
-  (e: 'update:cells', cells: NotebookCell[]): void;
+  (e: "update:cells", cells: NotebookCell[]): void;
 }>();
 
 const executingCellId = ref<string | null>(null);
@@ -66,21 +70,22 @@ const isAnyExecuting = computed(() => executingCellId.value !== null);
 // ─── Cell Operations ──────────────────────────────────────────────────────────
 
 const updateCellCode = (cellId: string, code: string) => {
-  emit('update:cells', props.cells.map(c =>
-    c.id === cellId ? { ...c, code } : c
-  ));
+  emit(
+    "update:cells",
+    props.cells.map((c) => (c.id === cellId ? { ...c, code } : c)),
+  );
 };
 
 const addCell = () => {
-  emit('update:cells', [
-    ...props.cells,
-    { id: crypto.randomUUID(), code: "", output: null },
-  ]);
+  emit("update:cells", [...props.cells, { id: crypto.randomUUID(), code: "", output: null }]);
 };
 
 const deleteCell = (cellId: string) => {
   if (props.cells.length <= 1) return;
-  emit('update:cells', props.cells.filter(c => c.id !== cellId));
+  emit(
+    "update:cells",
+    props.cells.filter((c) => c.id !== cellId),
+  );
 };
 
 const moveCell = (index: number, direction: number) => {
@@ -89,26 +94,30 @@ const moveCell = (index: number, direction: number) => {
   const newCells = [...props.cells];
   const [cell] = newCells.splice(index, 1);
   newCells.splice(newIndex, 0, cell);
-  emit('update:cells', newCells);
+  emit("update:cells", newCells);
 };
 
 const clearAllOutputs = () => {
-  emit('update:cells', props.cells.map(c => ({ ...c, output: null })));
+  emit(
+    "update:cells",
+    props.cells.map((c) => ({ ...c, output: null })),
+  );
 };
 
 // ─── Execution ────────────────────────────────────────────────────────────────
 
-const updateCellOutput = (cellId: string, output: NotebookCell['output']) => {
-  emit('update:cells', props.cells.map(c =>
-    c.id === cellId ? { ...c, output } : c
-  ));
+const updateCellOutput = (cellId: string, output: NotebookCell["output"]) => {
+  emit(
+    "update:cells",
+    props.cells.map((c) => (c.id === cellId ? { ...c, output } : c)),
+  );
 };
 
 const runCell = async (cellId: string): Promise<boolean> => {
   if (!props.kernelId) return false;
 
   // Capture code at start to avoid race conditions if cells change during execution
-  const cell = props.cells.find(c => c.id === cellId);
+  const cell = props.cells.find((c) => c.id === cellId);
   if (!cell) return true;
   const codeToRun = cell.code;
   if (!codeToRun.trim()) return true;

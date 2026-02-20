@@ -109,6 +109,18 @@ class IncomingColumns:
     pass
 
 
+class AvailableArtifacts:
+    """
+    A marker class used in `SingleSelect` and `MultiSelect` components.
+
+    When `options` is set to this class, the component will be dynamically
+    populated with available artifact names from upstream nodes. This is
+    useful for selecting models or other shared artifacts by name.
+    """
+
+    pass
+
+
 class ColumnSelector(FlowfileInComponent):
     """
     A UI component that allows users to select one or more columns from the
@@ -224,7 +236,7 @@ class SingleSelect(FlowfileInComponent):
     """
 
     component_type: Literal["SingleSelect"] = "SingleSelect"
-    options: list[str | tuple[str, Any]] | type[IncomingColumns]
+    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts]
     default: Any | None = None
     input_type: InputType = "text"
 
@@ -243,7 +255,7 @@ class MultiSelect(FlowfileInComponent):
     """
 
     component_type: Literal["MultiSelect"] = "MultiSelect"
-    options: list[str | tuple[str, Any]] | type[IncomingColumns]
+    options: list[str | tuple[str, Any]] | type[IncomingColumns] | type[AvailableArtifacts]
     default: list[Any] = Field(default_factory=list)
     input_type: InputType = "array"
 

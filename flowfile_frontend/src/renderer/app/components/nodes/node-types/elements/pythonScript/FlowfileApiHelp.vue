@@ -65,8 +65,8 @@
         <section class="api-section">
           <h4>Display</h4>
           <p class="section-description">
-            Render rich objects (matplotlib figures, plotly figures, PIL images, HTML strings) in the
-            output panel.
+            Render rich objects (matplotlib figures, plotly figures, PIL images, HTML strings) in
+            the output panel.
           </p>
           <div class="api-item">
             <code>flowfile.display(obj)</code>
@@ -102,7 +102,10 @@
             <p>Retrieve a specific version of a global artifact.</p>
           </div>
           <div class="api-item">
-            <code>flowfile.list_global_artifacts(namespace_id?, tags?) -> list[GlobalArtifactInfo]</code>
+            <code
+              >flowfile.list_global_artifacts(namespace_id?, tags?) ->
+              list[GlobalArtifactInfo]</code
+            >
             <p>
               List all available global artifacts. Each item has: <code>.id</code>,
               <code>.name</code>, <code>.version</code>, <code>.status</code>,
@@ -143,13 +146,15 @@
         <section class="api-section">
           <h4>File Utilities</h4>
           <p class="section-description">
-            Convenience helpers for working with files on the shared volume. Files written here
-            are accessible from all FlowFile services and persist across kernel executions.
+            Convenience helpers for working with files on the shared volume. Files written here are
+            accessible from all FlowFile services and persist across kernel executions.
           </p>
           <div class="api-item">
             <code>flowfile.get_shared_location("test_file.csv")</code>
-            <p>Returns the absolute path for a file in the shared directory.
-               Parent directories are created automatically.</p>
+            <p>
+              Returns the absolute path for a file in the shared directory. Parent directories are
+              created automatically.
+            </p>
           </div>
           <div class="api-item">
             <code>flowfile.get_shared_location("subdir/report.parquet")</code>

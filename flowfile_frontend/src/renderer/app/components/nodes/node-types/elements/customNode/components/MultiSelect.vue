@@ -40,23 +40,24 @@ const props = defineProps({
     type: Array as PropType<string[]>,
     default: () => [],
   },
+  availableArtifacts: {
+    type: Array as PropType<string[]>,
+    default: () => [],
+  },
 });
 
 defineEmits(["update:modelValue"]);
 
 const options = computed(() => {
-  if (
-    props.schema.options &&
-    !Array.isArray(props.schema.options) &&
-    props.schema.options.__type__ === "IncomingColumns"
-  ) {
-    return props.incomingColumns;
-  }
-
   if (Array.isArray(props.schema.options)) {
     return props.schema.options;
   }
-
+  if (props.schema.options?.__type__ === "IncomingColumns") {
+    return props.incomingColumns;
+  }
+  if (props.schema.options?.__type__ === "AvailableArtifacts") {
+    return props.availableArtifacts;
+  }
   return [];
 });
 </script>
