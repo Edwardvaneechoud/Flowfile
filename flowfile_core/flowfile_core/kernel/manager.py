@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import socket
+import threading
 import time
 
 import docker
@@ -58,9 +59,7 @@ class KernelManager:
         # Docker-in-Docker settings: when core itself runs in a container,
         # kernel containers must use a named volume (not a bind mount) and
         # connect to the same Docker network for service discovery.
-        self._docker_network: str | None = (
-            os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
-        )
+        self._docker_network: str | None = os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
 
         # In Docker mode, discover the volume that covers _shared_volume
         # (e.g. flowfile-internal-storage mounted at /app/internal_storage).
@@ -204,16 +203,9 @@ class KernelManager:
 
         # Discover parquet files in the input directory
         if os.path.isdir(input_dir):
-            parquet_files = sorted(
-                f for f in os.listdir(input_dir) if f.endswith(".parquet")
-            )
+            parquet_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
             if parquet_files:
-                request.input_paths = {
-                    "main": [
-                        self.to_kernel_path(os.path.join(input_dir, f))
-                        for f in parquet_files
-                    ]
-                }
+                request.input_paths = {"main": [self.to_kernel_path(os.path.join(input_dir, f)) for f in parquet_files]}
 
         request.output_dir = self.to_kernel_path(output_dir)
 
@@ -600,9 +592,17 @@ class KernelManager:
                 kernel.state = KernelState.IDLE
 
     def execute_sync(
-        self, kernel_id: str, request: ExecuteRequest, flow_logger: FlowLogger | None = None
+        self,
+        kernel_id: str,
+        request: ExecuteRequest,
+        flow_logger: FlowLogger | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> ExecuteResult:
-        """Synchronous wrapper around execute() for use from non-async code."""
+        """Synchronous wrapper around execute() for use from non-async code.
+
+        When *cancel_event* is provided the HTTP call runs in a daemon thread
+        so the caller can be unblocked promptly when the event is set.
+        """
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
@@ -610,10 +610,43 @@ class KernelManager:
         kernel.state = KernelState.EXECUTING
         try:
             url = f"{self._kernel_url(kernel)}/execute"
-            with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
-                response = client.post(url, json=request.model_dump())
-                response.raise_for_status()
-                return ExecuteResult(**response.json())
+
+            if cancel_event is None:
+                # Simple blocking call (no cancellation support)
+                with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+                    response = client.post(url, json=request.model_dump())
+                    response.raise_for_status()
+                    return ExecuteResult(**response.json())
+
+            # --- cancellation-aware path ---
+            result_holder: list[ExecuteResult | None] = [None]
+            error_holder: list[BaseException | None] = [None]
+
+            def _post() -> None:
+                try:
+                    with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+                        resp = client.post(url, json=request.model_dump())
+                        resp.raise_for_status()
+                        result_holder[0] = ExecuteResult(**resp.json())
+                except BaseException as exc:
+                    error_holder[0] = exc
+
+            t = threading.Thread(target=_post, daemon=True)
+            t.start()
+
+            while t.is_alive():
+                t.join(timeout=0.5)
+                if cancel_event.is_set():
+                    # Best-effort interrupt, then return immediately
+                    self.interrupt_execution_sync(kernel_id)
+                    return ExecuteResult(success=False, error="Execution cancelled by user")
+
+            if error_holder[0] is not None:
+                raise error_holder[0]
+            if result_holder[0] is not None:
+                return result_holder[0]
+            raise RuntimeError("Kernel execution returned no result")
+
         except (httpx.HTTPError, OSError):
             if self._check_oom_killed(kernel_id):
                 kernel.state = KernelState.ERROR
@@ -630,6 +663,51 @@ class KernelManager:
         finally:
             if kernel.state == KernelState.EXECUTING:
                 kernel.state = KernelState.IDLE
+
+    def interrupt_execution_sync(self, kernel_id: str) -> bool:
+        """Interrupt running user code on a kernel.
+
+        Tries the HTTP ``/interrupt`` endpoint first (works when the kernel
+        runs user code in a background thread and keeps the event loop free).
+        Falls back to sending ``SIGUSR1`` via Docker if the HTTP call fails
+        (e.g. older kernel image, or the event loop is blocked).
+        """
+        kernel = self._kernels.get(kernel_id)
+        if kernel is None or kernel.container_id is None:
+            logger.warning("Cannot interrupt kernel '%s': not found or no container", kernel_id)
+            return False
+        if kernel.state != KernelState.EXECUTING:
+            return False
+
+        # --- Try HTTP /interrupt (preferred) ---
+        should_try_http = self._docker_network is not None or kernel.port is not None
+        if should_try_http:
+            try:
+                url = f"{self._kernel_url(kernel)}/interrupt"
+                with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
+                    resp = client.post(url)
+                    if resp.status_code == 200:
+                        logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
+                        return True
+            except (httpx.HTTPError, OSError):
+                logger.debug("HTTP /interrupt failed for kernel '%s', falling back to SIGUSR1", kernel_id)
+
+        # --- Fallback: Docker SIGUSR1 ---
+        try:
+            container = self._docker.containers.get(kernel.container_id)
+            container.kill(signal="SIGUSR1")
+            logger.info("Sent SIGUSR1 to kernel '%s' (container %s)", kernel_id, kernel.container_id[:12])
+            return True
+        except docker.errors.NotFound:
+            logger.warning("Container for kernel '%s' not found", kernel_id)
+            return False
+        except (docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.error("Failed to send SIGUSR1 to kernel '%s': %s", kernel_id, exc)
+            return False
+
+    async def interrupt_execution(self, kernel_id: str) -> bool:
+        """Async wrapper around :meth:`interrupt_execution_sync`."""
+        return self.interrupt_execution_sync(kernel_id)
 
     async def clear_artifacts(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)
@@ -793,9 +871,7 @@ class KernelManager:
                 response.raise_for_status()
                 return KernelMemoryInfo(**response.json())
         except (httpx.HTTPError, OSError) as exc:
-            raise RuntimeError(
-                f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}"
-            ) from exc
+            raise RuntimeError(f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}") from exc
 
     async def list_kernel_artifacts(self, kernel_id: str) -> list:
         """List all artifacts in a running kernel."""

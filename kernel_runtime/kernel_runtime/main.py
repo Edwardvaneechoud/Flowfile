@@ -1,8 +1,12 @@
 import ast
+import asyncio
 import contextlib
+import ctypes
 import io
 import logging
 import os
+import signal
+import threading
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -61,6 +65,52 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Execution cancellation
+# ---------------------------------------------------------------------------
+# When user code runs via asyncio.to_thread(), we track its thread ident so
+# that /interrupt (or SIGUSR1) can inject a KeyboardInterrupt into it.
+_exec_thread_id: int | None = None
+_exec_lock = threading.Lock()
+
+
+def _raise_in_exec_thread() -> bool:
+    """Inject ``KeyboardInterrupt`` into the executing thread (if any).
+
+    Uses ``PyThreadState_SetAsyncExc`` to set a pending async exception.
+    Also sends ``SIGUSR1`` to the thread to interrupt blocking C calls
+    (e.g. ``time.sleep``) so the exception is checked sooner.
+
+    Returns ``True`` if an exec thread was found and interrupted.
+    """
+    with _exec_lock:
+        tid = _exec_thread_id
+    if tid is None:
+        return False
+
+    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(tid),
+        ctypes.py_object(KeyboardInterrupt),
+    )
+    # Send SIGUSR1 to the thread to kick it out of any blocking syscall.
+    # The signal itself is harmless (handler below ignores it when not
+    # targeting the main thread), but the EINTR it causes lets the
+    # thread re-enter the bytecode eval loop where the async exception fires.
+    try:
+        signal.pthread_kill(tid, signal.SIGUSR1)
+    except (OSError, ValueError):
+        pass  # thread may have already exited
+    return True
+
+
+def _cancel_signal_handler(signum, frame):
+    """Handle SIGUSR1: interrupt the exec thread if one is running."""
+    if _raise_in_exec_thread():
+        logger.warning("SIGUSR1 received – interrupting execution thread")
+    else:
+        logger.debug("SIGUSR1 received outside execution, ignoring")
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +209,10 @@ def _setup_persistence() -> None:
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _setup_persistence()
+    try:
+        signal.signal(signal.SIGUSR1, _cancel_signal_handler)
+    except ValueError:
+        pass  # not in main thread (e.g. TestClient)
     yield
 
 
@@ -286,8 +340,14 @@ class CleanupRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/execute", response_model=ExecuteResponse)
-async def execute(request: ExecuteRequest):
+def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
+    """Run user code synchronously (called via ``asyncio.to_thread``).
+
+    Executing in a worker thread keeps the event loop free so that the
+    ``/interrupt`` endpoint can be served while user code is running.
+    """
+    global _exec_thread_id
+
     start = time.perf_counter()
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
@@ -339,8 +399,14 @@ async def execute(request: ExecuteRequest):
             if request.interactive:
                 user_code = _maybe_wrap_last_expression(user_code)
 
-            # Execute user code
-            exec(user_code, exec_globals)  # noqa: S102
+            # Execute user code — track the thread so /interrupt can target it
+            with _exec_lock:
+                _exec_thread_id = threading.get_ident()
+            try:
+                exec(user_code, exec_globals)  # noqa: S102
+            finally:
+                with _exec_lock:
+                    _exec_thread_id = None
 
         # Collect display outputs
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
@@ -370,6 +436,19 @@ async def execute(request: ExecuteRequest):
             stderr=stderr_buf.getvalue(),
             execution_time_ms=elapsed,
         )
+    except KeyboardInterrupt:
+        with _exec_lock:
+            _exec_thread_id = None
+        display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
+        elapsed = (time.perf_counter() - start) * 1000
+        return ExecuteResponse(
+            success=False,
+            display_outputs=display_outputs,
+            stdout=stdout_buf.getvalue(),
+            stderr=stderr_buf.getvalue(),
+            error="Execution cancelled by user",
+            execution_time_ms=elapsed,
+        )
     except Exception as exc:
         # Still collect any display outputs that were generated before the error
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
@@ -386,7 +465,22 @@ async def execute(request: ExecuteRequest):
             execution_time_ms=elapsed,
         )
     finally:
+        with _exec_lock:
+            _exec_thread_id = None
         flowfile_client._clear_context()
+
+
+@app.post("/execute", response_model=ExecuteResponse)
+async def execute(request: ExecuteRequest):
+    return await asyncio.to_thread(_execute_sync, request)
+
+
+@app.post("/interrupt")
+async def interrupt():
+    """Interrupt running user code by injecting ``KeyboardInterrupt``."""
+    if _raise_in_exec_thread():
+        return {"status": "interrupted"}
+    return {"status": "no_execution_running"}
 
 
 @app.post("/clear")
