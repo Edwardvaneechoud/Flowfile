@@ -59,9 +59,7 @@ class KernelManager:
         # Docker-in-Docker settings: when core itself runs in a container,
         # kernel containers must use a named volume (not a bind mount) and
         # connect to the same Docker network for service discovery.
-        self._docker_network: str | None = (
-            os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
-        )
+        self._docker_network: str | None = os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
 
         # In Docker mode, discover the volume that covers _shared_volume
         # (e.g. flowfile-internal-storage mounted at /app/internal_storage).
@@ -205,16 +203,9 @@ class KernelManager:
 
         # Discover parquet files in the input directory
         if os.path.isdir(input_dir):
-            parquet_files = sorted(
-                f for f in os.listdir(input_dir) if f.endswith(".parquet")
-            )
+            parquet_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
             if parquet_files:
-                request.input_paths = {
-                    "main": [
-                        self.to_kernel_path(os.path.join(input_dir, f))
-                        for f in parquet_files
-                    ]
-                }
+                request.input_paths = {"main": [self.to_kernel_path(os.path.join(input_dir, f)) for f in parquet_files]}
 
         request.output_dir = self.to_kernel_path(output_dir)
 
@@ -685,15 +676,17 @@ class KernelManager:
             return False
 
         # --- Try HTTP /interrupt (preferred) ---
-        try:
-            url = f"{self._kernel_url(kernel)}/interrupt"
-            with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
-                resp = client.post(url)
-                if resp.status_code == 200:
-                    logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
-                    return True
-        except (httpx.HTTPError, OSError):
-            logger.debug("HTTP /interrupt failed for kernel '%s', falling back to SIGUSR1", kernel_id)
+        should_try_http = self._docker_network is not None or kernel.port is not None
+        if should_try_http:
+            try:
+                url = f"{self._kernel_url(kernel)}/interrupt"
+                with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
+                    resp = client.post(url)
+                    if resp.status_code == 200:
+                        logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
+                        return True
+            except (httpx.HTTPError, OSError):
+                logger.debug("HTTP /interrupt failed for kernel '%s', falling back to SIGUSR1", kernel_id)
 
         # --- Fallback: Docker SIGUSR1 ---
         try:
@@ -862,9 +855,7 @@ class KernelManager:
                 response.raise_for_status()
                 return KernelMemoryInfo(**response.json())
         except (httpx.HTTPError, OSError) as exc:
-            raise RuntimeError(
-                f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}"
-            ) from exc
+            raise RuntimeError(f"Could not retrieve memory stats from kernel '{kernel_id}': {exc}") from exc
 
     async def list_kernel_artifacts(self, kernel_id: str) -> list:
         """List all artifacts in a running kernel."""

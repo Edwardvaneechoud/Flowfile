@@ -213,7 +213,7 @@ class FlowNode:
             return
 
         # Wrap callback with output_field_config support if present and enabled
-        output_field_config = getattr(self._setting_input, 'output_field_config', None)
+        output_field_config = getattr(self._setting_input, "output_field_config", None)
         if output_field_config and output_field_config.enabled:
             f = create_schema_callback_with_output_config(f, output_field_config)
 
@@ -608,7 +608,9 @@ class FlowNode:
                 logger.info(f"get_predicted_schema: node_id={self.node_id} - set predicted_schema from schema_callback")
                 return self.node_schema.predicted_schema
             else:
-                logger.warning(f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema")
+                logger.warning(
+                    f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema"
+                )
         else:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
 
@@ -688,7 +690,9 @@ class FlowNode:
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
                                         input_result = v.get_resulting_data()
-                                        self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
+                                        self.print(
+                                            f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}"
+                                        )
                                         input_data.append(input_result)
                                     self.print(f"All {len(input_data)} inputs collected, calling node function")
                                     fl = self._function(*input_data)
@@ -700,7 +704,10 @@ class FlowNode:
                         fl.set_streamable(self.node_settings.streamable)
 
                         # Apply output field configuration if enabled
-                        if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                        if (
+                            hasattr(self._setting_input, "output_field_config")
+                            and self._setting_input.output_field_config
+                        ):
                             try:
                                 fl = apply_output_field_config(fl, self._setting_input.output_field_config)
                             except Exception as e:
@@ -730,7 +737,7 @@ class FlowNode:
 
             # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
             # This ensures schema prediction accounts for output_field_config validation
-            if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+            if hasattr(self._setting_input, "output_field_config") and self._setting_input.output_field_config:
                 if self._setting_input.output_field_config.enabled:
                     fl = apply_output_field_config(fl, self._setting_input.output_field_config)
 
@@ -1104,6 +1111,7 @@ class FlowNode:
         else:
             logger.warning("No external process to cancel")
         self.node_stats.is_canceled = True
+        self._execution_state.is_canceled = True
 
     def execute_node(
         self,
