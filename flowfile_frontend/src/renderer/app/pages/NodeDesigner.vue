@@ -137,11 +137,7 @@
                   @change="handleKernelChange"
                 >
                   <option :value="null">Local (default)</option>
-                  <option
-                    v-for="kernel in availableKernels"
-                    :key="kernel.id"
-                    :value="kernel.id"
-                  >
+                  <option v-for="kernel in availableKernels" :key="kernel.id" :value="kernel.id">
                     {{ kernel.name }}
                     <template v-if="kernel.packages.length">
                       ({{ kernel.packages.join(", ") }})
@@ -149,11 +145,7 @@
                   </option>
                 </select>
               </div>
-              <div
-                v-if="nodeMetadata.kernel_id"
-                class="form-field"
-                style="grid-column: span 2"
-              >
+              <div v-if="nodeMetadata.kernel_id" class="form-field" style="grid-column: span 2">
                 <label>Output Names</label>
                 <div class="output-names-list">
                   <div
@@ -184,7 +176,11 @@
                   </button>
                 </div>
               </div>
-              <div v-else-if="kernelSelectionRequired" class="form-field" style="grid-column: span 2">
+              <div
+                v-else-if="kernelSelectionRequired"
+                class="form-field"
+                style="grid-column: span 2"
+              >
                 <div class="kernel-error">
                   Kernel execution is required for this node. Select a kernel to enable it.
                 </div>

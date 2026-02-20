@@ -1,10 +1,16 @@
 <template>
   <div class="tree-node">
     <div class="tree-row" :class="{ expanded }" @click="toggle">
-      <i :class="expanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'" class="chevron"></i>
-      <i :class="node.level === 0 ? 'fa-solid fa-box-archive' : 'fa-solid fa-layer-group'" class="ns-icon"></i>
+      <i
+        :class="expanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
+        class="chevron"
+      ></i>
+      <i
+        :class="node.level === 0 ? 'fa-solid fa-box-archive' : 'fa-solid fa-layer-group'"
+        class="ns-icon"
+      ></i>
       <span class="ns-name">{{ node.name }}</span>
-      <span class="ns-count" v-if="totalFlows > 0">{{ totalFlows }}</span>
+      <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
       <div class="tree-actions" @click.stop>
         <button
           v-if="node.level === 0"
@@ -84,7 +90,9 @@
       >
         <i class="fa-solid fa-cube artifact-icon"></i>
         <span class="artifact-name">{{ group.name }}</span>
-        <span v-if="group.versionCount > 1" class="artifact-versions-count">{{ group.versionCount }} versions</span>
+        <span v-if="group.versionCount > 1" class="artifact-versions-count"
+          >{{ group.versionCount }} versions</span
+        >
         <span class="artifact-version">v{{ group.latest.version }}</span>
       </div>
     </div>
@@ -117,26 +125,31 @@ defineEmits<{
 }>();
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
-  if (node.flows.some(f => f.id === flowId)) return true;
-  return node.children.some(child => containsFlow(child, flowId));
+  if (node.flows.some((f) => f.id === flowId)) return true;
+  return node.children.some((child) => containsFlow(child, flowId));
 }
 
 const expanded = ref(true);
-const toggle = () => { expanded.value = !expanded.value; };
+const toggle = () => {
+  expanded.value = !expanded.value;
+};
 
-watch(() => props.selectedFlowId, (flowId) => {
-  if (flowId !== null && containsFlow(props.node, flowId)) {
-    expanded.value = true;
-  }
-});
+watch(
+  () => props.selectedFlowId,
+  (flowId) => {
+    if (flowId !== null && containsFlow(props.node, flowId)) {
+      expanded.value = true;
+    }
+  },
+);
 
 function countUniqueArtifactNames(artifacts: GlobalArtifact[]): number {
-  return new Set(artifacts.map(a => a.name)).size;
+  return new Set(artifacts.map((a) => a.name)).size;
 }
 
 const groupedArtifacts = computed((): ArtifactGroup[] => {
   const byName = new Map<string, GlobalArtifact[]>();
-  for (const a of (props.node.artifacts ?? [])) {
+  for (const a of props.node.artifacts ?? []) {
     const list = byName.get(a.name) ?? [];
     list.push(a);
     byName.set(a.name, list);
@@ -300,11 +313,19 @@ const totalFlows = computed(() => {
   flex-shrink: 0;
 }
 
-.run-indicator.success { background: #22c55e; }
-.run-indicator.failure { background: #ef4444; }
+.run-indicator.success {
+  background: #22c55e;
+}
+.run-indicator.failure {
+  background: #ef4444;
+}
 
-.tree-flow.file-missing { opacity: 0.55; }
-.tree-flow.file-missing .flow-icon { color: #f59e0b; }
+.tree-flow.file-missing {
+  opacity: 0.55;
+}
+.tree-flow.file-missing .flow-icon {
+  color: #f59e0b;
+}
 
 .missing-icon {
   font-size: 11px;

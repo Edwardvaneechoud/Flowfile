@@ -1,24 +1,22 @@
 <template>
   <div class="cell-wrapper" :class="cellClasses">
     <!-- Gutter: execution count or cell index -->
-    <div class="cell-gutter">
-      [{{ cell.output?.execution_count ?? cellIndex + 1 }}]
-    </div>
+    <div class="cell-gutter">[{{ cell.output?.execution_count ?? cellIndex + 1 }}]</div>
 
     <!-- Main content area -->
     <div class="cell-content">
       <!-- Toolbar (shown on hover/focus) -->
       <div class="cell-toolbar">
-        <button @click="emit('run-cell')" :disabled="isExecuting" title="Run cell (Shift+Enter)">
+        <button :disabled="isExecuting" title="Run cell (Shift+Enter)" @click="emit('run-cell')">
           <i class="fa-solid fa-play"></i>
         </button>
-        <button @click="emit('move-up')" :disabled="cellIndex === 0" title="Move up">
+        <button :disabled="cellIndex === 0" title="Move up" @click="emit('move-up')">
           <i class="fa-solid fa-chevron-up"></i>
         </button>
-        <button @click="emit('move-down')" :disabled="isLastCell" title="Move down">
+        <button :disabled="isLastCell" title="Move down" @click="emit('move-down')">
           <i class="fa-solid fa-chevron-down"></i>
         </button>
-        <button @click="emit('delete')" :disabled="cellCount <= 1" title="Delete cell">
+        <button :disabled="cellCount <= 1" title="Delete cell" @click="emit('delete')">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
@@ -27,12 +25,12 @@
       <div class="cell-editor-wrapper">
         <codemirror
           :model-value="cell.code"
-          @update:model-value="(val: string) => emit('update:code', val)"
           placeholder="# Enter code..."
           :autofocus="false"
           :indent-with-tab="false"
           :tab-size="4"
           :extensions="cellExtensions"
+          @update:model-value="(val: string) => emit('update:code', val)"
         />
       </div>
 
@@ -74,18 +72,18 @@ interface Props {
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
-  (e: 'update:code', code: string): void;
-  (e: 'run-cell'): void;
-  (e: 'run-cell-and-advance'): void;
-  (e: 'move-up'): void;
-  (e: 'move-down'): void;
-  (e: 'delete'): void;
+  (e: "update:code", code: string): void;
+  (e: "run-cell"): void;
+  (e: "run-cell-and-advance"): void;
+  (e: "move-up"): void;
+  (e: "move-down"): void;
+  (e: "delete"): void;
 }>();
 
 // Cell classes (computed)
 const cellClasses = computed(() => ({
-  'cell--executing': props.isExecuting,
-  'cell--error': props.cell.output?.error,
+  "cell--executing": props.isExecuting,
+  "cell--error": props.cell.output?.error,
 }));
 
 // ─── CodeMirror Extensions ───────────────────────────────────────────────────
@@ -121,14 +119,14 @@ const notebookKeymap = keymap.of([
   {
     key: "Shift-Enter",
     run: (): boolean => {
-      emit('run-cell');
+      emit("run-cell");
       return true; // MUST return true to prevent newline insertion
     },
   },
   {
     key: "Mod-Enter", // Ctrl+Enter on Windows/Linux, Cmd+Enter on Mac
     run: (): boolean => {
-      emit('run-cell-and-advance');
+      emit("run-cell-and-advance");
       return true;
     },
   },
@@ -195,7 +193,7 @@ const cellExtensions: Extension[] = [
   align-items: flex-start;
   justify-content: center;
   padding-top: 0.4rem;
-  font-family: 'Fira Code', monospace;
+  font-family: "Fira Code", monospace;
   font-size: 0.65rem;
   color: var(--el-text-color-placeholder);
   user-select: none;

@@ -7,7 +7,11 @@
       </div>
       <div class="kernel-card__meta">
         <p class="kernel-card__id">{{ kernel.id }}</p>
-        <span v-if="kernel.kernel_version" class="kernel-card__version" title="Kernel runtime version">
+        <span
+          v-if="kernel.kernel_version"
+          class="kernel-card__version"
+          title="Kernel runtime version"
+        >
           v{{ kernel.kernel_version }}
         </span>
       </div>
@@ -103,9 +107,9 @@ const props = defineProps<{
 }>();
 
 defineEmits<{
-  start: [id: string];
-  stop: [id: string];
-  delete: [id: string, name: string];
+  (e: "start", id: string): void;
+  (e: "stop", id: string): void;
+  (e: "delete", id: string, name: string): void;
 }>();
 
 const maxPackagesShown = 5;

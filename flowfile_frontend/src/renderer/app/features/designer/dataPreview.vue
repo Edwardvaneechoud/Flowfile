@@ -127,7 +127,11 @@
       </div>
 
       <div
-        v-if="nodeArtifacts.published.length === 0 && nodeArtifacts.consumed.length === 0 && nodeArtifacts.deleted.length === 0"
+        v-if="
+          nodeArtifacts.published.length === 0 &&
+          nodeArtifacts.consumed.length === 0 &&
+          nodeArtifacts.deleted.length === 0
+        "
         class="artifact-empty"
       >
         No artifacts recorded for this node.

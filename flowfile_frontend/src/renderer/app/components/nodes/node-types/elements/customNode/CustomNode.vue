@@ -213,14 +213,13 @@ const loadNodeData = async (nodeId: number) => {
     }
 
     // Initialize kernel selection: saved setting > schema default > null
-    selectedKernelId.value =
-      nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
+    selectedKernelId.value = nodeUserDefined.value?.kernel_id ?? schemaData.kernel_id ?? null;
     kernelRequiredError.value = !!schemaData.requires_kernel && !selectedKernelId.value;
 
     const mainColumns = inputNodeData?.main_input?.columns ?? [];
     if (mainColumns.length) {
       availableColumns.value = mainColumns;
-      columnTypes.value = inputNodeData.main_input.table_schema;
+      columnTypes.value = inputNodeData.main_input?.table_schema ?? [];
     } else {
       console.warn(
         `No main_input or columns found for node ${nodeId}. Select components may be empty.`,

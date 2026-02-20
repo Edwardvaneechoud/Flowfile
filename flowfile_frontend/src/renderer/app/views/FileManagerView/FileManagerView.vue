@@ -2,9 +2,7 @@
   <div class="file-manager-container">
     <div class="mb-3">
       <h2 class="page-title">File Manager</h2>
-      <p class="page-description">
-        Upload and manage data files in the shared directory
-      </p>
+      <p class="page-description">Upload and manage data files in the shared directory</p>
     </div>
 
     <!-- Upload Card -->
@@ -22,9 +20,7 @@
           @click="openFilePicker"
         >
           <i class="fa-solid fa-cloud-arrow-up upload-zone__icon"></i>
-          <p class="upload-zone__text">
-            Drag and drop files here, or click to browse
-          </p>
+          <p class="upload-zone__text">Drag and drop files here, or click to browse</p>
           <p class="upload-zone__hint">
             Supported: CSV, Parquet, Excel (.xlsx/.xls), JSON, TXT, TSV
           </p>
@@ -40,11 +36,7 @@
 
         <!-- Upload progress -->
         <div v-if="uploadQueue.length > 0" class="upload-queue">
-          <div
-            v-for="item in uploadQueue"
-            :key="item.name"
-            class="upload-queue__item"
-          >
+          <div v-for="item in uploadQueue" :key="item.name" class="upload-queue__item">
             <div class="upload-queue__info">
               <i :class="getFileIcon(item.name)" class="upload-queue__file-icon"></i>
               <span class="upload-queue__name">{{ item.name }}</span>
@@ -75,9 +67,7 @@
     <!-- Files List Card -->
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">
-          Files ({{ filteredFiles.length }})
-        </h3>
+        <h3 class="card-title">Files ({{ filteredFiles.length }})</h3>
         <div v-if="files.length > 0" class="search-container">
           <input
             v-model="searchTerm"
@@ -102,11 +92,7 @@
         </div>
 
         <div v-else-if="filteredFiles.length > 0" class="connections-list">
-          <div
-            v-for="file in filteredFiles"
-            :key="file.name"
-            class="connection-item"
-          >
+          <div v-for="file in filteredFiles" :key="file.name" class="connection-item">
             <div class="connection-info">
               <div class="connection-name">
                 <i :class="getFileIcon(file.name)"></i>
@@ -143,33 +129,23 @@
       <div class="modal-container" @click.stop>
         <div class="modal-header">
           <h3 class="modal-title">Delete File</h3>
-          <button
-            class="modal-close"
-            aria-label="Close delete confirmation"
-            @click="cancelDelete"
-          >
+          <button class="modal-close" aria-label="Close delete confirmation" @click="cancelDelete">
             <i class="fa-solid fa-times"></i>
           </button>
         </div>
         <div class="modal-content">
           <p>
             Are you sure you want to delete
-            <strong>{{ fileToDelete }}</strong>?
+            <strong>{{ fileToDelete }}</strong
+            >?
           </p>
           <p class="warning-text">
-            This action cannot be undone. Any flows referencing this file will
-            need to be updated.
+            This action cannot be undone. Any flows referencing this file will need to be updated.
           </p>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="cancelDelete">
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger-filled"
-            :disabled="isDeleting"
-            @click="handleDeleteFile"
-          >
+          <button class="btn btn-secondary" @click="cancelDelete">Cancel</button>
+          <button class="btn btn-danger-filled" :disabled="isDeleting" @click="handleDeleteFile">
             <i v-if="isDeleting" class="fas fa-spinner fa-spin"></i>
             {{ isDeleting ? "Deleting..." : "Delete File" }}
           </button>
@@ -183,15 +159,8 @@
 import { ref, onMounted } from "vue";
 import { useFileManager } from "./useFileManager";
 
-const {
-  files,
-  filteredFiles,
-  isLoading,
-  searchTerm,
-  loadFiles,
-  uploadFile,
-  deleteFile,
-} = useFileManager();
+const { files, filteredFiles, isLoading, searchTerm, loadFiles, uploadFile, deleteFile } =
+  useFileManager();
 
 // Upload state
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -206,8 +175,7 @@ interface UploadQueueItem {
 
 const uploadQueue = ref<UploadQueueItem[]>([]);
 
-const acceptString =
-  ".csv,.parquet,.xlsx,.xls,.json,.txt,.tsv";
+const acceptString = ".csv,.parquet,.xlsx,.xls,.json,.txt,.tsv";
 
 // Delete state
 const showDeleteModal = ref(false);
@@ -250,16 +218,13 @@ async function processFiles(fileList: File[]) {
       item.progress = 100;
     } catch (error: any) {
       item.status = "error";
-      item.error =
-        error.response?.data?.detail || error.message || "Upload failed";
+      item.error = error.response?.data?.detail || error.message || "Upload failed";
     }
   }
 
   // Clear completed items after a delay
   setTimeout(() => {
-    uploadQueue.value = uploadQueue.value.filter(
-      (i) => i.status === "uploading",
-    );
+    uploadQueue.value = uploadQueue.value.filter((i) => i.status === "uploading");
   }, 3000);
 }
 

@@ -51,13 +51,24 @@
             <i class="fa-solid fa-triangle-exclamation"></i>
             No kernel selected. A kernel is required to run Python code.
           </div>
-          <div v-else-if="selectedKernelState && selectedKernelState !== 'idle'" class="kernel-warning">
+          <div
+            v-else-if="selectedKernelState && selectedKernelState !== 'idle'"
+            class="kernel-warning"
+          >
             <i class="fa-solid fa-triangle-exclamation"></i>
             Kernel is {{ selectedKernelState }}.
-            <template v-if="selectedKernelState === 'stopped'">Start it from the Kernel Manager to execute code.</template>
-            <template v-else-if="selectedKernelState === 'error'">Check the Kernel Manager for details.</template>
-            <template v-else-if="selectedKernelState === 'starting'">Please wait for it to become idle.</template>
-            <template v-else-if="selectedKernelState === 'executing'">Please wait for the current execution to finish.</template>
+            <template v-if="selectedKernelState === 'stopped'"
+              >Start it from the Kernel Manager to execute code.</template
+            >
+            <template v-else-if="selectedKernelState === 'error'"
+              >Check the Kernel Manager for details.</template
+            >
+            <template v-else-if="selectedKernelState === 'starting'"
+              >Please wait for it to become idle.</template
+            >
+            <template v-else-if="selectedKernelState === 'executing'"
+              >Please wait for the current execution to finish.</template
+            >
           </div>
         </div>
 
@@ -78,7 +89,9 @@
                     class="artifact-tag"
                   >
                     {{ artifact.name }}
-                    <span v-if="artifact.type_name" class="artifact-type">({{ artifact.type_name }})</span>
+                    <span v-if="artifact.type_name" class="artifact-type"
+                      >({{ artifact.type_name }})</span
+                    >
                   </span>
                 </template>
                 <span v-else class="artifacts-empty">None</span>
@@ -92,7 +105,9 @@
                     class="artifact-tag artifact-tag--published"
                   >
                     {{ artifact.name }}
-                    <span v-if="artifact.type_name" class="artifact-type">({{ artifact.type_name }})</span>
+                    <span v-if="artifact.type_name" class="artifact-type"
+                      >({{ artifact.type_name }})</span
+                    >
                   </span>
                 </template>
                 <span v-else class="artifacts-empty">Run the flow to see published artifacts</span>
@@ -147,8 +162,12 @@
                 class="kernel-state-dot"
                 :class="`kernel-state-dot--${selectedKernelState}`"
               ></span>
-              {{ kernels.find(k => k.id === selectedKernelId)?.name }}
-              <span v-if="memoryDisplay" class="kernel-indicator__memory" :class="`kernel-memory--${memoryLevel}`">
+              {{ kernels.find((k) => k.id === selectedKernelId)?.name }}
+              <span
+                v-if="memoryDisplay"
+                class="kernel-indicator__memory"
+                :class="`kernel-memory--${memoryLevel}`"
+              >
                 {{ memoryDisplay }}
               </span>
             </span>
@@ -369,9 +388,7 @@ const loadArtifacts = async () => {
       availableArtifacts.value = allArtifacts.filter(
         (a) => a.node_id != null && upstreamSet.has(a.node_id),
       );
-      publishedArtifacts.value = allArtifacts.filter(
-        (a) => a.node_id === currentNodeId,
-      );
+      publishedArtifacts.value = allArtifacts.filter((a) => a.node_id === currentNodeId);
     } else {
       availableArtifacts.value = [];
       publishedArtifacts.value = [];
@@ -397,7 +414,7 @@ const loadFlowRunDisplayOutputs = async () => {
     if (outputs.length > 0 && cells.value.length > 0) {
       // Attach display outputs to the last cell
       const lastCell = cells.value[cells.value.length - 1];
-      cells.value = cells.value.map(c =>
+      cells.value = cells.value.map((c) =>
         c.id === lastCell.id
           ? {
               ...c,
@@ -440,15 +457,17 @@ const syncCellsToNode = () => {
   if (!nodePythonScript.value) return;
 
   // Persist cells WITHOUT output (outputs are runtime-only, contain base64 images)
-  nodePythonScript.value.python_script_input.cells = cells.value.map(c => ({
+  nodePythonScript.value.python_script_input.cells = cells.value.map((c) => ({
     id: c.id,
     code: c.code,
   }));
 
   // Derive combined code for flow execution
   // flow_graph.py reads python_script_input.code — this must always be populated
-  nodePythonScript.value.python_script_input.code =
-    cells.value.map(c => c.code).filter(Boolean).join("\n\n");
+  nodePythonScript.value.python_script_input.code = cells.value
+    .map((c) => c.code)
+    .filter(Boolean)
+    .join("\n\n");
 };
 
 // ─── Node settings composable ───────────────────────────────────────────────
@@ -474,7 +493,7 @@ const loadNodeData = async (nodeId: number) => {
     if (nodeData.value) {
       const hasValidSetup = Boolean(
         nodeData.value?.setting_input?.is_setup &&
-          nodeData.value?.setting_input?.python_script_input,
+        nodeData.value?.setting_input?.python_script_input,
       );
 
       nodePythonScript.value = hasValidSetup
@@ -485,18 +504,20 @@ const loadNodeData = async (nodeId: number) => {
       const input = nodePythonScript.value!.python_script_input;
       if (input.cells && input.cells.length > 0) {
         // Load from saved cells (output is runtime-only, not persisted)
-        cells.value = input.cells.map(c => ({
+        cells.value = input.cells.map((c) => ({
           id: c.id,
           code: c.code,
           output: null,
         }));
       } else {
         // Backward compat: create single cell from existing code
-        cells.value = [{
-          id: crypto.randomUUID(),
-          code: input.code || DEFAULT_PYTHON_SCRIPT_CODE,
-          output: null,
-        }];
+        cells.value = [
+          {
+            id: crypto.randomUUID(),
+            code: input.code || DEFAULT_PYTHON_SCRIPT_CODE,
+            output: null,
+          },
+        ];
       }
 
       selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
