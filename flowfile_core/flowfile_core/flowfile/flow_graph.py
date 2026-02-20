@@ -963,7 +963,6 @@ class FlowGraph:
 
             # Generate the kernel code from the custom node's process method
             code = custom_node.generate_kernel_code()
-            node_logger.info(f"Kernel code generated for execution:\n{code}")
 
             # Build log callback URL
             if manager._kernel_volume:

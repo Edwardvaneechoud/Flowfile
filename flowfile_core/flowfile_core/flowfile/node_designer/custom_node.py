@@ -597,8 +597,10 @@ except ModuleNotFoundError:
 
 self = _Self()
 
-# --- Read inputs ---
-inputs = [flowfile.read_input()]
+        # --- Read inputs ---
+        inputs = flowfile.read_inputs().get("main", [])
+        if not inputs:
+            inputs = [flowfile.read_input()] if hasattr(flowfile, "read_input") else []
 
 # --- Process body ---
 {body}

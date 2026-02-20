@@ -175,10 +175,10 @@ async function fetchKernels() {
   }
 }
 
-async function fetchAvailableArtifacts(nodeId: number) {
+async function fetchAvailableArtifacts(nodeId: number, kernelId: string | null) {
   try {
     const response = await axios.get("/flow/node_available_artifacts", {
-      params: { flow_id: nodeStore.flow_id, node_id: nodeId },
+      params: { flow_id: nodeStore.flow_id, node_id: nodeId, kernel_id: kernelId },
     });
     const artifacts = response.data?.artifacts ?? [];
     artifactOptions.value = artifacts.map((artifact: any) => artifact.name);
@@ -195,7 +195,7 @@ const loadNodeData = async (nodeId: number) => {
   currentNodeId.value = nodeId;
 
   try {
-  const inputNodeData = await nodeStore.getNodeData(nodeId, false);
+    const inputNodeData = await nodeStore.getNodeData(nodeId, false);
     if (!inputNodeData) {
       return;
     }
@@ -227,7 +227,7 @@ const loadNodeData = async (nodeId: number) => {
       );
     }
 
-    await fetchAvailableArtifacts(nodeId);
+    await fetchAvailableArtifacts(nodeId, selectedKernelId.value ?? schemaData.kernel_id ?? null);
 
     initializeFormData(schemaData, inputNodeData?.setting_input);
   } catch (err: any) {
