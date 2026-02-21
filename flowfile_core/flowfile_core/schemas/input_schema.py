@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -97,7 +98,7 @@ class OutputFieldConfig(BaseModel):
         "add_missing",  # Add missing fields with defaults, remove extra columns
         "add_missing_keep_extra",  # Add missing fields with defaults, keep all incoming columns
         "raise_on_missing",  # Raise error if any fields are missing
-        "select_only"  # Select only specified fields, skip missing silently
+        "select_only",  # Select only specified fields, skip missing silently
     ] = "select_only"
     fields: list[OutputFieldInfo] = Field(default_factory=list)
     validate_data_types: bool = False  # Enable data type validation without casting
@@ -728,7 +729,9 @@ class NodeManualInput(NodeBase):
             desc = ", ".join(cols)
             if len(self.raw_data_format.columns) > 5:
                 desc += f" (+{len(self.raw_data_format.columns) - 5} more)"
-            num_rows = len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            num_rows = (
+                len(self.raw_data_format.data[0]) if self.raw_data_format.data and self.raw_data_format.data[0] else 0
+            )
             return f"{len(self.raw_data_format.columns)} cols, {num_rows} rows: {desc}"
         return ""
 
@@ -795,6 +798,19 @@ class DatabaseSettings(BaseModel):
     query: str | None = None
     query_mode: Literal["query", "table", "reference"] = "table"
 
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. "
+                        f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
+
     @model_validator(mode="after")
     def validate_table_or_query(self):
         # Validate that either table_name or query is provided
@@ -820,6 +836,19 @@ class DatabaseWriteSettings(BaseModel):
     table_name: str
     schema_name: str | None = None
     if_exists: Literal["append", "replace", "fail"] | None = "append"
+
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. "
+                        f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
 
 
 class NodeDatabaseReader(NodeBase):
@@ -1139,7 +1168,34 @@ class NodePolarsCode(NodeMultiInput):
         return first_line
 
 
+class NotebookCell(BaseModel):
+    """A single cell in the notebook editor.
+
+    Note: Cell output (stdout, display_outputs, errors) is handled entirely
+    on the frontend and is not persisted. Only id and code are stored.
+    """
+
+    id: str
+    code: str = ""
+
+
+class PythonScriptInput(BaseModel):
+    """Settings for Python code execution on a kernel."""
+
+    code: str = ""
+    kernel_id: str | None = None
+    cells: list[NotebookCell] | None = None
+
+
+class NodePythonScript(NodeMultiInput):
+    """Node that executes Python code on a kernel container."""
+
+    python_script_input: PythonScriptInput = PythonScriptInput()
+
+
 class UserDefinedNode(NodeMultiInput):
     """Settings for a node that contains the user defined node information"""
 
     settings: Any
+    kernel_id: str | None = None
+    output_names: list[str] = Field(default_factory=lambda: ["main"])

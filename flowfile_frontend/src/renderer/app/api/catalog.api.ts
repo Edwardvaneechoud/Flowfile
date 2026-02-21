@@ -8,6 +8,7 @@ import type {
   FlowRegistrationUpdate,
   FlowRun,
   FlowRunDetail,
+  GlobalArtifact,
   NamespaceCreate,
   NamespaceTree,
   NamespaceUpdate,
@@ -131,6 +132,16 @@ export class CatalogApi {
   static async openRunSnapshot(runId: number): Promise<number> {
     const response = await axios.post<{ flow_id: number }>(`/catalog/runs/${runId}/open`);
     return response.data.flow_id;
+  }
+
+  // ====== Artifacts ======
+
+  /** List active artifacts produced by a specific registered flow. */
+  static async getFlowArtifacts(registrationId: number): Promise<GlobalArtifact[]> {
+    const response = await axios.get<GlobalArtifact[]>(
+      `/catalog/flows/${registrationId}/artifacts`,
+    );
+    return response.data;
   }
 
   // ====== Stats ======

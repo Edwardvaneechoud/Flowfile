@@ -59,12 +59,15 @@
           <tr v-for="(nr, idx) in nodeResults" :key="idx">
             <td>{{ nr.node_name || `Node ${nr.node_id}` }}</td>
             <td>
-              <span class="status-badge" :class="nr.success ? 'success' : (nr.success === false ? 'failure' : 'pending')">
-                {{ nr.success ? 'OK' : (nr.success === false ? 'Failed' : 'Running') }}
+              <span
+                class="status-badge"
+                :class="nr.success ? 'success' : nr.success === false ? 'failure' : 'pending'"
+              >
+                {{ nr.success ? "OK" : nr.success === false ? "Failed" : "Running" }}
               </span>
             </td>
-            <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : '--' }}</td>
-            <td class="error-text">{{ nr.error || '--' }}</td>
+            <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : "--" }}</td>
+            <td class="error-text">{{ nr.error || "--" }}</td>
           </tr>
         </tbody>
       </table>
@@ -153,7 +156,9 @@ function formatDuration(seconds: number | null): string {
 </script>
 
 <style scoped>
-.run-detail { max-width: 900px; }
+.run-detail {
+  max-width: 900px;
+}
 
 .detail-header {
   display: flex;
@@ -182,7 +187,10 @@ function formatDuration(seconds: number | null): string {
   transition: all var(--transition-fast);
 }
 
-.back-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
 
 /* Meta Grid */
 .meta-grid {
@@ -215,9 +223,15 @@ function formatDuration(seconds: number | null): string {
   color: var(--color-text-primary);
 }
 
-.text-success { color: #22c55e; }
-.text-danger { color: #ef4444; }
-.text-pending { color: #eab308; }
+.text-success {
+  color: #22c55e;
+}
+.text-danger {
+  color: #ef4444;
+}
+.text-pending {
+  color: #eab308;
+}
 
 .flow-link {
   color: var(--color-primary);
@@ -228,7 +242,9 @@ function formatDuration(seconds: number | null): string {
   transition: opacity var(--transition-fast);
 }
 
-.flow-link:hover { opacity: 0.8; }
+.flow-link:hover {
+  opacity: 0.8;
+}
 
 .flow-link-icon {
   font-size: 10px;
@@ -274,7 +290,10 @@ function formatDuration(seconds: number | null): string {
   color: var(--color-text-primary);
 }
 
-.mono { font-family: monospace; font-size: var(--font-size-xs); }
+.mono {
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+}
 
 .error-text {
   color: var(--color-text-muted);
@@ -293,9 +312,18 @@ function formatDuration(seconds: number | null): string {
   font-weight: var(--font-weight-medium);
 }
 
-.status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-.status-badge.failure { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-.status-badge.pending { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+.status-badge.success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.status-badge.failure {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.status-badge.pending {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
 
 /* Snapshot Header */
 .snapshot-header {
@@ -324,7 +352,9 @@ function formatDuration(seconds: number | null): string {
   transition: opacity var(--transition-fast);
 }
 
-.open-snapshot-btn:hover { opacity: 0.9; }
+.open-snapshot-btn:hover {
+  opacity: 0.9;
+}
 
 /* Snapshot Viewer */
 .snapshot-viewer {

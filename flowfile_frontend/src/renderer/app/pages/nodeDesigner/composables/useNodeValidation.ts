@@ -27,9 +27,9 @@ export function useNodeValidation() {
       });
     }
 
-    if (!nodeMetadata.node_category.trim()) {
-      errors.push({ field: "node_category", message: "Category is required" });
-    }
+  if (!nodeMetadata.node_category.trim()) {
+    errors.push({ field: "node_category", message: "Category is required" });
+  }
 
     // Check for duplicate section names
     const sectionNames = new Set<string>();

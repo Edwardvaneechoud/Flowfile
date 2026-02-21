@@ -1,5 +1,9 @@
 <template>
-  <div class="flow-list-item" :class="{ selected, 'file-missing': !flow.file_exists }" @click="$emit('select')">
+  <div
+    class="flow-list-item"
+    :class="{ selected, 'file-missing': !flow.file_exists }"
+    @click="$emit('select')"
+  >
     <div class="flow-main">
       <i class="fa-solid fa-diagram-project flow-icon"></i>
       <div class="flow-info">
@@ -67,8 +71,12 @@ defineEmits<{
   transition: background var(--transition-fast);
 }
 
-.flow-list-item:hover { background: var(--color-background-hover); }
-.flow-list-item.selected { background: rgba(59, 130, 246, 0.1); }
+.flow-list-item:hover {
+  background: var(--color-background-hover);
+}
+.flow-list-item.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
 
 .flow-main {
   display: flex;
@@ -125,9 +133,15 @@ defineEmits<{
   transition: all var(--transition-fast);
 }
 
-.action-btn:hover { color: var(--color-primary); }
-.star-btn.active { color: #f59e0b; }
-.follow-btn.active { color: var(--color-primary); }
+.action-btn:hover {
+  color: var(--color-primary);
+}
+.star-btn.active {
+  color: #f59e0b;
+}
+.follow-btn.active {
+  color: var(--color-primary);
+}
 
 .run-dot {
   width: 8px;
@@ -135,11 +149,19 @@ defineEmits<{
   border-radius: var(--border-radius-full);
 }
 
-.run-dot.success { background: #22c55e; }
-.run-dot.failure { background: #ef4444; }
+.run-dot.success {
+  background: #22c55e;
+}
+.run-dot.failure {
+  background: #ef4444;
+}
 
-.flow-list-item.file-missing { opacity: 0.55; }
-.flow-list-item.file-missing .flow-icon { color: #f59e0b; }
+.flow-list-item.file-missing {
+  opacity: 0.55;
+}
+.flow-list-item.file-missing .flow-icon {
+  color: #f59e0b;
+}
 
 .flow-name-row {
   display: flex;
@@ -153,5 +175,7 @@ defineEmits<{
   flex-shrink: 0;
 }
 
-.missing-text { color: #f59e0b; }
+.missing-text {
+  color: #f59e0b;
+}
 </style>

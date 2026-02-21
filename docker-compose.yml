@@ -25,6 +25,8 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
+      # Internal token for kernel → Core authentication (shared with kernel containers)
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       # Master key for encrypting secrets - if not set, setup screen will prompt to configure
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - WORKER_HOST=flowfile-worker
@@ -33,6 +35,12 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
+      # SECURITY: The Docker socket gives this container the ability to
+      # create and manage other containers on the host (used for kernel
+      # management).  In production, consider using a Docker socket proxy
+      # (e.g. tecnativa/docker-socket-proxy) to restrict API access to
+      # only the endpoints needed (containers, volumes).
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
@@ -61,9 +69,24 @@ services:
     networks:
       - flowfile-network
 
+  # Build-only service: produces the flowfile-kernel image used by kernel
+  # containers.  Not started by `docker compose up` — build with:
+  #   docker compose build flowfile-kernel
+  flowfile-kernel:
+    build:
+      context: kernel_runtime
+      dockerfile: Dockerfile
+    image: flowfile-kernel
+    entrypoint: ["true"]
+    restart: "no"
+    profiles:
+      - kernel
+
 networks:
   flowfile-network:
     driver: bridge
+    # Fixed name so kernel containers (created via Docker API) can join it
+    name: flowfile-network
 
 volumes:
   flowfile-internal-storage:

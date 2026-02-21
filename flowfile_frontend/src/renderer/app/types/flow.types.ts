@@ -129,3 +129,42 @@ export interface VueFlowInput {
   node_edges: EdgeInput[];
   node_inputs: NodeInput[];
 }
+
+// ============================================================================
+// Artifact Visualization Types
+// ============================================================================
+
+export interface ArtifactPublished {
+  name: string;
+  type_name: string;
+  module: string;
+}
+
+export interface ArtifactConsumed {
+  name: string;
+  source_node_id: number | null;
+  type_name: string;
+}
+
+export interface NodeArtifactSummary {
+  published_count: number;
+  consumed_count: number;
+  deleted_count: number;
+  published: ArtifactPublished[];
+  consumed: ArtifactConsumed[];
+  deleted: string[];
+  kernel_id: string;
+}
+
+export interface ArtifactEdge {
+  source: number;
+  target: number;
+  artifact_name: string;
+  artifact_type: string;
+  kernel_id: string;
+}
+
+export interface FlowArtifactData {
+  nodes: Record<string, NodeArtifactSummary>;
+  edges: ArtifactEdge[];
+}

@@ -15,6 +15,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     get_polars_type,
     get_query_columns,
     get_table_column_types,
+    validate_sql_identifier,
     validate_sql_query,
 )
 from flowfile_core.schemas.input_schema import (
@@ -585,3 +586,178 @@ class TestSQLQueryValidation:
         )
         assert sql_source.query_mode == "table"
         assert "SELECT * FROM users" in sql_source.query
+
+
+# ============================================================================
+# SQL Identifier Validation Tests (no Docker required)
+# ============================================================================
+
+
+class TestSQLIdentifierValidation:
+    """Tests for SQL identifier validation - these don't require a database connection."""
+
+    def test_valid_identifiers(self):
+        """Test that valid identifiers pass validation."""
+        valid_identifiers = [
+            "users",
+            "my_table",
+            "_private",
+            "Table1",
+            "a",
+            "_",
+            "UPPER_CASE",
+            "schema123",
+        ]
+        for identifier in valid_identifiers:
+            validate_sql_identifier(identifier)  # Should not raise
+
+    def test_valid_dotted_identifiers(self):
+        """Test that valid dotted identifiers (schema.table) pass validation."""
+        valid_identifiers = [
+            "public.users",
+            "my_schema.my_table",
+            "analytics.public.credits",
+        ]
+        for identifier in valid_identifiers:
+            validate_sql_identifier(identifier)  # Should not raise
+
+    def test_sql_injection_in_table_name_rejected(self):
+        """Test that SQL injection attempts in table names are rejected."""
+        malicious_names = [
+            "users; DROP TABLE users;--",
+            "users; DELETE FROM users",
+            "users UNION SELECT * FROM secrets",
+            "users' OR '1'='1",
+        ]
+        for name in malicious_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "table name")
+
+    def test_sql_injection_in_schema_name_rejected(self):
+        """Test that SQL injection attempts in schema names are rejected."""
+        malicious_names = [
+            "public; DROP TABLE users;--",
+            "public' OR '1'='1",
+            "public; SELECT * FROM secrets",
+        ]
+        for name in malicious_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "schema name")
+
+    def test_empty_identifier_rejected(self):
+        """Test that empty and whitespace-only identifiers are rejected."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_identifier("", "table name")
+        assert "cannot be empty" in str(exc_info.value)
+
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_identifier("   ", "table name")
+        assert "cannot be empty" in str(exc_info.value)
+
+    def test_special_characters_rejected(self):
+        """Test that special characters in identifiers are rejected."""
+        invalid_names = [
+            "table'name",
+            'table"name',
+            "table--name",
+            "table;name",
+            "table name",
+            "table(name)",
+            "table=name",
+            "1table",
+        ]
+        for name in invalid_names:
+            with pytest.raises(UnsafeSQLError):
+                validate_sql_identifier(name, "table name")
+
+    def test_sql_source_rejects_malicious_table_name(self):
+        """Test that SqlSource constructor rejects malicious table names."""
+        with pytest.raises(UnsafeSQLError):
+            SqlSource(
+                connection_string="postgresql://test:test@localhost/test",
+                table_name="users; DROP TABLE users;--"
+            )
+
+    def test_sql_source_rejects_malicious_schema_name(self):
+        """Test that SqlSource constructor rejects malicious schema names."""
+        with pytest.raises(UnsafeSQLError):
+            SqlSource(
+                connection_string="postgresql://test:test@localhost/test",
+                table_name="users",
+                schema_name="public; DROP TABLE users;--"
+            )
+
+    def test_sql_source_accepts_valid_table_with_schema(self):
+        """Test that SqlSource accepts valid table and schema names."""
+        sql_source = SqlSource(
+            connection_string="postgresql://test:test@localhost/test",
+            table_name="users",
+            schema_name="public"
+        )
+        assert sql_source.query == "SELECT * FROM public.users"
+
+    def test_sql_source_accepts_dotted_table_name(self):
+        """Test that SqlSource accepts dotted table names (schema.table notation)."""
+        sql_source = SqlSource(
+            connection_string="postgresql://test:test@localhost/test",
+            table_name="public.users"
+        )
+        assert sql_source.query == "SELECT * FROM public.users"
+
+    def test_pydantic_database_settings_rejects_malicious_table(self):
+        """Test that DatabaseSettings Pydantic model rejects malicious table names."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DatabaseSettings(
+                table_name="users; DROP TABLE users;--",
+                query_mode="table",
+                connection_mode="inline",
+                database_connection=DatabaseConnection(
+                    database_type="postgresql",
+                    username="test",
+                    password_ref="test",
+                    host="localhost",
+                    port=5432,
+                    database="testdb",
+                ),
+            )
+
+    def test_pydantic_database_settings_rejects_malicious_schema(self):
+        """Test that DatabaseSettings Pydantic model rejects malicious schema names."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DatabaseSettings(
+                table_name="users",
+                schema_name="public; DROP TABLE users;--",
+                query_mode="table",
+                connection_mode="inline",
+                database_connection=DatabaseConnection(
+                    database_type="postgresql",
+                    username="test",
+                    password_ref="test",
+                    host="localhost",
+                    port=5432,
+                    database="testdb",
+                ),
+            )
+
+    def test_pydantic_database_settings_accepts_valid_identifiers(self):
+        """Test that DatabaseSettings accepts valid table and schema names."""
+        settings = DatabaseSettings(
+            table_name="users",
+            schema_name="public",
+            query_mode="table",
+            connection_mode="inline",
+            database_connection=DatabaseConnection(
+                database_type="postgresql",
+                username="test",
+                password_ref="test",
+                host="localhost",
+                port=5432,
+                database="testdb",
+            ),
+        )
+        assert settings.table_name == "users"
+        assert settings.schema_name == "public"

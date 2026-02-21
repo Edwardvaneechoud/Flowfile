@@ -28,6 +28,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "unpivot": input_schema.NodeUnpivot,
     "text_to_rows": input_schema.NodeTextToRows,
     "graph_solver": input_schema.NodeGraphSolver,
+    "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
     "join": input_schema.NodeJoin,
     "cross_join": input_schema.NodeCrossJoin,
@@ -115,6 +116,10 @@ class FlowGraphConfig(BaseModel):
     save_location: str | None = None
     name: str = ""
     path: str = ""
+    source_registration_id: int | None = Field(
+        default=None,
+        description="Catalog registration ID when running a registered flow.",
+    )
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
@@ -174,13 +179,15 @@ class RawLogInput(BaseModel):
     Attributes:
         flowfile_flow_id (int): The ID of the flow that generated the log.
         log_message (str): The content of the log message.
-        log_type (Literal["INFO", "ERROR"]): The type of log.
+        log_type (Literal["INFO", "WARNING", "ERROR"]): The type of log.
+        node_id (int | None): Optional node ID to attribute the log to.
         extra (Optional[dict]): Extra context data for the log.
     """
 
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None
 
 
@@ -196,6 +203,7 @@ class FlowfileSettings(BaseModel):
     auto_save: bool = False
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
+    source_registration_id: int | None = None
 
 
 class FlowfileNode(BaseModel):

@@ -11,6 +11,7 @@ import type {
   HistoryState,
   UndoRedoResult,
   OperationResponse,
+  FlowArtifactData,
 } from "../types";
 
 export class FlowApi {
@@ -317,5 +318,32 @@ export class FlowApi {
       headers: { accept: "application/json" },
     });
     return response.data;
+  }
+
+  // ============================================================================
+  // Artifact Operations
+  // ============================================================================
+
+  /**
+   * Get artifact visualization data for a flow (badges, edges)
+   */
+  static async getArtifacts(flowId: number): Promise<FlowArtifactData> {
+    const response = await axios.get<FlowArtifactData>("/flow/artifacts", {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get the transitive upstream node IDs for a given node in a flow.
+   * Used to filter which artifacts are reachable via the DAG.
+   */
+  static async getNodeUpstreamIds(flowId: number, nodeId: number): Promise<number[]> {
+    const response = await axios.get<{ upstream_node_ids: number[] }>("/flow/node_upstream_ids", {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { accept: "application/json" },
+    });
+    return response.data.upstream_node_ids;
   }
 }

@@ -397,6 +397,43 @@ def write_output(
         error_message[: len(str(e))] = str(e).encode()
 
 
+def write_parquet(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and write it to a parquet file.
+
+    This offloads the collect() from core to the worker process, producing
+    a Polars-version-independent parquet file at *output_path*.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write_parquet operation to: {output_path}")
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        df.write_parquet(output_path)
+        # Flush to disk to prevent race conditions when another process reads
+        with open(output_path, "rb") as f:
+            os.fsync(f.fileno())
+        flowfile_logger.info(f"write_parquet completed: {len(df)} records written to {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during write_parquet operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
 def generic_task(
     func: Callable,
     progress: Value,

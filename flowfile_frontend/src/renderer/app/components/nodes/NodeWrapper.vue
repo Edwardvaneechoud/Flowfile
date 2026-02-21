@@ -57,6 +57,9 @@
       />
       <component :is="data.component" v-else-if="data.component" :node-id="data.id" />
 
+      <!-- Artifact badges (published/consumed indicators) -->
+      <ArtifactBadge :node-id="data.id" />
+
       <!-- Handles are always rendered -->
       <div
         v-for="(input, index) in data.inputs"
@@ -161,6 +164,7 @@ import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
+import ArtifactBadge from "./ArtifactBadge.vue";
 import type { NodeTemplate } from "../../types";
 
 const nodeStore = useNodeStore();

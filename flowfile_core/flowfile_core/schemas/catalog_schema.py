@@ -6,8 +6,7 @@ run history, favorites and follows.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, ConfigDict, Field
 
 # ==================== Namespace Schemas ====================
 
@@ -38,8 +37,10 @@ class NamespaceOut(BaseModel):
 
 class NamespaceTree(NamespaceOut):
     """Recursive tree node – children are nested schemas of the same hierarchy."""
+
     children: list["NamespaceTree"] = Field(default_factory=list)
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
+    artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -73,6 +74,7 @@ class FlowRegistrationOut(BaseModel):
     last_run_at: datetime | None = None
     last_run_success: bool | None = None
     file_exists: bool = True
+    artifact_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -100,6 +102,7 @@ class FlowRunOut(BaseModel):
 
 class FlowRunDetail(FlowRunOut):
     """Extended run detail that includes the YAML flow snapshot and node results."""
+
     flow_snapshot: str | None = None
     node_results_json: str | None = None
 
@@ -125,6 +128,34 @@ class FollowOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ==================== Global Artifact Schemas ====================
+
+
+class GlobalArtifactOut(BaseModel):
+    """Read-only representation of a global artifact for catalog display."""
+
+    id: int
+    name: str
+    version: int
+    status: str  # "active", "deleted"
+    description: str | None = None
+    python_type: str | None = None
+    python_module: str | None = None
+    serialization_format: str | None = None  # "pickle", "joblib", "parquet"
+    size_bytes: int | None = None
+    sha256: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    namespace_id: int | None = None
+    source_registration_id: int | None = None
+    source_flow_id: int | None = None
+    source_node_id: int | None = None
+    owner_id: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ==================== Catalog Overview ====================
 
 
@@ -133,6 +164,7 @@ class CatalogStats(BaseModel):
     total_flows: int = 0
     total_runs: int = 0
     total_favorites: int = 0
+    total_artifacts: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
 

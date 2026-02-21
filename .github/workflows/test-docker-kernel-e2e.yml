@@ -1,0 +1,94 @@
+name: Docker Kernel E2E Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'kernel_runtime/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/Dockerfile'
+      - 'flowfile_worker/Dockerfile'
+      - 'docker-compose.yml'
+      - 'tests/integration/**'
+      - '.github/workflows/test-docker-kernel-e2e.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'kernel_runtime/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/Dockerfile'
+      - 'flowfile_worker/Dockerfile'
+      - 'docker-compose.yml'
+      - 'tests/integration/**'
+      - '.github/workflows/test-docker-kernel-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  docker-kernel-e2e:
+    name: Docker Kernel E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      COMPOSE_PROJECT_NAME: flowfile-ci-${{ github.run_id }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction --no-ansi
+
+      - name: Run Docker Kernel E2E tests
+        run: |
+          poetry run pytest tests/integration -m docker_integration -vv --tb=long --log-cli-level=INFO
+        timeout-minutes: 15
+
+      - name: Clean up Docker resources
+        if: always()
+        run: |
+          docker compose -p flowfile-ci-${{ github.run_id }} down -v --remove-orphans || true
+          docker ps -a --filter "name=flowfile-kernel" -q | xargs -r docker rm -f || true
+          docker system prune -f
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker containers ==="
+          docker ps -a
+          echo ""
+          echo "=== Compose service logs ==="
+          docker compose -p flowfile-ci-${{ github.run_id }} logs --tail=200 || true
+          echo ""
+          echo "=== Kernel container logs ==="
+          docker ps -a --filter "name=flowfile-kernel" --format "{{.Names}}" | while read name; do
+            echo "--- Logs for $name ---"
+            docker logs "$name" 2>&1 || true
+          done

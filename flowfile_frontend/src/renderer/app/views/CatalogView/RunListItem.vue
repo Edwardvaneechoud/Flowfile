@@ -7,7 +7,11 @@
     </div>
     <div class="run-right">
       <span class="run-duration">{{ formatDuration(run.duration_seconds) }}</span>
-      <i v-if="run.has_snapshot" class="fa-solid fa-code-branch snapshot-icon" title="Has version snapshot"></i>
+      <i
+        v-if="run.has_snapshot"
+        class="fa-solid fa-code-branch snapshot-icon"
+        title="Has version snapshot"
+      ></i>
     </div>
   </div>
 </template>
@@ -30,8 +34,10 @@ const statusClass = computed(() => {
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -54,8 +60,12 @@ function formatDuration(seconds: number | null): string {
   transition: background var(--transition-fast);
 }
 
-.run-list-item:hover { background: var(--color-background-hover); }
-.run-list-item.selected { background: rgba(59, 130, 246, 0.1); }
+.run-list-item:hover {
+  background: var(--color-background-hover);
+}
+.run-list-item.selected {
+  background: rgba(59, 130, 246, 0.1);
+}
 
 .status-dot {
   width: 8px;
@@ -64,9 +74,15 @@ function formatDuration(seconds: number | null): string {
   flex-shrink: 0;
 }
 
-.status-dot.success { background: #22c55e; }
-.status-dot.failure { background: #ef4444; }
-.status-dot.pending { background: #eab308; }
+.status-dot.success {
+  background: #22c55e;
+}
+.status-dot.failure {
+  background: #ef4444;
+}
+.status-dot.pending {
+  background: #eab308;
+}
 
 .run-info {
   display: flex;

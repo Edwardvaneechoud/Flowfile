@@ -16,6 +16,8 @@ DirectoryOptions = Literal[
     "cache_directory",
     "flows_directory",
     "user_defined_nodes_directory",
+    "global_artifacts_directory",
+    "artifact_staging_directory",
 ]
 
 
@@ -142,6 +144,47 @@ class FlowfileStorage:
         """Directory for temporary files specific to flows (internal)."""
         return self.temp_directory / "flows"
 
+    @property
+    def shared_directory(self) -> Path:
+        """Directory shared between core, worker, and kernel containers.
+
+        Lives under internal storage so it's on the same volume that
+        core and worker already share (flowfile-internal-storage).
+        Can be overridden via FLOWFILE_SHARED_DIR environment variable.
+        """
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir)
+        return self.temp_directory / "kernel_shared"
+
+    @property
+    def global_artifacts_directory(self) -> Path:
+        """Directory for permanent storage of global artifacts.
+
+        Must be under the kernel's shared volume so Docker containers can
+        access artifact files.  When FLOWFILE_SHARED_DIR is set (e.g. tests),
+        that path is used directly; otherwise we default to the same
+        ``temp/kernel_shared`` directory that KernelManager mounts.
+        """
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir) / "global_artifacts"
+        # Must match KernelManager default shared volume path
+        return self.temp_directory / "kernel_shared" / "global_artifacts"
+
+    @property
+    def artifact_staging_directory(self) -> Path:
+        """Directory for staging artifact uploads before finalization.
+
+        Must be under the kernel's shared volume so Docker containers can
+        write blobs here.  Uses the same resolution logic as
+        ``global_artifacts_directory``.
+        """
+        shared_dir = os.environ.get("FLOWFILE_SHARED_DIR")
+        if shared_dir:
+            return Path(shared_dir) / "artifact_staging"
+        return self.temp_directory / "kernel_shared" / "artifact_staging"
+
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
         # Internal directories (always created in base_directory)
@@ -152,6 +195,8 @@ class FlowfileStorage:
             self.temp_directory,
             self.system_logs_directory,
             self.temp_directory_for_flows,
+            self.shared_directory,
+            self.artifact_staging_directory,
         ]
 
         # User-accessible directories (location depends on environment)
@@ -161,6 +206,7 @@ class FlowfileStorage:
             self.outputs_directory,
             self.user_defined_nodes_directory,
             self.user_defined_nodes_icons,
+            self.global_artifacts_directory,
         ]
 
         for directory in internal_directories + user_directories:
@@ -268,3 +314,18 @@ def get_logs_directory() -> str:
 def get_system_logs_directory() -> str:
     """Get system logs directory path as string."""
     return str(storage.system_logs_directory)
+
+
+def get_shared_directory() -> str:
+    """Get shared directory path as string."""
+    return str(storage.shared_directory)
+
+
+def get_global_artifacts_directory() -> str:
+    """Get global artifacts directory path as string."""
+    return str(storage.global_artifacts_directory)
+
+
+def get_artifact_staging_directory() -> str:
+    """Get artifact staging directory path as string."""
+    return str(storage.artifact_staging_directory)

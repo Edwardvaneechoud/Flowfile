@@ -56,6 +56,7 @@ pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
 boto3 = ">=1.38.40,<1.38.47"
 cryptography = "^45.0.5"
 httpx = "^0.28.1"
+docker = ">=7.0.0"
 tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
 pl-fuzzy-frame-match = ">=0.4.0"
@@ -102,7 +103,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 markers = [
     "worker: Tests for the flowfile_worker package",
-    "core: Tests for the flowfile_core package"
+    "core: Tests for the flowfile_core package",
+    "kernel: Integration tests requiring Docker kernel containers",
+    "docker_integration: Full Docker-based E2E tests (require Docker, slow)"
 ]
 
 [tool.coverage.run]

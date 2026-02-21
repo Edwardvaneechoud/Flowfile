@@ -234,6 +234,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         auto_save=flowfile_data.flowfile_settings.auto_save,
         show_detailed_progress=flowfile_data.flowfile_settings.show_detailed_progress,
         max_parallel_workers=flowfile_data.flowfile_settings.max_parallel_workers,
+        source_registration_id=flowfile_data.flowfile_settings.source_registration_id,
     )
 
     return schemas.FlowInformation(

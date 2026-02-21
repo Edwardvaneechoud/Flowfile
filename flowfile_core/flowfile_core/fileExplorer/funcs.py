@@ -100,15 +100,17 @@ class SecureFileExplorer:
         else:
             self.sandbox_root = None
 
-        # Set initial current path
-        initial_path = Path(start_path).expanduser().resolve()
+        # Resolve initial path using os.path.realpath (recognized by CodeQL as safe normalization)
+        initial_str = os.path.realpath(os.path.expanduser(str(start_path)))
 
-        # If sandbox is set and initial path is outside it, raise an error
-        # (never silently fall back, as that causes frontend/backend desync)
-        if self.sandbox_root and not self._is_path_safe(initial_path):
-            raise PermissionError(f"Access denied: path is outside the allowed directory")
+        # If sandbox is set, validate path using os.path.realpath + startswith
+        # (this is the pattern CodeQL recognizes as a sanitizer for py/path-injection)
+        if self.sandbox_root is not None:
+            sandbox_str = os.path.realpath(str(self.sandbox_root))
+            if not initial_str.startswith(sandbox_str + os.sep) and initial_str != sandbox_str:
+                raise PermissionError("Access denied: path is outside the allowed directory")
 
-        self.current_path = initial_path
+        self.current_path = Path(initial_str)
 
     def _is_path_safe(self, path: Path) -> bool:
         """Check if a path is within the sandbox root.
