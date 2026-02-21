@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -797,6 +798,19 @@ class DatabaseSettings(BaseModel):
     query: str | None = None
     query_mode: Literal["query", "table", "reference"] = "table"
 
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. "
+                        f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
+
     @model_validator(mode="after")
     def validate_table_or_query(self):
         # Validate that either table_name or query is provided
@@ -822,6 +836,19 @@ class DatabaseWriteSettings(BaseModel):
     table_name: str
     schema_name: str | None = None
     if_exists: Literal["append", "replace", "fail"] | None = "append"
+
+    @field_validator("table_name", "schema_name", mode="before")
+    @classmethod
+    def validate_sql_identifier(cls, v):
+        if v is not None and v != "":
+            parts = v.split(".")
+            for part in parts:
+                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
+                    raise ValueError(
+                        f"Invalid SQL identifier: '{v}'. "
+                        f"Only letters, numbers, and underscores are allowed."
+                    )
+        return v
 
 
 class NodeDatabaseReader(NodeBase):
