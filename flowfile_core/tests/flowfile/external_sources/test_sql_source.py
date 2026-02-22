@@ -351,7 +351,7 @@ def test_error_sql_source_validate():
                                              port=5433,
                                              database='testdb')
     database_settings = DatabaseSettings(database_connection=database_connection,
-                                         schema_name='public', table_name='movies',
+                                         schema_name='public', table_name='moviess',
                                          connection_mode='inline')
     breakpoint()
     ensure_password_is_available()
