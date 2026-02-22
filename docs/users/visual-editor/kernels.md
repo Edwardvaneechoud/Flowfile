@@ -365,6 +365,7 @@ For details on building custom nodes, see [Node Designer](node-designer.md#kerne
 
 Kernel execution is in beta. The following limitations are known and being worked on:
 
+- **Named reads from inputs** — Currently all inputs are named `main` and provided as a list of DataFrames. Ideally inputs would be named based on their source connections, allowing you to read them by name (e.g. `flowfile.read_input("orders")`). This is not yet implemented.
 - **Flow-to-code export** — Python Script nodes that use kernel execution are not yet included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes will be skipped in the generated code.
 - **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile.list_artifacts()` in code, but there is no visual artifact explorer yet.
 - **Python package versioning** — Packages specified during kernel creation are installed via `pip install` at container startup without version pinning. There is no lock file or reproducible environment mechanism yet. To pin versions, specify them explicitly in the packages field (e.g. `scikit-learn==1.4.0, pandas==2.1.0`).
