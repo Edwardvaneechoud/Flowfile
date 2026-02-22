@@ -353,7 +353,6 @@ def test_error_sql_source_validate():
     database_settings = DatabaseSettings(database_connection=database_connection,
                                          schema_name='public', table_name='moviess',
                                          connection_mode='inline')
-    breakpoint()
     ensure_password_is_available()
     sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
     assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
