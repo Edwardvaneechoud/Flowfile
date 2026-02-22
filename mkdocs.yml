@@ -96,6 +96,7 @@ nav:
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
         - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
         - Export to Python: users/visual-editor/tutorials/code-generator.md
+      - Kernel Execution: users/visual-editor/kernels.md
       - Node Designer: users/visual-editor/node-designer.md
       - Settings: users/visual-editor/settings.md
 
@@ -134,5 +135,6 @@ nav:
     - Architecture: for-developers/architecture.md
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
+    - Kernel Architecture: for-developers/kernel-architecture.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
