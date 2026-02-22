@@ -1,65 +1,16 @@
 import { app, BrowserWindow, Menu, MenuItemConstructorOptions, shell } from "electron";
-import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
 import { createWindow, getMainWindow, createLoadingWindow } from "./windowManager";
 import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { loadWindow } from "./windowLoader";
-import { platform } from "os";
 import {
   setupIpcHandlers,
   setupWindowIpcHandlers,
   setupAppIpcHandlers,
-  updateDockerStatus,
   updateServicesStatus,
 } from "./ipcHandlers";
-
-async function checkDocker(): Promise<{
-  isAvailable: boolean;
-  error: string | null;
-}> {
-  const currentPlatform = platform();
-  const isWindows = currentPlatform === "win32";
-  const isMac = currentPlatform === "darwin";
-
-  return new Promise((resolve) => {
-    const checkCommand = "docker info";
-
-    if (isWindows || !isMac) {
-      exec(checkCommand, (error) => {
-        resolve({
-          isAvailable: !error,
-          error: error
-            ? "Docker is not available. Some features may have limited functionality."
-            : null,
-        });
-      });
-      return;
-    }
-
-    exec('pgrep -x "Docker"', (error, stdout) => {
-      if (!stdout) {
-        exec(checkCommand, (error) => {
-          resolve({
-            isAvailable: !error,
-            error: error
-              ? "Docker is not available. Some features may have limited functionality."
-              : null,
-          });
-        });
-        return;
-      }
-
-      exec(checkCommand, (error) => {
-        resolve({
-          isAvailable: !error,
-          error: error ? "Docker service is currently unreachable" : null,
-        });
-      });
-    });
-  });
-}
 
 function setupCustomMenu(mainWindow: BrowserWindow): void {
   const refreshHandler = async (): Promise<void> => {
@@ -168,12 +119,6 @@ app.whenReady().then(async () => {
 
   try {
     const loadingWin = createLoadingWindow();
-
-    const dockerStatusResult = await checkDocker();
-    console.log("Docker status:", dockerStatusResult);
-
-    updateDockerStatus(dockerStatusResult);
-    loadingWin?.webContents.send("update-docker-status", dockerStatusResult);
 
     try {
       const startingStatus = { status: "starting", error: null };
