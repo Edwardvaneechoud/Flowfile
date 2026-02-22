@@ -67,6 +67,7 @@
         class="handle-input"
         :style="getHandleStyle(index, data.inputs.length)"
       >
+        <span v-if="input.label" class="handle-label handle-label-input">{{ input.label }}</span>
         <Handle :id="input.id" type="target" :position="input.position" />
       </div>
       <div
@@ -76,6 +77,7 @@
         :style="getHandleStyle(index, data.outputs.length)"
       >
         <Handle :id="output.id" type="source" :position="output.position" />
+        <span v-if="output.label" class="handle-label handle-label-output">{{ output.label }}</span>
       </div>
 
       <!-- Teleport Context Menu to body -->
@@ -201,10 +203,12 @@ interface NodeData {
   inputs: Array<{
     id: string;
     position: any;
+    label?: string;
   }>;
   outputs: Array<{
     id: string;
     position: any;
+    label?: string;
   }>;
   nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
   nodeItem?: string; // Optional node item name for backward compatibility
@@ -625,6 +629,28 @@ onMounted(async () => {
 .handle-output {
   position: absolute;
   right: -8px;
+}
+
+.handle-label {
+  position: absolute;
+  font-size: 0.6rem;
+  color: var(--color-text-secondary, #999);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60px;
+  pointer-events: none;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 1;
+}
+
+.handle-label-input {
+  left: 10px;
+}
+
+.handle-label-output {
+  right: 10px;
 }
 
 .context-menu {

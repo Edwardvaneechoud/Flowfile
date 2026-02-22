@@ -806,8 +806,7 @@ class DatabaseSettings(BaseModel):
             for part in parts:
                 if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
                     raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. "
-                        f"Only letters, numbers, and underscores are allowed."
+                        f"Invalid SQL identifier: '{v}'. Only letters, numbers, and underscores are allowed."
                     )
         return v
 
@@ -845,8 +844,7 @@ class DatabaseWriteSettings(BaseModel):
             for part in parts:
                 if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
                     raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. "
-                        f"Only letters, numbers, and underscores are allowed."
+                        f"Invalid SQL identifier: '{v}'. Only letters, numbers, and underscores are allowed."
                     )
         return v
 
@@ -996,7 +994,8 @@ class NodeInputConnection(BaseModel):
             case "input-2":
                 return "left"
             case _:
-                raise ValueError(f"Unexpected connection_class: {self.connection_class}")
+                # input-3 through input-9: additional named inputs (multi-input nodes)
+                return "main"
 
 
 class NodePivot(NodeSingleInput):
@@ -1185,6 +1184,7 @@ class PythonScriptInput(BaseModel):
     code: str = ""
     kernel_id: str | None = None
     cells: list[NotebookCell] | None = None
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
 
 
 class NodePythonScript(NodeMultiInput):

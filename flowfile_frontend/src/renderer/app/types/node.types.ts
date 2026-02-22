@@ -562,6 +562,7 @@ export interface PythonScriptInput {
   code: string;
   kernel_id: string | null;
   cells?: NotebookCell[];
+  output_names?: string[];
 }
 
 // ============================================================================

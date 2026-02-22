@@ -145,6 +145,8 @@ class FlowNode:
         self._named_outputs: dict[str, FlowDataEngine] = {}
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
+        # Maps source node id -> target handle used in the connection (e.g. "input-0")
+        self._input_target_handles: dict[int, str] = {}
 
     @property
     def state_needs_reset(self) -> bool:
@@ -518,6 +520,7 @@ class FlowNode:
         from_node: "FlowNode",
         insert_type: Literal["main", "left", "right"] = "main",
         output_handle: str = "output-0",
+        target_handle: str = "input-0",
     ) -> None:
         """Adds a connection from a source node to this node.
 
@@ -525,6 +528,7 @@ class FlowNode:
             from_node: The node to connect from.
             insert_type: The type of input to connect to ('main', 'left', 'right').
             output_handle: The output handle on the source node (e.g. 'output-0', 'output-1').
+            target_handle: The input handle on this node (e.g. 'input-0', 'input-1').
 
         Raises:
             Exception: If the insert_type is invalid.
@@ -543,6 +547,8 @@ class FlowNode:
             raise Exception("Cannot find the connection")
         # Track which output handle of the source node this connection uses
         self._input_output_handles[from_node.node_id] = output_handle
+        # Track which input handle on this node the connection targets
+        self._input_target_handles[from_node.node_id] = target_handle
         if self.setting_input.is_setup:
             if hasattr(self.setting_input, "depending_on_id") and insert_type == "main":
                 self.setting_input.depending_on_id = from_node.node_id
@@ -1527,13 +1533,14 @@ class FlowNode:
         if self.node_inputs.main_inputs is not None:
             for i, main_input in enumerate(self.node_inputs.main_inputs):
                 source_handle = self._input_output_handles.get(main_input.node_id, "output-0")
+                target_handle = self._input_target_handles.get(main_input.node_id, "input-0")
                 edges.append(
                     schemas.NodeEdge(
                         id=f"{main_input.node_id}-{self.node_id}-{i}",
                         source=main_input.node_id,
                         target=self.node_id,
                         sourceHandle=source_handle,
-                        targetHandle="input-0",
+                        targetHandle=target_handle,
                     )
                 )
         if self.node_inputs.left_input is not None:

@@ -22,14 +22,30 @@ def write_inputs_to_parquet(
     input_dir: str,
     flow_id: int,
     node_id: int,
+    input_names: list[str] | None = None,
 ) -> dict[str, list[str]]:
     """Serialize input tables to parquet on the shared volume.
 
-    Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
+    Args:
+        flowfile_tables: The input DataFrames to serialize.
+        manager: The kernel manager (for path translation).
+        input_dir: Directory to write parquet files into.
+        flow_id: The flow ID.
+        node_id: The node ID.
+        input_names: Optional list of names, one per input table. When provided,
+            each table is written under its name instead of all under ``"main"``.
+            Multiple inputs sharing the same name are grouped (union-style).
+            When ``None``, all inputs go under ``"main"`` (backward-compatible).
+
+    Returns:
+        The ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
-    main_paths: list[str] = []
+    result: dict[str, list[str]] = {}
     for idx, ft in enumerate(flowfile_tables):
-        local_path = os.path.join(input_dir, f"main_{idx}.parquet")
+        name = input_names[idx] if input_names and idx < len(input_names) else "main"
+        # Track per-name index for unique file naming
+        name_count = len(result.get(name, []))
+        local_path = os.path.join(input_dir, f"{name}_{name_count}.parquet")
         fetcher = ExternalDfFetcher(
             flow_id=flow_id,
             node_id=node_id,
@@ -40,8 +56,14 @@ def write_inputs_to_parquet(
         )
         if fetcher.has_error:
             raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
-        main_paths.append(manager.to_kernel_path(local_path))
-    return {"main": main_paths}
+        result.setdefault(name, []).append(manager.to_kernel_path(local_path))
+
+    # Backward compatibility: when there's a single named input, also register under "main"
+    if len(result) == 1 and "main" not in result:
+        only_name = next(iter(result))
+        result["main"] = result[only_name]
+
+    return result
 
 
 def build_execute_request(

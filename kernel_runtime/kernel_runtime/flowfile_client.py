@@ -119,8 +119,14 @@ def read_input(name: str = "main") -> pl.LazyFrame:
     When multiple paths are registered under the same name (e.g. a union
     of several upstream nodes), all files are scanned and concatenated
     automatically by Polars.
+
+    When called with the default ``name="main"`` and no ``"main"`` key exists,
+    auto-resolves to the only available input (if there is exactly one).
     """
     input_paths: dict[str, list[str]] = _get_context_value("input_paths")
+    # Auto-resolve: when "main" is requested but doesn't exist and there's exactly one input
+    if name == "main" and "main" not in input_paths and len(input_paths) == 1:
+        name = next(iter(input_paths))
     paths = _check_input_available(input_paths, name)
     if len(paths) == 1:
         return pl.scan_parquet(paths[0])
@@ -366,7 +372,7 @@ def publish_global(
         if resp.status_code >= 400:
             detail = resp.text
             raise RuntimeError(
-                f"Artifact finalize failed ({resp.status_code}): {detail}. " f"Request body: {finalize_body}"
+                f"Artifact finalize failed ({resp.status_code}): {detail}. Request body: {finalize_body}"
             )
 
     return target["artifact_id"]
