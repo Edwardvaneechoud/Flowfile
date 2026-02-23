@@ -23,6 +23,7 @@ Mapping:
 from __future__ import annotations
 
 import ast
+import re
 import textwrap
 from dataclasses import dataclass, field
 from typing import Literal
@@ -231,8 +232,13 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
             return self._artifact_subscript(node.args[0])
 
         if method == "list_artifacts":
-            # flowfile.list_artifacts() → _artifacts["kernel_id"]
-            return self._kernel_artifacts_node()
+            # flowfile.list_artifacts() → dict(_artifacts["kernel_id"])
+            # Wrap in dict() so mutations don't affect the shared store.
+            return ast.Call(
+                func=ast.Name(id="dict", ctx=ast.Load()),
+                args=[self._kernel_artifacts_node()],
+                keywords=[],
+            )
 
         if method == "log":
             return self._make_log_print(node)
@@ -262,7 +268,12 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
         method = call.func.attr
 
         if method == "publish_output":
-            # Remove publish_output statements — we handle via return
+            if call.args and self._last_output_expr is not None:
+                # Keep the expression of non-last publish_output calls so
+                # side effects are preserved (e.g. publish_output(compute())).
+                # The *last* publish_output becomes the return value.
+                if ast.dump(call.args[0]) != ast.dump(self._last_output_expr):
+                    return ast.Expr(value=call.args[0])
             return None
 
         if method == "publish_artifact":
@@ -289,7 +300,7 @@ class _FlowfileCallRewriter(ast.NodeTransformer):
         # Unsupported calls → replace with a marker that becomes a comment
         if _is_flowfile_call(call):
             source = ast.unparse(node.value)
-            marker = f"__FLOWFILE_UNSUPPORTED_{len(self._unsupported_markers)}__"
+            marker = f"__FF_UNSUP_X{len(self._unsupported_markers):04d}X__"
             self._unsupported_markers[marker] = source
             return ast.Expr(value=ast.Name(id=marker, ctx=ast.Load()))
 
@@ -494,10 +505,12 @@ def build_function_code(
     # Add warnings for unsupported calls / dynamic artifact names
     if analysis.unsupported_calls:
         methods = sorted({m for m, _ in analysis.unsupported_calls})
-        body_lines.append(f"# WARNING: The following flowfile API calls are not supported in code generation")
+        body_lines.append("# WARNING: The following flowfile API calls are not supported in code generation")
         body_lines.append(f"# and will not work outside the kernel runtime: {', '.join(methods)}")
     if analysis.dynamic_artifact_names:
         body_lines.append("# WARNING: Dynamic artifact names detected — these may not resolve correctly")
+    if len(analysis.output_exprs) > 1:
+        body_lines.append("# WARNING: Multiple publish_output calls detected — only the last one is returned")
 
     # Strip imports from rewritten code (they go to top-level)
     body_code = _strip_imports_and_flowfile(rewritten_code)
@@ -534,10 +547,16 @@ def build_function_code(
     indented_body = textwrap.indent("\n".join(body_lines), "    ")
     func_def = f"def {func_name}({param_str}) -> {return_type}:\n{indented_body}"
 
-    # Replace unsupported-call markers with comments
+    # Replace unsupported-call marker lines with comments.
+    # Markers appear as standalone expression statements (e.g. "    __FF_UNSUP_X0000X__").
+    # We match the whole line to avoid accidental substring replacement in user code.
     if unsupported_markers:
         for marker, source in unsupported_markers.items():
-            func_def = func_def.replace(marker, f"# {source}  # not supported outside kernel runtime")
+            pattern = re.compile(r"^(\s*)" + re.escape(marker) + r"\s*$", re.MULTILINE)
+            func_def = pattern.sub(
+                rf"\g<1># {source}  # not supported outside kernel runtime",
+                func_def,
+            )
 
     # Build call
     arg_str = ", ".join(args)
@@ -576,25 +595,34 @@ def _build_return_for_output(
 
     The expression is the original AST node from publish_output(expr).
     We need to rewrite any flowfile calls in it and then produce the return.
+
+    Adds ``.lazy()`` only when the expression is likely a DataFrame (variable
+    reference, attribute access, method call, or subscript).  Literal values
+    such as dicts, lists, ints, and strings are returned as-is because calling
+    ``.lazy()`` on them would raise an ``AttributeError``.
     """
     # Create a temporary module to transform the expression
     temp_code = ast.unparse(output_expr)
 
-    # Check if it's just a variable name — common pattern like publish_output(result)
-    # In that case, ensure .lazy() is called for DataFrame returns
-    # We add .lazy() wrapper as a safety measure for DataFrames
     rewriter = _FlowfileCallRewriter(analysis, kernel_id=kernel_id)
     expr_tree = ast.parse(temp_code, mode="eval")
     new_expr = rewriter.visit(expr_tree)
     ast.fix_missing_locations(new_expr)
     rewritten = ast.unparse(new_expr)
 
-    # Check if the expression already has .lazy() call
+    # Already has .lazy() — no need to wrap
     if rewritten.endswith(".lazy()"):
         return f"return {rewritten}"
 
-    # If the expression is just a variable that likely holds a DataFrame,
-    # wrap with .lazy() to ensure LazyFrame return
+    # Detect expressions that are clearly NOT DataFrames (literals, dicts,
+    # lists, sets, tuples, f-strings, booleans).  For these, skip .lazy().
+    inner_expr = new_expr.body  # ast.Expression wraps the actual expr
+    if isinstance(inner_expr, (ast.Constant, ast.Dict, ast.List, ast.Set,
+                               ast.Tuple, ast.JoinedStr)):
+        return f"return {rewritten}"
+
+    # For variable names, attribute access, calls, subscripts — assume it
+    # could be a DataFrame and wrap with .lazy() as a safety measure.
     return f"return {rewritten}.lazy()"
 
 

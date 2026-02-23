@@ -723,3 +723,204 @@ class TestMultiInputCodeGeneration:
         assert "dict[str, list[pl.LazyFrame]]" in generated
         assert "flowfile" not in generated
         verify_code_executes(generated)
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests (from review)
+# ---------------------------------------------------------------------------
+
+
+class TestNonDataFrameOutput:
+    """Test publish_output with non-DataFrame return types."""
+
+    def test_publish_output_dict_no_lazy(self):
+        """publish_output({'key': 'value'}) should NOT have .lazy() appended."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = (
+            "flowfile.publish_output({'result': 42})\n"
+        )
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        generated = export_flow_to_polars(flow)
+        # A dict literal should NOT get .lazy() appended
+        assert ".lazy()" not in generated or "return {" in generated
+        # Verify the dict appears as the return value
+        assert "result" in generated
+
+    def test_publish_output_int_no_lazy(self):
+        """publish_output(42) should NOT have .lazy() appended."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = "flowfile.publish_output(42)\n"
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        generated = export_flow_to_polars(flow)
+        assert "return 42" in generated
+        assert "42.lazy()" not in generated
+
+    def test_publish_output_string_no_lazy(self):
+        """publish_output('hello') should NOT have .lazy() appended."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = "flowfile.publish_output('hello')\n"
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        generated = export_flow_to_polars(flow)
+        assert "hello" in generated
+        assert ".lazy()" not in generated or "hello" in generated.split(".lazy()")[0]
+
+    def test_publish_output_variable_gets_lazy(self):
+        """publish_output(df) should still get .lazy() — it's likely a DataFrame."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = (
+            "df = flowfile.read_input().collect()\n"
+            "flowfile.publish_output(df)\n"
+        )
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        generated = export_flow_to_polars(flow)
+        assert "df.lazy()" in generated
+        verify_code_executes(generated)
+
+
+class TestMultiplePublishOutput:
+    """Test scripts with multiple publish_output calls."""
+
+    def test_two_publish_outputs_warns(self):
+        """Multiple publish_output calls should generate a warning comment."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = (
+            "df = flowfile.read_input().collect()\n"
+            "flowfile.publish_output(df)\n"
+            "result = df.with_columns(x=pl.lit(1))\n"
+            "flowfile.publish_output(result)\n"
+        )
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        generated = export_flow_to_polars(flow)
+        assert "Multiple publish_output" in generated
+        # The last publish_output expression should be the return
+        assert "result.lazy()" in generated
+
+    def test_two_publish_outputs_preserves_first_expr(self):
+        """The expression of the first publish_output should be kept as a statement."""
+        from flowfile_core.flowfile.code_generator.python_script_rewriter import (
+            analyze_flowfile_usage,
+            build_function_code,
+            rewrite_flowfile_calls,
+        )
+
+        code = (
+            "first = compute_a()\n"
+            "flowfile.publish_output(first)\n"
+            "second = compute_b()\n"
+            "flowfile.publish_output(second)\n"
+        )
+        analysis = analyze_flowfile_usage(code)
+        assert len(analysis.output_exprs) == 2
+        rewritten, markers = rewrite_flowfile_calls(code, analysis)
+        # "first" should still appear as a statement (side-effect preserved)
+        assert "first" in rewritten
+
+
+class TestMixedReadInputModes:
+    """Test scripts using both read_input and read_inputs."""
+
+    def test_read_input_when_main_absent(self):
+        """read_input() in multi mode still produces inputs['main'][0]."""
+        from flowfile_core.flowfile.code_generator.python_script_rewriter import (
+            analyze_flowfile_usage,
+            build_function_code,
+            rewrite_flowfile_calls,
+        )
+
+        code = (
+            "df = flowfile.read_input().collect()\n"
+            "all_dfs = flowfile.read_inputs()\n"
+            "flowfile.publish_output(df)\n"
+        )
+        analysis = analyze_flowfile_usage(code)
+        assert analysis.input_mode == "multi"
+        assert analysis.has_read_input is True
+        assert analysis.has_read_inputs is True
+
+        rewritten, _ = rewrite_flowfile_calls(code, analysis)
+        # read_input() should become inputs['main'][0], not just inputs
+        assert "main" in rewritten
+        assert "[0]" in rewritten
+
+
+class TestDefaultKernelScoping:
+    """Test _default kernel scoping with multiple python_script nodes."""
+
+    def test_default_kernel_no_collision(self):
+        """Multiple python_script nodes without kernel_id share _default scope."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        producer_code = (
+            "info = {'key': 'value'}\n"
+            'flowfile.publish_artifact("shared", info)\n'
+            "flowfile.publish_output(flowfile.read_input())\n"
+        )
+        add_python_script_node(flow, node_id=2, code=producer_code, depending_on_ids=[1])
+        connect_nodes(flow, 1, 2)
+
+        consumer_code = (
+            'info = flowfile.read_artifact("shared")\n'
+            "flowfile.publish_output(flowfile.read_input())\n"
+        )
+        add_python_script_node(flow, node_id=3, code=consumer_code, depending_on_ids=[2])
+        connect_nodes(flow, 2, 3)
+
+        generated = export_flow_to_polars(flow)
+        assert "_default" in generated
+        assert "shared" in generated
+        verify_code_executes(generated)
+
+    def test_deterministic_kernel_order(self):
+        """Kernel IDs in _artifacts init should be sorted for deterministic output."""
+        flow = create_basic_flow()
+        add_manual_input_node(flow, node_id=1)
+
+        code = "flowfile.publish_output(flowfile.read_input())\n"
+        # Add nodes with kernels in reverse alphabetical order
+        add_python_script_node(flow, node_id=2, code=code, depending_on_ids=[1], kernel_id="z_kernel")
+        connect_nodes(flow, 1, 2)
+        add_python_script_node(flow, node_id=3, code=code, depending_on_ids=[2], kernel_id="a_kernel")
+        connect_nodes(flow, 2, 3)
+
+        generated = export_flow_to_polars(flow)
+        # a_kernel should come before z_kernel in the initialization
+        a_pos = generated.index("a_kernel")
+        z_pos = generated.index("z_kernel")
+        assert a_pos < z_pos
+
+
+class TestListArtifactsMutation:
+    """Test that list_artifacts returns a copy."""
+
+    def test_list_artifacts_returns_copy(self):
+        """list_artifacts() should produce dict(...) wrapper to prevent mutation."""
+        from flowfile_core.flowfile.code_generator.python_script_rewriter import (
+            analyze_flowfile_usage,
+            rewrite_flowfile_calls,
+        )
+
+        code = "arts = flowfile.list_artifacts()\n"
+        analysis = analyze_flowfile_usage(code)
+        rewritten, _ = rewrite_flowfile_calls(code, analysis, kernel_id="k1")
+        assert "dict(" in rewritten

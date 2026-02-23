@@ -223,6 +223,7 @@ class TestRewriteFlowfileCalls:
         assert "flowfile" not in result
         assert "_artifacts" in result
         assert "k1" in result
+        assert "dict(" in result
 
     def test_default_kernel_id_when_none(self):
         code = 'flowfile.publish_artifact("model", clf)'

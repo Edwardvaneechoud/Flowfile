@@ -1219,8 +1219,8 @@ class FlowGraphToPolarsConverter:
                 self._add_code(f"# Required packages: {', '.join(required)}")
                 self._add_code(f"# Install with: pip install {' '.join(required)}")
                 self._add_code("")
-        except Exception:
-            pass  # Kernel manager not available; skip requirements comment
+        except (ImportError, AttributeError, KeyError):
+            pass  # Kernel manager not available during code generation
 
     # Handlers for unsupported node types - these add nodes to the unsupported list
 
@@ -1746,7 +1746,7 @@ class FlowGraphToPolarsConverter:
 
         # Artifact store — one sub-dict per kernel, matching runtime isolation
         if self._has_python_script_nodes or self._published_artifacts:
-            kernel_init = ", ".join(f'"{kid}": {{}}' for kid in self._kernel_ids_used)
+            kernel_init = ", ".join(f'"{kid}": {{}}' for kid in sorted(self._kernel_ids_used))
             lines.append(f"    _artifacts = {{{kernel_init}}}  # Artifact store (per kernel)")
 
         lines.append("    ")
