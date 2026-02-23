@@ -2,6 +2,7 @@
 // Consolidated from features/designer/baseNode/nodeInterfaces.ts and nodeInput.ts
 
 import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes";
+import type { DisplayOutput } from "./kernel.types";
 
 // ============================================================================
 // Data Type Definitions
@@ -539,6 +540,31 @@ export interface PolarsCodeInput {
 }
 
 // ============================================================================
+// Python Script Types
+// ============================================================================
+
+export interface CellOutput {
+  stdout: string;
+  stderr: string;
+  display_outputs: DisplayOutput[];
+  error: string | null;
+  execution_time_ms: number;
+  execution_count: number;
+}
+
+export interface NotebookCell {
+  id: string;
+  code: string;
+  output?: CellOutput | null;
+}
+
+export interface PythonScriptInput {
+  code: string;
+  kernel_id: string | null;
+  cells?: NotebookCell[];
+}
+
+// ============================================================================
 // Union Types
 // ============================================================================
 
@@ -765,6 +791,10 @@ export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
 }
 
+export interface NodePythonScript extends NodeMultiInput {
+  python_script_input: PythonScriptInput;
+}
+
 export interface NodeUnique extends NodeSingleInput {
   unique_input: UniqueInput;
 }
@@ -775,6 +805,8 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeUserDefined extends NodeMultiInput {
   settings: any;
+  kernel_id?: string | null;
+  output_names?: string[];
 }
 
 export interface NodeFormula extends NodeSingleInput {

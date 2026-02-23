@@ -19,7 +19,7 @@ export interface TextInputComponent extends BaseComponent {
 
 export interface MultiSelectComponent extends BaseComponent {
   component_type: "MultiSelect";
-  options: { __type__: "IncomingColumns" } | string[];
+  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
 }
 
 export interface ToggleSwitchComponent extends BaseComponent {
@@ -42,7 +42,7 @@ export interface SliderInputComponent extends BaseComponent {
 
 export interface SingleSelectComponent extends BaseComponent {
   component_type: "SingleSelect";
-  options: { __type__: "IncomingColumns" } | string[];
+  options: { __type__: "IncomingColumns" } | { __type__: "AvailableArtifacts" } | string[];
 }
 
 export interface ColumnSelectorComponent extends BaseComponent {
@@ -125,6 +125,9 @@ export interface CustomNodeSchema {
   settings_schema: SettingsSchema;
   number_of_inputs: number;
   number_of_outputs: number;
+  requires_kernel?: boolean;
+  kernel_id?: string | null;
+  output_names?: string[];
   node_group?: string;
   title?: string;
   intro?: string;

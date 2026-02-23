@@ -21,7 +21,7 @@
           @click="$emit('toggleFavorite', flow.id)"
         >
           <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
-          {{ flow.is_favorite ? 'Favorited' : 'Favorite' }}
+          {{ flow.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
           class="action-btn-lg"
@@ -29,7 +29,7 @@
           @click="$emit('toggleFollow', flow.id)"
         >
           <i :class="flow.is_following ? 'fa-solid fa-bell' : 'fa-regular fa-bell'"></i>
-          {{ flow.is_following ? 'Following' : 'Follow' }}
+          {{ flow.is_following ? "Following" : "Follow" }}
         </button>
       </div>
     </div>
@@ -39,7 +39,10 @@
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Flow file not found</strong>
-        <p>The file <code>{{ flow.flow_path }}</code> no longer exists on disk. The flow cannot be opened or executed, but its run history is still available below.</p>
+        <p>
+          The file <code>{{ flow.flow_path }}</code> no longer exists on disk. The flow cannot be
+          opened or executed, but its run history is still available below.
+        </p>
       </div>
     </div>
 
@@ -51,7 +54,13 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Last Run</span>
-        <span class="meta-value">{{ flow.last_run_at ? formatDate(flow.last_run_at) : 'Never' }}</span>
+        <span class="meta-value">{{
+          flow.last_run_at ? formatDate(flow.last_run_at) : "Never"
+        }}</span>
+      </div>
+      <div class="meta-card">
+        <span class="meta-label">Artifacts</span>
+        <span class="meta-value">{{ flow.artifact_count ?? 0 }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Status</span>
@@ -78,12 +87,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="run in runs"
-            :key="run.id"
-            class="run-row"
-            @click="$emit('viewRun', run.id)"
-          >
+          <tr v-for="run in runs" :key="run.id" class="run-row" @click="$emit('viewRun', run.id)">
             <td>
               <span class="status-badge" :class="runStatusClass(run)">
                 {{ runStatusText(run) }}
@@ -102,16 +106,53 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Artifacts Section -->
+    <div class="section">
+      <h3>Global Artifacts</h3>
+      <div v-if="artifacts.length === 0" class="empty-runs">No artifacts published yet.</div>
+      <table v-else class="runs-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Version</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="artifact in artifacts" :key="artifact.id" class="artifact-row">
+            <td>
+              <div class="artifact-name">
+                <i class="fa-solid fa-cube artifact-icon"></i>
+                {{ artifact.name }}
+              </div>
+              <div v-if="artifact.description" class="artifact-desc">
+                {{ artifact.description }}
+              </div>
+            </td>
+            <td>v{{ artifact.version }}</td>
+            <td>
+              <span class="type-badge">{{ formatType(artifact) }}</span>
+            </td>
+            <td>{{ formatSize(artifact.size_bytes) }}</td>
+            <td>{{ artifact.created_at ? formatDate(artifact.created_at) : "--" }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { FlowRegistration, FlowRun } from "../../types";
+import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
 
 const props = defineProps<{
   flow: FlowRegistration;
   runs: FlowRun[];
+  artifacts: GlobalArtifact[];
 }>();
 
 defineEmits<{
@@ -143,8 +184,10 @@ function runStatusText(run: FlowRun): string {
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -154,10 +197,27 @@ function formatDuration(seconds: number | null): string {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
+
+function formatType(artifact: GlobalArtifact): string {
+  if (artifact.python_type) {
+    const parts = artifact.python_type.split(".");
+    return parts[parts.length - 1];
+  }
+  return artifact.serialization_format ?? "unknown";
+}
+
+function formatSize(bytes: number | null): string {
+  if (bytes === null) return "--";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 </script>
 
 <style scoped>
-.flow-detail { max-width: 900px; }
+.flow-detail {
+  max-width: 900px;
+}
 
 .detail-header {
   display: flex;
@@ -198,8 +258,14 @@ function formatDuration(seconds: number | null): string {
   transition: all var(--transition-fast);
 }
 
-.action-btn-lg:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.action-btn-lg.active { color: var(--color-primary); border-color: var(--color-primary); }
+.action-btn-lg:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.action-btn-lg.active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
 
 .action-btn-primary {
   display: flex;
@@ -216,7 +282,9 @@ function formatDuration(seconds: number | null): string {
   transition: opacity var(--transition-fast);
 }
 
-.action-btn-primary:hover { opacity: 0.9; }
+.action-btn-primary:hover {
+  opacity: 0.9;
+}
 
 /* ========== Meta Grid ========== */
 .meta-grid {
@@ -255,8 +323,12 @@ function formatDuration(seconds: number | null): string {
   word-break: break-all;
 }
 
-.text-success { color: #22c55e; }
-.text-danger { color: #ef4444; }
+.text-success {
+  color: #22c55e;
+}
+.text-danger {
+  color: #ef4444;
+}
 
 /* ========== Run History Table ========== */
 .section h3 {
@@ -293,7 +365,9 @@ function formatDuration(seconds: number | null): string {
   transition: background var(--transition-fast);
 }
 
-.run-row:hover { background: var(--color-background-hover); }
+.run-row:hover {
+  background: var(--color-background-hover);
+}
 
 .status-badge {
   display: inline-block;
@@ -303,9 +377,18 @@ function formatDuration(seconds: number | null): string {
   font-weight: var(--font-weight-medium);
 }
 
-.status-badge.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-.status-badge.failure { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-.status-badge.pending { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+.status-badge.success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.status-badge.failure {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.status-badge.pending {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
 
 .snapshot-link {
   color: var(--color-primary);
@@ -313,8 +396,45 @@ function formatDuration(seconds: number | null): string {
   font-size: var(--font-size-xs);
 }
 
-.no-snapshot { color: var(--color-text-muted); }
-.empty-runs { color: var(--color-text-muted); font-size: var(--font-size-sm); padding: var(--spacing-4); text-align: center; }
+.no-snapshot {
+  color: var(--color-text-muted);
+}
+.empty-runs {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-4);
+  text-align: center;
+}
+
+/* ========== Artifact Rows ========== */
+.artifact-row td {
+  vertical-align: top;
+}
+.artifact-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-weight: var(--font-weight-medium);
+}
+.artifact-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+}
+.artifact-desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.type-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: monospace;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-secondary);
+}
 
 /* ========== Missing File Banner ========== */
 .missing-banner {

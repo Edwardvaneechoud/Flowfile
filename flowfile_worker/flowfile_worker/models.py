@@ -32,6 +32,7 @@ OperationType = Literal[
     "store_sample",
     "write_to_database",
     "write_to_cloud_storage",
+    "write_parquet",
 ]
 ResultType = Literal["polars", "other"]
 
@@ -140,5 +141,6 @@ class Status(BaseModel):
 class RawLogInput(BaseModel):
     flowfile_flow_id: int
     log_message: str
-    log_type: Literal["INFO", "ERROR"]
+    log_type: Literal["INFO", "WARNING", "ERROR"]
+    node_id: int | None = None
     extra: dict | None = None

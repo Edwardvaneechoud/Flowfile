@@ -15,6 +15,8 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.artifacts import router as artifacts_router
+from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
@@ -40,8 +42,8 @@ server_instance = None
 async def shutdown_handler(app: FastAPI):
     """Handles the graceful startup and shutdown of the FastAPI application.
 
-    This context manager ensures that resources, such as log files, are cleaned
-    up properly when the application is terminated.
+    This context manager ensures that resources, such as log files and kernel
+    containers, are cleaned up properly when the application is terminated.
     """
     print("Starting core application...")
     try:
@@ -49,8 +51,20 @@ async def shutdown_handler(app: FastAPI):
     finally:
         print("Shutting down core application...")
         print("Cleaning up core service resources...")
+        _shutdown_kernels()
         clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
+
+
+def _shutdown_kernels():
+    """Stop all running kernel containers during shutdown."""
+    try:
+        from flowfile_core.kernel import get_kernel_manager
+
+        manager = get_kernel_manager()
+        manager.shutdown_all()
+    except Exception as exc:
+        print(f"Error shutting down kernels: {exc}")
 
 
 # Initialize FastAPI with metadata
@@ -85,11 +99,13 @@ app.add_middleware(
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
+app.include_router(artifacts_router)
 app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
+app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
 
 

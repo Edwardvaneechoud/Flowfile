@@ -45,17 +45,17 @@ async def add_log(flow_id: int, log_message: str):
 @router.post("/raw_logs", tags=["flow_logging"])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """Adds a log message to the log file for a given flow_id."""
-    logger.info("Adding raw logs")
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    flow.flow_logger.get_log_filepath()
     flow_logger = flow.flow_logger
-    flow_logger.get_log_filepath()
+    node_id = raw_log_input.node_id if raw_log_input.node_id is not None else -1
     if raw_log_input.log_type == "INFO":
-        flow_logger.info(raw_log_input.log_message, extra=raw_log_input.extra)
+        flow_logger.info(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
+    elif raw_log_input.log_type == "WARNING":
+        flow_logger.warning(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
     elif raw_log_input.log_type == "ERROR":
-        flow_logger.error(raw_log_input.log_message, extra=raw_log_input.extra)
+        flow_logger.error(raw_log_input.log_message, extra=raw_log_input.extra, node_id=node_id)
     return {"message": "Log added successfully"}
 
 

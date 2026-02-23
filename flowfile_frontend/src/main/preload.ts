@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   sendMessage: (message: string) => ipcRenderer.send("message", message),
-  getDockerStatus: () => ipcRenderer.invoke("get-docker-status"),
   getServicesStatus: () => ipcRenderer.invoke("get-services-status"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   onStartupSuccess: (callback: () => void) => {
@@ -10,13 +9,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("startup-success", listener);
     return () => {
       ipcRenderer.removeListener("startup-success", listener);
-    };
-  },
-  onDockerStatusUpdate: (callback: (status: any) => void) => {
-    const listener = (_: any, status: any) => callback(status);
-    ipcRenderer.on("update-docker-status", listener);
-    return () => {
-      ipcRenderer.removeListener("update-docker-status", listener);
     };
   },
   onServicesStatusUpdate: (callback: (status: any) => void) => {

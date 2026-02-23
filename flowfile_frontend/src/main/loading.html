@@ -157,10 +157,6 @@
             <div class="progress-bar"></div>
         </div>
         <div class="status-list">
-            <div id="docker-item" class="status-item">
-                <div id="docker-icon" class="status-icon pending"></div>
-                <span id="docker-text" class="status-text">Checking Docker availability...</span>
-            </div>
             <div id="services-item" class="status-item">
                 <div id="services-icon" class="status-icon pending"></div>
                 <span id="services-text" class="status-text">Starting services...</span>
@@ -171,17 +167,6 @@
     <script>
         window.electronAPI.getAppVersion().then(version => {
             document.getElementById('version').textContent = 'v' + version;
-        });
-
-        window.electronAPI.onDockerStatusUpdate(({ isAvailable, error }) => {
-            const item = document.getElementById('docker-item');
-            const icon = document.getElementById('docker-icon');
-            const text = document.getElementById('docker-text');
-
-            item.className = 'status-item ' + (isAvailable ? 'success' : 'error');
-            icon.className = 'status-icon ' + (isAvailable ? 'success' : 'error');
-            icon.textContent = isAvailable ? '✓' : '!';
-            text.textContent = isAvailable ? 'Docker is available' : (error || 'Docker unavailable');
         });
 
         window.electronAPI.onServicesStatusUpdate(({ status, error }) => {

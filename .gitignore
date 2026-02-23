@@ -67,8 +67,12 @@ htmlcov/
 # Docker
 flowfile_data/
 
+# Egg info
+*.egg-info/
+
 # Secrets and keys - NEVER commit these
 master_key.txt
 *.key
 *.pem
 !requirements*.txt
+test-embed

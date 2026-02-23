@@ -258,6 +258,74 @@ This generated class is what gets saved to your user-defined nodes directory.
 
 ---
 
+## Kernel Execution
+
+Custom nodes can run their process method inside a Docker-based kernel instead of the local Polars engine. This is useful when your node needs third-party libraries (e.g. scikit-learn, XGBoost), requires more isolation, or produces artifacts.
+
+### Enabling Kernel Mode
+
+1. In the Node Metadata section, check **Require Kernel Execution**
+
+![Require Kernel checkbox](../../assets/images/guides/node-designer/require-kernel-checkbox.png)
+*Enabling kernel execution in the Node Designer metadata section*
+
+2. A new **Execution** section appears below the metadata. Select a kernel from the dropdown.
+
+![Kernel execution section in Node Designer](../../assets/images/guides/node-designer/kernel-execution-section.png)
+*The kernel execution section showing the kernel dropdown and output name configuration*
+
+3. Configure **Output Names** — when a kernel is selected, you can define multiple named outputs (e.g. `main`, `predictions`, `metrics`). Each output name maps to a separate output handle on the node.
+
+!!! tip "Create kernels first"
+    Kernels must be created and started in the [Kernel Manager](kernels.md) before they appear in the dropdown. If no kernels are available, the dropdown only shows "Local (default)".
+
+### How It Works
+
+When kernel execution is enabled:
+
+- The Node Designer auto-generates a kernel script from your `process` method
+- Your `self.settings_schema` values are baked into the script as a lightweight proxy
+- Inputs are read via `flowfile.read_input()` instead of being passed as LazyFrame arguments
+- Return values are published via `flowfile.publish_output()` for each named output
+- The full `flowfile` API is available — artifacts, display, logging, and more
+
+Your process method code stays the same. The `self.settings_schema` pattern works identically in kernel mode — the generated script creates proxy classes that replicate the same access pattern.
+
+### Custom Node with Kernel — Using It in a Flow
+
+When you use a kernel-enabled custom node in a flow, the node settings panel shows a **Kernel** dropdown to select (or change) which kernel runs the node.
+
+![Custom node kernel selector in flow](../../assets/images/guides/node-designer/custom-node-kernel-selector.png)
+*A kernel-enabled custom node in a flow, showing the kernel selector in the node settings panel*
+
+### Example: ML Scoring Node
+
+Here's a process method that trains a model and publishes it as an artifact:
+
+```python
+def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    import flowfile
+    from sklearn.ensemble import RandomForestClassifier
+
+    lf = inputs[0]
+    target_col: str = self.settings_schema.main_section.target_column.value
+
+    df = lf.collect()
+    X = df.drop(target_col).to_numpy()
+    y = df[target_col].to_numpy()
+
+    model = RandomForestClassifier(n_estimators=100).fit(X, y)
+    flowfile.publish_artifact("trained_model", model)
+    flowfile.log_info(f"Model trained with accuracy: {model.score(X, y):.3f}")
+
+    predictions = model.predict(X)
+    return df.with_columns(pl.Series("prediction", predictions)).lazy()
+```
+
+For more details on the `flowfile` API available inside kernels, see [Kernel Execution](kernels.md).
+
+---
+
 ## Toolbar Actions
 
 | Button | Shortcut | Description |
@@ -276,6 +344,7 @@ For more control or version-controlled node definitions, you can create nodes as
 
 ## Related Documentation
 
+- [Kernel Execution](kernels.md) — Run code in isolated Docker containers
 - [Building Flows](building-flows.md) — Using nodes in workflows
 - [Transform Nodes](nodes/transform.md) — Built-in transformation nodes
 - [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md) — Python-based node creation

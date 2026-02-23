@@ -4,7 +4,9 @@ from typing import Annotated, Any, Literal
 from pl_fuzzy_frame_match.models import FuzzyMapping
 from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
-OperationType = Literal["store", "calculate_schema", "calculate_number_of_records", "write_output", "store_sample"]
+OperationType = Literal[
+    "store", "calculate_schema", "calculate_number_of_records", "write_output", "store_sample", "write_parquet"
+]
 
 
 # Custom type for bytes that serializes to/from base64 string in JSON

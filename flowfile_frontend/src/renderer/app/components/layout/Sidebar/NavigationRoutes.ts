@@ -58,6 +58,13 @@ export default {
       },
     },
     {
+      name: "kernelManager",
+      displayName: "menu.kernelManager",
+      meta: {
+        icon: "fa-solid fa-server",
+      },
+    },
+    {
       name: "nodeDesigner",
       displayName: "menu.nodeDesigner",
       meta: {

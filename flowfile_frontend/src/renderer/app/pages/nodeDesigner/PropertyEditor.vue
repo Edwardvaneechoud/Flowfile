@@ -136,6 +136,7 @@
               >
                 <option value="static">Static Options</option>
                 <option value="incoming_columns">Incoming Columns</option>
+                <option value="available_artifacts">Available Artifacts</option>
               </select>
             </div>
             <div v-if="component.options_source === 'static'" class="property-row">
@@ -164,6 +165,7 @@
               >
                 <option value="static">Static Options</option>
                 <option value="incoming_columns">Incoming Columns</option>
+                <option value="available_artifacts">Available Artifacts</option>
               </select>
             </div>
             <div v-if="component.options_source === 'static'" class="property-row">

@@ -46,7 +46,9 @@
               :key="node.id"
               :node="node"
               :selected-flow-id="catalogStore.selectedFlowId"
-              @select-flow="catalogStore.selectFlow($event)"
+              :selected-artifact-id="catalogStore.selectedArtifactId"
+              @select-flow="selectFlow($event)"
+              @select-artifact="selectArtifact($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-follow="catalogStore.toggleFollow($event)"
               @register-flow="openRegisterFlow($event)"
@@ -111,15 +113,26 @@
         <RunDetailPanel
           v-if="catalogStore.selectedRunDetail"
           :run="catalogStore.selectedRunDetail"
-          @close="catalogStore.selectedRunId = null; catalogStore.selectedRunDetail = null"
+          @close="
+            catalogStore.selectedRunId = null;
+            catalogStore.selectedRunDetail = null;
+          "
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
+        />
+        <!-- Artifact detail view -->
+        <ArtifactDetailPanel
+          v-else-if="catalogStore.selectedArtifact"
+          :artifact="catalogStore.selectedArtifact"
+          :versions="selectedArtifactVersions"
+          @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
           v-else-if="catalogStore.selectedFlow"
           :flow="catalogStore.selectedFlow"
           :runs="catalogStore.flowRuns"
+          :artifacts="catalogStore.flowArtifacts"
           @view-run="catalogStore.loadRunDetail($event)"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
@@ -138,7 +151,7 @@
     <!-- Create Namespace Modal -->
     <div v-if="showCreateNamespace" class="modal-overlay" @click.self="showCreateNamespace = false">
       <div class="modal-card">
-        <h3>{{ createSchemaParentId ? 'Create Schema' : 'Create Catalog' }}</h3>
+        <h3>{{ createSchemaParentId ? "Create Schema" : "Create Catalog" }}</h3>
         <input
           v-model="newNamespaceName"
           class="input-field"
@@ -151,7 +164,13 @@
           placeholder="Description (optional)"
         />
         <div class="modal-actions">
-          <button class="btn-secondary" @click="showCreateNamespace = false; createSchemaParentId = null">
+          <button
+            class="btn-secondary"
+            @click="
+              showCreateNamespace = false;
+              createSchemaParentId = null;
+            "
+          >
             Cancel
           </button>
           <button class="btn-primary" :disabled="!newNamespaceName.trim()" @click="createNamespace">
@@ -172,7 +191,7 @@
           <div v-if="newFlowPath" class="selected-file-badge">
             <i class="fa-solid fa-file"></i>
             <span>{{ newFlowPath }}</span>
-            <button class="clear-file-btn" @click="newFlowPath = ''" title="Clear">
+            <button class="clear-file-btn" title="Clear" @click="newFlowPath = ''">
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
@@ -211,11 +230,12 @@ import { FlowApi } from "../../api/flow.api";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
+import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
-import type { CatalogTab } from "../../types";
+import type { CatalogTab, GlobalArtifact, NamespaceTree } from "../../types";
 
 const router = useRouter();
 
@@ -251,11 +271,16 @@ const tabs = computed(() => [
 
 const sidebarTitle = computed(() => {
   switch (catalogStore.activeTab) {
-    case "catalog": return "Catalogs";
-    case "favorites": return "Favorites";
-    case "following": return "Following";
-    case "runs": return "Run History";
-    default: return "";
+    case "catalog":
+      return "Catalogs";
+    case "favorites":
+      return "Favorites";
+    case "following":
+      return "Following";
+    case "runs":
+      return "Run History";
+    default:
+      return "";
   }
 });
 
@@ -271,6 +296,39 @@ const registerFlowNamespaceId = ref<number | null>(null);
 const newFlowName = ref("");
 const newFlowPath = ref("");
 const newFlowDesc = ref("");
+
+function selectFlow(flowId: number) {
+  catalogStore.clearArtifactSelection();
+  catalogStore.selectFlow(flowId);
+}
+
+function selectArtifact(artifactId: number) {
+  catalogStore.selectedFlowId = null;
+  catalogStore.selectArtifact(artifactId);
+}
+
+/** Collect all versions of the selected artifact from the tree. */
+function collectArtifactVersions(
+  nodes: NamespaceTree[],
+  name: string,
+  nsId: number | null,
+): GlobalArtifact[] {
+  const result: GlobalArtifact[] = [];
+  for (const node of nodes) {
+    for (const a of node.artifacts ?? []) {
+      if (a.name === name && a.namespace_id === nsId) result.push(a);
+    }
+    result.push(...collectArtifactVersions(node.children, name, nsId));
+  }
+  return result;
+}
+
+const selectedArtifactVersions = computed((): GlobalArtifact[] => {
+  const a = catalogStore.selectedArtifact;
+  if (!a) return [];
+  const versions = collectArtifactVersions(catalogStore.tree, a.name, a.namespace_id);
+  return versions.sort((x, y) => y.version - x.version);
+});
 
 function openCreateSchema(parentId: number) {
   createSchemaParentId.value = parentId;
@@ -358,7 +416,11 @@ async function registerFlow() {
     newFlowName.value = "";
     newFlowPath.value = "";
     newFlowDesc.value = "";
-    await Promise.all([catalogStore.loadTree(), catalogStore.loadAllFlows(), catalogStore.loadStats()]);
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadStats(),
+    ]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to register flow");
   }
@@ -520,9 +582,17 @@ onMounted(async () => {
   transition: opacity var(--transition-fast);
 }
 
-.btn-primary:hover { opacity: 0.9; }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-sm { padding: var(--spacing-1) var(--spacing-3); font-size: var(--font-size-xs); }
+.btn-primary:hover {
+  opacity: 0.9;
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-sm {
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+}
 
 .btn-secondary {
   padding: var(--spacing-2) var(--spacing-4);
@@ -534,12 +604,17 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-.btn-secondary:hover { background: var(--color-background-hover); }
+.btn-secondary:hover {
+  background: var(--color-background-hover);
+}
 
 /* ========== Modal ========== */
 .modal-overlay {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;

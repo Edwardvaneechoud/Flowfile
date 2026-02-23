@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 
@@ -41,6 +42,10 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
 
         logger.info(f"Processing query with operation: {operation_type}")
 
+        # Extract extra kwargs from header if present (used by write_parquet, etc.)
+        kwargs_str = request.headers.get("X-Kwargs")
+        kwargs = json.loads(kwargs_str) if kwargs_str else {}
+
         default_cache_dir = create_and_get_default_cache_dir(flow_id)
         file_path = os.path.join(default_cache_dir, f"{task_id}.arrow")
         result_type = "polars" if operation_type == "store" else "other"
@@ -58,7 +63,7 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
             file_ref=file_path,
             flowfile_flow_id=flow_id,
             flowfile_node_id=node_id,
-            kwargs={},
+            kwargs=kwargs,
         )
         logger.info(f"Started background task: {task_id}")
         return status
