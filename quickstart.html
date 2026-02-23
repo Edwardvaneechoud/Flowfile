@@ -1,0 +1,3634 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/quickstart.html">
+      
+      
+        <link rel="prev" href="index.html">
+      
+      
+        <link rel="next" href="users/index.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>Quickstart - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#quick-start-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Quickstart
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="quickstart.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/index.html" class="md-tabs__link">
+          
+  
+  
+  User Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="quickstart.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-installation-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative Installation Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-your-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose Your Path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-technical-quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start for Non-Technical Users
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start for Non-Technical Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-start-flowfile-and-create-a-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Start Flowfile, and create a Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-load-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Load Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-clean-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Clean Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-analyze-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Analyze Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-save-your-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Save Your Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#heres-what-your-complete-flow-should-look-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Here's what your complete flow should look like:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#congratulations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Congratulations!
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pro-tips-for-non-technical-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pro Tips for Non-Technical Users:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technical-quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start for Technical Users
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start for Technical Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-install-and-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Install and Import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-build-a-real-world-etl-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Build a Real-World ETL Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-extract-and-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Extract and Transform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-load-and-monitor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Load and Monitor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-advanced-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Advanced Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 5: Advanced Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#visualize-your-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualize Your Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-as-pure-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export as Pure Python
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-production-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Production Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#next-steps-for-technical-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps for Technical Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-flowfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌟 Why Flowfile?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Get Help
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_3" id="__nav_3_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Node Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transform Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregate Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/nodes/output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_4" id="__nav_3_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/tutorials/database-connectivity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to PostgreSQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/tutorials/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manage Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/tutorials/code-generator.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export to Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/node-designer.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/visual-editor/settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_3" id="__nav_3_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/concepts/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/concepts/design-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowFrame & FlowGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/concepts/expressions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_4" id="__nav_3_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/reading-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/writing-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/data-types.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/flowframe-operations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DataFrame Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/aggregations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/joins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/reference/visual-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual UI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_5" id="__nav_3_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/python-api/tutorials/flowfile_frame_api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows with Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/deployment/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/deployment/desktop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/deployment/python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Package
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="users/deployment/docker.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/design-philosophy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/creating-custom-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create Custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="for-developers/custom-node-tutorial.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building more custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-installation-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative Installation Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-your-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose Your Path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-technical-quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start for Non-Technical Users
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start for Non-Technical Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-start-flowfile-and-create-a-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Start Flowfile, and create a Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-load-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Load Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-clean-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Clean Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-analyze-your-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Analyze Your Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-save-your-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Save Your Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#heres-what-your-complete-flow-should-look-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Here's what your complete flow should look like:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#congratulations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Congratulations!
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pro-tips-for-non-technical-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pro Tips for Non-Technical Users:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technical-quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start for Technical Users
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start for Technical Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-install-and-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Install and Import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-build-a-real-world-etl-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Build a Real-World ETL Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-extract-and-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Extract and Transform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-load-and-monitor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Load and Monitor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-advanced-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Advanced Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 5: Advanced Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#visualize-your-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualize Your Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-as-pure-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export as Pure Python
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-production-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Production Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#next-steps-for-technical-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps for Technical Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-flowfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌟 Why Flowfile?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Get Help
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="quick-start-guide">Quick Start Guide</h1>
+<div align="center" style="padding: 1rem;">
+  <img src="assets/images/logo.png" alt="Flowfile Logo" width="100" style="max-width: 100%; height: auto;">
+  <h2 style="font-size: clamp(1.5rem, 4vw, 2rem); margin: 1rem 0;">Get Started with Flowfile in 5 Minutes</h2>
+</div>
+
+<h2 id="installation">Installation</h2>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem auto; max-width: 100%;">
+  <h3 style="margin-top: 0; color: white; font-size: clamp(1.2rem, 3vw, 1.5rem);">Recommended quickstart: Install from PyPI</h3>
+  <pre style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; color: white; overflow-x: auto; -webkit-overflow-scrolling: touch;"><code>pip install flowfile</code></pre>
+  <p style="margin-bottom: 0; font-size: clamp(0.9rem, 2vw, 1rem);">This installs everything you need - the Python API, visual editor, and all services.</p>
+</div>
+
+<h3 id="alternative-installation-methods">Alternative Installation Methods</h3>
+<details>
+<summary><b>Desktop Application (Pre-built Installer)</b></summary>
+<p>Download the latest installer for your platform:
+- <strong>Windows</strong>: <a href="https://github.com/Edwardvaneechoud/Flowfile/releases">Flowfile-Setup.exe</a>
+- <strong>macOS</strong>: <a href="https://github.com/Edwardvaneechoud/Flowfile/releases">Flowfile.dmg</a> </p>
+<blockquote>
+<p><strong>Note</strong>: You may see security warnings since the installer isn't signed. On Windows, click "More info" → "Run anyway". On macOS, right-click → "Open" → confirm.</p>
+</blockquote>
+</details>
+<details>
+<summary><b>Development Setup (From Source)</b></summary>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Clone repository</span>
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/edwardvaneechoud/Flowfile.git
+<span class="nb">cd</span><span class="w"> </span>Flowfile
+
+<span class="c1"># Install with Poetry</span>
+poetry<span class="w"> </span>install
+
+<span class="c1"># Start services</span>
+poetry<span class="w"> </span>run<span class="w"> </span>flowfile_worker<span class="w">  </span><span class="c1"># Terminal 1 (port 63579)</span>
+poetry<span class="w"> </span>run<span class="w"> </span>flowfile_core<span class="w">    </span><span class="c1"># Terminal 2 (port 63578)</span>
+
+<span class="c1"># Start frontend</span>
+<span class="nb">cd</span><span class="w"> </span>flowfile_frontend
+npm<span class="w"> </span>install
+npm<span class="w"> </span>run<span class="w"> </span>dev:web<span class="w">  </span><span class="c1"># Terminal 3 (port 8080)</span>
+</code></pre></div>
+
+</details>
+
+<hr />
+<h2 id="choose-your-path">Choose Your Path</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: clamp(1rem, 3vw, 2rem); margin: clamp(2rem, 4vw, 3rem) 0;">
+
+<div style="border: 2px solid #00CED1; border-radius: 12px; padding: clamp(1rem, 3vw, 1.5rem); background: linear-gradient(135deg, rgba(0,206,209,0.05) 0%, rgba(107,70,193,0.05) 100%);">
+  <h3 style="color: #00CED1; margin-top: 0; font-size: clamp(1.1rem, 2.5vw, 1.3rem);">Non-Technical Users</h3>
+  <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Perfect for:</strong> Analysts, business users, Excel power users</p>
+  <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>No coding required!</strong></p>
+
+  <ul style="list-style: none; padding: 0; margin: 1rem 0;">
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Drag and drop interface</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Visual data preview</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Export to Excel/CSV</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Built-in transformations</li>
+  </ul>
+
+  <a href="#non-technical-quickstart" style="display: inline-block; background: #00CED1; color: white; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 1rem; font-size: clamp(0.9rem, 2vw, 1rem); text-align: center; width: 100%; box-sizing: border-box;">Start Visual Tutorial →</a>
+</div>
+
+<div style="border: 2px solid #8B5CF6; border-radius: 12px; padding: clamp(1rem, 3vw, 1.5rem); background: linear-gradient(135deg, rgba(139,92,246,0.05) 0%, rgba(0,206,209,0.05) 100%);">
+  <h3 style="color: #8B5CF6; margin-top: 0; font-size: clamp(1.1rem, 2.5vw, 1.3rem);">Technical Users</h3>
+  <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Perfect for:</strong> Developers, data scientists, engineers</p>
+  <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Full programmatic control!</strong></p>
+
+  <ul style="list-style: none; padding: 0; margin: 1rem 0;">
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Polars-compatible API</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Cloud storage integration</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Version control friendly</li>
+    <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Complex dynamic logic</li>
+  </ul>
+
+  <a href="#technical-quickstart" style="display: inline-block; background: #8B5CF6; color: white; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 1rem; font-size: clamp(0.9rem, 2vw, 1rem); text-align: center; width: 100%; box-sizing: border-box;">Start Python Tutorial →</a>
+</div>
+
+</div>
+
+<hr />
+<h2 id="non-technical-quickstart">Quick Start for Non-Technical Users</h2>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px; margin: 2rem 0; color: white;">
+<strong style="font-size: clamp(0.95rem, 2vw, 1.1rem);">Goal:</strong> <span style="font-size: clamp(0.9rem, 2vw, 1rem);">Clean and analyze sales data without writing any code</span>
+</div>
+
+<h3 id="step-1-start-flowfile-and-create-a-flow">Step 1: Start Flowfile, and create a Flow</h3>
+<p>Open your terminal (Command Prompt on Windows, Terminal on Mac) and type:</p>
+<p><div class="highlight"><pre><span></span><code>flowfile<span class="w"> </span>run<span class="w"> </span>ui
+</code></pre></div>
+Your browser should automatically open to the Flowfile UI.</p>
+<div class="admonition warning">
+<p class="admonition-title">If the browser does not open automatically</p>
+<p>If the browser does not open automatically, you can manually navigate to <a href="http://127.0.0.1:63578/ui#/main/designer">http://127.0.0.1:63578/ui#/main/designer</a> in your web browser.</p>
+</div>
+<div style="background-color: rgba(0, 0, 0, 0.1); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px; margin: 1rem 0;">
+<p><strong>Creating your First Flow:</strong></p>
+<ol>
+<li><strong>Click "Create"</strong> to create a new data pipeline</li>
+<li><strong>Click "Create New File Here"</strong></li>
+<li><strong>Name your flow</strong> (e.g., "Sales Data Analysis")</li>
+<li><strong>Click on "Settings"</strong> in the top right to configure your flow</li>
+<li><strong>Set the Execution mode</strong> to "Development"</li>
+</ol>
+</div>
+<p>Your should see now an empty flow:
+<img alt="Flowfile Interface" src="assets/images/quickstart/start_page.png" />New clean flow interface</p>
+<h3 id="step-2-load-your-data">Step 2: Load Your Data</h3>
+<div style="background-color: rgba(0, 0, 0, 0.1); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px; margin: 1rem 0;">
+<p><strong>Loading a CSV or Excel file:</strong></p>
+<ol>
+<li><strong>Find the "Read Data" node</strong> in the left panel under "Input"</li>
+<li><strong>Drag it</strong> onto the canvas (center area)</li>
+<li><strong>Click the node</strong> to open settings on the right</li>
+<li><strong>Click "Browse"</strong> and select your file</li>
+<li><strong>Configure options</strong> (if needed):<ul>
+<li>For CSV: Check "Has Headers" if your file has column names</li>
+<li>For Excel: Select the sheet name</li>
+</ul>
+</li>
+<li><strong>Click "Run"</strong> (top toolbar) to load the data</li>
+<li><strong>Click the node</strong> to preview your data in the bottom panel</li>
+</ol>
+</div>
+<h3 id="step-3-clean-your-data">Step 3: Clean Your Data</h3>
+<p>Let's remove duplicate records and filter for high-value transactions:</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+
+<div markdown="1" style="background-color: rgba(0, 0, 0, 0.1); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px;">
+<h4 style="margin-top: 0; color: #00CED1; font-size: clamp(1rem, 2.5vw, 1.2rem);">Remove Duplicates</h4>
+<ol style="margin: 0.5rem 0; padding-left: 1.5rem; font-size: clamp(0.85rem, 2vw, 0.95rem);">
+<li>Drag "Drop Duplicates" node from Transform section</li>
+<li>Connect it to your Read Data node</li>
+<li>Select columns to check for duplicates</li>
+<li>Click Run</li>
+</ol>
+</div>
+
+<div markdown="1" style="background-color: rgba(0, 0, 0, 0.1); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px;">
+<h4 style="margin-top: 0; color: #00CED1; font-size: clamp(1rem, 2.5vw, 1.2rem);">Filter Data</h4>
+<ol style="margin: 0.5rem 0; padding-left: 1.5rem; font-size: clamp(0.85rem, 2vw, 0.95rem);">
+<li>Drag "Filter Data" node from Transform section</li>
+<li>Connect it to Drop Duplicates node</li>
+<li>Enter formula: <code>[Quantity] > 7</code></li>
+<li>Click Run</li>
+</ol>
+</div>
+
+</div>
+
+<h3 id="step-4-analyze-your-data">Step 4: Analyze Your Data</h3>
+<p><strong>Create a summary by city:</strong></p>
+<ol>
+<li><strong>Add a Group By node</strong> from the Aggregate section</li>
+<li><strong>Connect it</strong> to your Filter node</li>
+<li><strong>Configure the aggregation</strong>:</li>
+<li>Group by: <code>city</code></li>
+<li>Aggregations:<ul>
+<li><code>gross income</code> → Sum → Name it <code>total_sales</code></li>
+<li><code>gross income</code> → Average → Name it <code>avg_sale</code></li>
+<li><code>gross income</code> → Count → Name it <code>number_of_sales</code></li>
+</ul>
+</li>
+<li><strong>Click Run</strong> to see your summary</li>
+</ol>
+<details>
+<summary>Data after group by</summary>
+<p><img alt="Group By Configuration" src="assets/images/quickstart/after_group_by.png" /></p>
+</details>
+<h3 id="step-5-save-your-results">Step 5: Save Your Results</h3>
+<div style="background-color: rgba(0, 0, 0, 0.1); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px; margin: 1rem 0;">
+<p><strong>Export your cleaned data:</strong></p>
+<ol>
+<li><strong>Add a "Write Data" node</strong> from Output section</li>
+<li><strong>Connect it</strong> to your final transformation</li>
+<li><strong>Choose format</strong>:<ul>
+<li><strong>Excel</strong>: Best for sharing with colleagues</li>
+<li><strong>CSV</strong>: Best for Excel/Google Sheets</li>
+<li><strong>Parquet</strong>: Best for large datasets</li>
+</ul>
+</li>
+<li><strong>Set file path</strong> (e.g., <code>cleaned_sales.xlsx</code>)</li>
+<li><strong>Click Run</strong> to save</li>
+</ol>
+</div>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem 0;">
+<h3 id="heres-what-your-complete-flow-should-look-like">Here's what your complete flow should look like:</h3>
+<p><img alt="Group By Configuration" src="assets/images/quickstart/result.png" /></p>
+</div>
+<h3 id="congratulations">Congratulations!</h3>
+<p>You've just built your first data pipeline! You can:
+- <strong>Save this flow</strong> using File → Save (creates a <code>.flowfile</code>)
+- <strong>Share it</strong> with colleagues who can run it without any setup
+- <strong>Schedule it</strong> to run automatically (coming soon)
+- <strong>Export as Python code</strong> if you want to see what's happening behind the scenes</p>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem 0;">
+<h3 id="pro-tips-for-non-technical-users" style="font-size: clamp(1.1rem, 2.5vw, 1.3rem); margin-top: 0;">Pro Tips for Non-Technical Users:</h3>
+<ul style="margin: 0.5rem 0; padding-left: 1.5rem; font-size: clamp(0.85rem, 2vw, 0.95rem);">
+<li><strong>Use descriptions:</strong> Right-click nodes and add descriptions to document your work</li>
+<li><strong>Preview often:</strong> Click nodes after running to see data at each step</li>
+<li><strong>Start small:</strong> Test with a sample of your data first</li>
+<li><strong>Save versions:</strong> Save different versions of your flow as you build</li>
+</ul>
+</div>
+<h3 id="next-steps">Next Steps</h3>
+<div style="padding: clamp(1.5rem, 3vw, 2rem); border-radius: 12px; margin: 2rem 0; display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 2vw, 1rem); flex-wrap: wrap;">
+<p><a href="users/visual-editor/building-flows.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); color: white; border-radius: 50px; text-decoration: none; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.3); transition: all 0.3s ease; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center; white-space: nowrap;" onmouseover="this.style.background='rgba(255, 255, 255, 0.2)'" onmouseout="this.style.background='rgba(255, 255, 255, 0.1)'">Complete Visual Guide</a>
+  <a href="users/visual-editor/nodes/index.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); color: white; border-radius: 50px; text-decoration: none; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.3); transition: all 0.3s ease; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center; white-space: nowrap;" onmouseover="this.style.background='rgba(255, 255, 255, 0.2)'" onmouseout="this.style.background='rgba(255, 255, 255, 0.1)'">Learn All Nodes</a>
+  <a href="users/visual-editor/tutorials/database-connectivity.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); color: white; border-radius: 50px; text-decoration: none; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.3); transition: all 0.3s ease; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center; white-space: nowrap;" onmouseover="this.style.background='rgba(255, 255, 255, 0.2)'" onmouseout="this.style.background='rgba(255, 255, 255, 0.1)'">Connect to Databases</a></p>
+</div>
+<hr />
+<h2 id="technical-quickstart">Quick Start for Technical Users</h2>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 8px; margin: 2rem 0; color: white;">
+<strong style="font-size: clamp(0.95rem, 2vw, 1.1rem);">Goal:</strong> <span style="font-size: clamp(0.9rem, 2vw, 1rem);">Build a production-ready ETL pipeline with cloud integration</span>
+</div>
+
+<h3 id="step-1-install-and-import">Step 1: Install and Import</h3>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>flowfile
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span><span class="p">,</span> <span class="n">when</span><span class="p">,</span> <span class="n">lit</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>  <span class="c1"># Flowfile returns Polars DataFrames</span>
+</code></pre></div>
+<h3 id="step-2-build-a-real-world-etl-pipeline">Step 2: Build a Real-World ETL Pipeline</h3>
+<p>Let's build a production pipeline that reads from S3, transforms data, and writes results:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Configure S3 connection (one-time setup)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretStr</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="n">ff</span><span class="o">.</span><span class="n">create_cloud_storage_connection_if_not_exists</span><span class="p">(</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">FullCloudStorageConnection</span><span class="p">(</span>
+        <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+        <span class="n">storage_type</span><span class="o">=</span><span class="s2">&quot;s3&quot;</span><span class="p">,</span>
+        <span class="n">auth_method</span><span class="o">=</span><span class="s2">&quot;access_key&quot;</span><span class="p">,</span>
+        <span class="n">aws_region</span><span class="o">=</span><span class="s2">&quot;us-east-1&quot;</span><span class="p">,</span>
+        <span class="n">aws_access_key_id</span><span class="o">=</span><span class="s2">&quot;AKIAIOSFODNN7EXAMPLE&quot;</span><span class="p">,</span>
+        <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">SecretStr</span><span class="p">(</span><span class="s2">&quot;wJalrXUtnFEMI/K7MDENG&quot;</span><span class="p">)</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="step-3-extract-and-transform">Step 3: Extract and Transform</h3>
+<div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Build the pipeline (lazy evaluation - no data loaded yet!)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+<span class="n">pipeline</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="c1"># Extract: Read partitioned parquet files from S3</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">scan_parquet_from_cloud_storage</span><span class="p">(</span>
+        <span class="s2">&quot;s3://data-lake/sales/year=2024/month=*&quot;</span><span class="p">,</span> 
+        <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Load Q1-Q4 2024 sales data&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Transform: Clean and enrich</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;completed&quot;</span><span class="p">)</span> <span class="o">&amp;</span> 
+        <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">),</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Keep only valid completed transactions&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Add calculated fields</span>
+    <span class="o">.</span><span class="n">with_columns</span><span class="p">([</span>
+        <span class="c1"># Business logic</span>
+        <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;line_total&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;tax&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Date features for analytics</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;order_date&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">quarter</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;quarter&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;order_date&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">day_of_week</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;day_of_week&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Customer segmentation</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">when</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;customer_lifetime_value&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10000</span><span class="p">)</span>
+            <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;VIP&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">when</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;customer_lifetime_value&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1000</span><span class="p">)</span>
+            <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;Regular&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">otherwise</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;New&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;customer_segment&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Region mapping</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">when</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;state&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">&quot;CA&quot;</span><span class="p">,</span> <span class="s2">&quot;OR&quot;</span><span class="p">,</span> <span class="s2">&quot;WA&quot;</span><span class="p">]))</span>
+            <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;West&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">when</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;state&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">&quot;NY&quot;</span><span class="p">,</span> <span class="s2">&quot;NJ&quot;</span><span class="p">,</span> <span class="s2">&quot;PA&quot;</span><span class="p">]))</span>
+            <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;Northeast&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">when</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;state&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">&quot;TX&quot;</span><span class="p">,</span> <span class="s2">&quot;FL&quot;</span><span class="p">,</span> <span class="s2">&quot;GA&quot;</span><span class="p">]))</span>
+            <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;South&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">otherwise</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">&quot;Midwest&quot;</span><span class="p">))</span>
+            <span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">)</span>
+    <span class="p">],</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Add business metrics and segments&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Complex aggregation</span>
+    <span class="o">.</span><span class="n">group_by</span><span class="p">([</span><span class="s2">&quot;region&quot;</span><span class="p">,</span> <span class="s2">&quot;quarter&quot;</span><span class="p">,</span> <span class="s2">&quot;customer_segment&quot;</span><span class="p">])</span>
+    <span class="o">.</span><span class="n">agg</span><span class="p">([</span>
+        <span class="c1"># Revenue metrics</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;line_total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;total_revenue&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;tax&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;total_tax&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Order metrics</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">n_unique</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;unique_orders&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;customer_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">n_unique</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;unique_customers&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Performance metrics</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;line_total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;avg_order_value&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;units_sold&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Statistical metrics</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;line_total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">std</span><span class="p">()</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;revenue_std&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;line_total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;median_order_value&quot;</span><span class="p">)</span>
+    <span class="p">])</span>
+
+    <span class="c1"># Final cleanup</span>
+    <span class="o">.</span><span class="n">sort</span><span class="p">([</span><span class="s2">&quot;region&quot;</span><span class="p">,</span> <span class="s2">&quot;quarter&quot;</span><span class="p">,</span> <span class="s2">&quot;total_revenue&quot;</span><span class="p">],</span> <span class="n">descending</span><span class="o">=</span><span class="p">[</span><span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">True</span><span class="p">])</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;total_revenue&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1000</span><span class="p">)</span>  <span class="c1"># Remove noise</span>
+<span class="p">)</span>
+
+<span class="c1"># Check the execution plan (no data processed yet!)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">pipeline</span><span class="o">.</span><span class="n">explain</span><span class="p">())</span>  <span class="c1"># Shows optimized Polars query plan</span>
+</code></pre></div>
+
+</div>
+
+<h3 id="step-4-load-and-monitor">Step 4: Load and Monitor</h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Option 1: Write to cloud storage</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">write_parquet_to_cloud_storage</span><span class="p">(</span>
+    <span class="s2">&quot;s3://data-warehouse/aggregated/sales_summary_2024.parquet&quot;</span><span class="p">,</span>
+    <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+    <span class="n">compression</span><span class="o">=</span><span class="s2">&quot;snappy&quot;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Save aggregated results for BI tools&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Option 2: Write to Delta Lake for versioning</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">write_delta</span><span class="p">(</span>
+    <span class="s2">&quot;s3://data-warehouse/delta/sales_summary&quot;</span><span class="p">,</span>
+    <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">&quot;append&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;overwrite&quot;</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Append to Delta table&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Option 3: Collect for analysis</span>
+<span class="n">df_result</span> <span class="o">=</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>  <span class="c1"># NOW it executes everything!</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processed </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df_result</span><span class="p">)</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> aggregated records&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">df_result</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="step-5-advanced-features">Step 5: Advanced Features</h3>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem 0;">
+<h4 id="visualize-your-pipeline" style="margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">Visualize Your Pipeline</h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># Open in visual editor</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">open_graph_in_editor</span><span class="p">(</span><span class="n">pipeline</span><span class="o">.</span><span class="n">flow_graph</span><span class="p">)</span>
+
+<span class="c1"># This shows your entire pipeline</span>
+<span class="c1"># as a visual flow diagram!</span>
+</code></pre></div>
+<details>
+<summary style="cursor: pointer; font-size: clamp(0.9rem, 2vw, 1rem);"> Visual overview of pipeline </summary>
+<p><img alt="Flow visualized" src="assets/images/quickstart/python_example.png" /></p>
+</details>
+</div>
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem 0;">
+<h4 id="export-as-pure-python" style="margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">Export as Pure Python</h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># Generate standalone code</span>
+<span class="n">code</span> <span class="o">=</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">flow_graph</span><span class="o">.</span><span class="n">generate_code</span><span class="p">()</span>
+
+<span class="c1"># Deploy without Flowfile dependency!</span>
+<span class="c1"># Uses only Polars</span>
+</code></pre></div>
+</div>
+<h3 id="step-6-production-patterns">Step 6: Production Patterns</h3>
+<p><strong>Pattern 1: Data Quality Checks</strong></p>
+<div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">data_quality_pipeline</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">ff</span><span class="o">.</span><span class="n">FlowFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ff</span><span class="o">.</span><span class="n">FlowFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reusable data quality check pipeline&quot;&quot;&quot;</span>
+
+    <span class="c1"># Record initial count</span>
+    <span class="n">initial_count</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">count</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;count&quot;</span><span class="p">))</span>
+
+    <span class="c1"># Apply quality filters</span>
+    <span class="n">clean_df</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">df</span>
+        <span class="c1"># Remove nulls in critical fields</span>
+        <span class="o">.</span><span class="n">drop_nulls</span><span class="p">(</span><span class="n">subset</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span>
+
+        <span class="c1"># Validate data ranges</span>
+        <span class="o">.</span><span class="n">filter</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_between</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1000000</span><span class="p">))</span> <span class="o">&amp;</span>
+            <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span>
+            <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;order_date&quot;</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">())</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Remove duplicates</span>
+        <span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">subset</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;order_id&quot;</span><span class="p">],</span> <span class="n">keep</span><span class="o">=</span><span class="s2">&quot;first&quot;</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Log quality metrics</span>
+    <span class="n">final_count</span> <span class="o">=</span> <span class="n">clean_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">count</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;count&quot;</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Initial count: </span><span class="si">{</span><span class="n">initial_count</span><span class="o">.</span><span class="n">collect</span><span class="p">()[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;count&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Final count after quality checks: </span><span class="si">{</span><span class="n">final_count</span><span class="o">.</span><span class="n">collect</span><span class="p">()[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;count&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">clean_df</span>
+</code></pre></div>
+
+</div>
+
+<p><strong>Pattern 2: Incremental Processing</strong></p>
+<div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Read only new data since last run</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+<span class="n">last_processed</span> <span class="o">=</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2024</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+<span class="n">incremental_pipeline</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">scan_parquet_from_cloud_storage</span><span class="p">(</span>
+        <span class="s2">&quot;s3://data-lake/events/&quot;</span><span class="p">,</span>
+        <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;event_timestamp&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">last_processed</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;event_timestamp&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">date</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;date&quot;</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">agg</span><span class="p">([</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;event_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">count</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;event_count&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;user_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">n_unique</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;unique_users&quot;</span><span class="p">)</span>
+    <span class="p">])</span>
+<span class="p">)</span>
+
+<span class="c1"># Process and append to existing data</span>
+<span class="n">incremental_pipeline</span><span class="o">.</span><span class="n">write_delta</span><span class="p">(</span>
+    <span class="s2">&quot;s3://data-warehouse/delta/daily_metrics&quot;</span><span class="p">,</span>
+    <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">&quot;append&quot;</span>
+<span class="p">)</span>
+</code></pre></div>
+
+</div>
+
+<p><strong>Pattern 3: Multi-Source Join</strong></p>
+<div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Combine data from multiple sources</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="n">customers</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">scan_parquet_from_cloud_storage</span><span class="p">(</span>
+    <span class="s2">&quot;s3://data-lake/customers/&quot;</span><span class="p">,</span>
+    <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span>
+<span class="p">)</span>
+
+<span class="n">orders</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">scan_csv_from_cloud_storage</span><span class="p">(</span>
+    <span class="s2">&quot;s3://raw-data/orders/&quot;</span><span class="p">,</span>
+    <span class="n">connection_name</span><span class="o">=</span><span class="s2">&quot;production-data&quot;</span><span class="p">,</span>
+    <span class="n">delimiter</span><span class="o">=</span><span class="s2">&quot;|&quot;</span><span class="p">,</span>
+    <span class="n">has_header</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="n">products</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">&quot;local_products.parquet&quot;</span><span class="p">)</span>
+
+<span class="c1"># Complex multi-join pipeline</span>
+<span class="n">enriched_orders</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">orders</span>
+    <span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">customers</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">products</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;product_id&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">with_columns</span><span class="p">([</span>
+        <span class="c1"># Handle missing values from left joins</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;customer_segment&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fill_null</span><span class="p">(</span><span class="s2">&quot;Unknown&quot;</span><span class="p">),</span>
+        <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;product_category&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fill_null</span><span class="p">(</span><span class="s2">&quot;Other&quot;</span><span class="p">),</span>
+
+        <span class="c1"># Calculate metrics</span>
+        <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;unit_price&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">)</span> <span class="o">*</span> 
+         <span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;discount_rate&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fill_null</span><span class="p">(</span><span class="mi">0</span><span class="p">)))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;net_revenue&quot;</span><span class="p">)</span>
+    <span class="p">])</span>
+<span class="p">)</span>
+
+<span class="c1"># Materialize results</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">enriched_orders</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+
+</div>
+
+<h3 id="next-steps-for-technical-users">Next Steps for Technical Users</h3>
+<div style="display: flex; gap: clamp(0.5rem, 2vw, 1rem); flex-wrap: wrap; margin: 2rem 0; justify-content: center;">
+  <a href="users/python-api/reference/index.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(0.8rem, 2vw, 1.2rem); background: #8B5CF6; color: white; border-radius: 6px; text-decoration: none; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center;">Complete API Reference</a>
+  <a href="users/python-api/concepts/design-concepts.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(0.8rem, 2vw, 1.2rem); background: #8B5CF6; color: white; border-radius: 6px; text-decoration: none; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center;">Architecture Deep Dive</a>
+  <a href="for-developers/flowfile-core.html" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(0.8rem, 2vw, 1.2rem); background: #8B5CF6; color: white; border-radius: 6px; text-decoration: none; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center;">Core Internals</a>
+  <a href="https://pola-rs.github.io/polars/py-polars/html/reference/" style="padding: clamp(0.6rem, 2vw, 0.8rem) clamp(0.8rem, 2vw, 1.2rem); background: #8B5CF6; color: white; border-radius: 6px; text-decoration: none; font-size: clamp(0.85rem, 2vw, 0.95rem); text-align: center;">Polars Documentation</a>
+</div>
+
+<hr />
+<h2 id="why-flowfile">🌟 Why Flowfile?</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: clamp(1rem, 3vw, 1.5rem); margin: 2rem 0;">
+
+<div markdown="1" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 8px; color: white;">
+<h4 style="color: #00CED1; margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">⚡ Performance</h4>
+<p style="font-size: clamp(0.85rem, 2vw, 0.95rem); margin: 0;">Built on Polars - Uses the speed of Polars</p>
+</div>
+
+<div markdown="1" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 8px; color: white;">
+<h4 style="color: #00CED1; margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">🔄 Dual Interface</h4>
+<p style="font-size: clamp(0.85rem, 2vw, 0.95rem); margin: 0;">Same pipeline works in both visual and code. Switch anytime, no lock-in.</p>
+</div>
+
+<div markdown="1" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 8px; color: white;">
+<h4 style="color: #00CED1; margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">📦 Export to Production</h4>
+<p style="font-size: clamp(0.85rem, 2vw, 0.95rem); margin: 0;">Generate pure Python/Polars code. Deploy anywhere without Flowfile.</p>
+</div>
+
+<div markdown="1" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1.5rem, 3vw, 2rem); border-radius: 8px; color: white;">
+<h4 style="color: #00CED1; margin-top: 0; font-size: clamp(1rem, 2.5vw, 1.2rem);">☁️ Cloud Support</h4>
+<p style="font-size: clamp(0.85rem, 2vw, 0.95rem); margin: 0;">Direct S3/cloud storage support, no need for expensive clusters to analyse your data</p>
+</div>
+
+</div>
+
+<hr />
+<h2 id="troubleshooting">Troubleshooting</h2>
+<details>
+<summary><strong>Installation Issues</strong></summary>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># If pip install fails, try:</span>
+pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip
+pip<span class="w"> </span>install<span class="w"> </span>flowfile
+
+<span class="c1"># For M1/M2 Macs:</span>
+pip<span class="w"> </span>install<span class="w"> </span>flowfile<span class="w"> </span>--no-binary<span class="w"> </span>:all:
+
+<span class="c1"># Behind corporate proxy:</span>
+pip<span class="w"> </span>install<span class="w"> </span>--proxy<span class="w"> </span>http://proxy.company.com:8080<span class="w"> </span>flowfile
+</code></pre></div>
+</details>
+
+<details>
+<summary><strong>Port Already in Use</strong></summary>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># Find what&#39;s using port 63578</span>
+lsof<span class="w"> </span>-i<span class="w"> </span>:63578<span class="w">  </span><span class="c1"># Mac/Linux</span>
+netstat<span class="w"> </span>-ano<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span>:63578<span class="w">  </span><span class="c1"># Windows</span>
+
+<span class="c1"># Kill the process or use different port:</span>
+<span class="nv">FLOWFILE_PORT</span><span class="o">=</span><span class="m">8080</span><span class="w"> </span>flowfile<span class="w"> </span>run<span class="w"> </span>ui
+</code></pre></div>
+</details>
+
+<h3 id="get-help">Get Help</h3>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: clamp(0.5rem, 2vw, 1rem); margin: 2rem 0;">
+  <div style="text-align: center;">
+    <strong style="font-size: clamp(0.9rem, 2vw, 1rem);">Documentation</strong><br>
+    <a href="users/index.html" style="color: #667eea; font-size: clamp(0.85rem, 2vw, 0.95rem);">Full Documentation</a>
+  </div>
+  <div style="text-align: center;">
+    <strong style="font-size: clamp(0.9rem, 2vw, 1rem);">Discussions</strong><br>
+    <a href="https://github.com/Edwardvaneechoud/Flowfile/discussions" style="color: #667eea; font-size: clamp(0.85rem, 2vw, 0.95rem);">GitHub Discussions</a>
+  </div>
+  <div style="text-align: center;">
+    <strong style="font-size: clamp(0.9rem, 2vw, 1rem);">Issues</strong><br>
+    <a href="https://github.com/Edwardvaneechoud/Flowfile/issues" style="color: #667eea; font-size: clamp(0.85rem, 2vw, 0.95rem);">GitHub Issues</a>
+  </div>
+</div>
+
+<hr />
+<div align="center" style="margin-top: clamp(2rem, 4vw, 3rem); padding: clamp(1.5rem, 3vw, 2rem); background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
+  <h2 style="color: white; margin-top: 0; font-size: clamp(1.5rem, 4vw, 2rem);">Ready to Transform Your Data?</h2>
+  <p style="font-size: clamp(0.95rem, 2.5vw, 1.1rem); margin: 1rem 0;">Join thousands of users building data pipelines with Flowfile</p>
+  <div style="display: flex; gap: clamp(0.5rem, 2vw, 1rem); justify-content: center; flex-wrap: wrap;">
+    <a href="users/visual-editor/index.html" style="background: white; color: #667eea; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1.5rem, 3vw, 2rem); border-radius: 50px; text-decoration: none; font-weight: bold; font-size: clamp(0.85rem, 2vw, 0.95rem); display: inline-block; min-width: 140px; text-align: center;">Start Visual (No Code) →</a>
+    <a href="users/python-api/index.html" style="border: 2px solid white; color: white; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1.5rem, 3vw, 2rem); border-radius: 50px; text-decoration: none; font-weight: bold; font-size: clamp(0.85rem, 2vw, 0.95rem); display: inline-block; min-width: 140px; text-align: center;">Start Coding (Python) →</a>
+  </div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

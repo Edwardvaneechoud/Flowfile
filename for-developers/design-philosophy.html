@@ -1,0 +1,3694 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/for-developers/design-philosophy.html">
+      
+      
+        <link rel="prev" href="index.html">
+      
+      
+        <link rel="next" href="architecture.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>Design Philosophy - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-architecture-story-how-flowfile-bridges-code-and-visual-worlds" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Design Philosophy
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/index.html" class="md-tabs__link">
+          
+  
+  
+  User Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_3" id="__nav_3_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Node Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transform Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregate Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/nodes/output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_4" id="__nav_3_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/database-connectivity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to PostgreSQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manage Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/tutorials/code-generator.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export to Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/node-designer.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_3" id="__nav_3_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/design-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowFrame & FlowGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/concepts/expressions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_4" id="__nav_3_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/reading-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/writing-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/data-types.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/flowframe-operations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DataFrame Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/aggregations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/joins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/reference/visual-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual UI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3_5" id="__nav_3_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/tutorials/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/python-api/tutorials/flowfile_frame_api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows with Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/desktop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Package
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/deployment/docker.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="design-philosophy.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem-we-solved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Problem We Solved
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-pipeline-two-ways" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Pipeline, Two Ways
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="One Pipeline, Two Ways">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sample-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sample Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-1-the-flowfile-api-developer-experience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 1: The Flowfile API (Developer Experience)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-direct-graph-construction-what-happens-internally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 2: Direct Graph Construction (What Happens Internally)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-fundamental-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Fundamental Concepts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Three Fundamental Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-dag-is-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The DAG is Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-settings-drive-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Settings Drive Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-execution-is-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Execution is Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#understanding-flownode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding FlowNode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowfile-the-use-of-closures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flowfile: The Use of Closures
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flowfile: The Use of Closures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-closure-pattern-in-practice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Closure Pattern in Practice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-schema-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback: Schema Callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execution-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution Methods
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Execution Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-execution-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🚀 Available Execution Methods
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="🚀 Available Execution Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#performance-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#development-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explain-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explain Plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="System Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#service-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Service Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contributing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Contributing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-node-the-full-picture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a New Node: The Full Picture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adding a New Node: The Full Picture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frontend-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frontend Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Vision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="creating-custom-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create Custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="custom-node-tutorial.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building more custom Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem-we-solved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Problem We Solved
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-pipeline-two-ways" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Pipeline, Two Ways
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="One Pipeline, Two Ways">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sample-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sample Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-1-the-flowfile-api-developer-experience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 1: The Flowfile API (Developer Experience)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-direct-graph-construction-what-happens-internally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 2: Direct Graph Construction (What Happens Internally)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-fundamental-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Fundamental Concepts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Three Fundamental Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-dag-is-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The DAG is Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-settings-drive-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Settings Drive Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-execution-is-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Execution is Everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#understanding-flownode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding FlowNode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowfile-the-use-of-closures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flowfile: The Use of Closures
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flowfile: The Use of Closures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-closure-pattern-in-practice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Closure Pattern in Practice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-schema-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback: Schema Callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execution-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution Methods
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Execution Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-execution-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🚀 Available Execution Methods
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="🚀 Available Execution Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#performance-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#development-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explain-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explain Plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="System Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#service-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Service Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contributing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Contributing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-node-the-full-picture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a New Node: The Full Picture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adding a New Node: The Full Picture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frontend-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frontend Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Vision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-architecture-story-how-flowfile-bridges-code-and-visual-worlds">The Architecture Story: How Flowfile Bridges Code and Visual Worlds</h1>
+<p><strong>📋 TL;DR - Key Takeaways</strong></p>
+<div class="admonition abstract">
+<p class="admonition-title">Key Points</p>
+<ul>
+<li><strong>Two ways to build pipelines</strong>: Write Python code or use drag-and-drop UI - both create the same thing</li>
+<li><strong>Settings-based design</strong>: Every transformation is just a configuration object (Pydantic model)</li>
+<li><strong>Clear separation</strong>: Graph structure, settings, and execution are handled separately</li>
+<li><strong>Happy accident</strong>: Started as a UI project, ended up with an architecture that works great for both UI and code</li>
+</ul>
+</div>
+<div class="admonition info">
+<p class="admonition-title">Navigation</p>
+<ul>
+<li><strong>This page</strong>: Architecture overview and design decisions</li>
+<li><strong><a href="flowfile-core.html">Core Developer Guide</a></strong>: Technical implementation details</li>
+<li><strong><a href="../users/python-api/index.html">Python API</a></strong>: How to use Flowfile in your projects</li>
+</ul>
+</div>
+<p><strong>👥 Who Should Read This?</strong></p>
+<div class="admonition question">
+<p class="admonition-title">Target Audience</p>
+<ul>
+<li>Contributors who want to understand the codebase</li>
+<li>Users curious about how things work internally</li>
+<li>Developers building similar dual-interface tools</li>
+<li>Anyone interested in bridging UI and code approaches</li>
+</ul>
+</div>
+<h2 id="the-problem-we-solved">The Problem We Solved</h2>
+<p>Most data tools force you to choose: either use a visual interface (easy but limited) or write code (powerful but complex). We wanted both in the same tool.</p>
+<p>The challenge: How do you make a visual drag-and-drop interface that creates the exact same pipelines as writing code?</p>
+<p>The platform started with a clean, settings-based backend where every transformation is a declarative configuration object. This design is perfect for a UI. But developers don't think in configuration objects—they think in code:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># How developers want to write data code</span>
+<span class="n">df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;price&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+</code></pre></div>
+<p>The breakthrough came from realizing that the Polars API would be able to convert to our settings object and therefore creating the same settings object that the UI creates. Both interfaces become different ways to build the same underlying configuration, giving developers the expressiveness they want while maintaining the structured settings the UI needs.</p>
+<h2 id="the-result">The result</h2>
+<div class="admonition abstract">
+<p class="admonition-title">How It Actually Happened</p>
+<p>This wasn't some grand plan. I started building a drag-and-drop UI and needed a clean way to configure nodes. Settings objects made sense for the UI. But the development of Flowfile has never been a planned approach, it was just about building what sounded <em>fun</em>.
+Later, when looking at other projects, I realized I could just have the API methods create the same settings objects, well that is <strong><em>fun</em></strong>. Suddenly there were two equivalent interfaces almost by accident,.
+Since Polars does the actual data processing, our settings just configure what Polars should do. This turned out to be an easy abstraction layer that showed it's potential from the start.</p>
+</div>
+<p>The result is a Python API that constructs the exact same configuration objects as the visual editor:</p>
+<ul>
+<li><strong>The Python API</strong> <code>df.filter(...)</code>  translates directly to a <code>NodeFilter</code> object</li>
+<li><strong>The Visual Editor</strong> creates an identical <code>NodeFilter</code> object through clicks and drags</li>
+</ul>
+<p>Both interfaces are different ways to build the same Directed Acyclic Graph (DAG), providing the experience of a code-native API combined with the accessibility of a visual editor.</p>
+<h2 id="one-pipeline-two-ways">One Pipeline, Two Ways</h2>
+<p>Let's build the same pipeline using both approaches to see how they produce identical results.</p>
+<h3 id="sample-data">Sample Data</h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="n">raw_data</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;North&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">150</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;South&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">300</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;East&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">200</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;West&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">12</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">100</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;North&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">250</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;South&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">400</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;East&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">18</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">350</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;West&quot;</span><span class="p">,</span> <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="mi">25</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">500</span><span class="p">},</span>
+<span class="p">]</span>
+</code></pre></div>
+<h3 id="method-1-the-flowfile-api-developer-experience">Method 1: The Flowfile API (Developer Experience)</h3>
+<p><strong>Code:</strong>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile_core.flowfile.flow_graph</span><span class="w"> </span><span class="kn">import</span> <span class="n">FlowGraph</span>
+
+<span class="n">graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">create_flow_graph</span><span class="p">()</span>
+
+<span class="c1"># Create pipeline with fluent API</span>
+<span class="n">df_1</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">FlowFrame</span><span class="p">(</span><span class="n">raw_data</span><span class="p">,</span> <span class="n">flow_graph</span><span class="o">=</span><span class="n">graph</span><span class="p">)</span>
+
+<span class="n">df_2</span> <span class="o">=</span> <span class="n">df_1</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+    <span class="n">flowfile_formulas</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;[quantity] * [price]&#39;</span><span class="p">],</span> 
+    <span class="n">output_column_names</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;total&quot;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">df_3</span> <span class="o">=</span> <span class="n">df_2</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">flowfile_formula</span><span class="o">=</span><span class="s2">&quot;[total]&gt;1500&quot;</span><span class="p">)</span>
+
+<span class="n">df_4</span> <span class="o">=</span> <span class="n">df_3</span><span class="o">.</span><span class="n">group_by</span><span class="p">([</span><span class="s1">&#39;region&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">agg</span><span class="p">([</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;total_revenue&quot;</span><span class="p">),</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;total&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;avg_transaction&quot;</span><span class="p">),</span>
+<span class="p">])</span>
+</code></pre></div></p>
+<details>
+<summary>Inspecting the graph</summary>
+<p><strong>Graph Introspection:</strong>
+<div class="highlight"><pre><span></span><code><span class="c1"># Access all nodes that were created in the graph</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">_node_db</span><span class="p">)</span>
+<span class="c1"># {1: Node id: 1 (manual_input), </span>
+<span class="c1">#  3: Node id: 3 (formula), </span>
+<span class="c1">#  4: Node id: 4 (filter), </span>
+<span class="c1">#  5: Node id: 5 (group_by)}</span>
+
+<span class="c1"># Find the starting node(s) of the graph</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">_flow_starts</span><span class="p">)</span>
+<span class="c1"># [Node id: 1 (manual_input)]</span>
+
+<span class="c1"># From every node, access the next node that depends on it</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">leads_to_nodes</span><span class="p">)</span>
+<span class="c1"># [Node id: 3 (formula)]</span>
+
+<span class="c1"># The other way around works too</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">node_inputs</span><span class="p">)</span>
+<span class="c1"># NodeStepInputs(Left Input: None, Right Input: None, </span>
+<span class="c1">#                Main Inputs: [Node id: 1 (manual_input)])</span>
+
+<span class="c1"># Access the settings and type of any node</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">setting_input</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">graph</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">node_type</span><span class="p">)</span>
+</code></pre></div></p>
+</details>
+<h3 id="method-2-direct-graph-construction-what-happens-internally">Method 2: Direct Graph Construction (What Happens Internally)</h3>
+<p><strong>Code:</strong>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">flowfile_core.schemas</span><span class="w"> </span><span class="kn">import</span> <span class="n">node_interface</span><span class="p">,</span> <span class="n">transformation_settings</span><span class="p">,</span> <span class="n">RawData</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile_core.flowfile.flow_graph</span><span class="w"> </span><span class="kn">import</span> <span class="n">add_connection</span>
+
+<span class="n">flow</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">create_flow_graph</span><span class="p">()</span>
+
+<span class="c1"># Node 1: Manual input</span>
+<span class="n">node_manual_input</span> <span class="o">=</span> <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeManualInput</span><span class="p">(</span>
+    <span class="n">flow_id</span><span class="o">=</span><span class="n">flow</span><span class="o">.</span><span class="n">flow_id</span><span class="p">,</span> 
+    <span class="n">node_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">raw_data_format</span><span class="o">=</span><span class="n">RawData</span><span class="o">.</span><span class="n">from_pylist</span><span class="p">(</span><span class="n">raw_data</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">add_manual_input</span><span class="p">(</span><span class="n">node_manual_input</span><span class="p">)</span>
+
+<span class="c1"># Node 2: Add formula for total</span>
+<span class="n">formula_node</span> <span class="o">=</span> <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeFormula</span><span class="p">(</span>
+    <span class="n">flow_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">node_id</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">transformation_settings</span><span class="o">.</span><span class="n">FunctionInput</span><span class="p">(</span>
+        <span class="n">field</span><span class="o">=</span><span class="n">transformation_settings</span><span class="o">.</span><span class="n">FieldInput</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;total&quot;</span><span class="p">,</span> 
+            <span class="n">data_type</span><span class="o">=</span><span class="s2">&quot;Double&quot;</span>
+        <span class="p">),</span>
+        <span class="n">function</span><span class="o">=</span><span class="s2">&quot;[quantity] * [price]&quot;</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">add_formula</span><span class="p">(</span><span class="n">formula_node</span><span class="p">)</span>
+<span class="n">add_connection</span><span class="p">(</span><span class="n">flow</span><span class="p">,</span> 
+    <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeConnection</span><span class="o">.</span><span class="n">create_from_simple_input</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+
+<span class="c1"># Node 3: Filter high value transactions</span>
+<span class="n">filter_node</span> <span class="o">=</span> <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeFilter</span><span class="p">(</span>
+    <span class="n">flow_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">node_id</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">filter_input</span><span class="o">=</span><span class="n">transformation_settings</span><span class="o">.</span><span class="n">FilterInput</span><span class="p">(</span>
+        <span class="n">filter_type</span><span class="o">=</span><span class="s2">&quot;advanced&quot;</span><span class="p">,</span>
+        <span class="n">advanced_filter</span><span class="o">=</span><span class="s2">&quot;[total]&gt;1500&quot;</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">add_filter</span><span class="p">(</span><span class="n">filter_node</span><span class="p">)</span>
+<span class="n">add_connection</span><span class="p">(</span><span class="n">flow</span><span class="p">,</span> 
+    <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeConnection</span><span class="o">.</span><span class="n">create_from_simple_input</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+
+<span class="c1"># Node 4: Group by region</span>
+<span class="n">group_by_node</span> <span class="o">=</span> <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeGroupBy</span><span class="p">(</span>
+    <span class="n">flow_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">node_id</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">groupby_input</span><span class="o">=</span><span class="n">transformation_settings</span><span class="o">.</span><span class="n">GroupByInput</span><span class="p">(</span>
+        <span class="n">agg_cols</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">transformation_settings</span><span class="o">.</span><span class="n">AggColl</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">,</span> <span class="s2">&quot;groupby&quot;</span><span class="p">),</span>
+            <span class="n">transformation_settings</span><span class="o">.</span><span class="n">AggColl</span><span class="p">(</span><span class="s2">&quot;total&quot;</span><span class="p">,</span> <span class="s2">&quot;sum&quot;</span><span class="p">,</span> <span class="s2">&quot;total_revenue&quot;</span><span class="p">),</span>
+            <span class="n">transformation_settings</span><span class="o">.</span><span class="n">AggColl</span><span class="p">(</span><span class="s2">&quot;total&quot;</span><span class="p">,</span> <span class="s2">&quot;mean&quot;</span><span class="p">,</span> <span class="s2">&quot;avg_transaction&quot;</span><span class="p">)</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">add_group_by</span><span class="p">(</span><span class="n">group_by_node</span><span class="p">)</span>
+<span class="n">add_connection</span><span class="p">(</span><span class="n">flow</span><span class="p">,</span> 
+    <span class="n">node_interface</span><span class="o">.</span><span class="n">NodeConnection</span><span class="o">.</span><span class="n">create_from_simple_input</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+</code></pre></div></p>
+<p><strong>Schema Inspection:</strong>
+<div class="highlight"><pre><span></span><code><span class="c1"># Check the schema at any node</span>
+<span class="nb">print</span><span class="p">([</span><span class="n">s</span><span class="o">.</span><span class="n">get_minimal_field_info</span><span class="p">()</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">flow</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">schema</span><span class="p">])</span>
+<span class="c1"># [MinimalFieldInfo(name=&#39;region&#39;, data_type=&#39;String&#39;), </span>
+<span class="c1">#  MinimalFieldInfo(name=&#39;total_revenue&#39;, data_type=&#39;Float64&#39;), </span>
+<span class="c1">#  MinimalFieldInfo(name=&#39;avg_transaction&#39;, data_type=&#39;Float64&#39;)]</span>
+</code></pre></div></p>
+<details>
+<summary>Both methods produce the exact same Polars execution plan:</summary>
+<p>This is the polars query plan generated by both methods:</p>
+<pre><code>```
+AGGREGATE[maintain_order: false]
+  [col("total").sum().alias("total_revenue"), 
+   col("total").mean().alias("avg_transaction")] BY [col("region")]
+  FROM
+  FILTER [(col("total")) &gt; (1500)]
+  FROM
+  WITH_COLUMNS:
+  [[(col("quantity")) * (col("price"))].alias("total")]
+  DF ["id", "region", "quantity", "price"]; PROJECT 3/4 COLUMNS
+```
+</code></pre>
+</details>
+<h2 id="core-architecture">Core Architecture</h2>
+<h3 id="three-fundamental-concepts">Three Fundamental Concepts</h3>
+<h4 id="1-the-dag-is-everything">1. The DAG is Everything</h4>
+<p>Every Flowfile pipeline is a Directed Acyclic Graph where. This is captured in the  <a href="python-api-reference.html#flowgraph">FlowGraph</a></p>
+<ul>
+<li><strong>Nodes</strong> are transformations (filter, join, group_by, etc.)</li>
+<li><strong>Edges</strong> represent data flow between nodes</li>
+<li><strong>Settings</strong> are Pydantic models configuring each transformation</li>
+</ul>
+<h4 id="2-settings-drive-everything">2. Settings Drive Everything</h4>
+<p>Every node is composed of two parts: the <strong>Node class</strong> (a Pydantic BaseModel) that holds metadata and the <strong>Settings</strong> (often dataclasses) that configure the transformation:</p>
+<p>Read more about <a href="python-api-reference.html#input_schema">Nodes</a> and the <a href="python-api-reference.html#transform_schema">transformations</a></p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The Node: metadata and graph position</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">NodeGroupBy</span><span class="p">(</span><span class="n">NodeSingleInput</span><span class="p">):</span>
+    <span class="n">groupby_input</span><span class="p">:</span> <span class="n">transform_schema</span><span class="o">.</span><span class="n">GroupByInput</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">NodeSingleInput</span><span class="p">(</span><span class="n">NodeBase</span><span class="p">):</span>
+    <span class="n">depending_on_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>  <span class="c1"># Parent node reference</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">NodeBase</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">flow_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">cache_results</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">pos_x</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">pos_y</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">description</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="c1"># ... graph metadata ...</span>
+
+<span class="c1"># The Settings: transformation configuration (dataclass)</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">GroupByInput</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Defines how to perform the group by operation&quot;&quot;&quot;</span>
+    <span class="n">agg_cols</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">AggColl</span><span class="p">]</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AggColl</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single aggregation operation&quot;&quot;&quot;</span>
+    <span class="n">old_name</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># Column to aggregate</span>
+    <span class="n">agg</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># Aggregation function (&#39;sum&#39;, &#39;mean&#39;, etc.)</span>
+    <span class="n">new_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># Output column name</span>
+    <span class="n">output_type</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Settings Power The Backend</p>
+<p>This dual structure—Nodes for graph metadata, Settings for transformation logic—drives the backend:</p>
+<ul>
+<li>🔧 <strong>Code generation</strong> (method signatures match settings)</li>
+<li>💾 <strong>Serialization</strong> (graphs can be saved/loaded)</li>
+<li>🔮 <strong>Schema prediction</strong> (output types are inferred from AggColl)</li>
+<li>🎨 <strong>UI structure</strong> (defines what the frontend needs to collect, though forms are manually built)</li>
+</ul>
+</div>
+<h4 id="3-execution-is-everything">3. Execution is Everything</h4>
+<p>The <a href="python-api-reference.html#flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine"><code>FlowDataEngine</code></a> orchestrates everything about execution. While the DAG defines structure and settings define configuration, FlowDataEngine is the runtime brain that makes it all happen.</p>
+<p>FlowDataEngine handles:
+- <strong>Compute location</strong> (worker service vs local execution)
+- <strong>Caching strategy</strong> (when to materialize, where to store)
+- <strong>Schema caching</strong> (avoiding redundant schema calculations)
+- <strong>Lazy vs eager evaluation</strong> (performance vs debugging modes)
+- <strong>Data movement</strong> (passing LazyFrames between transformations)</p>
+<p>This separation is powerful: the DAG remains a pure specification, settings stay declarative, and FlowDataEngine owns all execution concerns. It wraps a Polars LazyFrame/DataFrame but is really the execution orchestrator—deciding where, when, and how transformations run.</p>
+<h3 id="understanding-flownode">Understanding FlowNode</h3>
+<p>The <code>FlowNode</code> class is the heart of each transformation in the graph. Each node encapsulates everything needed for a single transformation step:</p>
+<div class="admonition info">
+<p class="admonition-title">Core FlowNode Components</p>
+<p><strong>Essential State:</strong></p>
+<ul>
+<li><strong><code>_function</code></strong>: The closure containing the transformation logic</li>
+<li><strong><code>leads_to_nodes</code></strong>: List of downstream nodes that depend on this one</li>
+<li><strong><code>node_information</code></strong>: Metadata (id, type, position, connections)</li>
+<li><strong><code>_hash</code></strong>: Unique identifier based on settings and parent hashes</li>
+</ul>
+<p><strong>Runtime State:</strong></p>
+<ul>
+<li><strong><code>results</code></strong>: Holds the resulting data, errors, and example data paths</li>
+<li><strong><code>node_stats</code></strong>: Tracks execution status (has_run, is_canceled, etc.)</li>
+<li><strong><code>node_settings</code></strong>: Runtime settings (cache_results, streamable, etc.)</li>
+<li><strong><code>state_needs_reset</code></strong>: Flag indicating if the node needs recalculation</li>
+</ul>
+<p><strong>Schema Information:</strong></p>
+<ul>
+<li><strong><code>node_schema</code></strong>: Input/output columns and predicted schemas</li>
+<li><strong><code>schema_callback</code></strong>: Function to calculate schema without execution</li>
+</ul>
+</div>
+<p>The beauty is that FlowNode doesn't know about specific transformations—it just orchestrates the execution of its <code>_function</code> closure with the right inputs and manages the resulting state.</p>
+<h2 id="flowfile-the-use-of-closures">Flowfile: The Use of Closures</h2>
+<p>When a method like <code>.filter()</code> is called, no data is actually filtered. Instead, a <code>FlowNode</code> is created containing a function—a closure that remembers its settings.</p>
+<p><strong>Visual: How Closures Build the Execution Chain</strong>
+<pre class="mermaid"><code>graph LR
+    subgraph "Node 1: manual_input"
+        direction TB
+        settings1("&lt;b&gt;Settings&lt;/b&gt;&lt;br/&gt;raw_data = [...]")
+        func1("&lt;b&gt;_func()&lt;/b&gt;&lt;br/&gt;&lt;i&gt;closure&lt;/i&gt;")
+        settings1 -.-&gt; |remembered by| func1
+    end
+
+    subgraph "Node 2: with_columns&lt;br/&gt;(formula)"
+        direction TB
+        settings2("&lt;b&gt;Settings&lt;/b&gt;&lt;br/&gt;formula = '[q] * [p]'")
+        func2("&lt;b&gt;_func(fl)&lt;/b&gt;&lt;br/&gt;&lt;i&gt;closure&lt;/i&gt;")
+        settings2 -.-&gt; |remembered by| func2
+    end
+
+    subgraph "Node 3: filter"
+        direction TB
+        settings3("&lt;b&gt;Settings&lt;/b&gt;&lt;br/&gt;filter = '[total] &gt; 1500'")
+        func3("&lt;b&gt;_func(fl)&lt;/b&gt;&lt;br/&gt;&lt;i&gt;closure&lt;/i&gt;")
+        settings3 -.-&gt; |remembered by| func3
+    end
+
+    subgraph "Node 4: group_by"
+        direction TB
+        settings4("&lt;b&gt;Settings&lt;/b&gt;&lt;br/&gt;agg = sum(total)")
+        func4("&lt;b&gt;_func(fl)&lt;/b&gt;&lt;br/&gt;&lt;i&gt;closure&lt;/i&gt;")
+        settings4 -.-&gt; |remembered by| func4
+    end
+
+    Result([Schema / Data])
+
+    func1 ==&gt; |FlowDataEngine| func2
+    func2 ==&gt; |FlowDataEngine| func3
+    func3 ==&gt; |FlowDataEngine| func4
+    func4 ==&gt; |Final FlowDataEngine&lt;br/&gt;with full LazyFrame plan| Result</code></pre></p>
+<p>Each <code>_func</code> is a closure that wraps around the previous one, building up a chain. The beauty is that Polars can track the schema through this entire chain without executing any data transformations—it just builds the query plan!</p>
+<h4 id="the-closure-pattern-in-practice">The Closure Pattern in Practice</h4>
+<p>Here's how closures are actually created in <a href="python-api-reference.html#flowgraph">FlowGraph</a>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># From the FlowGraph implementation</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">add_group_by</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group_by_settings</span><span class="p">:</span> <span class="n">input_schema</span><span class="o">.</span><span class="n">NodeGroupBy</span><span class="p">):</span>
+    <span class="c1"># The closure: captures group_by_settings</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_func</span><span class="p">(</span><span class="n">fl</span><span class="p">:</span> <span class="n">FlowDataEngine</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowDataEngine</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">fl</span><span class="o">.</span><span class="n">do_group_by</span><span class="p">(</span><span class="n">group_by_settings</span><span class="o">.</span><span class="n">groupby_input</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+
+    <span class="bp">self</span><span class="o">.</span><span class="n">add_node_step</span><span class="p">(</span>
+        <span class="n">node_id</span><span class="o">=</span><span class="n">group_by_settings</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span>
+        <span class="n">function</span><span class="o">=</span><span class="n">_func</span><span class="p">,</span>  <span class="c1"># This closure remembers group_by_settings!</span>
+        <span class="n">node_type</span><span class="o">=</span><span class="s1">&#39;group_by&#39;</span><span class="p">,</span>
+        <span class="n">setting_input</span><span class="o">=</span><span class="n">group_by_settings</span><span class="p">,</span>
+        <span class="n">input_node_ids</span><span class="o">=</span><span class="p">[</span><span class="n">group_by_settings</span><span class="o">.</span><span class="n">depending_on_id</span><span class="p">]</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">add_union</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">union_settings</span><span class="p">:</span> <span class="n">input_schema</span><span class="o">.</span><span class="n">NodeUnion</span><span class="p">):</span>
+    <span class="c1"># Another closure: captures union_settings</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_func</span><span class="p">(</span><span class="o">*</span><span class="n">flowfile_tables</span><span class="p">:</span> <span class="n">FlowDataEngine</span><span class="p">):</span>
+        <span class="n">dfs</span> <span class="o">=</span> <span class="p">[</span><span class="n">flt</span><span class="o">.</span><span class="n">data_frame</span> <span class="k">for</span> <span class="n">flt</span> <span class="ow">in</span> <span class="n">flowfile_tables</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">FlowDataEngine</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">dfs</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s1">&#39;diagonal_relaxed&#39;</span><span class="p">))</span>
+
+    <span class="bp">self</span><span class="o">.</span><span class="n">add_node_step</span><span class="p">(</span>
+        <span class="n">node_id</span><span class="o">=</span><span class="n">union_settings</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span>
+        <span class="n">function</span><span class="o">=</span><span class="n">_func</span><span class="p">,</span>  <span class="c1"># This closure has everything it needs</span>
+        <span class="n">node_type</span><span class="o">=</span><span class="s1">&#39;union&#39;</span><span class="p">,</span>
+        <span class="n">setting_input</span><span class="o">=</span><span class="n">union_settings</span><span class="p">,</span>
+        <span class="n">input_node_ids</span><span class="o">=</span><span class="n">union_settings</span><span class="o">.</span><span class="n">depending_on_ids</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>Each <code>_func</code> is a closure that captures its specific settings. When these functions are composed during execution, they form a chain:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Conceptual composition of the closures</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">group_by</span><span class="o">.</span><span class="n">_func</span><span class="p">(</span>
+    <span class="nb">filter</span><span class="o">.</span><span class="n">_func</span><span class="p">(</span>
+        <span class="n">formula</span><span class="o">.</span><span class="n">_func</span><span class="p">(</span>
+            <span class="n">manual_input</span><span class="o">.</span><span class="n">_func</span><span class="p">()</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Result is a FlowDataEngine with a LazyFrame that knows its schema</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data_frame</span><span class="o">.</span><span class="n">collect_schema</span><span class="p">())</span>
+<span class="c1"># Schema([(&#39;region&#39;, String), (&#39;total_revenue&#39;, Float64), (&#39;avg_transaction&#39;, Float64)])</span>
+</code></pre></div>
+<div class="admonition example">
+<p class="admonition-title">Why This Works</p>
+<ol>
+<li><strong>Each <code>_func</code> is a closure</strong> containing the node's settings</li>
+<li><strong>Functions only need FlowDataEngine as input</strong> (or multiple for joins/unions)</li>
+<li><strong>LazyFrame tracks schema changes</strong> through the entire chain</li>
+<li><strong>No data is processed</strong>—Polars just builds the query plan</li>
+</ol>
+<p>The result: instant schema feedback without running expensive computations!</p>
+</div>
+<h3 id="fallback-schema-callbacks">Fallback: Schema Callbacks</h3>
+<p>For nodes that can't infer schemas automatically (external data sources), each FlowNode can have a <code>schema_callback</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">schema_callback</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">input_schema</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pure function: settings + input schema → output schema&quot;&quot;&quot;</span>
+    <span class="c1"># Calculate output schema without data</span>
+    <span class="k">return</span> <span class="n">new_schema</span>
+</code></pre></div>
+<h2 id="execution-methods">Execution Methods</h2>
+<p>Flowfile offers flexible execution strategies depending on your needs:</p>
+<h3 id="available-execution-methods">🚀 Available Execution Methods</h3>
+<h4 id="performance-mode">Performance Mode</h4>
+<p><strong>When to use:</strong> Production pipelines, large datasets</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Get the final result efficiently</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="n">final_node_id</span><span class="p">)</span><span class="o">.</span><span class="n">get_resulting_data</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Characteristics:</strong></p>
+<ul>
+<li>⚡ Pull-based execution from the final node</li>
+<li>🎯 Polars optimizes the entire pipeline</li>
+<li>💨 Data flows once through optimized plan</li>
+<li>🚫 No intermediate materialization</li>
+</ul>
+<h4 id="development-mode">Development Mode</h4>
+<p><strong>When to use:</strong> Debugging, inspection, incremental development</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Execute with caching enabled</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="n">flow</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">create_flow_graph</span><span class="p">()</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">flow_settings</span><span class="o">.</span><span class="n">execution_mode</span> <span class="o">=</span> <span class="s2">&quot;Development&quot;</span>
+
+<span class="c1"># Add transformations here</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">run_graph</span><span class="p">()</span>
+
+<span class="c1"># Inspect intermediate results</span>
+<span class="n">node_3_result</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">get_example_data</span><span class="p">()</span>
+
+<span class="n">flow</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">needs_run</span><span class="p">(</span><span class="n">performance_mode</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="c1"># False</span>
+</code></pre></div>
+<p><strong>Characteristics:</strong>
+- 📝 Push-based execution in topological order
+- 💾 Each node's output written to disk
+- 🔍 Inspect any intermediate result
+- 🔄 When re-running the flow, only the steps that have changed(directly and indirectly) will run</p>
+<h4 id="explain-plan">Explain Plan</h4>
+<p><strong>When to use:</strong> Optimization, understanding deeply the execution plan.</p>
+<p>!!! warning This feature uses directly the Polars implementation, when the full flow cannot be fully converted to Polars, it will show partial executions.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># See what Polars will actually do</span>
+<span class="n">plan</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="n">node_id</span><span class="p">)</span><span class="o">.</span><span class="n">get_resulting_data</span><span class="p">()</span><span class="o">.</span><span class="n">data_frame</span><span class="o">.</span><span class="n">explain</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Characteristics:</strong>
+- 📊 Shows optimized query plan
+- 🔍 Understand Polars optimizations
+- 📈 Identify performance bottlenecks
+- 🎯 No actual execution</p>
+<h2 id="system-architecture">System Architecture</h2>
+<h3 id="service-architecture">Service Architecture</h3>
+<pre class="mermaid"><code>graph LR
+    subgraph "Frontend"
+        A[Designer&lt;br/&gt;Vue/Electron]
+    end
+
+    subgraph "Backend"
+        B[Core Service&lt;br/&gt;FastAPI]
+        C[Worker Service&lt;br/&gt;FastAPI]
+    end
+
+    subgraph "Storage"
+        D[Arrow IPC&lt;br/&gt;Cache]
+    end
+
+    A &lt;--&gt;|Settings/Schema| B
+    B &lt;--&gt;|Execution| C
+    C &lt;--&gt;|Data| D</code></pre>
+<div class="admonition info">
+<p class="admonition-title">Service Responsibilities</p>
+<p><strong>Designer:</strong>
+- Visual graph building interface
+- Node configuration forms (manually implemented)
+- Real-time schema feedback</p>
+<p><strong>Core:</strong>
+- DAG management
+- Execution orchestration
+- Schema prediction</p>
+<p><strong>Worker:</strong>
+- Polars transformations
+- Data caching (Arrow IPC)
+- Isolated from Core for scalability</p>
+</div>
+<h3 id="project-structure">Project Structure</h3>
+<div class="highlight"><pre><span></span><code>flowfile/
+├── flowfile_core/
+│   ├── nodes/              # Node implementations
+│   ├── schemas/            # Pydantic models
+│   └── flowfile/          # Graph management
+├── flowfile_worker/
+│   ├── execution/         # Polars execution
+│   └── cache/            # Arrow IPC caching
+└── flowfile_frontend/
+    ├── components/       # Vue components
+    └── electron/        # Desktop app
+</code></pre></div>
+<h2 id="contributing">Contributing</h2>
+<div class="admonition warning">
+<p class="admonition-title">Current State of Node Development</p>
+<p>While the backend architecture elegantly uses settings-driven nodes, adding new nodes requires work across multiple layers. The frontend currently requires manual implementation for each node type—the visual editor doesn't automatically generate forms from Pydantic schemas yet.</p>
+<p>However, there are also opportunities for more focused contributions! Integration with databases and cloud services is needed—these are smaller, more targeted tasks since the core structure is already in place. There's a lot of active development happening, so it's an exciting time to contribute!</p>
+</div>
+<h3 id="adding-a-new-node-the-full-picture">Adding a New Node: The Full Picture</h3>
+<p>Adding a node isn't as simple as defining settings and a function. Here's what's actually required:</p>
+<h4 id="backend-requirements">Backend Requirements</h4>
+<ol>
+<li><strong>Define the Pydantic settings model</strong> in <code>schemas/</code></li>
+<li><strong>Implement the transformation method</strong> on <code>FlowDataEngine</code></li>
+<li><strong>Add the node method</strong> to <code>FlowGraph</code> (e.g., <code>add_custom_transform()</code>)</li>
+<li><strong>Create the closure function</strong> that captures settings</li>
+<li><strong>Define schema callbacks</strong> for predicting output schemas</li>
+<li><strong>Register the node</strong> in the node registry</li>
+</ol>
+<p>Example of what's really needed in FlowGraph:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">add_custom_transform</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">transform_settings</span><span class="p">:</span> <span class="n">input_schema</span><span class="o">.</span><span class="n">NodeCustomTransform</span><span class="p">):</span>
+    <span class="c1"># Create the closure that captures settings</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_func</span><span class="p">(</span><span class="n">fl</span><span class="p">:</span> <span class="n">FlowDataEngine</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowDataEngine</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">fl</span><span class="o">.</span><span class="n">do_custom_transform</span><span class="p">(</span><span class="n">transform_settings</span><span class="o">.</span><span class="n">transform_input</span><span class="p">)</span>
+
+    <span class="c1"># Register with the graph</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">add_node_step</span><span class="p">(</span>
+        <span class="n">node_id</span><span class="o">=</span><span class="n">transform_settings</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span>
+        <span class="n">function</span><span class="o">=</span><span class="n">_func</span><span class="p">,</span>
+        <span class="n">node_type</span><span class="o">=</span><span class="s1">&#39;custom_transform&#39;</span><span class="p">,</span>
+        <span class="n">setting_input</span><span class="o">=</span><span class="n">transform_settings</span><span class="p">,</span>
+        <span class="n">input_node_ids</span><span class="o">=</span><span class="p">[</span><span class="n">transform_settings</span><span class="o">.</span><span class="n">depending_on_id</span><span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Don&#39;t forget schema prediction!</span>
+    <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="n">transform_settings</span><span class="o">.</span><span class="n">node_id</span><span class="p">)</span>
+    <span class="c1"># ... schema callback setup ...</span>
+</code></pre></div>
+<h4 id="frontend-requirements">Frontend Requirements</h4>
+<p>Currently, you'll need to:</p>
+<ol>
+<li>Create a new Vue component for the node's configuration form</li>
+<li>Handle the visual representation in the graph editor</li>
+<li>Map the UI inputs to the backend settings structure</li>
+<li>Add the node type to the visual editor's palette</li>
+</ol>
+<p>This manual process ensures full control over the UI/UX but requires significant development effort.</p>
+<h3 id="future-vision">Future Vision</h3>
+<p>The goal is to eventually auto-generate UI from Pydantic schemas, which would complete the settings-driven architecture. This would make adding new nodes closer to just defining the backend settings and transformation logic, with the UI automatically following.</p>
+<p>The beauty of Flowfile's architecture—discovered through the organic evolution from a UI-first approach—is that even though adding nodes requires work across multiple layers today, the settings-based design provides a clear contract between visual and code interfaces. </p>
+<p>I hope you enjoyed learning about Flowfile's architecture and found the dual-interface approach as exciting as I do! If you have questions, ideas, or want to contribute, ]
+feel free to reach out via <a href="https://github.com/edwardvaneechoud/Flowfile">GitHub</a> or check our <a href="flowfile-core.html">Core Developer Guide</a>. Happy building!</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
