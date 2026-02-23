@@ -1,0 +1,88 @@
+name: Publish flowfile-editor to npm
+
+on:
+  push:
+    tags:
+      - 'wasm-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_wasm/package-lock.json
+
+      - name: Install dependencies
+        working-directory: flowfile_wasm
+        run: npm ci
+
+      - name: Type check
+        working-directory: flowfile_wasm
+        run: npx vue-tsc --noEmit
+
+      - name: Run tests
+        working-directory: flowfile_wasm
+        run: npm run test:run
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_wasm/package-lock.json
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: flowfile_wasm
+        run: npm ci
+
+      - name: Verify version matches tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        working-directory: flowfile_wasm
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/wasm-v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version: $PKG_VERSION"
+
+      - name: Print version
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: flowfile_wasm
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Publishing version: $PKG_VERSION"
+
+      - name: Build library
+        working-directory: flowfile_wasm
+        run: npm run build:lib
+
+      - name: Publish to npm
+        working-directory: flowfile_wasm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

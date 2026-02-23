@@ -53,8 +53,8 @@
         <Handle :id="`output-${i - 1}`" type="source" :position="Position.Right" />
       </div>
 
-      <!-- Context Menu -->
-      <Teleport v-if="menuVisible" to="body">
+      <!-- Context Menu: teleported to Canvas container (inherits CSS vars, avoids VueFlow transform) -->
+      <Teleport v-if="menuVisible" to="#flowfile-context-menu-container">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
           <div class="context-menu-item" @click="runNode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -87,6 +87,7 @@ import { useFlowStore } from '../../stores/flow-store'
 const iconMap: Record<string, string> = {
   read: 'input_data.png',
   manual_input: 'manual_input.png',
+  external_data: 'external_data.svg',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',
@@ -98,7 +99,8 @@ const iconMap: Record<string, string> = {
   explore_data: 'view.png',
   pivot: 'pivot.png',
   unpivot: 'unpivot.png',
-  output: 'output.png'
+  output: 'output.png',
+  external_output: 'external_output.svg'
 }
 
 interface NodeData {

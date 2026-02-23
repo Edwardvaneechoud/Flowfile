@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- Document/result shape -->
+  <rect x="14" y="10" width="24" height="30" rx="3" fill="#48BB78" opacity="0.15"/>
+  <rect x="14" y="10" width="24" height="30" rx="3" stroke="#48BB78" stroke-width="2.5" fill="none"/>
+  <line x1="20" y1="19" x2="32" y2="19" stroke="#48BB78" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="25" x2="32" y2="25" stroke="#48BB78" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="31" x2="28" y2="31" stroke="#48BB78" stroke-width="2" stroke-linecap="round"/>
+  <!-- Arrow going out to external -->
+  <path d="M42 46H58" stroke="#276749" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M54 41l6 5-6 5" stroke="#276749" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Plug/connection symbol -->
+  <circle cx="34" cy="46" r="6" fill="#48BB78" opacity="0.2"/>
+  <circle cx="34" cy="46" r="6" stroke="#276749" stroke-width="2" fill="none"/>
+  <circle cx="34" cy="46" r="2.5" fill="#276749"/>
+</svg>

@@ -13,6 +13,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Manual Input',
     intro: 'Enter data manually in CSV format. Great for creating small datasets or test data.'
   },
+  external_data: {
+    title: 'External Data',
+    intro: 'Load data provided by the host application. Select an available dataset from the dropdown.'
+  },
   filter: {
     title: 'Filter',
     intro: 'Filter rows based on conditions. Use basic mode for simple filters or advanced mode for custom Polars expressions.'
@@ -60,6 +64,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   output: {
     title: 'Write Data',
     intro: 'Export your data as CSV. Run the flow to prepare the data, then download the file to your computer.'
+  },
+  external_output: {
+    title: 'External Output',
+    intro: 'Send the result data back to the host application via the output callback. Use this to return processed data from the embedded editor.'
   }
 }
 

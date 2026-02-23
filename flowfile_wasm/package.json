@@ -1,16 +1,45 @@
 {
-  "name": "flowfile-wasm",
+  "name": "flowfile-editor",
   "version": "0.1.0",
-  "description": "Minimal WASM-based data flow designer using Pyodide and Polars",
+  "description": "Embeddable browser-based data flow designer using Pyodide and Polars",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Edwardvaneechoud/Flowfile"
+  },
   "type": "module",
+  "main": "./dist/flowfile-editor.js",
+  "module": "./dist/flowfile-editor.js",
+  "types": "./dist/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/flowfile-editor.js",
+      "types": "./dist/lib/index.d.ts"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "build:lib": "BUILD_MODE=lib vue-tsc --noEmit && BUILD_MODE=lib vite build",
+    "build:all": "npm run build && npm run build:lib",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "vue": "^3.3.0",
+    "pinia": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pinia": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@ag-grid-community/client-side-row-model": "^31.1.1",
@@ -29,9 +58,6 @@
     "@vue-flow/core": "^1.42.1",
     "@vue-flow/minimap": "^1.5.2",
     "js-yaml": "^4.1.1",
-    "pinia": "^2.0.16",
-    "vue": "^3.5.13",
-    "vue-router": "^4.4.0",
     "vue-codemirror": "^6.1.1"
   },
   "devDependencies": {
@@ -40,9 +66,12 @@
     "@vue/test-utils": "^2.4.6",
     "fake-indexeddb": "^6.0.0",
     "happy-dom": "^15.11.7",
+    "pinia": "^2.0.16",
     "typescript": "~5.6.3",
     "vite": "^4.5.3",
     "vitest": "^2.1.8",
+    "vue": "^3.5.13",
+    "vue-router": "^4.4.0",
     "vue-tsc": "^2.0.19"
   }
 }
