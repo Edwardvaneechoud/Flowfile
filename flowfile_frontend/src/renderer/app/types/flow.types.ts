@@ -120,6 +120,7 @@ export interface EdgeInput {
   target: string;
   sourceHandle: string;
   targetHandle: string;
+  label?: string;
 }
 
 // ============================================================================

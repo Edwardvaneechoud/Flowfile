@@ -355,7 +355,20 @@ export default function useDragAndDrop() {
 
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
-    addEdges(flowData.node_edges);
+
+    // Add labels to edges from source node output handles
+    const edgesWithLabels = flowData.node_edges.map((edge) => {
+      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      if (sourceNode?.data?.outputs) {
+        const output = sourceNode.data.outputs.find((o: any) => o.id === edge.sourceHandle);
+        if (output?.label) {
+          return { ...edge, label: output.label };
+        }
+      }
+      return edge;
+    });
+
+    addEdges(edgesWithLabels);
   }
 
   async function onDrop(event: DragEvent, flowId: number): Promise<OperationResponse | undefined> {
@@ -529,6 +542,17 @@ export default function useDragAndDrop() {
       const newTargetId = nodeIdMapping.get(edge.targetNodeId);
 
       if (newSourceId !== undefined && newTargetId !== undefined) {
+        // Look up the source node's output label for the edge
+        const sourceNodeInfo = multiCopyValue.nodes.find(
+          (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
+        );
+        const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""));
+        const outputLabel =
+          sourceNodeInfo?.nodeTemplate?.output_names &&
+          sourceNodeInfo.nodeTemplate.output_names.length > 1
+            ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
+            : undefined;
+
         // Create the edge in the UI
         const newEdge = {
           id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
@@ -536,6 +560,7 @@ export default function useDragAndDrop() {
           target: String(newTargetId),
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
+          ...(outputLabel ? { label: outputLabel } : {}),
         };
         addEdges([newEdge]);
 

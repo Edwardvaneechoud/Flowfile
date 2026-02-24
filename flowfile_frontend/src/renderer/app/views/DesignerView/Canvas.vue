@@ -187,6 +187,16 @@ async function onConnect(params: any) {
       },
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);
+
+    // Add label from source node's named output handle
+    const sourceNode = instance.findNode(params.source);
+    if (sourceNode?.data?.outputs) {
+      const output = sourceNode.data.outputs.find((o: any) => o.id === params.sourceHandle);
+      if (output?.label) {
+        params.label = output.label;
+      }
+    }
+
     addEdges([params]);
     // Update history state from response
     if (response?.history) {
@@ -715,6 +725,23 @@ body,
 
 .custom-node-flow .vue-flow__edges {
   filter: invert(100%);
+}
+
+.custom-node-flow .vue-flow__edge-textwrapper {
+  filter: invert(100%);
+}
+
+.custom-node-flow .vue-flow__edge-text {
+  font-size: 11px;
+  font-weight: 500;
+  fill: #555;
+}
+
+.custom-node-flow .vue-flow__edge-textbg {
+  fill: #fff;
+  rx: 4;
+  ry: 4;
+  opacity: 0.9;
 }
 
 .animated-bg-gradient {
