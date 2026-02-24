@@ -108,6 +108,7 @@ export interface NodeInput extends NodeTemplate {
   id: number;
   pos_x: number;
   pos_y: number;
+  node_reference?: string;
 }
 
 // ============================================================================

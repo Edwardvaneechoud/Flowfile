@@ -321,6 +321,7 @@ export default function useDragAndDrop() {
         id: node.id,
         label: node.name,
         component: markRaw(component),
+        nodeReference: node.node_reference,
         inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
           id: `input-${i}`,
           position: Position.Left,
@@ -356,7 +357,7 @@ export default function useDragAndDrop() {
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
 
-    // Add labels to edges from source node output handles
+    // Add labels to edges from source node output handles or node_reference
     const edgesWithLabels = flowData.node_edges.map((edge) => {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
@@ -364,6 +365,9 @@ export default function useDragAndDrop() {
         if (output?.label) {
           return { ...edge, label: output.label };
         }
+      }
+      if (sourceNode?.data?.nodeReference) {
+        return { ...edge, label: sourceNode.data.nodeReference };
       }
       return edge;
     });

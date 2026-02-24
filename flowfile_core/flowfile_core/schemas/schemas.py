@@ -392,12 +392,14 @@ class NodeInput(NodeTemplate):
         pos_x (float): The x-coordinate on the canvas.
         pos_y (float): The y-coordinate on the canvas.
         output_names (list[str] | None): Named outputs for multi-output nodes.
+        node_reference (str | None): Reference name used for code generation and input naming.
     """
 
     id: int
     pos_x: float
     pos_y: float
     output_names: list[str] | None = None
+    node_reference: str | None = None
 
 
 class NodeEdge(BaseModel):

@@ -188,13 +188,16 @@ async function onConnect(params: any) {
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);
 
-    // Add label from source node's named output handle
+    // Add label from source node's named output handle or node_reference
     const sourceNode = instance.findNode(params.source);
     if (sourceNode?.data?.outputs) {
       const output = sourceNode.data.outputs.find((o: any) => o.id === params.sourceHandle);
       if (output?.label) {
         params.label = output.label;
       }
+    }
+    if (!params.label && sourceNode?.data?.nodeReference) {
+      params.label = sourceNode.data.nodeReference;
     }
 
     addEdges([params]);
