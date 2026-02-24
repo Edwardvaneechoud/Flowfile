@@ -868,6 +868,33 @@ def get_node(flow_id: int, node_id: int, get_data: bool = False):
     return v
 
 
+@router.get("/node/input_names", tags=["editor"])
+def get_node_input_names(flow_id: int, node_id: int) -> list[dict]:
+    """Returns the named inputs available for a kernel node.
+
+    Each entry contains the input name (derived from the source node's
+    ``node_reference`` or fallback ``df_{id}``), the source node ID, and
+    its type. The frontend uses this for autocomplete and display.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "Node not found")
+
+    result = []
+    for source_node in node.all_inputs:
+        ref = getattr(source_node.setting_input, "node_reference", None)
+        name = ref if ref else f"df_{source_node.node_id}"
+        result.append({
+            "name": name,
+            "source_node_id": source_node.node_id,
+            "source_node_type": source_node.node_type,
+        })
+    return result
+
+
 @router.post("/node/description/", tags=["editor"])
 def update_description_node(flow_id: int, node_id: int, description: str = Body(...)):
     """Updates the description text for a specific node."""

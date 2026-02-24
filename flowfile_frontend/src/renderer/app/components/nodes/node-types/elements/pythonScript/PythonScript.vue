@@ -72,6 +72,50 @@
           </div>
         </div>
 
+        <!-- Available Inputs (read-only, derived from connections) -->
+        <div v-if="inputNames.length > 0" class="setting-block">
+          <label class="setting-label">Available Inputs</label>
+          <div class="input-names-display">
+            <span v-for="inp in inputNames" :key="inp.name" class="input-name-tag">
+              {{ inp.name }}
+              <span class="input-name-type">({{ inp.source_node_type }})</span>
+            </span>
+            <span class="input-names-hint">
+              Use flowfile.read_input("name") to read a specific input
+            </span>
+          </div>
+        </div>
+
+        <!-- Output Names -->
+        <div class="setting-block">
+          <label class="setting-label">Output Names</label>
+          <div class="output-names-editor">
+            <div
+              v-for="(name, index) in outputNames"
+              :key="index"
+              class="output-name-row"
+            >
+              <el-input
+                v-model="outputNames[index]"
+                size="small"
+                placeholder="output name"
+                @blur="handleOutputNamesChange"
+              />
+              <button
+                v-if="outputNames.length > 1"
+                class="icon-button icon-button--danger"
+                title="Remove output"
+                @click="removeOutputName(index)"
+              >
+                <i class="fa-solid fa-minus"></i>
+              </button>
+            </div>
+            <button class="add-output-button" @click="addOutputName">
+              <i class="fa-solid fa-plus"></i> Add Output
+            </button>
+          </div>
+        </div>
+
         <!-- Artifacts Panel — moved ABOVE code, it's reference info -->
         <div class="setting-block">
           <label class="setting-label">Artifacts</label>
@@ -198,8 +242,10 @@
 import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
 
+import { Position } from "@vue-flow/core";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useEditorStore } from "../../../../../stores/editor-store";
+import { useFlowStore } from "../../../../../stores/flow-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -215,6 +261,7 @@ import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const flowStore = useFlowStore();
 const dataLoaded = ref(false);
 const showEditor = ref(false);
 const showHelp = ref(false);
@@ -223,6 +270,15 @@ const showExpandedEditor = ref(false);
 const nodePythonScript = ref<NodePythonScript | null>(null);
 const nodeData = ref<NodeData | null>(null);
 const cells = ref<NotebookCell[]>([]);
+
+// Named inputs/outputs state
+interface InputNameInfo {
+  name: string;
+  source_node_id: number;
+  source_node_type: string;
+}
+const inputNames = ref<InputNameInfo[]>([]);
+const outputNames = ref<string[]>(["main"]);
 
 // Kernel state
 const kernels = ref<KernelInfo[]>([]);
@@ -401,6 +457,52 @@ const loadArtifacts = async () => {
   }
 };
 
+// ─── Named inputs / outputs ─────────────────────────────────────────────────
+
+const loadInputNames = async () => {
+  const flowId = nodePythonScript.value?.flow_id;
+  const nodeId = nodePythonScript.value?.node_id;
+  if (flowId == null || nodeId == null) return;
+
+  try {
+    inputNames.value = await FlowApi.getNodeInputNames(Number(flowId), nodeId);
+  } catch {
+    inputNames.value = [];
+  }
+};
+
+const addOutputName = () => {
+  outputNames.value.push(`output_${outputNames.value.length}`);
+  handleOutputNamesChange();
+};
+
+const removeOutputName = (index: number) => {
+  outputNames.value.splice(index, 1);
+  handleOutputNamesChange();
+};
+
+const handleOutputNamesChange = () => {
+  if (nodePythonScript.value) {
+    nodePythonScript.value.output_names = [...outputNames.value];
+  }
+  updateNodeOutputHandles();
+};
+
+const updateNodeOutputHandles = () => {
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance) return;
+
+  const nodeId = String(nodePythonScript.value?.node_id);
+  const vfNode = vfInstance.findNode(nodeId);
+  if (vfNode) {
+    vfNode.data.outputs = outputNames.value.map((name: string, i: number) => ({
+      id: `output-${i}`,
+      position: Position.Right,
+      label: outputNames.value.length > 1 ? name : undefined,
+    }));
+  }
+};
+
 // ─── Flow run display outputs ────────────────────────────────────────────────
 
 const loadFlowRunDisplayOutputs = async () => {
@@ -522,14 +624,20 @@ const loadNodeData = async (nodeId: number) => {
 
       selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
 
+      // Initialize output names from saved data
+      const savedOutputNames = nodePythonScript.value!.output_names;
+      outputNames.value =
+        savedOutputNames && savedOutputNames.length > 0 ? [...savedOutputNames] : ["main"];
+
       showEditor.value = true;
       dataLoaded.value = true;
 
-      // Load kernels, artifacts, display outputs, and start memory polling
+      // Load kernels, artifacts, display outputs, input names, and start memory polling
       await loadKernels();
       startKernelPolling();
       loadArtifacts();
       loadFlowRunDisplayOutputs();
+      loadInputNames();
       if (selectedKernelId.value) {
         startMemoryPolling();
       }
@@ -775,6 +883,82 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .artifacts-empty {
   color: var(--el-text-color-placeholder);
   font-style: italic;
+}
+
+/* ─── Named inputs display ───────────────────────────────────────────────── */
+
+.input-names-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0;
+}
+
+.input-name-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem 0.5rem;
+  background-color: var(--el-color-info-light-9, #f4f4f5);
+  color: var(--el-text-color-regular);
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-family: var(--el-font-family, monospace);
+}
+
+.input-name-type {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.input-names-hint {
+  display: block;
+  width: 100%;
+  font-size: 0.7rem;
+  color: var(--el-text-color-placeholder);
+  margin-top: 0.2rem;
+}
+
+/* ─── Output names editor ────────────────────────────────────────────────── */
+
+.output-names-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.output-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.output-name-row .el-input {
+  flex: 1;
+}
+
+.icon-button--danger:hover {
+  color: var(--el-color-danger);
+}
+
+.add-output-button {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--el-color-primary);
+  background: none;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-output-button:hover {
+  border-color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
 }
 
 /* ─── Expanded Editor Dialog ─────────────────────────────────────────────── */

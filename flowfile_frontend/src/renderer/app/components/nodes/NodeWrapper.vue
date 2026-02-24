@@ -67,6 +67,9 @@
         class="handle-input"
         :style="getHandleStyle(index, data.inputs.length)"
       >
+        <span v-if="input.label && data.inputs.length > 1" class="handle-label handle-label--input">
+          {{ input.label }}
+        </span>
         <Handle :id="input.id" type="target" :position="input.position" />
       </div>
       <div
@@ -76,6 +79,9 @@
         :style="getHandleStyle(index, data.outputs.length)"
       >
         <Handle :id="output.id" type="source" :position="output.position" />
+        <span v-if="output.label && data.outputs.length > 1" class="handle-label handle-label--output">
+          {{ output.label }}
+        </span>
       </div>
 
       <!-- Teleport Context Menu to body -->
@@ -625,6 +631,25 @@ onMounted(async () => {
 .handle-output {
   position: absolute;
   right: -8px;
+}
+
+.handle-label {
+  position: absolute;
+  font-size: 0.55rem;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.8;
+}
+
+.handle-label--input {
+  left: 14px;
+}
+
+.handle-label--output {
+  right: 14px;
 }
 
 .context-menu {

@@ -154,3 +154,20 @@ export const flowfileCompletionVals = [
   { label: "range", type: "function" },
   { label: "import", type: "keyword" },
 ];
+
+/**
+ * Generate dynamic completions for named inputs available to this node.
+ * These are prioritised above static completions via the `boost` field.
+ */
+export function createDynamicInputCompletions(
+  inputNames: string[],
+): { label: string; type: string; info: string; detail: string; apply: string; boost: number }[] {
+  return inputNames.map((name) => ({
+    label: `read_input("${name}")`,
+    type: "function",
+    info: `Read the "${name}" input DataFrame`,
+    detail: `flowfile.read_input("${name}")`,
+    apply: `read_input("${name}")`,
+    boost: 10,
+  }));
+}

@@ -328,6 +328,8 @@ export default function useDragAndDrop() {
         outputs: Array.from({ length: node.output }, (_, i) => ({
           id: `output-${i}`,
           position: Position.Right,
+          label:
+            node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
         })),
         nodeTemplate: nodeTemplate,
       },

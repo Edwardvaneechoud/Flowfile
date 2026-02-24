@@ -1510,10 +1510,13 @@ class FlowNode:
         Returns:
             A `NodeInput` object.
         """
+        # Pass output_names to the frontend when the node has them configured
+        output_names = getattr(self.setting_input, "output_names", None)
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,
             id=self.node_id,
+            output_names=output_names if output_names and len(output_names) > 1 else None,
             **self.node_template.__dict__,
         )
 

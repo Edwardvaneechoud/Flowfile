@@ -391,11 +391,13 @@ class NodeInput(NodeTemplate):
         id (int): The unique ID of the node instance.
         pos_x (float): The x-coordinate on the canvas.
         pos_y (float): The y-coordinate on the canvas.
+        output_names (list[str] | None): Named outputs for multi-output nodes.
     """
 
     id: int
     pos_x: float
     pos_y: float
+    output_names: list[str] | None = None
 
 
 class NodeEdge(BaseModel):
