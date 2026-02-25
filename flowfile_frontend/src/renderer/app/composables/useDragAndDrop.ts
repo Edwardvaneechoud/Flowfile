@@ -14,6 +14,7 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi } from "../api";
+import { useEditorStore } from "../stores/editor-store";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -357,8 +358,10 @@ export default function useDragAndDrop() {
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
 
-    // Add labels to edges from source node output handles or node_reference
+    // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
+    const editorStore = useEditorStore();
     const edgesWithLabels = flowData.node_edges.map((edge) => {
+      if (!editorStore.showEdgeLabels) return edge;
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
         const output = sourceNode.data.outputs.find((o: any) => o.id === edge.sourceHandle);
@@ -369,7 +372,7 @@ export default function useDragAndDrop() {
       if (sourceNode?.data?.nodeReference) {
         return { ...edge, label: sourceNode.data.nodeReference };
       }
-      return edge;
+      return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
     });
 
     addEdges(edgesWithLabels);

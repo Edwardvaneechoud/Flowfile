@@ -157,6 +157,7 @@ class FlowSettings(FlowGraphConfig):
     auto_save: bool = False
     modified_on: float | None = None
     show_detailed_progress: bool = True
+    show_edge_labels: bool = True
     is_running: bool = False
     is_canceled: bool = False
     track_history: bool = True

@@ -174,6 +174,55 @@ const selectNodeExternally = (nodeId: number) => {
   fitView({ nodes: [nodeId.toString()] });
 };
 
+/**
+ * Compute the label for an edge based on its source node.
+ * Priority: output handle label > nodeReference > df_{nodeId} default.
+ */
+function computeEdgeLabel(
+  sourceNode: ReturnType<typeof instance.findNode>,
+  sourceHandle?: string,
+): string {
+  if (sourceNode?.data?.outputs && sourceHandle) {
+    const output = sourceNode.data.outputs.find((o: any) => o.id === sourceHandle);
+    if (output?.label) {
+      return output.label;
+    }
+  }
+  if (sourceNode?.data?.nodeReference) {
+    return sourceNode.data.nodeReference;
+  }
+  return `df_${sourceNode?.data?.id ?? sourceNode?.id ?? ""}`;
+}
+
+/**
+ * Refresh labels on all edges (respects showEdgeLabels toggle).
+ */
+function refreshAllEdgeLabels() {
+  const allEdges = instance.getEdges.value;
+  for (const edge of allEdges) {
+    if (editorStore.showEdgeLabels) {
+      const sourceNode = instance.findNode(edge.source);
+      edge.label = computeEdgeLabel(sourceNode, edge.sourceHandle ?? undefined);
+    } else {
+      edge.label = undefined;
+    }
+  }
+}
+
+/**
+ * Update edge labels for all outgoing edges of a specific node.
+ */
+function updateEdgeLabelsForNode(nodeId: string) {
+  if (!editorStore.showEdgeLabels) return;
+  const allEdges = instance.getEdges.value;
+  const sourceNode = instance.findNode(nodeId);
+  for (const edge of allEdges) {
+    if (edge.source === nodeId) {
+      edge.label = computeEdgeLabel(sourceNode, edge.sourceHandle ?? undefined);
+    }
+  }
+}
+
 async function onConnect(params: any) {
   if (params.target && params.source) {
     const nodeConnection: NodeConnection = {
@@ -188,16 +237,9 @@ async function onConnect(params: any) {
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);
 
-    // Add label from source node's named output handle or node_reference
-    const sourceNode = instance.findNode(params.source);
-    if (sourceNode?.data?.outputs) {
-      const output = sourceNode.data.outputs.find((o: any) => o.id === params.sourceHandle);
-      if (output?.label) {
-        params.label = output.label;
-      }
-    }
-    if (!params.label && sourceNode?.data?.nodeReference) {
-      params.label = sourceNode.data.nodeReference;
+    if (editorStore.showEdgeLabels) {
+      const sourceNode = instance.findNode(params.source);
+      params.label = computeEdgeLabel(sourceNode, params.sourceHandle);
     }
 
     addEdges([params]);
@@ -569,6 +611,14 @@ onMounted(async () => {
       }
     },
   );
+
+  // Refresh edge labels when toggle changes
+  watch(
+    () => editorStore.showEdgeLabels,
+    () => {
+      refreshAllEdgeLabels();
+    },
+  );
 });
 
 onUnmounted(() => {
@@ -577,6 +627,8 @@ onUnmounted(() => {
 
 defineExpose({
   loadFlow,
+  updateEdgeLabelsForNode,
+  refreshAllEdgeLabels,
 });
 </script>
 

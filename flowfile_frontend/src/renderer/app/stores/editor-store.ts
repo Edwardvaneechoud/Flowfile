@@ -26,6 +26,9 @@ export const useEditorStore = defineStore("editor", {
     // Code generator state
     showCodeGenerator: false,
 
+    // Edge label state
+    showEdgeLabels: true,
+
     // Run state
     isRunning: false,
     showFlowResult: false,

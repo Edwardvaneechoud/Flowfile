@@ -25,6 +25,7 @@ export interface FlowSettings {
   execution_mode: ExecutionMode;
   execution_location: ExecutionLocation;
   show_detailed_progress: boolean;
+  show_edge_labels: boolean;
   is_running: boolean;
   max_parallel_workers: number;
 }
