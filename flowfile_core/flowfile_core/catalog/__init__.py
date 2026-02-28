@@ -22,6 +22,8 @@ from .exceptions import (
     NoSnapshotError,
     NotAuthorizedError,
     RunNotFoundError,
+    TableExistsError,
+    TableNotFoundError,
 )
 from .repository import CatalogRepository, SQLAlchemyCatalogRepository
 from .service import CatalogService
@@ -43,4 +45,6 @@ __all__ = [
     "FavoriteNotFoundError",
     "FollowNotFoundError",
     "NoSnapshotError",
+    "TableNotFoundError",
+    "TableExistsError",
 ]

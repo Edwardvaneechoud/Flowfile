@@ -120,8 +120,7 @@ class FlowHasArtifactsError(CatalogError):
         self.registration_id = registration_id
         self.artifact_count = artifact_count
         super().__init__(
-            f"Cannot delete flow {registration_id}: "
-            f"{artifact_count} active artifact(s) still reference it"
+            f"Cannot delete flow {registration_id}: " f"{artifact_count} active artifact(s) still reference it"
         )
 
 
@@ -131,3 +130,26 @@ class NoSnapshotError(CatalogError):
     def __init__(self, run_id: int):
         self.run_id = run_id
         super().__init__(f"No flow snapshot available for run id={run_id}")
+
+
+class TableNotFoundError(CatalogError):
+    """Raised when a catalog table lookup fails."""
+
+    def __init__(self, table_id: int | None = None, name: str | None = None):
+        self.table_id = table_id
+        self.name = name
+        detail = "Catalog table not found"
+        if table_id is not None:
+            detail = f"Catalog table with id={table_id} not found"
+        elif name is not None:
+            detail = f"Catalog table '{name}' not found"
+        super().__init__(detail)
+
+
+class TableExistsError(CatalogError):
+    """Raised when attempting to create a duplicate catalog table."""
+
+    def __init__(self, name: str, namespace_id: int | None = None):
+        self.name = name
+        self.namespace_id = namespace_id
+        super().__init__(f"Catalog table '{name}' already exists in namespace_id={namespace_id}")

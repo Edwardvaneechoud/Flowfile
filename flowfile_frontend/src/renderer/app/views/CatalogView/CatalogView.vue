@@ -47,11 +47,14 @@
               :node="node"
               :selected-flow-id="catalogStore.selectedFlowId"
               :selected-artifact-id="catalogStore.selectedArtifactId"
+              :selected-table-id="catalogStore.selectedTableId"
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
+              @select-table="selectTable($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-follow="catalogStore.toggleFollow($event)"
               @register-flow="openRegisterFlow($event)"
+              @register-table="openRegisterTable($event)"
               @create-schema="openCreateSchema($event)"
             />
           </div>
@@ -126,6 +129,14 @@
           :artifact="catalogStore.selectedArtifact"
           :versions="selectedArtifactVersions"
           @navigate-to-flow="navigateToFlow($event)"
+        />
+        <!-- Table detail view -->
+        <TableDetailPanel
+          v-else-if="catalogStore.selectedTable"
+          :table="catalogStore.selectedTable"
+          :preview="catalogStore.tablePreview"
+          :loading-preview="catalogStore.loadingTablePreview"
+          @delete-table="handleDeleteTable($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -217,6 +228,44 @@
         </div>
       </div>
     </div>
+
+    <!-- Register Table Modal -->
+    <div v-if="showRegisterTable" class="modal-overlay" @click.self="showRegisterTable = false">
+      <div class="modal-card modal-card-lg">
+        <h3>Register Table</h3>
+        <input v-model="newTableName" class="input-field" placeholder="Table name" />
+        <input v-model="newTableDesc" class="input-field" placeholder="Description (optional)" />
+        <div class="file-browser-section">
+          <label class="field-label">Source data file</label>
+          <div v-if="newTablePath" class="selected-file-badge">
+            <i class="fa-solid fa-table"></i>
+            <span>{{ newTablePath }}</span>
+            <button class="clear-file-btn" title="Clear" @click="newTablePath = ''">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div class="file-browser-container">
+            <FileBrowser
+              :allowed-file-types="['csv', 'txt', 'tsv', 'parquet', 'xlsx', 'xls']"
+              mode="open"
+              context="dataFiles"
+              :is-visible="showRegisterTable"
+              @file-selected="handleTableFileSelected"
+            />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="showRegisterTable = false">Cancel</button>
+          <button
+            class="btn-primary"
+            :disabled="!newTableName.trim() || !newTablePath.trim()"
+            @click="registerTable"
+          >
+            Register
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -231,6 +280,7 @@ import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
+import TableDetailPanel from "./TableDetailPanel.vue";
 import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
@@ -297,13 +347,26 @@ const newFlowName = ref("");
 const newFlowPath = ref("");
 const newFlowDesc = ref("");
 
+// Register table state
+const showRegisterTable = ref(false);
+const registerTableNamespaceId = ref<number | null>(null);
+const newTableName = ref("");
+const newTablePath = ref("");
+const newTableDesc = ref("");
+
 function selectFlow(flowId: number) {
   catalogStore.clearArtifactSelection();
   catalogStore.selectFlow(flowId);
 }
 
+function selectTable(tableId: number) {
+  catalogStore.clearArtifactSelection();
+  catalogStore.selectTable(tableId);
+}
+
 function selectArtifact(artifactId: number) {
   catalogStore.selectedFlowId = null;
+  catalogStore.clearTableSelection();
   catalogStore.selectArtifact(artifactId);
 }
 
@@ -354,6 +417,65 @@ function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
     // Auto-fill name from filename (without extension)
     const baseName = fileInfo.name.replace(/\.(yaml|yml|flowfile)$/i, "");
     newFlowName.value = baseName;
+  }
+}
+
+function openRegisterTable(namespaceId: number) {
+  registerTableNamespaceId.value = namespaceId;
+  newTableName.value = "";
+  newTablePath.value = "";
+  newTableDesc.value = "";
+  showRegisterTable.value = true;
+}
+
+function handleTableFileSelected(fileInfo: { name: string; path: string }) {
+  newTablePath.value = fileInfo.path;
+  if (!newTableName.value.trim()) {
+    const baseName = fileInfo.name.replace(/\.(csv|txt|tsv|parquet|xlsx|xls)$/i, "");
+    newTableName.value = baseName;
+  }
+}
+
+async function registerTable() {
+  if (!newTableName.value.trim() || !newTablePath.value.trim()) return;
+  try {
+    const nsId = registerTableNamespaceId.value ?? defaultNamespaceId.value;
+    await CatalogApi.registerTable(
+      {
+        name: newTableName.value.trim(),
+        description: newTableDesc.value.trim() || null,
+        namespace_id: nsId,
+      },
+      newTablePath.value.trim(),
+    );
+    showRegisterTable.value = false;
+    newTableName.value = "";
+    newTablePath.value = "";
+    newTableDesc.value = "";
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllTables(),
+      catalogStore.loadStats(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to register table");
+  }
+}
+
+async function handleDeleteTable(tableId: number) {
+  if (!confirm("Are you sure you want to delete this table? The materialized data will be removed.")) {
+    return;
+  }
+  try {
+    await CatalogApi.deleteTable(tableId);
+    catalogStore.clearTableSelection();
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllTables(),
+      catalogStore.loadStats(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to delete table");
   }
 }
 

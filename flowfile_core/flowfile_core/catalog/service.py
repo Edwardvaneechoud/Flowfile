@@ -22,10 +22,13 @@ from flowfile_core.catalog.exceptions import (
     NestingLimitError,
     NoSnapshotError,
     RunNotFoundError,
+    TableExistsError,
+    TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.database.models import (
     CatalogNamespace,
+    CatalogTable,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -34,6 +37,9 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
+    CatalogTableOut,
+    CatalogTablePreview,
+    ColumnSchema,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
@@ -262,7 +268,8 @@ class CatalogService:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
-        if children > 0 or flows > 0:
+        tables = self.repo.count_tables_in_namespace(namespace_id)
+        if children > 0 or flows > 0 or tables > 0:
             raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows)
         self.repo.delete_namespace(namespace_id)
 
@@ -294,6 +301,7 @@ class CatalogService:
         all_flows: list[FlowRegistration] = []
         namespace_flow_map: dict[int, list[FlowRegistration]] = {}
         namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
+        namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
@@ -302,6 +310,7 @@ class CatalogService:
             namespace_artifact_map[cat.id] = [
                 self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
             ]
+            namespace_table_map[cat.id] = [self._table_to_out(t) for t in self.repo.list_tables_for_namespace(cat.id)]
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
@@ -309,6 +318,9 @@ class CatalogService:
                 all_flows.extend(schema_flows)
                 namespace_artifact_map[schema.id] = [
                     self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
+                ]
+                namespace_table_map[schema.id] = [
+                    self._table_to_out(t) for t in self.repo.list_tables_for_namespace(schema.id)
                 ]
 
         # Bulk enrich all flows at once
@@ -336,6 +348,7 @@ class CatalogService:
                         children=[],
                         flows=flow_outs,
                         artifacts=namespace_artifact_map.get(schema.id, []),
+                        tables=namespace_table_map.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -353,6 +366,7 @@ class CatalogService:
                     children=children,
                     flows=root_flow_outs,
                     artifacts=namespace_artifact_map.get(cat.id, []),
+                    tables=namespace_table_map.get(cat.id, []),
                 )
             )
         return result
@@ -700,6 +714,214 @@ class CatalogService:
         return self._bulk_enrich_flows(flows, user_id)
 
     # ------------------------------------------------------------------ #
+    # Catalog table operations
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _table_to_out(table: CatalogTable) -> CatalogTableOut:
+        """Convert a CatalogTable ORM instance to its Pydantic output schema."""
+        import json
+
+        columns: list[ColumnSchema] = []
+        if table.schema_json:
+            try:
+                raw = json.loads(table.schema_json)
+                columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        return CatalogTableOut(
+            id=table.id,
+            name=table.name,
+            namespace_id=table.namespace_id,
+            description=table.description,
+            owner_id=table.owner_id,
+            file_path=table.file_path,
+            schema_columns=columns,
+            row_count=table.row_count,
+            column_count=table.column_count,
+            size_bytes=table.size_bytes,
+            created_at=table.created_at,
+            updated_at=table.updated_at,
+        )
+
+    def register_table(
+        self,
+        name: str,
+        file_path: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+    ) -> CatalogTableOut:
+        """Register a new table in the catalog by materializing it as Parquet.
+
+        The caller must provide ``file_path`` pointing to a supported source
+        file (CSV, Parquet, Excel). The service reads the file, writes a
+        Parquet copy to the catalog tables directory, and records metadata.
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If ``namespace_id`` is given but doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        import json
+        from pathlib import Path
+
+        import polars as pl
+
+        from shared.storage_config import storage
+
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
+
+        # Read source file into a Polars DataFrame
+        src = Path(file_path)
+        ext = src.suffix.lower()
+        if ext == ".csv" or ext == ".txt" or ext == ".tsv":
+            df = pl.read_csv(src, infer_schema_length=10000)
+        elif ext == ".parquet":
+            df = pl.read_parquet(src)
+        elif ext in (".xlsx", ".xls"):
+            df = pl.read_excel(src)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+
+        # Materialize as Parquet in catalog storage
+        dest_dir = storage.catalog_tables_directory
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # Use a unique filename to avoid collisions
+        import uuid
+
+        parquet_filename = f"{name}_{uuid.uuid4().hex[:8]}.parquet"
+        dest_path = dest_dir / parquet_filename
+        df.write_parquet(dest_path)
+
+        # Build schema metadata
+        schema_list = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+        size_bytes = dest_path.stat().st_size
+
+        table = CatalogTable(
+            name=name,
+            namespace_id=namespace_id,
+            description=description,
+            owner_id=owner_id,
+            file_path=str(dest_path),
+            schema_json=json.dumps(schema_list),
+            row_count=len(df),
+            column_count=len(df.columns),
+            size_bytes=size_bytes,
+        )
+        table = self.repo.create_table(table)
+        return self._table_to_out(table)
+
+    def get_table(self, table_id: int) -> CatalogTableOut:
+        """Get a catalog table by ID.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        return self._table_to_out(table)
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTableOut]:
+        """List tables, optionally filtered by namespace."""
+        tables = self.repo.list_tables(namespace_id=namespace_id)
+        return [self._table_to_out(t) for t in tables]
+
+    def update_table(
+        self,
+        table_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        namespace_id: int | None = None,
+    ) -> CatalogTableOut:
+        """Update a catalog table's metadata.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        if name is not None:
+            table.name = name
+        if description is not None:
+            table.description = description
+        if namespace_id is not None:
+            table.namespace_id = namespace_id
+        table = self.repo.update_table(table)
+        return self._table_to_out(table)
+
+    def delete_table(self, table_id: int) -> None:
+        """Delete a catalog table and its materialized Parquet file.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        from pathlib import Path
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        # Remove the materialized file
+        parquet_path = Path(table.file_path)
+        if parquet_path.exists():
+            parquet_path.unlink()
+
+        self.repo.delete_table(table_id)
+
+    def get_table_preview(self, table_id: int, limit: int = 100) -> CatalogTablePreview:
+        """Read the first N rows from the materialized Parquet file.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        from pathlib import Path
+
+        import polars as pl
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        parquet_path = Path(table.file_path)
+        if not parquet_path.exists():
+            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+
+        df = pl.read_parquet(parquet_path, n_rows=limit)
+        columns = df.columns
+        dtypes = [str(df[col].dtype) for col in columns]
+
+        # Convert to list of lists (JSON-safe)
+        rows = df.to_pandas().values.tolist()
+
+        return CatalogTablePreview(
+            columns=columns,
+            dtypes=dtypes,
+            rows=rows,
+            total_rows=table.row_count or len(df),
+        )
+
+    # ------------------------------------------------------------------ #
     # Dashboard / Stats
     # ------------------------------------------------------------------ #
 
@@ -713,6 +935,7 @@ class CatalogService:
         total_runs = self.repo.count_runs()
         total_favs = self.repo.count_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
+        total_tables = self.repo.count_all_tables()
 
         recent_runs = self.repo.list_runs(limit=10, offset=0)
         recent_out = [self._run_to_out(r) for r in recent_runs]
@@ -732,6 +955,7 @@ class CatalogService:
             total_runs=total_runs,
             total_favorites=total_favs,
             total_artifacts=total_artifacts,
+            total_tables=total_tables,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
         )

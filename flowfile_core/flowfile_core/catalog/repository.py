@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
     CatalogNamespace,
+    CatalogTable,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -134,6 +135,28 @@ class CatalogRepository(Protocol):
     def count_catalog_namespaces(self) -> int: ...
 
     def count_all_flows(self) -> int: ...
+
+    # -- Catalog table operations -----------------------------------------------
+
+    def get_table(self, table_id: int) -> CatalogTable | None: ...
+
+    def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None: ...
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
+
+    def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]: ...
+
+    def create_table(self, table: CatalogTable) -> CatalogTable: ...
+
+    def update_table(self, table: CatalogTable) -> CatalogTable: ...
+
+    def delete_table(self, table_id: int) -> None: ...
+
+    def count_tables_in_namespace(self, namespace_id: int) -> int: ...
+
+    def count_all_tables(self) -> int: ...
+
+    def list_all_tables(self) -> list[CatalogTable]: ...
 
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
@@ -400,6 +423,49 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_flows(self) -> int:
         return self._db.query(FlowRegistration).count()
+
+    # -- Catalog table operations -----------------------------------------------
+
+    def get_table(self, table_id: int) -> CatalogTable | None:
+        return self._db.get(CatalogTable, table_id)
+
+    def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None:
+        return self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).first()
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
+        q = self._db.query(CatalogTable)
+        if namespace_id is not None:
+            q = q.filter_by(namespace_id=namespace_id)
+        return q.order_by(CatalogTable.name).all()
+
+    def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]:
+        return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).order_by(CatalogTable.name).all()
+
+    def create_table(self, table: CatalogTable) -> CatalogTable:
+        self._db.add(table)
+        self._db.commit()
+        self._db.refresh(table)
+        return table
+
+    def update_table(self, table: CatalogTable) -> CatalogTable:
+        self._db.commit()
+        self._db.refresh(table)
+        return table
+
+    def delete_table(self, table_id: int) -> None:
+        table = self._db.get(CatalogTable, table_id)
+        if table is not None:
+            self._db.delete(table)
+            self._db.commit()
+
+    def count_tables_in_namespace(self, namespace_id: int) -> int:
+        return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).count()
+
+    def count_all_tables(self) -> int:
+        return self._db.query(CatalogTable).count()
+
+    def list_all_tables(self) -> list[CatalogTable]:
+        return self._db.query(CatalogTable).order_by(CatalogTable.name).all()
 
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 

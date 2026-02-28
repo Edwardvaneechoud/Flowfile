@@ -28,6 +28,14 @@
         >
           <i class="fa-solid fa-file-circle-plus"></i>
         </button>
+        <button
+          v-if="node.level === 1"
+          class="action-btn"
+          title="Register table"
+          @click="$emit('registerTable', node.id)"
+        >
+          <i class="fa-solid fa-table"></i>
+        </button>
       </div>
     </div>
 
@@ -39,11 +47,14 @@
         :node="child"
         :selected-flow-id="selectedFlowId"
         :selected-artifact-id="selectedArtifactId"
+        :selected-table-id="selectedTableId"
         @select-flow="$emit('selectFlow', $event)"
         @select-artifact="$emit('selectArtifact', $event)"
+        @select-table="$emit('selectTable', $event)"
         @toggle-favorite="$emit('toggleFavorite', $event)"
         @toggle-follow="$emit('toggleFollow', $event)"
         @register-flow="$emit('registerFlow', $event)"
+        @register-table="$emit('registerTable', $event)"
         @create-schema="$emit('createSchema', $event)"
       />
 
@@ -95,13 +106,26 @@
         >
         <span class="artifact-version">v{{ group.latest.version }}</span>
       </div>
+
+      <!-- Catalog Tables -->
+      <div
+        v-for="table in (node.tables ?? [])"
+        :key="'t-' + table.id"
+        class="tree-table"
+        :class="{ selected: selectedTableId === table.id }"
+        @click.stop="$emit('selectTable', table.id)"
+      >
+        <i class="fa-solid fa-table table-icon"></i>
+        <span class="table-name">{{ table.name }}</span>
+        <span v-if="table.row_count !== null" class="table-rows">{{ formatRowCount(table.row_count) }} rows</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { GlobalArtifact, NamespaceTree } from "../../types";
+import type { CatalogTable, GlobalArtifact, NamespaceTree } from "../../types";
 
 interface ArtifactGroup {
   name: string;
@@ -113,16 +137,26 @@ const props = defineProps<{
   node: NamespaceTree;
   selectedFlowId: number | null;
   selectedArtifactId: number | null;
+  selectedTableId: number | null;
 }>();
 
 defineEmits<{
   selectFlow: [id: number];
   selectArtifact: [id: number];
+  selectTable: [id: number];
   toggleFavorite: [id: number];
   toggleFollow: [id: number];
   registerFlow: [namespaceId: number];
+  registerTable: [namespaceId: number];
   createSchema: [parentId: number];
 }>();
+
+function formatRowCount(n: number | null): string {
+  if (n === null) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
   if (node.flows.some((f) => f.id === flowId)) return true;
@@ -161,9 +195,15 @@ const groupedArtifacts = computed((): ArtifactGroup[] => {
 });
 
 const totalFlows = computed(() => {
-  let count = props.node.flows.length + countUniqueArtifactNames(props.node.artifacts ?? []);
+  let count =
+    props.node.flows.length +
+    countUniqueArtifactNames(props.node.artifacts ?? []) +
+    (props.node.tables ?? []).length;
   for (const child of props.node.children) {
-    count += child.flows.length + countUniqueArtifactNames(child.artifacts ?? []);
+    count +=
+      child.flows.length +
+      countUniqueArtifactNames(child.artifacts ?? []) +
+      (child.tables ?? []).length;
   }
   return count;
 });
@@ -374,6 +414,51 @@ const totalFlows = computed(() => {
 }
 
 .artifact-version {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-background-tertiary);
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 18px;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+/* ========== Catalog Table Items ========== */
+.tree-table {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-table:hover {
+  background: var(--color-background-hover);
+}
+
+.tree-table.selected {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+}
+
+.tree-table .table-icon {
+  color: #10b981;
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.tree-table .table-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-rows {
   font-size: 11px;
   color: var(--color-text-muted);
   background: var(--color-background-tertiary);

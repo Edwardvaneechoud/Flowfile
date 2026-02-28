@@ -1,4 +1,3 @@
-
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -103,6 +102,8 @@ class Kernel(Base):
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+
 # ==================== Flow Catalog Models ====================
 
 
@@ -112,6 +113,7 @@ class CatalogNamespace(Base):
     level 0 = catalog, level 1 = schema. Flows are registered under a schema
     via FlowRegistration.namespace_id.
     """
+
     __tablename__ = "catalog_namespaces"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -123,13 +125,12 @@ class CatalogNamespace(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("name", "parent_id", name="uq_namespace_name_parent"),
-    )
+    __table_args__ = (UniqueConstraint("name", "parent_id", name="uq_namespace_name_parent"),)
 
 
 class FlowRegistration(Base):
     """Persistent registry entry for a flow. Links a flow file path to catalog metadata."""
+
     __tablename__ = "flow_registrations"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -144,6 +145,7 @@ class FlowRegistration(Base):
 
 class FlowRun(Base):
     """Persistent record of every flow execution, with a snapshot of the flow version."""
+
     __tablename__ = "flow_runs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -166,6 +168,7 @@ class FlowRun(Base):
 
 class FlowFavorite(Base):
     """Allows a user to bookmark/favorite a registered flow."""
+
     __tablename__ = "flow_favorites"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -173,13 +176,12 @@ class FlowFavorite(Base):
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "registration_id", name="uq_user_favorite"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_favorite"),)
 
 
 class FlowFollow(Base):
     """Allows a user to follow/subscribe to a registered flow for updates."""
+
     __tablename__ = "flow_follows"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -187,9 +189,7 @@ class FlowFollow(Base):
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
 
 
 # ==================== Global Artifacts ====================
@@ -202,6 +202,7 @@ class GlobalArtifact(Base):
     configuration objects) from kernel code and retrieve them later—either in the
     same flow, a different flow, or a different session.
     """
+
     __tablename__ = "global_artifacts"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -232,12 +233,12 @@ class GlobalArtifact(Base):
     )
 
     # Serialization
-    python_type = Column(String, nullable=True)      # e.g., "sklearn.ensemble.RandomForestClassifier"
-    python_module = Column(String, nullable=True)    # e.g., "sklearn.ensemble"
+    python_type = Column(String, nullable=True)  # e.g., "sklearn.ensemble.RandomForestClassifier"
+    python_module = Column(String, nullable=True)  # e.g., "sklearn.ensemble"
     serialization_format = Column(String, nullable=False)  # parquet, joblib, pickle
 
     # Storage
-    storage_key = Column(String, nullable=True)      # e.g., "42/model.joblib"
+    storage_key = Column(String, nullable=True)  # e.g., "42/model.joblib"
     size_bytes = Column(Integer, nullable=True)
     sha256 = Column(String, nullable=True)
 
@@ -249,6 +250,39 @@ class GlobalArtifact(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("name", "namespace_id", "version", name="uq_artifact_name_ns_version"),
-    )
+    __table_args__ = (UniqueConstraint("name", "namespace_id", "version", name="uq_artifact_name_ns_version"),)
+
+
+# ==================== Catalog Tables ====================
+
+
+class CatalogTable(Base):
+    """A materialized data table registered in the catalog.
+
+    When a user registers a table, its data is materialized as a Parquet file
+    in the catalog tables storage directory for fast, consistent reads and
+    previews.
+    """
+
+    __tablename__ = "catalog_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
+    description = Column(Text, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Storage: path to the materialized Parquet file
+    file_path = Column(String, nullable=False)
+
+    # Schema metadata (JSON array of {name, dtype} objects)
+    schema_json = Column(Text, nullable=True)
+    row_count = Column(Integer, nullable=True)
+    column_count = Column(Integer, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("name", "namespace_id", name="uq_catalog_table_name_ns"),)

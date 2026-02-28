@@ -3,6 +3,10 @@ import axios from "../services/axios.config";
 import type {
   CatalogNamespace,
   CatalogStats,
+  CatalogTable,
+  CatalogTableCreate,
+  CatalogTablePreview,
+  CatalogTableUpdate,
   FlowRegistration,
   FlowRegistrationCreate,
   FlowRegistrationUpdate,
@@ -140,6 +144,50 @@ export class CatalogApi {
   static async getFlowArtifacts(registrationId: number): Promise<GlobalArtifact[]> {
     const response = await axios.get<GlobalArtifact[]>(
       `/catalog/flows/${registrationId}/artifacts`,
+    );
+    return response.data;
+  }
+
+  // ====== Catalog Tables ======
+
+  static async getTables(namespaceId?: number | null): Promise<CatalogTable[]> {
+    const params: Record<string, any> = {};
+    if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+    const response = await axios.get<CatalogTable[]>("/catalog/tables", { params });
+    return response.data;
+  }
+
+  static async getTable(tableId: number): Promise<CatalogTable> {
+    const response = await axios.get<CatalogTable>(`/catalog/tables/${tableId}`);
+    return response.data;
+  }
+
+  static async registerTable(
+    body: CatalogTableCreate,
+    filePath: string,
+  ): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/tables", body, {
+      params: { file_path: filePath },
+    });
+    return response.data;
+  }
+
+  static async updateTable(id: number, body: CatalogTableUpdate): Promise<CatalogTable> {
+    const response = await axios.put<CatalogTable>(`/catalog/tables/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteTable(id: number): Promise<void> {
+    await axios.delete(`/catalog/tables/${id}`);
+  }
+
+  static async getTablePreview(
+    tableId: number,
+    limit = 100,
+  ): Promise<CatalogTablePreview> {
+    const response = await axios.get<CatalogTablePreview>(
+      `/catalog/tables/${tableId}/preview`,
+      { params: { limit } },
     );
     return response.data;
   }

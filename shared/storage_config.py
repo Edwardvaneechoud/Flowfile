@@ -18,6 +18,7 @@ DirectoryOptions = Literal[
     "user_defined_nodes_directory",
     "global_artifacts_directory",
     "artifact_staging_directory",
+    "catalog_tables_directory",
 ]
 
 
@@ -173,6 +174,13 @@ class FlowfileStorage:
         return self.temp_directory / "kernel_shared" / "global_artifacts"
 
     @property
+    def catalog_tables_directory(self) -> Path:
+        """Directory for materialized catalog table Parquet files."""
+        if _is_docker_mode():
+            return self.user_data_directory / "catalog_tables"
+        return self.base_directory / "catalog_tables"
+
+    @property
     def artifact_staging_directory(self) -> Path:
         """Directory for staging artifact uploads before finalization.
 
@@ -207,6 +215,7 @@ class FlowfileStorage:
             self.user_defined_nodes_directory,
             self.user_defined_nodes_icons,
             self.global_artifacts_directory,
+            self.catalog_tables_directory,
         ]
 
         for directory in internal_directories + user_directories:
