@@ -157,6 +157,7 @@ class FlowSettings(FlowGraphConfig):
     auto_save: bool = False
     modified_on: float | None = None
     show_detailed_progress: bool = True
+    show_edge_labels: bool = True
     is_running: bool = False
     is_canceled: bool = False
     track_history: bool = True
@@ -391,11 +392,15 @@ class NodeInput(NodeTemplate):
         id (int): The unique ID of the node instance.
         pos_x (float): The x-coordinate on the canvas.
         pos_y (float): The y-coordinate on the canvas.
+        output_names (list[str] | None): Named outputs for multi-output nodes.
+        node_reference (str | None): Reference name used for code generation and input naming.
     """
 
     id: int
     pos_x: float
     pos_y: float
+    output_names: list[str] | None = None
+    node_reference: str | None = None
 
 
 class NodeEdge(BaseModel):

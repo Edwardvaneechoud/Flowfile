@@ -346,4 +346,19 @@ export class FlowApi {
     });
     return response.data.upstream_node_ids;
   }
+
+  /**
+   * Get the named input keys available for a kernel node.
+   * Each entry has: name, source_node_id, source_node_type.
+   */
+  static async getNodeInputNames(
+    flowId: number,
+    nodeId: number,
+  ): Promise<{ name: string; source_node_id: number; source_node_type: string }[]> {
+    const response = await axios.get("/node/input_names", {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
 }

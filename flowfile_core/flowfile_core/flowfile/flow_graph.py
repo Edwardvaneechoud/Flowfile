@@ -942,8 +942,21 @@ class FlowGraph:
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
+            # Resolve named input keys from connected source nodes
+            input_names: list[str] | None = None
+            current_node = self.get_node(node_id)
+            if current_node is not None and len(flow_data_engine) > 0:
+                source_nodes = current_node.all_inputs
+                input_names = []
+                for source_node in source_nodes:
+                    ref = getattr(source_node.setting_input, "node_reference", None)
+                    name = ref if ref else f"df_{source_node.node_id}"
+                    input_names.append(name)
+
             # Write inputs to parquet
-            input_paths = write_inputs_to_parquet(flow_data_engine, manager, input_dir, flow_id, node_id)
+            input_paths = write_inputs_to_parquet(
+                flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
+            )
 
             # Generate the kernel code from the custom node's process method
             code = custom_node.generate_kernel_code()
@@ -1297,7 +1310,20 @@ class FlowGraph:
             os.makedirs(output_dir, exist_ok=True)
             self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
 
-            input_paths = write_inputs_to_parquet(flowfile_tables, manager, input_dir, flow_id, node_id)
+            # Resolve named input keys from connected source nodes
+            input_names: list[str] | None = None
+            current_node = self.get_node(node_id)
+            if current_node is not None and len(flowfile_tables) > 0:
+                source_nodes = current_node.all_inputs
+                input_names = []
+                for source_node in source_nodes:
+                    ref = getattr(source_node.setting_input, "node_reference", None)
+                    name = ref if ref else f"df_{source_node.node_id}"
+                    input_names.append(name)
+
+            input_paths = write_inputs_to_parquet(
+                flowfile_tables, manager, input_dir, flow_id, node_id, input_names=input_names
+            )
 
             # 3. Build request and execute on the kernel
             request = build_execute_request(
@@ -1341,10 +1367,22 @@ class FlowGraph:
                     artifact_names=result.artifacts_deleted,
                 )
 
-            # 6. Read output parquet or pass through first input
-            output_path = os.path.join(output_dir, "main.parquet")
-            if os.path.exists(output_path):
-                return FlowDataEngine(pl.scan_parquet(output_path))
+            # 6. Read named output parquets or pass through first input
+            output_names = node_python_script.output_names
+            node = self.get_node(node_id)
+            primary_result: FlowDataEngine | None = None
+            for i, name in enumerate(output_names):
+                output_path = os.path.join(output_dir, f"{name}.parquet")
+                if os.path.exists(output_path):
+                    fde = FlowDataEngine(pl.scan_parquet(output_path))
+                    handle = f"output-{i}"
+                    if node is not None:
+                        node._named_outputs[handle] = fde
+                    if i == 0:
+                        primary_result = fde
+
+            if primary_result is not None:
+                return primary_result
             return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
         def schema_callback():
@@ -1377,6 +1415,15 @@ class FlowGraph:
             input_node_ids=node_python_script.depending_on_ids,
             schema_callback=schema_callback,
         )
+
+        # Override the template output count when multiple outputs are configured
+        output_names = node_python_script.output_names
+        if len(output_names) > 1:
+            node = self.get_node(node_python_script.node_id)
+            if node is not None:
+                template_dict = node.node_template.model_dump()
+                template_dict["output"] = len(output_names)
+                node.node_template = schemas.NodeTemplate(**template_dict)
 
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
         """Adds a special node that directly injects a Polars LazyFrame into the graph.

@@ -162,6 +162,17 @@
           />
         </div>
         <div class="form-group">
+          <el-checkbox
+            v-model="flowSettings.show_edge_labels"
+            label="Show edge labels"
+            size="small"
+            @change="pushFlowSettings"
+          />
+          <span class="form-hint">
+            Display input names on connections between nodes.
+          </span>
+        </div>
+        <div class="form-group">
           <label>Parallel workers:</label>
           <el-input-number
             v-model="flowSettings.max_parallel_workers"
@@ -276,7 +287,9 @@ const loadFlowSettings = async () => {
   if (!flowSettings.value) return;
 
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
+  flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? true;
   editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+  editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
   if (!runButton.value) return;
 
@@ -294,6 +307,7 @@ const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+    editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
   }
 };
 

@@ -1191,6 +1191,7 @@ class NodePythonScript(NodeMultiInput):
     """Node that executes Python code on a kernel container."""
 
     python_script_input: PythonScriptInput = PythonScriptInput()
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
 
 
 class UserDefinedNode(NodeMultiInput):

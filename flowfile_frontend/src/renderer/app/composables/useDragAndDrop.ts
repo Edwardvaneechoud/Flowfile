@@ -14,6 +14,7 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi } from "../api";
+import { useEditorStore } from "../stores/editor-store";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -321,6 +322,7 @@ export default function useDragAndDrop() {
         id: node.id,
         label: node.name,
         component: markRaw(component),
+        nodeReference: node.node_reference,
         inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
           id: `input-${i}`,
           position: Position.Left,
@@ -328,6 +330,8 @@ export default function useDragAndDrop() {
         outputs: Array.from({ length: node.output }, (_, i) => ({
           id: `output-${i}`,
           position: Position.Right,
+          label:
+            node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
         })),
         nodeTemplate: nodeTemplate,
       },
@@ -353,7 +357,25 @@ export default function useDragAndDrop() {
 
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
-    addEdges(flowData.node_edges);
+
+    // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
+    const editorStore = useEditorStore();
+    const edgesWithLabels = flowData.node_edges.map((edge) => {
+      if (!editorStore.showEdgeLabels) return edge;
+      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      if (sourceNode?.data?.outputs) {
+        const output = sourceNode.data.outputs.find((o: any) => o.id === edge.sourceHandle);
+        if (output?.label) {
+          return { ...edge, label: output.label };
+        }
+      }
+      if (sourceNode?.data?.nodeReference) {
+        return { ...edge, label: sourceNode.data.nodeReference };
+      }
+      return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
+    });
+
+    addEdges(edgesWithLabels);
   }
 
   async function onDrop(event: DragEvent, flowId: number): Promise<OperationResponse | undefined> {
@@ -527,6 +549,17 @@ export default function useDragAndDrop() {
       const newTargetId = nodeIdMapping.get(edge.targetNodeId);
 
       if (newSourceId !== undefined && newTargetId !== undefined) {
+        // Look up the source node's output label for the edge
+        const sourceNodeInfo = multiCopyValue.nodes.find(
+          (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
+        );
+        const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""));
+        const outputLabel =
+          sourceNodeInfo?.nodeTemplate?.output_names &&
+          sourceNodeInfo.nodeTemplate.output_names.length > 1
+            ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
+            : undefined;
+
         // Create the edge in the UI
         const newEdge = {
           id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
@@ -534,6 +567,7 @@ export default function useDragAndDrop() {
           target: String(newTargetId),
           sourceHandle: edge.sourceHandle,
           targetHandle: edge.targetHandle,
+          ...(outputLabel ? { label: outputLabel } : {}),
         };
         addEdges([newEdge]);
 

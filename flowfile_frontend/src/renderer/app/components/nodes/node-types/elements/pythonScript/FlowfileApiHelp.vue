@@ -12,23 +12,29 @@
           <h4>Data I/O</h4>
           <div class="api-item">
             <code>flowfile.read_input()</code>
-            <p>Read the main input as a Polars LazyFrame.</p>
+            <p>Read all inputs concatenated as a single Polars LazyFrame (backward compatible).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.read_input("left")</code>
-            <p>Read a named input connection.</p>
+            <code>flowfile.read_input("orders")</code>
+            <p>
+              Read a specific named input. Names are derived from the source node's
+              <em>node_reference</em> (visible in the "Available Inputs" panel above).
+            </p>
           </div>
           <div class="api-item">
             <code>flowfile.read_inputs()</code>
-            <p>Read all inputs as a dict of LazyFrame lists (one per connection).</p>
+            <p>Read all inputs as a dict of LazyFrame lists keyed by name.</p>
           </div>
           <div class="api-item">
             <code>flowfile.publish_output(df)</code>
-            <p>Write the main output DataFrame.</p>
+            <p>Write the main output DataFrame (mapped to the first output handle).</p>
           </div>
           <div class="api-item">
-            <code>flowfile.publish_output(df, "secondary")</code>
-            <p>Write a named output DataFrame.</p>
+            <code>flowfile.publish_output(df, "rejected")</code>
+            <p>
+              Write to a named output handle. Configure output names in the
+              "Output Names" section above.
+            </p>
           </div>
         </section>
 
@@ -229,15 +235,29 @@ df.write_parquet(flowfile.get_shared_location("exports/output.parquet"))</code><
           </div>
 
           <div class="pattern">
-            <h5>Multiple Inputs</h5>
+            <h5>Named Inputs</h5>
             <pre><code>import polars as pl
 
-inputs = flowfile.read_inputs()
-# inputs is a dict: {"main": [LazyFrame, ...]}
-# Each connected input is a separate LazyFrame in the list
-df1, df2 = inputs["main"]
-combined = pl.concat([df1, df2])
-flowfile.publish_output(combined)</code></pre>
+# Read specific inputs by their source node name
+orders = flowfile.read_input("orders")
+customers = flowfile.read_input("customers")
+
+# Join them
+result = orders.join(customers, on="customer_id")
+flowfile.publish_output(result)</code></pre>
+          </div>
+
+          <div class="pattern">
+            <h5>Multiple Named Outputs</h5>
+            <pre><code>import polars as pl
+
+df = flowfile.read_input()
+clean = df.filter(pl.col("valid") == True)
+rejected = df.filter(pl.col("valid") == False)
+
+# Each goes to a different output handle
+flowfile.publish_output(clean, "clean")
+flowfile.publish_output(rejected, "rejected")</code></pre>
           </div>
         </section>
       </div>
