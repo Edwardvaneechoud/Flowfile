@@ -270,6 +270,7 @@
               context="dataFiles"
               :is-visible="showRegisterTable"
               @file-selected="handleTableFileSelected"
+              @update:model-value="handleTableFileUpdate"
             />
           </div>
         </div>
@@ -474,6 +475,13 @@ function handleTableFileSelected(fileInfo: { name: string; path: string }) {
   if (!newTableName.value.trim()) {
     const baseName = fileInfo.name.replace(/\.(csv|txt|tsv|parquet|xlsx|xls)$/i, "");
     newTableName.value = baseName;
+  }
+}
+
+/** Capture single-click file selection from the FileBrowser. */
+function handleTableFileUpdate(file: { name: string; path: string; is_directory: boolean } | null) {
+  if (file && !file.is_directory) {
+    handleTableFileSelected(file);
   }
 }
 

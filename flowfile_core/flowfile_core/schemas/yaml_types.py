@@ -86,6 +86,9 @@ class OutputSettingsYaml(TypedDict, total=False):
     abs_file_path: str
     fields: list[str]
     table_settings: dict
+    publish_to_catalog: bool
+    catalog_table_name: str
+    catalog_namespace_id: int
 
 
 class NodeSelectYaml(TypedDict, total=False):

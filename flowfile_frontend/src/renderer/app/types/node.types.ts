@@ -268,6 +268,9 @@ export interface OutputSettings {
   fields?: string[];
   write_mode: "overwrite" | "append" | "error";
   table_settings: OutputTableSettings;
+  publish_to_catalog?: boolean;
+  catalog_table_name?: string | null;
+  catalog_namespace_id?: number | null;
 }
 
 // ============================================================================

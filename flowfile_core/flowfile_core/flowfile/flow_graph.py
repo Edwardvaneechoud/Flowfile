@@ -1,6 +1,7 @@
 import datetime
 import functools
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable
@@ -1935,6 +1936,8 @@ class FlowGraph:
                 node_id=output_file.node_id,
                 execute_remote=execute_remote,
             )
+            if output_file.output_settings.publish_to_catalog:
+                self._publish_output_to_catalog(output_file.output_settings)
             return df
 
         def schema_callback():
@@ -1952,6 +1955,33 @@ class FlowGraph:
             schema_callback=schema_callback,
             input_node_ids=[input_node_id],
         )
+
+    @staticmethod
+    def _publish_output_to_catalog(settings: input_schema.OutputSettings):
+        """Register the written output file as a catalog table."""
+        from flowfile_core.catalog import CatalogService
+        from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+        from flowfile_core.database.connection import get_db_context
+
+        table_name = settings.catalog_table_name or settings.name.rsplit(".", 1)[0]
+        file_path = settings.abs_file_path or ""
+        if not file_path:
+            return
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                svc = CatalogService(repo)
+                svc.register_table(
+                    name=table_name,
+                    file_path=file_path,
+                    owner_id=1,
+                    namespace_id=settings.catalog_namespace_id,
+                    description=f"Published from output node",
+                )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to publish output to catalog as '%s'", table_name, exc_info=True
+            )
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):

@@ -279,6 +279,9 @@ class OutputSettings(BaseModel):
     write_mode: str = "overwrite"
     table_settings: OutputTableSettings
     abs_file_path: str | None = None
+    publish_to_catalog: bool = False
+    catalog_table_name: str | None = None
+    catalog_namespace_id: int | None = None
 
     def to_yaml_dict(self) -> OutputSettingsYaml:
         """Converts the output settings to a dictionary suitable for YAML serialization."""
@@ -296,6 +299,12 @@ class OutputSettings(BaseModel):
         ts_dict = self.table_settings.model_dump(exclude={"file_type"})
         if any(v for v in ts_dict.values()):  # Has meaningful settings
             result["table_settings"] = ts_dict
+        if self.publish_to_catalog:
+            result["publish_to_catalog"] = True
+            if self.catalog_table_name:
+                result["catalog_table_name"] = self.catalog_table_name
+            if self.catalog_namespace_id is not None:
+                result["catalog_namespace_id"] = self.catalog_namespace_id
         return result
 
     @property
