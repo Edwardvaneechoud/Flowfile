@@ -21,14 +21,22 @@
       <div class="catalog-sidebar">
         <div class="sidebar-header">
           <h3>{{ sidebarTitle }}</h3>
-          <button
-            v-if="catalogStore.activeTab === 'catalog'"
-            class="btn-icon"
-            title="New catalog"
-            @click="showCreateNamespace = true"
-          >
-            <i class="fa-solid fa-plus"></i>
-          </button>
+          <div v-if="catalogStore.activeTab === 'catalog'" class="sidebar-header-actions">
+            <button
+              class="btn-icon"
+              title="Register table"
+              @click="openRegisterTableGlobal"
+            >
+              <i class="fa-solid fa-table"></i>
+            </button>
+            <button
+              class="btn-icon"
+              title="New catalog"
+              @click="showCreateNamespace = true"
+            >
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
         </div>
 
         <!-- Catalog Tree -->
@@ -235,6 +243,17 @@
         <h3>Register Table</h3>
         <input v-model="newTableName" class="input-field" placeholder="Table name" />
         <input v-model="newTableDesc" class="input-field" placeholder="Description (optional)" />
+        <div class="namespace-selector">
+          <label class="field-label">Catalog / Schema</label>
+          <select v-model="registerTableNamespaceId" class="input-field">
+            <option v-for="ns in schemaNamespaces" :key="ns.id" :value="ns.id">
+              {{ ns.label }}
+            </option>
+          </select>
+          <p v-if="schemaNamespaces.length === 0" class="ns-hint">
+            No schemas available. Create a catalog and schema first.
+          </p>
+        </div>
         <div class="file-browser-section">
           <label class="field-label">Source data file</label>
           <div v-if="newTablePath" class="selected-file-badge">
@@ -420,8 +439,30 @@ function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
   }
 }
 
+/** Collect all schema-level (level 1) namespaces from the tree for the dropdown. */
+const schemaNamespaces = computed(() => {
+  const result: { id: number; label: string }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
+    }
+  }
+  return result;
+});
+
 function openRegisterTable(namespaceId: number) {
   registerTableNamespaceId.value = namespaceId;
+  newTableName.value = "";
+  newTablePath.value = "";
+  newTableDesc.value = "";
+  showRegisterTable.value = true;
+}
+
+/** Open register table modal from the sidebar header (no pre-selected namespace). */
+function openRegisterTableGlobal() {
+  // Pre-select the default namespace or the first available schema
+  registerTableNamespaceId.value =
+    defaultNamespaceId.value ?? schemaNamespaces.value[0]?.id ?? null;
   newTableName.value = "";
   newTablePath.value = "";
   newTableDesc.value = "";
@@ -644,6 +685,11 @@ onMounted(async () => {
   color: var(--color-text-primary);
 }
 
+.sidebar-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .catalog-detail {
   flex: 1;
   overflow-y: auto;
@@ -850,5 +896,20 @@ onMounted(async () => {
   border-radius: var(--border-radius-md);
   height: 350px;
   overflow: hidden;
+}
+
+/* ========== Namespace Selector ========== */
+.namespace-selector {
+  margin-bottom: var(--spacing-3);
+}
+
+.namespace-selector select {
+  appearance: auto;
+}
+
+.ns-hint {
+  margin: var(--spacing-1) 0 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 </style>
