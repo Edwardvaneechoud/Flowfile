@@ -182,16 +182,17 @@ function computeEdgeLabel(
   sourceNode: ReturnType<typeof instance.findNode>,
   sourceHandle?: string,
 ): string {
-  if (sourceNode?.data?.outputs && sourceHandle) {
-    const output = sourceNode.data.outputs.find((o: any) => o.id === sourceHandle);
+  const data = sourceNode?.data as Record<string, any> | undefined;
+  if (data?.outputs && sourceHandle) {
+    const output = data.outputs.find((o: any) => o.id === sourceHandle);
     if (output?.label) {
       return output.label;
     }
   }
-  if (sourceNode?.data?.nodeReference) {
-    return sourceNode.data.nodeReference;
+  if (data?.nodeReference) {
+    return data.nodeReference;
   }
-  return `df_${sourceNode?.data?.id ?? sourceNode?.id ?? ""}`;
+  return `df_${data?.id ?? sourceNode?.id ?? ""}`;
 }
 
 /**

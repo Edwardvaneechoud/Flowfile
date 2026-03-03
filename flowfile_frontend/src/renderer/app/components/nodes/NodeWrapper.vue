@@ -204,13 +204,16 @@ interface NodeData {
   id: number;
   label: string;
   component?: any; // Made optional since we might use nodeTemplate instead
+  nodeReference?: string;
   inputs: Array<{
     id: string;
     position: any;
+    label?: string;
   }>;
   outputs: Array<{
     id: string;
     position: any;
+    label?: string;
   }>;
   nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
   nodeItem?: string; // Optional node item name for backward compatibility
