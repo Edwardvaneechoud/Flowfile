@@ -2004,7 +2004,8 @@ class FlowGraph:
             setting_input=node_catalog_reader,
             schema_callback=schema_callback,
         )
-        self.add_node_to_starting_list(node_catalog_reader.node_id)
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
