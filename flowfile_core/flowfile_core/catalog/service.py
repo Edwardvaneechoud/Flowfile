@@ -39,10 +39,12 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
     CatalogTableOut,
     CatalogTablePreview,
+    CatalogTableSummary,
     ColumnSchema,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
+    FlowSummary,
     GlobalArtifactOut,
     NamespaceTree,
 )
@@ -74,6 +76,7 @@ class CatalogService:
         run_count = self.repo.count_run_for_flow(flow.id)
         last_run = self.repo.last_run_for_flow(flow.id)
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
+        produced_tables = self.repo.list_tables_for_flow(flow.id)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -90,6 +93,10 @@ class CatalogService:
             last_run_success=last_run.success if last_run else None,
             file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
             artifact_count=artifact_count,
+            tables_produced=[
+                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id)
+                for t in produced_tables
+            ],
         )
 
     def _bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
@@ -103,15 +110,17 @@ class CatalogService:
 
         flow_ids = [f.id for f in flows]
 
-        # Bulk fetch all enrichment data (4 queries total)
+        # Bulk fetch all enrichment data (5 queries total)
         fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
         follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
         run_stats = self.repo.bulk_get_run_stats(flow_ids)
         artifact_counts = self.repo.bulk_get_artifact_counts(flow_ids)
+        tables_by_flow = self.repo.bulk_get_tables_for_flows(flow_ids)
 
         result: list[FlowRegistrationOut] = []
         for flow in flows:
             run_count, last_run = run_stats.get(flow.id, (0, None))
+            produced = tables_by_flow.get(flow.id, [])
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -129,6 +138,10 @@ class CatalogService:
                     last_run_success=last_run.success if last_run else None,
                     file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
                     artifact_count=artifact_counts.get(flow.id, 0),
+                    tables_produced=[
+                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id)
+                        for t in produced
+                    ],
                 )
             )
         return result
@@ -717,8 +730,7 @@ class CatalogService:
     # Catalog table operations
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _table_to_out(table: CatalogTable) -> CatalogTableOut:
+    def _table_to_out(self, table: CatalogTable) -> CatalogTableOut:
         """Convert a CatalogTable ORM instance to its Pydantic output schema."""
         import json
 
@@ -732,6 +744,17 @@ class CatalogService:
 
         from pathlib import Path
 
+        # Resolve source flow name if linked
+        source_registration_name: str | None = None
+        if getattr(table, "source_registration_id", None):
+            reg = self.repo.get_flow(table.source_registration_id)
+            if reg is not None:
+                source_registration_name = reg.name
+
+        # Resolve flows that read from this table
+        readers = self.repo.list_readers_for_table(table.id)
+        read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
@@ -744,6 +767,10 @@ class CatalogService:
             row_count=table.row_count,
             column_count=table.column_count,
             size_bytes=table.size_bytes,
+            source_registration_id=getattr(table, "source_registration_id", None),
+            source_registration_name=source_registration_name,
+            source_run_id=getattr(table, "source_run_id", None),
+            read_by_flows=read_by_flows,
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -755,6 +782,8 @@ class CatalogService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
     ) -> CatalogTableOut:
         """Register a new table in the catalog by materializing it as Parquet.
 
@@ -821,6 +850,8 @@ class CatalogService:
             row_count=len(df),
             column_count=len(df.columns),
             size_bytes=size_bytes,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
         )
         table = self.repo.create_table(table)
         return self._table_to_out(table)

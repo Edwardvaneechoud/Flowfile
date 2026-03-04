@@ -35,6 +35,29 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
+      <div v-if="table.source_registration_name" class="meta-card">
+        <span class="meta-label">Produced by</span>
+        <span class="meta-value meta-link" @click="$emit('navigateToFlow', table.source_registration_id)">
+          <i class="fa-solid fa-diagram-project"></i>
+          {{ table.source_registration_name }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Read by flows -->
+    <div v-if="table.read_by_flows && table.read_by_flows.length > 0" class="section">
+      <h3>Read by Flows</h3>
+      <div class="read-by-list">
+        <div
+          v-for="flow in table.read_by_flows"
+          :key="flow.id"
+          class="read-by-item"
+          @click="$emit('navigateToFlow', flow.id)"
+        >
+          <i class="fa-solid fa-diagram-project read-by-icon"></i>
+          <span>{{ flow.name }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Schema -->
@@ -102,6 +125,7 @@ defineProps<{
 
 defineEmits<{
   deleteTable: [id: number];
+  navigateToFlow: [registrationId: number];
 }>();
 
 function formatNumber(n: number | null | undefined): string {
@@ -217,6 +241,48 @@ function formatCell(value: any): string {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.meta-link {
+  cursor: pointer;
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-sm);
+}
+
+.meta-link:hover {
+  text-decoration: underline;
+}
+
+.read-by-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.read-by-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.read-by-item:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.read-by-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
 }
 
 /* ========== Sections ========== */

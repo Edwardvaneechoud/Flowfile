@@ -281,8 +281,27 @@ class CatalogTable(Base):
     column_count = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
 
+    # Lineage: which flow produced this table
+    source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("name", "namespace_id", name="uq_catalog_table_name_ns"),)
+
+
+class CatalogTableReadLink(Base):
+    """Tracks which registered flows read from which catalog tables."""
+
+    __tablename__ = "catalog_table_read_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),
+    )

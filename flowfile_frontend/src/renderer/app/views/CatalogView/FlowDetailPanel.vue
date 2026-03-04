@@ -107,6 +107,22 @@
       </table>
     </div>
 
+    <!-- Tables Produced -->
+    <div v-if="flow.tables_produced && flow.tables_produced.length > 0" class="section">
+      <h3>Tables Produced</h3>
+      <div class="tables-produced-list">
+        <div
+          v-for="table in flow.tables_produced"
+          :key="table.id"
+          class="table-produced-item"
+          @click="$emit('selectTable', table.id)"
+        >
+          <i class="fa-solid fa-table table-produced-icon"></i>
+          <span>{{ table.name }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Artifacts Section -->
     <div class="section">
       <h3>Global Artifacts</h3>
@@ -160,6 +176,7 @@ defineEmits<{
   toggleFavorite: [flowId: number];
   toggleFollow: [flowId: number];
   openFlow: [flowPath: string];
+  selectTable: [tableId: number];
 }>();
 
 const statusClass = computed(() => {
@@ -434,6 +451,36 @@ function formatSize(bytes: number | null): string {
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);
   color: var(--color-text-secondary);
+}
+
+/* ========== Tables Produced ========== */
+.tables-produced-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.table-produced-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.table-produced-item:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.table-produced-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
 }
 
 /* ========== Missing File Banner ========== */

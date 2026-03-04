@@ -1968,6 +1968,7 @@ class FlowGraph:
 
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None
+        resolved_table_id: int | None = None
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
@@ -1975,12 +1976,17 @@ class FlowGraph:
                 if node_catalog_reader.catalog_table_id is not None:
                     table_out = svc.get_table(node_catalog_reader.catalog_table_id)
                     file_path = table_out.file_path
+                    resolved_table_id = table_out.id
                 elif node_catalog_reader.catalog_table_name:
                     tables = svc.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
                     for t in tables:
                         if t.name == node_catalog_reader.catalog_table_name:
                             file_path = t.file_path
+                            resolved_table_id = t.id
                             break
+                # Record the read relationship
+                if resolved_table_id and self._flow_settings.source_registration_id:
+                    repo.upsert_read_link(resolved_table_id, self._flow_settings.source_registration_id)
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
@@ -2046,6 +2052,7 @@ class FlowGraph:
                         owner_id=node_catalog_writer.user_id or 1,
                         namespace_id=settings.namespace_id,
                         description=settings.description,
+                        source_registration_id=self._flow_settings.source_registration_id,
                     )
             except Exception:
                 logger.warning(

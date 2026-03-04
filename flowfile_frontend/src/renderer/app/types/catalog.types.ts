@@ -54,6 +54,7 @@ export interface FlowRegistration {
   last_run_success: boolean | null;
   file_exists: boolean;
   artifact_count: number;
+  tables_produced: CatalogTableSummary[];
 }
 
 export interface FlowRegistrationCreate {
@@ -129,6 +130,17 @@ export interface ColumnSchema {
   dtype: string;
 }
 
+export interface CatalogTableSummary {
+  id: number;
+  name: string;
+  namespace_id: number | null;
+}
+
+export interface FlowSummary {
+  id: number;
+  name: string;
+}
+
 export interface CatalogTable {
   id: number;
   name: string;
@@ -141,6 +153,10 @@ export interface CatalogTable {
   row_count: number | null;
   column_count: number | null;
   size_bytes: number | null;
+  source_registration_id: number | null;
+  source_registration_name: string | null;
+  source_run_id: number | null;
+  read_by_flows: FlowSummary[];
   created_at: string;
   updated_at: string;
 }
