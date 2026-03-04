@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
   <!-- Background circular shape -->
-  <circle cx="100" cy="100" r="85" fill="#6366F1" />
+  <circle cx="100" cy="100" r="85" fill="#16a34a" />
 
   <!-- Open book / catalog shape -->
   <path d="M60 65 L60 135 Q100 125 100 125 Q100 125 140 135 L140 65 Q100 75 100 75 Q100 75 60 65 Z" fill="#FFFFFF" fill-opacity="0.2" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round" />
@@ -23,5 +23,5 @@
   <polyline points="90,148 100,138 110,148" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
 
   <!-- Label -->
-  <text x="100" y="180" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="#FFFFFF">CATALOG</text>
+  <text x="100" y="183" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="#FFFFFF">CATALOG</text>
 </svg>
