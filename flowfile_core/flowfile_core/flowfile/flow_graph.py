@@ -1984,9 +1984,6 @@ class FlowGraph:
                             file_path = t.file_path
                             resolved_table_id = t.id
                             break
-                # Record the read relationship
-                if resolved_table_id and self._flow_settings.source_registration_id:
-                    repo.upsert_read_link(resolved_table_id, self._flow_settings.source_registration_id)
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
@@ -1995,6 +1992,14 @@ class FlowGraph:
         def _func() -> FlowDataEngine:
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
+            # Record the read relationship at runtime (source_registration_id is set by then)
+            if resolved_table_id and self._flow_settings.source_registration_id:
+                try:
+                    with get_db_context() as db:
+                        repo = SQLAlchemyCatalogRepository(db)
+                        repo.upsert_read_link(resolved_table_id, self._flow_settings.source_registration_id)
+                except Exception:
+                    logger.warning("Failed to record catalog read link", exc_info=True)
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
