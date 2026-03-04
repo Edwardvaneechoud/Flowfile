@@ -4,12 +4,27 @@ import sys
 from pathlib import Path
 
 
-def run_flow(flow_path: str) -> int:
+def _parse_arg_pairs(arg_list: list[str] | None) -> dict[str, str]:
+    """Parse --arg key=value pairs into a dict."""
+    if not arg_list:
+        return {}
+    result = {}
+    for item in arg_list:
+        if "=" not in item:
+            print(f"Error: Invalid --arg format: {item!r} (expected key=value)", file=sys.stderr)
+            sys.exit(1)
+        key, _, value = item.partition("=")
+        result[key.strip()] = value.strip()
+    return result
+
+
+def run_flow(flow_path: str, arg_values: dict[str, str] | None = None) -> int:
     """
     Load and execute a flow from a YAML/JSON file.
 
     Args:
         flow_path: Path to the flow file (.yaml, .yml, or .json)
+        arg_values: Optional dict of flow argument values (name → raw value)
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -41,6 +56,16 @@ def run_flow(flow_path: str) -> int:
 
     # Force local execution for CLI - no worker service needed
     flow.execution_location = "local"
+
+    # Resolve flow arguments if any are defined or provided
+    if arg_values or flow.flow_settings.flow_arguments:
+        try:
+            flow.resolve_arguments(arg_values or {})
+            if arg_values:
+                print(f"Flow arguments: {arg_values}")
+        except ValueError as e:
+            print(f"Error resolving flow arguments: {e}", file=sys.stderr)
+            return 1
 
     # Remove explore_data nodes - they're UI-only and require a worker service
     explore_data_nodes = [n.node_id for n in flow.nodes if n.node_type == "explore_data"]
@@ -101,6 +126,10 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
+    parser.add_argument(
+        "--arg", action="append", metavar="KEY=VALUE",
+        help="Set a flow argument (repeatable, e.g. --arg input_path=/data/file.csv --arg threshold=0.5)",
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -126,7 +155,8 @@ def main():
                 print("Error: 'flow' component requires a file path", file=sys.stderr)
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
-            sys.exit(run_flow(args.file_path))
+            arg_values = _parse_arg_pairs(args.arg)
+            sys.exit(run_flow(args.file_path, arg_values=arg_values))
     else:
         # Default action - show info
         print(f"FlowFile v{flowfile.__version__}")
@@ -137,6 +167,7 @@ def main():
         print("")
         print("  # Run a flow from a file")
         print("  flowfile run flow my_pipeline.yaml")
+        print("  flowfile run flow my_pipeline.yaml --arg input_path=/data/file.csv --arg threshold=0.5")
         print("")
         print("  # Advanced: Run individual components")
         print("  flowfile run core  # Start only the core service")

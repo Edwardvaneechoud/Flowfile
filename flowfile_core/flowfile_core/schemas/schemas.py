@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_seriali
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import input_schema
+from flowfile_core.schemas.flow_args import FlowArgument
 
 ExecutionModeLiteral = Literal["Development", "Performance"]
 ExecutionLocationsLiteral = Literal["local", "remote"]
@@ -123,6 +124,10 @@ class FlowGraphConfig(BaseModel):
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
+    flow_arguments: list[FlowArgument] = Field(
+        default_factory=list,
+        description="Typed arguments that parameterize this flow at run time.",
+    )
 
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
@@ -204,6 +209,7 @@ class FlowfileSettings(BaseModel):
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
+    flow_arguments: list[FlowArgument] = Field(default_factory=list)
 
 
 class FlowfileNode(BaseModel):

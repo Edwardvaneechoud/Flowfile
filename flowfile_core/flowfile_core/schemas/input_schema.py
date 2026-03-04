@@ -363,6 +363,10 @@ class NodeBase(BaseModel):
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
     output_field_config: OutputFieldConfig | None = None
+    argument_bindings: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps setting field paths to flow argument names for runtime injection.",
+    )
 
     @field_validator("node_reference", mode="before")
     @classmethod

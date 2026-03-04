@@ -11,6 +11,21 @@ export type ExecutionMode = "Development" | "Performance";
 export type ExecutionLocation = "local" | "remote";
 
 // ============================================================================
+// Flow Arguments
+// ============================================================================
+
+export type FlowArgType = "string" | "number" | "boolean" | "list";
+
+export interface FlowArgument {
+  name: string;
+  arg_type: FlowArgType;
+  default: any;
+  description: string;
+  required: boolean;
+  options?: string[];
+}
+
+// ============================================================================
 // Flow Settings
 // ============================================================================
 
@@ -27,6 +42,7 @@ export interface FlowSettings {
   show_detailed_progress: boolean;
   is_running: boolean;
   max_parallel_workers: number;
+  flow_arguments: FlowArgument[];
 }
 
 // ============================================================================

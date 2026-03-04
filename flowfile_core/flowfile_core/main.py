@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
     SERVER_HOST,
@@ -15,17 +16,17 @@ from flowfile_core.configs.settings import (
     WORKER_PORT,
     WORKER_URL,
 )
-from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.subflow import router as subflow_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
-from flowfile_core.routes.file_manager import router as file_manager_router
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -107,6 +108,7 @@ app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=[
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
+app.include_router(subflow_router)
 
 
 @app.post("/shutdown")

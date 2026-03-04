@@ -94,5 +94,24 @@ for custom_node in CUSTOM_NODE_STORE.values():
     register_custom_node(custom_node().to_node_template())
 
 
+def register_subflow_node(flow_path: str):
+    """Register a saved flow as a subflow custom node.
+
+    Args:
+        flow_path: Path to the .yaml/.json flow file.
+
+    Returns:
+        The SubflowNode instance.
+    """
+    from flowfile_core.flowfile.node_designer.subflow_node import SubflowNode
+
+    node = SubflowNode.from_flow_path(flow_path)
+    CUSTOM_NODE_STORE[node.item] = type(node)
+    if node.item not in node_dict:
+        register_custom_node(node.to_node_template())
+    logger.info(f"Registered subflow node: {node.item} from {flow_path}")
+    return node
+
+
 def check_if_has_default_setting(node_item: str):
     return node_item in nodes_with_defaults

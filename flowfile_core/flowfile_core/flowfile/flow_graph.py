@@ -365,6 +365,7 @@ class FlowGraph:
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
         self.artifact_context = ArtifactContext()
+        self._flow_arguments: dict[str, Any] = {}  # Resolved argument values
 
         # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
@@ -389,6 +390,88 @@ class FlowGraph:
         ):
             self.reset()
         self._flow_settings = flow_settings
+
+    # ==================== Flow Arguments ====================
+
+    def resolve_arguments(self, arg_values: dict[str, Any] | None = None) -> None:
+        """Validate and resolve flow argument values.
+
+        Must be called before ``run_graph()`` when the flow defines arguments
+        that need runtime values.  Stores the resolved values internally so
+        that ``_apply_arguments()`` can inject them into node settings.
+
+        Args:
+            arg_values: Mapping of argument name → raw value.  Missing optional
+                        arguments fall back to their declared defaults.
+        """
+        from flowfile_core.schemas.flow_args import resolve_flow_arguments
+
+        arg_values = arg_values or {}
+        self._flow_arguments = resolve_flow_arguments(
+            self._flow_settings.flow_arguments, arg_values
+        )
+
+    def _apply_arguments(self) -> None:
+        """Inject resolved argument values into node settings before execution.
+
+        Handles two mechanisms:
+
+        1. **Direct field binding** — each node may declare
+           ``setting_input.argument_bindings`` mapping field paths to argument
+           names.  The bound field is set to the resolved value.
+
+        2. **Template substitution** — for code-bearing nodes (formula,
+           python_script, polars_code) ``{{arg_name}}`` placeholders in code
+           strings are replaced with resolved values.
+        """
+        from flowfile_core.schemas.flow_args import apply_field_binding, substitute_template
+
+        if not self._flow_arguments:
+            return
+
+        for node in self.nodes:
+            si = node.setting_input
+            if si is None:
+                continue
+
+            # --- Direct field bindings ---
+            bindings: dict[str, str] = getattr(si, "argument_bindings", {})
+            for field_path, arg_name in bindings.items():
+                if arg_name in self._flow_arguments:
+                    try:
+                        apply_field_binding(si, field_path, self._flow_arguments[arg_name])
+                    except (AttributeError, TypeError) as exc:
+                        self.flow_logger.warning(
+                            f"Failed to bind argument '{arg_name}' to "
+                            f"'{field_path}' on node {node.node_id}: {exc}"
+                        )
+
+            # --- Template substitution in code fields ---
+            # Formula nodes
+            if hasattr(si, "formulas"):
+                for formula in si.formulas:
+                    if hasattr(formula, "formula_expression") and formula.formula_expression:
+                        formula.formula_expression = substitute_template(
+                            formula.formula_expression, self._flow_arguments
+                        )
+
+            # Polars code nodes
+            if hasattr(si, "polars_code_input") and si.polars_code_input:
+                if si.polars_code_input.polars_code:
+                    si.polars_code_input.polars_code = substitute_template(
+                        si.polars_code_input.polars_code, self._flow_arguments
+                    )
+
+            # Python script nodes
+            if hasattr(si, "python_script_input") and si.python_script_input:
+                if si.python_script_input.code:
+                    si.python_script_input.code = substitute_template(
+                        si.python_script_input.code, self._flow_arguments
+                    )
+                if si.python_script_input.cells:
+                    for cell in si.python_script_input.cells:
+                        if cell.code:
+                            cell.code = substitute_template(cell.code, self._flow_arguments)
 
     # ==================== History Management Methods ====================
 
@@ -2716,6 +2799,10 @@ class FlowGraph:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
+
+            # Apply flow arguments (field bindings + template substitution)
+            if self._flow_arguments:
+                self._apply_arguments()
 
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
