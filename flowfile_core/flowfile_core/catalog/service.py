@@ -730,6 +730,8 @@ class CatalogService:
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
+        from pathlib import Path
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
@@ -737,6 +739,7 @@ class CatalogService:
             description=table.description,
             owner_id=table.owner_id,
             file_path=table.file_path,
+            file_exists=Path(table.file_path).is_file() if table.file_path else False,
             schema_columns=columns,
             row_count=table.row_count,
             column_count=table.column_count,

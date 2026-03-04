@@ -48,6 +48,8 @@
         :selected-flow-id="selectedFlowId"
         :selected-artifact-id="selectedArtifactId"
         :selected-table-id="selectedTableId"
+        :search-query="searchQuery"
+        :show-unavailable="showUnavailable"
         @select-flow="$emit('selectFlow', $event)"
         @select-artifact="$emit('selectArtifact', $event)"
         @select-table="$emit('selectTable', $event)"
@@ -60,7 +62,7 @@
 
       <!-- Flows under this namespace -->
       <div
-        v-for="flow in node.flows"
+        v-for="flow in visibleFlows"
         :key="'f-' + flow.id"
         class="tree-flow"
         :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
@@ -93,7 +95,7 @@
 
       <!-- Artifacts grouped by name -->
       <div
-        v-for="group in groupedArtifacts"
+        v-for="group in visibleArtifacts"
         :key="'ag-' + group.name"
         class="tree-artifact"
         :class="{ selected: selectedArtifactId === group.latest.id }"
@@ -109,10 +111,10 @@
 
       <!-- Catalog Tables -->
       <div
-        v-for="table in (node.tables ?? [])"
+        v-for="table in visibleTables"
         :key="'t-' + table.id"
         class="tree-table"
-        :class="{ selected: selectedTableId === table.id }"
+        :class="{ selected: selectedTableId === table.id, 'file-missing': (table as any).file_exists === false }"
         @click.stop="$emit('selectTable', table.id)"
       >
         <i class="fa-solid fa-table table-icon"></i>
@@ -133,12 +135,20 @@ interface ArtifactGroup {
   versionCount: number;
 }
 
-const props = defineProps<{
-  node: NamespaceTree;
-  selectedFlowId: number | null;
-  selectedArtifactId: number | null;
-  selectedTableId: number | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    node: NamespaceTree;
+    selectedFlowId: number | null;
+    selectedArtifactId: number | null;
+    selectedTableId: number | null;
+    searchQuery?: string;
+    showUnavailable?: boolean;
+  }>(),
+  {
+    searchQuery: "",
+    showUnavailable: false,
+  },
+);
 
 defineEmits<{
   selectFlow: [id: number];
@@ -162,6 +172,38 @@ function containsFlow(node: NamespaceTree, flowId: number): boolean {
   if (node.flows.some((f) => f.id === flowId)) return true;
   return node.children.some((child) => containsFlow(child, flowId));
 }
+
+const query = computed(() => props.searchQuery.toLowerCase());
+
+const visibleFlows = computed(() => {
+  let flows = props.node.flows;
+  if (!props.showUnavailable) {
+    flows = flows.filter((f) => f.file_exists);
+  }
+  if (query.value) {
+    flows = flows.filter((f) => f.name.toLowerCase().includes(query.value));
+  }
+  return flows;
+});
+
+const visibleTables = computed(() => {
+  let tables = props.node.tables ?? [];
+  if (!props.showUnavailable) {
+    tables = tables.filter((t) => (t as any).file_exists !== false);
+  }
+  if (query.value) {
+    tables = tables.filter((t) => t.name.toLowerCase().includes(query.value));
+  }
+  return tables;
+});
+
+const visibleArtifacts = computed((): ArtifactGroup[] => {
+  let groups = groupedArtifacts.value;
+  if (query.value) {
+    groups = groups.filter((g) => g.name.toLowerCase().includes(query.value));
+  }
+  return groups;
+});
 
 const expanded = ref(true);
 const toggle = () => {
@@ -360,10 +402,12 @@ const totalFlows = computed(() => {
   background: #ef4444;
 }
 
-.tree-flow.file-missing {
+.tree-flow.file-missing,
+.tree-table.file-missing {
   opacity: 0.55;
 }
-.tree-flow.file-missing .flow-icon {
+.tree-flow.file-missing .flow-icon,
+.tree-table.file-missing .table-icon {
   color: #f59e0b;
 }
 

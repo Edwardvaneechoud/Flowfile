@@ -1,7 +1,6 @@
 import datetime
 import functools
 import json
-import logging
 import os
 import threading
 from collections.abc import Callable
@@ -1936,8 +1935,6 @@ class FlowGraph:
                 node_id=output_file.node_id,
                 execute_remote=execute_remote,
             )
-            if output_file.output_settings.publish_to_catalog:
-                self._publish_output_to_catalog(output_file.output_settings)
             return df
 
         def schema_callback():
@@ -1956,32 +1953,129 @@ class FlowGraph:
             input_node_ids=[input_node_id],
         )
 
-    @staticmethod
-    def _publish_output_to_catalog(settings: input_schema.OutputSettings):
-        """Register the written output file as a catalog table."""
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_catalog_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
+        """Adds a node that reads a table from the catalog.
+
+        Resolves the catalog table by ID (or name + namespace) and reads
+        the materialized Parquet file.
+        """
+        import logging
+
         from flowfile_core.catalog import CatalogService
         from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
         from flowfile_core.database.connection import get_db_context
 
-        table_name = settings.catalog_table_name or settings.name.rsplit(".", 1)[0]
-        file_path = settings.abs_file_path or ""
-        if not file_path:
-            return
+        logger = logging.getLogger(__name__)
+
+        # Resolve catalog table metadata ahead of time so we can build a schema callback.
+        file_path: str | None = None
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 svc = CatalogService(repo)
-                svc.register_table(
-                    name=table_name,
-                    file_path=file_path,
-                    owner_id=1,
-                    namespace_id=settings.catalog_namespace_id,
-                    description=f"Published from output node",
-                )
+                if node_catalog_reader.catalog_table_id is not None:
+                    table_out = svc.get_table(node_catalog_reader.catalog_table_id)
+                    file_path = table_out.file_path
+                elif node_catalog_reader.catalog_table_name:
+                    tables = svc.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
+                    for t in tables:
+                        if t.name == node_catalog_reader.catalog_table_name:
+                            file_path = t.file_path
+                            break
         except Exception:
-            logging.getLogger(__name__).warning(
-                "Failed to publish output to catalog as '%s'", table_name, exc_info=True
-            )
+            logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
+
+        resolved_path = file_path
+
+        def _func(df: FlowDataEngine) -> FlowDataEngine:
+            if not resolved_path:
+                raise ValueError("Catalog table could not be resolved — no file path found")
+            return FlowDataEngine.create_from_polars_lazy_frame(pl.scan_parquet(resolved_path))
+
+        def schema_callback():
+            if resolved_path:
+                return pl.scan_parquet(resolved_path).collect_schema()
+            return None
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+            schema_callback=schema_callback,
+        )
+        self.add_node_to_starting_list(node_catalog_reader.node_id)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
+        """Adds a node that writes its input to the catalog as a Parquet table."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        def _func(df: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.catalog import CatalogService
+            from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+            from flowfile_core.database.connection import get_db_context
+
+            settings = node_catalog_writer.catalog_write_settings
+            if not settings.table_name:
+                raise ValueError("Catalog writer requires a table name")
+
+            # Materialize the dataframe to a temporary parquet, then register via the catalog service.
+            from shared.storage_config import storage
+
+            import uuid
+
+            dest_dir = storage.catalog_tables_directory
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            parquet_filename = f"{settings.table_name}_{uuid.uuid4().hex[:8]}.parquet"
+            dest_path = dest_dir / parquet_filename
+
+            collected = df.collect()
+            collected.write_parquet(dest_path)
+
+            try:
+                with get_db_context() as db:
+                    repo = SQLAlchemyCatalogRepository(db)
+                    svc = CatalogService(repo)
+                    if settings.write_mode == "overwrite":
+                        existing = svc.list_tables(namespace_id=settings.namespace_id)
+                        for t in existing:
+                            if t.name == settings.table_name:
+                                svc.delete_table(t.id)
+                                break
+                    svc.register_table(
+                        name=settings.table_name,
+                        file_path=str(dest_path),
+                        owner_id=node_catalog_writer.user_id or 1,
+                        namespace_id=settings.namespace_id,
+                        description=settings.description,
+                    )
+            except Exception:
+                logger.warning(
+                    "Failed to register catalog table '%s'", settings.table_name, exc_info=True
+                )
+                raise
+
+            return df
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
+            return input_node.schema
+
+        input_node_id = node_catalog_writer.depending_on_id if hasattr(node_catalog_writer, "depending_on_id") else None
+        self.add_node_step(
+            node_id=node_catalog_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_writer",
+            setting_input=node_catalog_writer,
+            schema_callback=schema_callback,
+            input_node_ids=[input_node_id],
+        )
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):

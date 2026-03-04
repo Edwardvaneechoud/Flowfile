@@ -41,6 +41,17 @@
 
         <!-- Catalog Tree -->
         <div v-if="catalogStore.activeTab === 'catalog'" class="tree-container">
+          <div class="sidebar-filters">
+            <input
+              v-model="searchQuery"
+              class="search-input"
+              placeholder="Search..."
+            />
+            <label class="unavailable-toggle">
+              <input v-model="showUnavailable" type="checkbox" />
+              <span>Show unavailable</span>
+            </label>
+          </div>
           <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
@@ -56,6 +67,8 @@
               :selected-flow-id="catalogStore.selectedFlowId"
               :selected-artifact-id="catalogStore.selectedArtifactId"
               :selected-table-id="catalogStore.selectedTableId"
+              :search-query="searchQuery"
+              :show-unavailable="showUnavailable"
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
@@ -167,125 +180,26 @@
       </div>
     </div>
 
-    <!-- Create Namespace Modal -->
-    <div v-if="showCreateNamespace" class="modal-overlay" @click.self="showCreateNamespace = false">
-      <div class="modal-card">
-        <h3>{{ createSchemaParentId ? "Create Schema" : "Create Catalog" }}</h3>
-        <input
-          v-model="newNamespaceName"
-          class="input-field"
-          :placeholder="createSchemaParentId ? 'Schema name' : 'Catalog name'"
-          @keyup.enter="createNamespace"
-        />
-        <input
-          v-model="newNamespaceDesc"
-          class="input-field"
-          placeholder="Description (optional)"
-        />
-        <div class="modal-actions">
-          <button
-            class="btn-secondary"
-            @click="
-              showCreateNamespace = false;
-              createSchemaParentId = null;
-            "
-          >
-            Cancel
-          </button>
-          <button class="btn-primary" :disabled="!newNamespaceName.trim()" @click="createNamespace">
-            Create
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- Modals -->
+    <CreateNamespaceModal
+      :visible="showCreateNamespace"
+      :parent-id="createSchemaParentId"
+      @close="showCreateNamespace = false; createSchemaParentId = null"
+    />
 
-    <!-- Register Flow Modal -->
-    <div v-if="showRegisterFlow" class="modal-overlay" @click.self="showRegisterFlow = false">
-      <div class="modal-card modal-card-lg">
-        <h3>Register Flow</h3>
-        <input v-model="newFlowName" class="input-field" placeholder="Flow name" />
-        <input v-model="newFlowDesc" class="input-field" placeholder="Description (optional)" />
-        <div class="file-browser-section">
-          <label class="field-label">Flow file</label>
-          <div v-if="newFlowPath" class="selected-file-badge">
-            <i class="fa-solid fa-file"></i>
-            <span>{{ newFlowPath }}</span>
-            <button class="clear-file-btn" title="Clear" @click="newFlowPath = ''">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-          <div class="file-browser-container">
-            <FileBrowser
-              :allowed-file-types="['yaml', 'yml', 'flowfile']"
-              mode="open"
-              context="flows"
-              :is-visible="showRegisterFlow"
-              @file-selected="handleFlowFileSelected"
-            />
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="showRegisterFlow = false">Cancel</button>
-          <button
-            class="btn-primary"
-            :disabled="!newFlowName.trim() || !newFlowPath.trim()"
-            @click="registerFlow"
-          >
-            Register
-          </button>
-        </div>
-      </div>
-    </div>
+    <RegisterFlowModal
+      :visible="showRegisterFlow"
+      :namespace-id="registerFlowNamespaceId"
+      :default-namespace-id="defaultNamespaceId"
+      @close="showRegisterFlow = false"
+    />
 
-    <!-- Register Table Modal -->
-    <div v-if="showRegisterTable" class="modal-overlay" @click.self="showRegisterTable = false">
-      <div class="modal-card modal-card-lg">
-        <h3>Register Table</h3>
-        <input v-model="newTableName" class="input-field" placeholder="Table name" />
-        <input v-model="newTableDesc" class="input-field" placeholder="Description (optional)" />
-        <div class="namespace-selector">
-          <label class="field-label">Catalog / Schema</label>
-          <select v-model="registerTableNamespaceId" class="input-field">
-            <option v-for="ns in schemaNamespaces" :key="ns.id" :value="ns.id">
-              {{ ns.label }}
-            </option>
-          </select>
-          <p v-if="schemaNamespaces.length === 0" class="ns-hint">
-            No schemas available. Create a catalog and schema first.
-          </p>
-        </div>
-        <div class="file-browser-section">
-          <label class="field-label">Source data file</label>
-          <div v-if="newTablePath" class="selected-file-badge">
-            <i class="fa-solid fa-table"></i>
-            <span>{{ newTablePath }}</span>
-            <button class="clear-file-btn" title="Clear" @click="newTablePath = ''">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-          <div class="file-browser-container">
-            <FileBrowser
-              :allowed-file-types="['csv', 'txt', 'tsv', 'parquet', 'xlsx', 'xls']"
-              mode="open"
-              context="dataFiles"
-              :is-visible="showRegisterTable"
-              @file-selected="handleTableFileSelected"
-              @update:model-value="handleTableFileUpdate"
-            />
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="showRegisterTable = false">Cancel</button>
-          <button
-            class="btn-primary"
-            :disabled="!newTableName.trim() || !newTablePath.trim()"
-            @click="registerTable"
-          >
-            Register
-          </button>
-        </div>
-      </div>
-    </div>
+    <RegisterTableModal
+      :visible="showRegisterTable"
+      :namespace-id="registerTableNamespaceId"
+      :default-namespace-id="defaultNamespaceId"
+      @close="showRegisterTable = false"
+    />
   </div>
 </template>
 
@@ -304,7 +218,9 @@ import TableDetailPanel from "./TableDetailPanel.vue";
 import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
-import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
+import CreateNamespaceModal from "./CreateNamespaceModal.vue";
+import RegisterFlowModal from "./RegisterFlowModal.vue";
+import RegisterTableModal from "./RegisterTableModal.vue";
 import type { CatalogTab, GlobalArtifact, NamespaceTree } from "../../types";
 
 const router = useRouter();
@@ -354,25 +270,20 @@ const sidebarTitle = computed(() => {
   }
 });
 
-// Create namespace state
+// Search and filter state
+const searchQuery = ref("");
+const showUnavailable = ref(false);
+
+// Modal state
 const showCreateNamespace = ref(false);
 const createSchemaParentId = ref<number | null>(null);
-const newNamespaceName = ref("");
-const newNamespaceDesc = ref("");
-
-// Register flow state
 const showRegisterFlow = ref(false);
 const registerFlowNamespaceId = ref<number | null>(null);
-const newFlowName = ref("");
-const newFlowPath = ref("");
-const newFlowDesc = ref("");
-
-// Register table state
 const showRegisterTable = ref(false);
 const registerTableNamespaceId = ref<number | null>(null);
-const newTableName = ref("");
-const newTablePath = ref("");
-const newTableDesc = ref("");
+
+// Default namespace ID (loaded once on mount)
+const defaultNamespaceId = ref<number | null>(null);
 
 function selectFlow(flowId: number) {
   catalogStore.clearArtifactSelection();
@@ -415,100 +326,30 @@ const selectedArtifactVersions = computed((): GlobalArtifact[] => {
 
 function openCreateSchema(parentId: number) {
   createSchemaParentId.value = parentId;
-  newNamespaceName.value = "";
-  newNamespaceDesc.value = "";
   showCreateNamespace.value = true;
 }
 
-// Default namespace ID (loaded once on mount)
-const defaultNamespaceId = ref<number | null>(null);
-
 function openRegisterFlow(namespaceId: number) {
   registerFlowNamespaceId.value = namespaceId;
-  newFlowName.value = "";
-  newFlowPath.value = "";
-  newFlowDesc.value = "";
   showRegisterFlow.value = true;
 }
 
-function handleFlowFileSelected(fileInfo: { name: string; path: string }) {
-  newFlowPath.value = fileInfo.path;
-  if (!newFlowName.value.trim()) {
-    // Auto-fill name from filename (without extension)
-    const baseName = fileInfo.name.replace(/\.(yaml|yml|flowfile)$/i, "");
-    newFlowName.value = baseName;
-  }
-}
-
-/** Collect all schema-level (level 1) namespaces from the tree for the dropdown. */
-const schemaNamespaces = computed(() => {
-  const result: { id: number; label: string }[] = [];
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-    }
-  }
-  return result;
-});
-
 function openRegisterTable(namespaceId: number) {
   registerTableNamespaceId.value = namespaceId;
-  newTableName.value = "";
-  newTablePath.value = "";
-  newTableDesc.value = "";
   showRegisterTable.value = true;
 }
 
 /** Open register table modal from the sidebar header (no pre-selected namespace). */
 function openRegisterTableGlobal() {
-  // Pre-select the default namespace or the first available schema
+  const schemaNamespaces: { id: number }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      schemaNamespaces.push({ id: schema.id });
+    }
+  }
   registerTableNamespaceId.value =
-    defaultNamespaceId.value ?? schemaNamespaces.value[0]?.id ?? null;
-  newTableName.value = "";
-  newTablePath.value = "";
-  newTableDesc.value = "";
+    defaultNamespaceId.value ?? schemaNamespaces[0]?.id ?? null;
   showRegisterTable.value = true;
-}
-
-function handleTableFileSelected(fileInfo: { name: string; path: string }) {
-  newTablePath.value = fileInfo.path;
-  if (!newTableName.value.trim()) {
-    const baseName = fileInfo.name.replace(/\.(csv|txt|tsv|parquet|xlsx|xls)$/i, "");
-    newTableName.value = baseName;
-  }
-}
-
-/** Capture single-click file selection from the FileBrowser. */
-function handleTableFileUpdate(file: { name: string; path: string; is_directory: boolean } | null) {
-  if (file && !file.is_directory) {
-    handleTableFileSelected(file);
-  }
-}
-
-async function registerTable() {
-  if (!newTableName.value.trim() || !newTablePath.value.trim()) return;
-  try {
-    const nsId = registerTableNamespaceId.value ?? defaultNamespaceId.value;
-    await CatalogApi.registerTable(
-      {
-        name: newTableName.value.trim(),
-        description: newTableDesc.value.trim() || null,
-        namespace_id: nsId,
-      },
-      newTablePath.value.trim(),
-    );
-    showRegisterTable.value = false;
-    newTableName.value = "";
-    newTablePath.value = "";
-    newTableDesc.value = "";
-    await Promise.all([
-      catalogStore.loadTree(),
-      catalogStore.loadAllTables(),
-      catalogStore.loadStats(),
-    ]);
-  } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to register table");
-  }
 }
 
 async function handleDeleteTable(tableId: number) {
@@ -553,48 +394,6 @@ function navigateToFlow(registrationId: number) {
   catalogStore.selectedRunDetail = null;
   catalogStore.selectFlow(registrationId);
   catalogStore.setActiveTab("catalog");
-}
-
-async function createNamespace() {
-  if (!newNamespaceName.value.trim()) return;
-  try {
-    await CatalogApi.createNamespace({
-      name: newNamespaceName.value.trim(),
-      parent_id: createSchemaParentId.value,
-      description: newNamespaceDesc.value.trim() || null,
-    });
-    showCreateNamespace.value = false;
-    createSchemaParentId.value = null;
-    newNamespaceName.value = "";
-    newNamespaceDesc.value = "";
-    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
-  } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to create namespace");
-  }
-}
-
-async function registerFlow() {
-  if (!newFlowName.value.trim() || !newFlowPath.value.trim()) return;
-  try {
-    const nsId = registerFlowNamespaceId.value ?? defaultNamespaceId.value;
-    await CatalogApi.registerFlow({
-      name: newFlowName.value.trim(),
-      flow_path: newFlowPath.value.trim(),
-      description: newFlowDesc.value.trim() || null,
-      namespace_id: nsId,
-    });
-    showRegisterFlow.value = false;
-    newFlowName.value = "";
-    newFlowPath.value = "";
-    newFlowDesc.value = "";
-    await Promise.all([
-      catalogStore.loadTree(),
-      catalogStore.loadAllFlows(),
-      catalogStore.loadStats(),
-    ]);
-  } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to register flow");
-  }
 }
 
 onMounted(async () => {
@@ -704,6 +503,45 @@ onMounted(async () => {
   padding: var(--spacing-4) var(--spacing-6);
 }
 
+/* ========== Sidebar Filters ========== */
+.sidebar-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.search-input {
+  flex: 1;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  min-width: 0;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.unavailable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.unavailable-toggle input {
+  margin: 0;
+}
+
 /* ========== Tree / List Containers ========== */
 .tree-container,
 .list-container {
@@ -768,156 +606,5 @@ onMounted(async () => {
 .btn-sm {
   padding: var(--spacing-1) var(--spacing-3);
   font-size: var(--font-size-xs);
-}
-
-.btn-secondary {
-  padding: var(--spacing-2) var(--spacing-4);
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.btn-secondary:hover {
-  background: var(--color-background-hover);
-}
-
-/* ========== Modal ========== */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-card {
-  background: var(--color-background-primary);
-  border-radius: var(--border-radius-lg);
-  padding: var(--spacing-6);
-  width: 400px;
-  max-width: 90vw;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal-card-lg {
-  width: 700px;
-  max-height: 85vh;
-  overflow-y: auto;
-}
-
-.modal-card h3 {
-  margin: 0 0 var(--spacing-4) 0;
-  font-size: var(--font-size-lg);
-}
-
-.input-field {
-  width: 100%;
-  padding: var(--spacing-2) var(--spacing-3);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-3);
-  box-sizing: border-box;
-}
-
-.input-field:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-2);
-}
-
-/* ========== File Browser in Register Modal ========== */
-.file-browser-section {
-  margin-bottom: var(--spacing-3);
-}
-
-.field-label {
-  display: block;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: var(--spacing-2);
-}
-
-.selected-file-badge {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  border-radius: var(--border-radius-md);
-  margin-bottom: var(--spacing-2);
-  font-size: var(--font-size-sm);
-  color: var(--color-primary);
-}
-
-.selected-file-badge span {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-}
-
-.clear-file-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--border-radius-sm);
-  font-size: 10px;
-}
-
-.clear-file-btn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-background-hover);
-}
-
-.file-browser-container {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  height: 350px;
-  overflow: hidden;
-}
-
-/* ========== Namespace Selector ========== */
-.namespace-selector {
-  margin-bottom: var(--spacing-3);
-}
-
-.namespace-selector select {
-  appearance: auto;
-}
-
-.ns-hint {
-  margin: var(--spacing-1) 0 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
 }
 </style>

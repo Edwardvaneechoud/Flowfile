@@ -79,42 +79,6 @@
       />
     </div>
 
-    <!-- Publish to Catalog -->
-    <div class="main-part">
-      <div class="catalog-publish-row">
-        <el-checkbox
-          v-model="nodeOutput.output_settings.publish_to_catalog"
-          label="Publish to Catalog"
-        />
-      </div>
-      <div v-if="nodeOutput.output_settings.publish_to_catalog" class="catalog-options">
-        <div class="catalog-field">
-          <label class="catalog-label">Table name</label>
-          <el-input
-            v-model="nodeOutput.output_settings.catalog_table_name"
-            size="small"
-            placeholder="Defaults to file name"
-          />
-        </div>
-        <div class="catalog-field">
-          <label class="catalog-label">Catalog / Schema</label>
-          <el-select
-            v-model="nodeOutput.output_settings.catalog_namespace_id"
-            size="small"
-            placeholder="Default namespace"
-            clearable
-          >
-            <el-option
-              v-for="ns in catalogNamespaces"
-              :key="ns.id"
-              :label="ns.label"
-              :value="ns.id"
-            />
-          </el-select>
-        </div>
-      </div>
-    </div>
-
     <el-dialog
       v-model="showFileSelectionModal"
       title="Select directory or file to write to"
@@ -134,7 +98,7 @@
   </div>
 </template>
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed } from "vue";
 import {
   NodeOutput,
   isOutputCsvTable,
@@ -155,7 +119,6 @@ import ExcelTableConfig from "./outputExcel.vue";
 import ParquetTableConfig from "./outputParquet.vue";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { WarningFilled } from "@element-plus/icons-vue";
-import { CatalogApi } from "../../../../../api/catalog.api";
 
 interface LocalFileInfo {
   file_name: string;
@@ -175,22 +138,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const showFileSelectionModal = ref(false);
 const selectedDirectoryExists = ref<boolean | null>(null);
 const localFileInfos = ref<LocalFileInfo[]>([]);
-
-// Catalog namespace options for the publish dropdown
-const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
-
-onMounted(async () => {
-  try {
-    const tree = await CatalogApi.getNamespaceTree();
-    for (const catalog of tree) {
-      for (const schema of catalog.children ?? []) {
-        catalogNamespaces.value.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
-      }
-    }
-  } catch {
-    // Catalog not available — leave empty
-  }
-});
 
 const hasFileExtension = computed(() => {
   return nodeOutput.value?.output_settings.name?.includes(".") ?? false;
@@ -381,27 +328,5 @@ defineExpose({
   color: var(--color-danger);
   display: flex;
   align-items: center;
-}
-
-.catalog-publish-row {
-  margin-bottom: 8px;
-}
-
-.catalog-options {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-left: 4px;
-}
-
-.catalog-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.catalog-label {
-  font-size: 12px;
-  color: var(--color-text-secondary);
 }
 </style>

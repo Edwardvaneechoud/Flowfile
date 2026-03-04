@@ -42,6 +42,8 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "database_writer": input_schema.NodeDatabaseWriter,
     "cloud_storage_reader": input_schema.NodeCloudStorageReader,
     "cloud_storage_writer": input_schema.NodeCloudStorageWriter,
+    "catalog_reader": input_schema.NodeCatalogReader,
+    "catalog_writer": input_schema.NodeCatalogWriter,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,

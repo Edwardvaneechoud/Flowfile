@@ -184,6 +184,7 @@ class CatalogTableOut(BaseModel):
     description: str | None = None
     owner_id: int
     file_path: str
+    file_exists: bool = True
     schema_columns: list[ColumnSchema] = Field(default_factory=list)
     row_count: int | None = None
     column_count: int | None = None

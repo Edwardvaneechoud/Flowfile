@@ -268,9 +268,6 @@ export interface OutputSettings {
   fields?: string[];
   write_mode: "overwrite" | "append" | "error";
   table_settings: OutputTableSettings;
-  publish_to_catalog?: boolean;
-  catalog_table_name?: string | null;
-  catalog_namespace_id?: number | null;
 }
 
 // ============================================================================
@@ -731,6 +728,23 @@ export interface NodeRead extends NodeBase {
 
 export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
+}
+
+export interface CatalogWriteSettings {
+  table_name: string;
+  namespace_id: number | null;
+  description: string | null;
+  write_mode: "overwrite" | "error";
+}
+
+export interface NodeCatalogWriter extends NodeBase {
+  catalog_write_settings: CatalogWriteSettings;
+}
+
+export interface NodeCatalogReader extends NodeBase {
+  catalog_table_id: number | null;
+  catalog_table_name: string | null;
+  catalog_namespace_id: number | null;
 }
 
 export interface NodeInputData extends NodeBase {

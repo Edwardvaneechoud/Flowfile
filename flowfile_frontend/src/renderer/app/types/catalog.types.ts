@@ -136,6 +136,7 @@ export interface CatalogTable {
   description: string | null;
   owner_id: number;
   file_path: string;
+  file_exists: boolean;
   schema_columns: ColumnSchema[];
   row_count: number | null;
   column_count: number | null;
