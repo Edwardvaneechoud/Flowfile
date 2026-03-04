@@ -128,6 +128,18 @@ class FlowGraphConfig(BaseModel):
         default_factory=list,
         description="Typed arguments that parameterize this flow at run time.",
     )
+    num_table_inputs: int | None = Field(
+        default=None,
+        ge=0,
+        description="Explicit number of table inputs when used as a subflow node. "
+        "None means auto-detect from flow structure.",
+    )
+    num_table_outputs: int | None = Field(
+        default=None,
+        ge=1,
+        description="Explicit number of table outputs when used as a subflow node. "
+        "None means auto-detect from flow structure.",
+    )
 
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
@@ -210,6 +222,8 @@ class FlowfileSettings(BaseModel):
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
     flow_arguments: list[FlowArgument] = Field(default_factory=list)
+    num_table_inputs: int | None = Field(default=None, ge=0)
+    num_table_outputs: int | None = Field(default=None, ge=1)
 
 
 class FlowfileNode(BaseModel):

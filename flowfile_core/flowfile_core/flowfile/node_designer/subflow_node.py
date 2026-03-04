@@ -3,6 +3,12 @@
 When a flow defines ``flow_arguments``, it can be registered as a subflow
 node so that other flows can use it as a single node whose settings panel
 exposes those arguments.
+
+A subflow can accept table inputs and produce table outputs, making it
+behave like a regular process node in the parent flow.  The number of
+inputs/outputs is auto-detected from the inner flow structure or can be
+explicitly configured via ``num_table_inputs`` / ``num_table_outputs`` in
+the flow settings.
 """
 
 import logging
@@ -30,11 +36,56 @@ _subflow_stack = threading.local()
 
 MAX_SUBFLOW_DEPTH = 5
 
+# Node types in the inner flow that represent data sources (they read their
+# own data and should NOT be counted as external table-input slots).
+_DATA_SOURCE_NODE_TYPES: set[str] = {
+    "read",
+    "read_csv",
+    "read_parquet",
+    "read_excel",
+    "read_json",
+    "read_clipboard",
+    "database_reader",
+    "cloud_storage_reader",
+    "external_source",
+    "sql_source",
+}
+
 
 def _get_subflow_stack() -> set[str]:
     if not hasattr(_subflow_stack, "stack"):
         _subflow_stack.stack = set()
     return _subflow_stack.stack
+
+
+def _count_table_io(flow_info) -> tuple[int, int]:
+    """Analyse the inner flow to determine number of table inputs / outputs.
+
+    **Input slots** – start nodes whose type is *not* a file/database reader.
+    These are nodes like ``manual_input`` that serve as placeholders for
+    external DataFrames passed in by the parent flow.
+
+    **Output slots** – terminal nodes (no downstream connections).
+
+    Returns:
+        (num_inputs, num_outputs)
+    """
+    input_slots: list = []
+    output_slots: list = []
+    for node_info in flow_info.data.values():
+        is_start = (
+            not node_info.left_input_id
+            and not node_info.right_input_id
+            and not (node_info.input_ids or [])
+        )
+        is_terminal = not (node_info.outputs or [])
+
+        if is_start and node_info.type not in _DATA_SOURCE_NODE_TYPES:
+            input_slots.append(node_info)
+        if is_terminal:
+            output_slots.append(node_info)
+
+    return len(input_slots), max(len(output_slots), 1)
 
 
 def _build_ui_component(arg: FlowArgument):
@@ -109,6 +160,12 @@ class SubflowNode(CustomNodeBase):
     The flow's ``flow_arguments`` are exposed as the node's settings panel.
     When executed, it opens the inner flow, injects argument values and input
     DataFrames, runs it, and returns the output.
+
+    **Table I/O** – The node can accept DataFrames from upstream nodes in
+    the parent flow and produce output DataFrames for downstream nodes.
+    The number of inputs/outputs is auto-detected from the inner flow
+    structure or can be explicitly set via ``num_table_inputs`` /
+    ``num_table_outputs`` in the flow settings.
     """
 
     flow_path: str = ""
@@ -118,6 +175,11 @@ class SubflowNode(CustomNodeBase):
     @classmethod
     def from_flow_path(cls, flow_path: str) -> "SubflowNode":
         """Create a SubflowNode by loading a flow file and extracting its arguments.
+
+        The number of table inputs and outputs is determined by:
+        1. Explicit ``num_table_inputs`` / ``num_table_outputs`` in flow settings (if set).
+        2. Auto-detection: start nodes that are *not* file/DB readers become
+           input slots; terminal nodes (no downstream) become output slots.
 
         Args:
             flow_path: Path to the .yaml/.json flow file.
@@ -133,23 +195,21 @@ class SubflowNode(CustomNodeBase):
         flow_args = flow_info.flow_settings.flow_arguments
         flow_name = flow_info.flow_name or path.stem
 
-        # Count inputs: nodes that have no dependencies (start nodes)
-        start_nodes = []
-        output_nodes = []
-        for node_info in flow_info.data.values():
-            # Start nodes: no left/right/main inputs
-            if not node_info.left_input_id and not node_info.right_input_id and not (node_info.input_ids or []):
-                start_nodes.append(node_info)
-            # Output nodes: nodes with no outputs
-            if not (node_info.outputs or []):
-                output_nodes.append(node_info)
+        # Determine table I/O counts — explicit config takes priority
+        explicit_in = getattr(flow_info.flow_settings, "num_table_inputs", None)
+        explicit_out = getattr(flow_info.flow_settings, "num_table_outputs", None)
 
-        # For subflow-as-node, the number_of_inputs is how many external
-        # DataFrames the subflow expects (typically 0 for file-based flows,
-        # or N for data-passing flows).
-        # For now, default to 0 (file-based) unless explicitly configured.
-        num_inputs = 0
-        num_outputs = 1
+        auto_in, auto_out = _count_table_io(flow_info)
+
+        num_inputs = explicit_in if explicit_in is not None else auto_in
+        num_outputs = explicit_out if explicit_out is not None else auto_out
+
+        logger.info(
+            "SubflowNode '%s': inputs=%d (explicit=%s, auto=%d), "
+            "outputs=%d (explicit=%s, auto=%d)",
+            flow_name, num_inputs, explicit_in, auto_in,
+            num_outputs, explicit_out, auto_out,
+        )
 
         settings_schema = _build_settings_schema(flow_args)
 
@@ -186,11 +246,15 @@ class SubflowNode(CustomNodeBase):
     def process(self, *inputs: pl.DataFrame) -> pl.DataFrame | None:
         """Execute the inner flow with resolved arguments.
 
+        When the subflow has table inputs (``number_of_inputs > 0``), the
+        incoming DataFrames are injected into the inner flow's non-reader
+        start nodes — in the same order they appear in the inner flow.
+
         Args:
             *inputs: DataFrames passed from upstream nodes in the parent flow.
 
         Returns:
-            The output DataFrame from the inner flow's terminal node(s).
+            The output DataFrame from the inner flow's first terminal node.
         """
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
         from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -218,10 +282,16 @@ class SubflowNode(CustomNodeBase):
             if arg_values:
                 inner_flow.resolve_arguments(arg_values)
 
-            # Inject input DataFrames into the inner flow's start nodes
+            # Inject input DataFrames into the inner flow's start nodes.
+            # Only inject into non-reader start nodes (same logic as
+            # _count_table_io) so that file-reader nodes keep their own
+            # data sources.
             if inputs:
-                start_nodes = [n for n in inner_flow.nodes if not n.has_input]
-                for df, start_node in zip(inputs, start_nodes, strict=False):
+                injectable_nodes = [
+                    n for n in inner_flow.nodes
+                    if not n.has_input and n.node_type not in _DATA_SOURCE_NODE_TYPES
+                ]
+                for df, target_node in zip(inputs, injectable_nodes, strict=False):
                     fde = FlowDataEngine(df)
 
                     def _make_input_func(data):
@@ -229,7 +299,7 @@ class SubflowNode(CustomNodeBase):
                             return data
                         return _func
 
-                    start_node.function = _make_input_func(fde)
+                    target_node.function = _make_input_func(fde)
 
             # Run the inner flow
             result = inner_flow.run_graph()
@@ -242,12 +312,12 @@ class SubflowNode(CustomNodeBase):
                             break
                 raise RuntimeError(error_msg)
 
-            # Extract output from the last node
+            # Extract output from terminal node(s)
             terminal_nodes = [n for n in inner_flow.nodes if not n.leads_to_nodes]
             if terminal_nodes:
-                last_node = terminal_nodes[-1]
-                if last_node.node_data is not None:
-                    return last_node.node_data.data_frame
+                first_terminal = terminal_nodes[0]
+                if first_terminal.node_data is not None:
+                    return first_terminal.node_data.data_frame
             return None
 
         finally:

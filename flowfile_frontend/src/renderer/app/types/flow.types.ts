@@ -43,6 +43,8 @@ export interface FlowSettings {
   is_running: boolean;
   max_parallel_workers: number;
   flow_arguments: FlowArgument[];
+  num_table_inputs?: number | null;
+  num_table_outputs?: number | null;
 }
 
 // ============================================================================

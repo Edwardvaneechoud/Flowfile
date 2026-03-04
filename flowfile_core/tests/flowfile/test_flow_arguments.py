@@ -260,3 +260,138 @@ class TestFlowArgumentInSchemas:
 
         # NodeBase is abstract-ish but we can test the field exists
         assert "argument_bindings" in NodeBase.model_fields
+
+    def test_flow_settings_has_table_io_fields(self):
+        from flowfile_core.schemas.schemas import FlowfileSettings
+
+        settings = FlowfileSettings()
+        assert settings.num_table_inputs is None
+        assert settings.num_table_outputs is None
+
+    def test_flow_settings_table_io_explicit(self):
+        from flowfile_core.schemas.schemas import FlowfileSettings
+
+        settings = FlowfileSettings(num_table_inputs=2, num_table_outputs=3)
+        assert settings.num_table_inputs == 2
+        assert settings.num_table_outputs == 3
+
+    def test_flow_settings_table_io_serialization_roundtrip(self):
+        from flowfile_core.schemas.schemas import FlowfileSettings
+
+        settings = FlowfileSettings(num_table_inputs=1, num_table_outputs=2)
+        dumped = settings.model_dump()
+        loaded = FlowfileSettings.model_validate(dumped)
+        assert loaded.num_table_inputs == 1
+        assert loaded.num_table_outputs == 2
+
+    def test_flow_graph_config_has_table_io_fields(self):
+        from flowfile_core.schemas.schemas import FlowGraphConfig
+
+        config = FlowGraphConfig()
+        assert config.num_table_inputs is None
+        assert config.num_table_outputs is None
+
+
+# ============================================================================
+# _count_table_io tests
+# ============================================================================
+
+
+class TestCountTableIO:
+    """Tests for auto-detection of table inputs/outputs from flow structure."""
+
+    def _make_flow_info(self, nodes: list[dict]):
+        """Create a minimal flow_info-like object with a data dict."""
+        from types import SimpleNamespace
+
+        data = {}
+        for n in nodes:
+            node = SimpleNamespace(
+                id=n["id"],
+                type=n.get("type", "manual_input"),
+                left_input_id=n.get("left_input_id"),
+                right_input_id=n.get("right_input_id"),
+                input_ids=n.get("input_ids", []),
+                outputs=n.get("outputs", []),
+            )
+            data[n["id"]] = node
+        return SimpleNamespace(data=data)
+
+    def test_single_manual_input_single_output(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "manual_input", "outputs": [2]},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1
+        assert num_out == 1
+
+    def test_two_manual_inputs(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "manual_input", "outputs": [3]},
+            {"id": 2, "type": "manual_input", "outputs": [3]},
+            {"id": 3, "type": "join", "input_ids": [1, 2], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 2
+        assert num_out == 1
+
+    def test_reader_nodes_not_counted_as_inputs(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "read", "outputs": [2]},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 0
+        assert num_out == 1
+
+    def test_mixed_reader_and_manual_input(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "read", "outputs": [3]},
+            {"id": 2, "type": "manual_input", "outputs": [3]},
+            {"id": 3, "type": "join", "input_ids": [1, 2], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1  # only manual_input
+        assert num_out == 1
+
+    def test_multiple_terminal_nodes(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "manual_input", "outputs": [2, 3]},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": []},
+            {"id": 3, "type": "select", "input_ids": [1], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1
+        assert num_out == 2
+
+    def test_no_nodes_returns_zero_one(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 0
+        assert num_out == 1  # minimum 1 output
+
+    def test_all_data_source_types_excluded(self):
+        from flowfile_core.flowfile.node_designer.subflow_node import (
+            _DATA_SOURCE_NODE_TYPES,
+            _count_table_io,
+        )
+
+        for source_type in _DATA_SOURCE_NODE_TYPES:
+            flow_info = self._make_flow_info([
+                {"id": 1, "type": source_type, "outputs": []},
+            ])
+            num_in, num_out = _count_table_io(flow_info)
+            assert num_in == 0, f"{source_type} should not be counted as input"
