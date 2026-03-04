@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
+    CatalogTableReadLink,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -165,6 +166,16 @@ class CatalogRepository(Protocol):
     def bulk_get_follow_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
 
     def bulk_get_run_stats(self, flow_ids: list[int]) -> dict[int, tuple[int, FlowRun | None]]: ...
+
+    def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
+
+    def bulk_get_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
+
+    def upsert_read_link(self, table_id: int, registration_id: int) -> None: ...
+
+    def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]: ...
+
+    def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -544,3 +555,72 @@ class SQLAlchemyCatalogRepository:
         for fid in flow_ids:
             result[fid] = (counts.get(fid, 0), last_runs.get(fid))
         return result
+
+    def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]:
+        """Return all catalog tables produced by a specific flow."""
+        return (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.source_registration_id == registration_id)
+            .order_by(CatalogTable.name)
+            .all()
+        )
+
+    def bulk_get_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]:
+        """Return tables produced by each flow_id in one query."""
+        if not flow_ids:
+            return {}
+        rows = (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.source_registration_id.in_(flow_ids))
+            .order_by(CatalogTable.name)
+            .all()
+        )
+        result: dict[int, list[CatalogTable]] = {}
+        for table in rows:
+            result.setdefault(table.source_registration_id, []).append(table)
+        return result
+
+    def upsert_read_link(self, table_id: int, registration_id: int) -> None:
+        """Record that a flow reads from a catalog table (idempotent)."""
+        existing = (
+            self._db.query(CatalogTableReadLink)
+            .filter_by(table_id=table_id, registration_id=registration_id)
+            .first()
+        )
+        if not existing:
+            self._db.add(CatalogTableReadLink(table_id=table_id, registration_id=registration_id))
+            self._db.commit()
+
+    def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]:
+        """Return all flows that read from a given table."""
+        link_rows = (
+            self._db.query(CatalogTableReadLink.registration_id)
+            .filter(CatalogTableReadLink.table_id == table_id)
+            .all()
+        )
+        reg_ids = [r[0] for r in link_rows]
+        if not reg_ids:
+            return []
+        return (
+            self._db.query(FlowRegistration)
+            .filter(FlowRegistration.id.in_(reg_ids))
+            .order_by(FlowRegistration.name)
+            .all()
+        )
+
+    def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]:
+        """Return all tables that a given flow reads from."""
+        link_rows = (
+            self._db.query(CatalogTableReadLink.table_id)
+            .filter(CatalogTableReadLink.registration_id == registration_id)
+            .all()
+        )
+        table_ids = [r[0] for r in link_rows]
+        if not table_ids:
+            return []
+        return (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.id.in_(table_ids))
+            .order_by(CatalogTable.name)
+            .all()
+        )

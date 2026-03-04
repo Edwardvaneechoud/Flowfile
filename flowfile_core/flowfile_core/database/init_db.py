@@ -46,6 +46,28 @@ def run_migrations():
             conn.commit()
             logger.info("Migration complete: must_change_password column added")
 
+        # Migrate catalog_tables: add lineage columns
+        result = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_tables'"
+        ))
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(catalog_tables)"))
+            table_columns = [row[1] for row in result.fetchall()]
+
+            if 'source_registration_id' not in table_columns:
+                logger.info("Adding source_registration_id column to catalog_tables")
+                conn.execute(text(
+                    "ALTER TABLE catalog_tables ADD COLUMN source_registration_id INTEGER"
+                ))
+                conn.commit()
+
+            if 'source_run_id' not in table_columns:
+                logger.info("Adding source_run_id column to catalog_tables")
+                conn.execute(text(
+                    "ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"
+                ))
+                conn.commit()
+
 
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()

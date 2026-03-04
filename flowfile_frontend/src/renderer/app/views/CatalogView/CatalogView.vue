@@ -158,6 +158,7 @@
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
           @delete-table="handleDeleteTable($event)"
+          @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -169,6 +170,7 @@
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
           @open-flow="openFlowInDesigner($event)"
+          @select-table="selectTable($event)"
         />
         <!-- Stats overview -->
         <StatsPanel
