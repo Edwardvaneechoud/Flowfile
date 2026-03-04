@@ -37,28 +37,51 @@
       </div>
       <div v-if="table.source_registration_name" class="meta-card">
         <span class="meta-label">Produced by</span>
-        <span class="meta-value meta-link" @click="$emit('navigateToFlow', table.source_registration_id)">
+        <span
+          class="meta-value meta-link"
+          :title="table.source_registration_name"
+          @click="$emit('navigateToFlow', table.source_registration_id)"
+        >
           <i class="fa-solid fa-diagram-project"></i>
-          {{ table.source_registration_name }}
+          <span class="meta-link-text">{{ table.source_registration_name }}</span>
+        </span>
+      </div>
+      <div
+        v-if="table.read_by_flows && table.read_by_flows.length > 0"
+        class="meta-card meta-card-clickable"
+        @click="showReadByModal = true"
+      >
+        <span class="meta-label">Read by</span>
+        <span class="meta-value">
+          {{ table.read_by_flows.length }} flow{{ table.read_by_flows.length !== 1 ? "s" : "" }}
         </span>
       </div>
     </div>
 
-    <!-- Read by flows -->
-    <div v-if="table.read_by_flows && table.read_by_flows.length > 0" class="section">
-      <h3>Read by Flows</h3>
-      <div class="read-by-list">
-        <div
-          v-for="flow in table.read_by_flows"
-          :key="flow.id"
-          class="read-by-item"
-          @click="$emit('navigateToFlow', flow.id)"
-        >
-          <i class="fa-solid fa-diagram-project read-by-icon"></i>
-          <span>{{ flow.name }}</span>
+    <!-- Read by Flows Modal -->
+    <Teleport to="body">
+      <div v-if="showReadByModal" class="modal-overlay" @click.self="showReadByModal = false">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Flows reading "{{ table.name }}"</h3>
+            <button class="modal-close" @click="showReadByModal = false">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div
+              v-for="flow in table.read_by_flows"
+              :key="flow.id"
+              class="read-by-item"
+              @click="$emit('navigateToFlow', flow.id); showReadByModal = false"
+            >
+              <i class="fa-solid fa-diagram-project read-by-icon"></i>
+              <span>{{ flow.name }}</span>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Schema -->
     <div v-if="table.schema_columns && table.schema_columns.length > 0" class="section">
@@ -115,7 +138,10 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import type { CatalogTable, CatalogTablePreview } from "../../types";
+
+const showReadByModal = ref(false);
 
 defineProps<{
   table: CatalogTable;
@@ -251,16 +277,26 @@ function formatCell(value: any): string {
   align-items: center;
   gap: var(--spacing-1);
   font-size: var(--font-size-sm);
+  min-width: 0;
+}
+
+.meta-link-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meta-link:hover {
   text-decoration: underline;
 }
 
-.read-by-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-2);
+.meta-card-clickable {
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.meta-card-clickable:hover {
+  border-color: var(--color-primary);
 }
 
 .read-by-item {
@@ -421,5 +457,70 @@ function formatCell(value: any): string {
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+}
+
+/* ========== Modal ========== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--color-background-primary);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--color-border-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: 420px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-4);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+}
+
+.modal-close:hover {
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.modal-body {
+  padding: var(--spacing-3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
 }
 </style>
