@@ -1566,3 +1566,61 @@ def test_node_reference_not_found():
 
     response = client.get("/node/reference", params={'flow_id': flow_id, 'node_id': 9999})
     assert response.status_code == 404, 'Non-existent node should return 404'
+
+
+# ---------------------------------------------------------------------------
+# /node/input_names endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_get_input_names_with_reference():
+    """input_names returns source node_reference when set."""
+    flow_id = create_flow_with_manual_input()  # node 1
+
+    # Set a reference on node 1
+    client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="orders")
+
+    # Add python_script node 2 connected to node 1
+    add_node(flow_id, 2, node_type="python_script", pos_x=200, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(flow_id, connection)
+
+    response = client.get("/node/input_names", params={"flow_id": flow_id, "node_id": 2})
+    assert response.status_code == 200
+    names = response.json()
+    assert len(names) == 1
+    assert names[0]["name"] == "orders"
+    assert names[0]["source_node_id"] == 1
+
+
+def test_get_input_names_fallback():
+    """input_names falls back to df_{node_id} when no reference is set."""
+    flow_id = create_flow_with_manual_input()  # node 1
+
+    # Add python_script node 2 connected to node 1 (no reference set)
+    add_node(flow_id, 2, node_type="python_script", pos_x=200, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(flow_id, connection)
+
+    response = client.get("/node/input_names", params={"flow_id": flow_id, "node_id": 2})
+    assert response.status_code == 200
+    names = response.json()
+    assert len(names) == 1
+    assert names[0]["name"] == "df_1"
+
+
+def test_get_input_names_no_inputs():
+    """input_names returns empty list for a node with no inputs."""
+    flow_id = create_flow_with_manual_input()  # node 1
+
+    response = client.get("/node/input_names", params={"flow_id": flow_id, "node_id": 1})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_input_names_node_not_found():
+    """input_names returns 404 for a non-existent node."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get("/node/input_names", params={"flow_id": flow_id, "node_id": 9999})
+    assert response.status_code == 404

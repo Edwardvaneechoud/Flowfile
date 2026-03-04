@@ -1,11 +1,14 @@
-"""Tests for resolve_node_paths and FlowSettings.show_edge_labels."""
+"""Tests for resolve_node_paths, write_inputs_to_parquet, and FlowSettings.show_edge_labels."""
 
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import FlowSettings
 
 # ---------------------------------------------------------------------------
@@ -205,3 +208,197 @@ class TestFlowSettingsShowEdgeLabels:
         data = {"flow_id": 1, "name": "test", "path": "."}
         settings = FlowSettings.model_validate(data)
         assert settings.show_edge_labels is True
+
+
+# ---------------------------------------------------------------------------
+# write_inputs_to_parquet
+# ---------------------------------------------------------------------------
+
+
+def _mock_fetcher(has_error=False, error_description=None):
+    """Return a mock ExternalDfFetcher that succeeds or fails."""
+    fetcher = MagicMock()
+    fetcher.has_error = has_error
+    fetcher.error_description = error_description
+    return fetcher
+
+
+class TestWriteInputsToParquet:
+    """Unit tests for kernel.execution.write_inputs_to_parquet."""
+
+    def test_unnamed_inputs_all_under_main(self, tmp_path: Path):
+        """Without input_names, all files are grouped under 'main'."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1, ft2 = MagicMock(), MagicMock()
+        with patch(
+            "flowfile_core.kernel.execution.ExternalDfFetcher",
+            side_effect=lambda **kw: _mock_fetcher(),
+        ):
+            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2)
+
+        assert list(result.keys()) == ["main"]
+        assert len(result["main"]) == 2
+        # Paths should be kernel-translated
+        for p in result["main"]:
+            assert p.startswith("/shared/")
+
+    def test_named_inputs_grouped_by_name(self, tmp_path: Path):
+        """With input_names, each table gets its own key plus a 'main' alias."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1, ft2 = MagicMock(), MagicMock()
+        with patch(
+            "flowfile_core.kernel.execution.ExternalDfFetcher",
+            side_effect=lambda **kw: _mock_fetcher(),
+        ):
+            result = write_inputs_to_parquet(
+                (ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"]
+            )
+
+        assert "orders" in result
+        assert "clients" in result
+        assert "main" in result
+        assert len(result["orders"]) == 1
+        assert len(result["clients"]) == 1
+        assert len(result["main"]) == 2
+
+    def test_named_inputs_main_no_duplicate(self, tmp_path: Path):
+        """When one input is named 'main', no extra 'main' alias is added."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1 = MagicMock()
+        with patch(
+            "flowfile_core.kernel.execution.ExternalDfFetcher",
+            side_effect=lambda **kw: _mock_fetcher(),
+        ):
+            result = write_inputs_to_parquet(
+                (ft1,), mgr, input_dir, 1, 2, input_names=["main"]
+            )
+
+        assert list(result.keys()) == ["main"]
+        assert len(result["main"]) == 1
+
+    def test_unnamed_fetcher_error_raises(self, tmp_path: Path):
+        """An error in ExternalDfFetcher raises RuntimeError (unnamed path)."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1 = MagicMock()
+        with patch(
+            "flowfile_core.kernel.execution.ExternalDfFetcher",
+            side_effect=lambda **kw: _mock_fetcher(has_error=True, error_description="disk full"),
+        ):
+            with pytest.raises(RuntimeError, match="Failed to write parquet"):
+                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
+
+    def test_named_fetcher_error_raises(self, tmp_path: Path):
+        """An error in ExternalDfFetcher raises RuntimeError (named path)."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1 = MagicMock()
+        with patch(
+            "flowfile_core.kernel.execution.ExternalDfFetcher",
+            side_effect=lambda **kw: _mock_fetcher(has_error=True, error_description="disk full"),
+        ):
+            with pytest.raises(RuntimeError, match="orders"):
+                write_inputs_to_parquet(
+                    (ft1,), mgr, input_dir, 1, 2, input_names=["orders"]
+                )
+
+    def test_empty_tuple_returns_empty_main(self, tmp_path: Path):
+        """An empty tuple of tables returns {"main": []}."""
+        from flowfile_core.kernel.execution import write_inputs_to_parquet
+
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        result = write_inputs_to_parquet((), mgr, input_dir, 1, 2)
+        assert result == {"main": []}
+
+
+# ---------------------------------------------------------------------------
+# NodePythonScript / UserDefinedNode output_names
+# ---------------------------------------------------------------------------
+
+
+class TestOutputNamesSchema:
+    """Tests for the output_names field on NodePythonScript and UserDefinedNode."""
+
+    def test_python_script_defaults_to_main(self):
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1)
+        assert node.output_names == ["main"]
+
+    def test_python_script_custom_output_names(self):
+        node = input_schema.NodePythonScript(
+            flow_id=1, node_id=1, output_names=["result", "errors"]
+        )
+        assert node.output_names == ["result", "errors"]
+
+    def test_python_script_roundtrip(self):
+        node = input_schema.NodePythonScript(
+            flow_id=1, node_id=1, output_names=["a", "b"]
+        )
+        restored = input_schema.NodePythonScript.model_validate(node.model_dump())
+        assert restored.output_names == ["a", "b"]
+
+    def test_user_defined_node_defaults_to_main(self):
+        node = input_schema.UserDefinedNode(
+            flow_id=1, node_id=1, settings={}, kernel_id=None
+        )
+        assert node.output_names == ["main"]
+
+    def test_user_defined_node_custom_output_names(self):
+        node = input_schema.UserDefinedNode(
+            flow_id=1, node_id=1, settings={}, output_names=["out1", "out2"]
+        )
+        assert node.output_names == ["out1", "out2"]
+
+
+# ---------------------------------------------------------------------------
+# NodeBase.node_reference validator
+# ---------------------------------------------------------------------------
+
+
+class TestNodeReferenceValidator:
+    """Tests for the node_reference field_validator on NodeBase."""
+
+    def test_none_stays_none(self):
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference=None)
+        assert node.node_reference is None
+
+    def test_empty_string_becomes_none(self):
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="")
+        assert node.node_reference is None
+
+    def test_valid_lowercase(self):
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="my_ref")
+        assert node.node_reference == "my_ref"
+
+    def test_rejects_uppercase(self):
+        with pytest.raises(Exception, match="lowercase"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="MyRef")
+
+    def test_rejects_spaces(self):
+        with pytest.raises(Exception, match="spaces"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="my ref")
