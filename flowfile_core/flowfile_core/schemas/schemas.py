@@ -232,6 +232,8 @@ class FlowfileNode(BaseModel):
     id: int
     type: str
     is_start_node: bool = False
+    is_flow_input: bool = False
+    is_flow_output: bool = False
     description: str | None = ""
     node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
@@ -251,6 +253,7 @@ class FlowfileNode(BaseModel):
         "description",
         "node_reference",
         "user_id",
+        "is_flow_input",
         "is_flow_output",
         "is_user_defined",
         "depending_on_id",

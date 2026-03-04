@@ -6,6 +6,20 @@
       @request-save="saveSettings"
     >
       <div class="listbox-wrapper">
+        <div class="flow-input-toggle">
+          <span class="toggle-label">Use as Flow Input</span>
+          <el-tooltip
+            effect="dark"
+            content="When checked, this node becomes a table input slot when the flow is used as a subflow node. The parent flow will inject its data here instead of reading from a file."
+            placement="top"
+          >
+            <el-icon class="info-icon"><InfoFilled /></el-icon>
+          </el-tooltip>
+          <el-switch
+            v-model="nodeRead.is_flow_input"
+            @change="saveSettings"
+          />
+        </div>
         <div class="file-upload-container">
           <div class="file-upload-wrapper" @click="modalVisibleForOpen = true">
             <label for="file-upload" class="file-upload-label">
@@ -71,6 +85,7 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { InfoFilled } from "@element-plus/icons-vue";
 
 const nodeStore = useNodeStore();
 const selectedFile = ref<FileInfo | null>(null);
@@ -287,5 +302,26 @@ input[type="text"] {
 input[type="text"]:focus {
   border-color: #3498db;
   outline: none;
+}
+
+.flow-input-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: var(--color-background-secondary);
+  border-radius: 6px;
+}
+
+.flow-input-toggle .toggle-label {
+  font-weight: 500;
+  font-size: 13px;
+  flex-grow: 1;
+}
+
+.flow-input-toggle .info-icon {
+  color: var(--color-text-secondary);
+  cursor: help;
 }
 </style>

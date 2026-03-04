@@ -61,18 +61,41 @@ def _get_subflow_stack() -> set[str]:
 def _count_table_io(flow_info) -> tuple[int, int]:
     """Analyse the inner flow to determine number of table inputs / outputs.
 
-    **Input slots** – start nodes whose type is *not* a file/database reader.
-    These are nodes like ``manual_input`` that serve as placeholders for
-    external DataFrames passed in by the parent flow.
+    Detection uses **explicit flags first**, then falls back to heuristics:
 
-    **Output slots** – terminal nodes (no downstream connections).
+    **Input slots** – nodes with ``is_flow_input == True``.  If no node has
+    the flag set, falls back to counting start nodes whose type is *not* a
+    file/database reader (e.g. ``manual_input``).
+
+    **Output slots** – nodes with ``is_flow_output == True``.  If no node
+    has the flag set, falls back to counting terminal nodes (no downstream
+    connections).
 
     Returns:
         (num_inputs, num_outputs)
     """
-    input_slots: list = []
-    output_slots: list = []
+    explicit_inputs: list = []
+    explicit_outputs: list = []
+    heuristic_inputs: list = []
+    heuristic_outputs: list = []
+
     for node_info in flow_info.data.values():
+        # Check explicit flags (on FlowfileNode or setting_input)
+        node_is_input = getattr(node_info, "is_flow_input", False) or False
+        node_is_output = getattr(node_info, "is_flow_output", False) or False
+
+        # Also check setting_input for flags (when loaded from FlowInformation)
+        si = getattr(node_info, "setting_input", None)
+        if si is not None:
+            node_is_input = node_is_input or (getattr(si, "is_flow_input", False) or False)
+            node_is_output = node_is_output or (getattr(si, "is_flow_output", False) or False)
+
+        if node_is_input:
+            explicit_inputs.append(node_info)
+        if node_is_output:
+            explicit_outputs.append(node_info)
+
+        # Heuristic detection
         is_start = (
             not node_info.left_input_id
             and not node_info.right_input_id
@@ -81,11 +104,48 @@ def _count_table_io(flow_info) -> tuple[int, int]:
         is_terminal = not (node_info.outputs or [])
 
         if is_start and node_info.type not in _DATA_SOURCE_NODE_TYPES:
-            input_slots.append(node_info)
+            heuristic_inputs.append(node_info)
         if is_terminal:
-            output_slots.append(node_info)
+            heuristic_outputs.append(node_info)
 
-    return len(input_slots), max(len(output_slots), 1)
+    # Prefer explicit flags; fall back to heuristic
+    num_inputs = len(explicit_inputs) if explicit_inputs else len(heuristic_inputs)
+    num_outputs = len(explicit_outputs) if explicit_outputs else len(heuristic_outputs)
+
+    return num_inputs, max(num_outputs, 1)
+
+
+def _find_input_nodes(flow) -> list:
+    """Return inner-flow nodes that should receive external DataFrames.
+
+    Prefers nodes whose ``setting_input.is_flow_input`` is True.
+    Falls back to non-reader start nodes (heuristic).
+    """
+    explicit = [
+        n for n in flow.nodes
+        if getattr(getattr(n, "setting_input", None), "is_flow_input", False)
+    ]
+    if explicit:
+        return explicit
+    return [
+        n for n in flow.nodes
+        if not n.has_input and n.node_type not in _DATA_SOURCE_NODE_TYPES
+    ]
+
+
+def _find_output_nodes(flow) -> list:
+    """Return inner-flow nodes whose results should be emitted.
+
+    Prefers nodes whose ``setting_input.is_flow_output`` is True.
+    Falls back to terminal nodes (no downstream connections).
+    """
+    explicit = [
+        n for n in flow.nodes
+        if getattr(getattr(n, "setting_input", None), "is_flow_output", False)
+    ]
+    if explicit:
+        return explicit
+    return [n for n in flow.nodes if not n.leads_to_nodes]
 
 
 def _build_ui_component(arg: FlowArgument):
@@ -282,15 +342,11 @@ class SubflowNode(CustomNodeBase):
             if arg_values:
                 inner_flow.resolve_arguments(arg_values)
 
-            # Inject input DataFrames into the inner flow's start nodes.
-            # Only inject into non-reader start nodes (same logic as
-            # _count_table_io) so that file-reader nodes keep their own
-            # data sources.
+            # Inject input DataFrames into the inner flow's input nodes.
+            # Prefer nodes explicitly marked with is_flow_input; fall back
+            # to heuristic (non-reader start nodes).
             if inputs:
-                injectable_nodes = [
-                    n for n in inner_flow.nodes
-                    if not n.has_input and n.node_type not in _DATA_SOURCE_NODE_TYPES
-                ]
+                injectable_nodes = _find_input_nodes(inner_flow)
                 for df, target_node in zip(inputs, injectable_nodes, strict=False):
                     fde = FlowDataEngine(df)
 
@@ -312,12 +368,14 @@ class SubflowNode(CustomNodeBase):
                             break
                 raise RuntimeError(error_msg)
 
-            # Extract output from terminal node(s)
-            terminal_nodes = [n for n in inner_flow.nodes if not n.leads_to_nodes]
-            if terminal_nodes:
-                first_terminal = terminal_nodes[0]
-                if first_terminal.node_data is not None:
-                    return first_terminal.node_data.data_frame
+            # Extract output from output nodes.
+            # Prefer nodes explicitly marked with is_flow_output; fall
+            # back to terminal nodes (no downstream connections).
+            output_nodes = _find_output_nodes(inner_flow)
+            if output_nodes:
+                first_output = output_nodes[0]
+                if first_output.node_data is not None:
+                    return first_output.node_data.data_frame
             return None
 
         finally:

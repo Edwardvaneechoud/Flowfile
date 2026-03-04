@@ -1,5 +1,19 @@
 <template>
   <div v-if="dataLoaded && nodeOutput && nodeOutput.output_settings" class="listbox-wrapper">
+    <div class="flow-output-toggle">
+      <span class="toggle-label">Use as Flow Output</span>
+      <el-tooltip
+        effect="dark"
+        content="When checked, this node's result becomes a table output when the flow is used as a subflow node. The parent flow will receive this data downstream."
+        placement="top"
+      >
+        <el-icon class="info-icon"><InfoFilled /></el-icon>
+      </el-tooltip>
+      <el-switch
+        v-model="nodeOutput.is_flow_output"
+        @change="saveSettings"
+      />
+    </div>
     <div class="main-part">
       <div class="file-upload-row">
         <label class="file-upload-label" @click="showFileSelectionModal = true">
@@ -118,7 +132,7 @@ import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
 import ParquetTableConfig from "./outputParquet.vue";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
-import { WarningFilled } from "@element-plus/icons-vue";
+import { InfoFilled, WarningFilled } from "@element-plus/icons-vue";
 
 interface LocalFileInfo {
   file_name: string;
@@ -328,5 +342,26 @@ defineExpose({
   color: var(--color-danger);
   display: flex;
   align-items: center;
+}
+
+.flow-output-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: var(--color-background-secondary);
+  border-radius: 6px;
+}
+
+.flow-output-toggle .toggle-label {
+  font-weight: 500;
+  font-size: 13px;
+  flex-grow: 1;
+}
+
+.flow-output-toggle .info-icon {
+  color: var(--color-text-secondary);
+  cursor: help;
 }
 </style>

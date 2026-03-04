@@ -360,6 +360,7 @@ class NodeBase(BaseModel):
     description: str | None = ""
     node_reference: str | None = None  # Unique reference identifier for code generation (lowercase, no spaces)
     user_id: int | None = None
+    is_flow_input: bool | None = False
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
     output_field_config: OutputFieldConfig | None = None

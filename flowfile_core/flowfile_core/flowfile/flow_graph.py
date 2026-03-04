@@ -2975,10 +2975,13 @@ class FlowGraph:
         nodes = []
         for node in self.nodes:
             node_info = node.get_node_information()
+            si = node_info.setting_input
             flowfile_node = schemas.FlowfileNode(
                 id=node_info.id,
                 type=node_info.type,
                 is_start_node=node.node_id in start_node_ids,
+                is_flow_input=getattr(si, "is_flow_input", False) or False,
+                is_flow_output=getattr(si, "is_flow_output", False) or False,
                 description=node_info.description,
                 node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
@@ -2987,7 +2990,7 @@ class FlowGraph:
                 right_input_id=node_info.right_input_id,
                 input_ids=node_info.input_ids,
                 outputs=node_info.outputs,
-                setting_input=node_info.setting_input,
+                setting_input=si,
             )
             nodes.append(flowfile_node)
 
@@ -2999,6 +3002,9 @@ class FlowGraph:
             show_detailed_progress=self.flow_settings.show_detailed_progress,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
+            flow_arguments=self.flow_settings.flow_arguments,
+            num_table_inputs=self.flow_settings.num_table_inputs,
+            num_table_outputs=self.flow_settings.num_table_outputs,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

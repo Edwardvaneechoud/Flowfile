@@ -175,6 +175,8 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["description"] = node.description or ""
             setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
+            setting_data["is_flow_input"] = node.is_flow_input
+            setting_data["is_flow_output"] = node.is_flow_output
 
             if is_user_defined:
                 setting_data["is_user_defined"] = True

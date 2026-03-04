@@ -707,6 +707,8 @@ export interface NodeBase {
   description?: string;
   node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
+  is_flow_input?: boolean;
+  is_flow_output?: boolean;
   output_field_config?: OutputFieldConfig | null;
 }
 

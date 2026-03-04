@@ -306,6 +306,12 @@ class TestCountTableIO:
 
         data = {}
         for n in nodes:
+            setting_input = None
+            if n.get("is_flow_input") or n.get("is_flow_output"):
+                setting_input = SimpleNamespace(
+                    is_flow_input=n.get("is_flow_input", False),
+                    is_flow_output=n.get("is_flow_output", False),
+                )
             node = SimpleNamespace(
                 id=n["id"],
                 type=n.get("type", "manual_input"),
@@ -313,6 +319,9 @@ class TestCountTableIO:
                 right_input_id=n.get("right_input_id"),
                 input_ids=n.get("input_ids", []),
                 outputs=n.get("outputs", []),
+                is_flow_input=n.get("is_flow_input", False),
+                is_flow_output=n.get("is_flow_output", False),
+                setting_input=setting_input,
             )
             data[n["id"]] = node
         return SimpleNamespace(data=data)
@@ -395,3 +404,86 @@ class TestCountTableIO:
             ])
             num_in, num_out = _count_table_io(flow_info)
             assert num_in == 0, f"{source_type} should not be counted as input"
+
+    def test_explicit_is_flow_input_flag(self):
+        """When is_flow_input is set, it takes priority over heuristic."""
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "read", "outputs": [2], "is_flow_input": True},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1  # read node is explicitly marked
+        assert num_out == 1
+
+    def test_explicit_is_flow_output_flag(self):
+        """When is_flow_output is set, it takes priority over heuristic."""
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "manual_input", "outputs": [2, 3]},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": [], "is_flow_output": True},
+            {"id": 3, "type": "select", "input_ids": [1], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1
+        assert num_out == 1  # only node 2 is marked as output
+
+    def test_explicit_flags_on_reader_node(self):
+        """A reader marked is_flow_input should be counted even though it's a reader."""
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "read_csv", "outputs": [3], "is_flow_input": True},
+            {"id": 2, "type": "read_csv", "outputs": [3]},
+            {"id": 3, "type": "join", "input_ids": [1, 2], "outputs": []},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1  # only the flagged one
+
+    def test_both_flags_explicit(self):
+        """Both is_flow_input and is_flow_output can be explicitly set."""
+        from flowfile_core.flowfile.node_designer.subflow_node import _count_table_io
+
+        flow_info = self._make_flow_info([
+            {"id": 1, "type": "read", "outputs": [2], "is_flow_input": True},
+            {"id": 2, "type": "filter", "input_ids": [1], "outputs": [3]},
+            {"id": 3, "type": "output", "input_ids": [2], "outputs": [], "is_flow_output": True},
+        ])
+        num_in, num_out = _count_table_io(flow_info)
+        assert num_in == 1
+        assert num_out == 1
+
+
+class TestFlowInputOutputFlags:
+    """Tests for is_flow_input/is_flow_output on NodeBase and FlowfileNode."""
+
+    def test_node_base_has_is_flow_input(self):
+        from flowfile_core.schemas.input_schema import NodeBase
+
+        assert "is_flow_input" in NodeBase.model_fields
+
+    def test_node_base_has_is_flow_output(self):
+        from flowfile_core.schemas.input_schema import NodeBase
+
+        assert "is_flow_output" in NodeBase.model_fields
+
+    def test_flowfile_node_has_flags(self):
+        from flowfile_core.schemas.schemas import FlowfileNode
+
+        node = FlowfileNode(id=1, type="read")
+        assert node.is_flow_input is False
+        assert node.is_flow_output is False
+
+    def test_flowfile_node_flags_serialization(self):
+        from flowfile_core.schemas.schemas import FlowfileNode
+
+        node = FlowfileNode(id=1, type="read", is_flow_input=True, is_flow_output=True)
+        dumped = node.model_dump()
+        assert dumped["is_flow_input"] is True
+        assert dumped["is_flow_output"] is True
+
+        loaded = FlowfileNode.model_validate(dumped)
+        assert loaded.is_flow_input is True
+        assert loaded.is_flow_output is True
