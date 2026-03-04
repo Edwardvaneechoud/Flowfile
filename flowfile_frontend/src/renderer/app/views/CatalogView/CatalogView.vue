@@ -500,6 +500,7 @@ onMounted(async () => {
 .catalog-detail {
   flex: 1;
   overflow-y: auto;
+  max-width: fit-content;
   padding: var(--spacing-4) var(--spacing-6);
 }
 
