@@ -3149,6 +3149,7 @@ class FlowGraph:
         source_registration_id is guaranteed to be set.
         """
         registration_id = self._flow_settings.source_registration_id
+        logger.debug(f"Found the following registration_id {registration_id}")
         if not registration_id:
             return
 
