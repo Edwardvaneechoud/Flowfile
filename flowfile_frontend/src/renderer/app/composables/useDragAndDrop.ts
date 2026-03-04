@@ -9,7 +9,6 @@ import type {
   NodeCopyInput,
   NodePromise,
   MultiNodeCopyValue,
-  EdgeCopyValue,
   NodeConnection,
   OperationResponse,
 } from "../types";

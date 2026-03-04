@@ -6,7 +6,6 @@ import type {
   NodeData,
   TableExample,
   NodeDescriptionDictionary,
-  NodeDescriptionEntry,
   NodeReferenceDictionary,
   ExpressionsOverview,
 } from "../types";
