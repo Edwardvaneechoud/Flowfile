@@ -1024,6 +1024,17 @@ def save_flow(flow_id: int, flow_path: str = None):
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
+    # Resolve source_registration_id so catalog read links can be recorded
+    if flow.flow_settings.source_registration_id is None:
+        resolve_path = flow_path or flow.flow_settings.path or flow.flow_settings.save_location
+        if resolve_path:
+            try:
+                with get_db_context() as db:
+                    reg = db.query(FlowRegistration).filter_by(flow_path=resolve_path).first()
+                    if reg:
+                        flow.flow_settings.source_registration_id = reg.id
+            except Exception:
+                logger.warning("Could not resolve source_registration_id at save time", exc_info=True)
     flow.save_flow(flow_path=flow_path)
 
 
