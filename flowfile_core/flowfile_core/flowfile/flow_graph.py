@@ -1992,14 +1992,6 @@ class FlowGraph:
         def _func() -> FlowDataEngine:
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
-            # Record the read relationship at runtime (source_registration_id is set by then)
-            if resolved_table_id and self._flow_settings.source_registration_id:
-                try:
-                    with get_db_context() as db:
-                        repo = SQLAlchemyCatalogRepository(db)
-                        repo.upsert_read_link(resolved_table_id, self._flow_settings.source_registration_id)
-                except Exception:
-                    logger.warning("Failed to record catalog read link", exc_info=True)
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
@@ -3147,6 +3139,36 @@ class FlowGraph:
             raise
 
         self.flow_settings.path = flow_path
+        self._sync_catalog_read_links()
+
+    def _sync_catalog_read_links(self):
+        """Record which catalog tables this flow reads from.
+
+        Scans all nodes for catalog_reader types and upserts read links
+        in the catalog database.  Runs at save time so that
+        source_registration_id is guaranteed to be set.
+        """
+        registration_id = self._flow_settings.source_registration_id
+        if not registration_id:
+            return
+
+        for node in self.nodes:
+            if node.node_type != "catalog_reader":
+                continue
+            setting = node.setting_input
+            table_id = getattr(setting, "catalog_table_id", None)
+            if not table_id:
+                continue
+            try:
+                with get_db_context() as db:
+                    repo = SQLAlchemyCatalogRepository(db)
+                    repo.upsert_read_link(table_id, registration_id)
+            except Exception:
+                logger.warning(
+                    "Failed to record catalog read link for table %s",
+                    table_id,
+                    exc_info=True,
+                )
 
     def get_frontend_data(self) -> dict:
         """Formats the graph structure into a JSON-like dictionary for a specific legacy frontend.
