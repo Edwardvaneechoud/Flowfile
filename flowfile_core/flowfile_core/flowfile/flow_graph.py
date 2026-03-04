@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
-from uuid import uuid1
+from uuid import uuid1, uuid4
 
 import fastexcel
 import polars as pl
@@ -2007,27 +2007,18 @@ class FlowGraph:
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
         """Adds a node that writes its input to the catalog as a Parquet table."""
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
-            from flowfile_core.catalog import CatalogService
-            from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-            from flowfile_core.database.connection import get_db_context
+            from shared.storage_config import storage
 
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
 
             # Materialize the dataframe to a temporary parquet, then register via the catalog service.
-            from shared.storage_config import storage
-
-            import uuid
-
             dest_dir = storage.catalog_tables_directory
             dest_dir.mkdir(parents=True, exist_ok=True)
-            parquet_filename = f"{settings.table_name}_{uuid.uuid4().hex[:8]}.parquet"
+            parquet_filename = f"{settings.table_name}_{uuid4().hex[:8]}.parquet"
             dest_path = dest_dir / parquet_filename
 
             collected = df.collect()
