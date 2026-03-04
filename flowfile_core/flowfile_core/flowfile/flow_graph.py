@@ -81,6 +81,11 @@ from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
+from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.database.connection import get_db_context
+
+
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
@@ -1960,13 +1965,6 @@ class FlowGraph:
         Resolves the catalog table by ID (or name + namespace) and reads
         the materialized Parquet file.
         """
-        import logging
-
-        from flowfile_core.catalog import CatalogService
-        from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-        from flowfile_core.database.connection import get_db_context
-
-        logger = logging.getLogger(__name__)
 
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None
@@ -1988,7 +1986,7 @@ class FlowGraph:
 
         resolved_path = file_path
 
-        def _func(df: FlowDataEngine) -> FlowDataEngine:
+        def _func() -> FlowDataEngine:
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
             return FlowDataEngine.create_from_polars_lazy_frame(pl.scan_parquet(resolved_path))
