@@ -1989,12 +1989,7 @@ class FlowGraph:
         def _func() -> FlowDataEngine:
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
-            return FlowDataEngine.create_from_polars_lazy_frame(pl.scan_parquet(resolved_path))
-
-        def schema_callback():
-            if resolved_path:
-                return pl.scan_parquet(resolved_path).collect_schema()
-            return None
+            return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
             node_id=node_catalog_reader.node_id,
@@ -2002,7 +1997,6 @@ class FlowGraph:
             input_columns=[],
             node_type="catalog_reader",
             setting_input=node_catalog_reader,
-            schema_callback=schema_callback,
         )
         node = self.get_node(node_catalog_reader.node_id)
         self.add_node_to_starting_list(node)
