@@ -8,8 +8,11 @@ raises ``HTTPException`` — only domain-specific exceptions from
 
 from __future__ import annotations
 
+import json
 import os
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
@@ -172,8 +175,6 @@ class CatalogService:
             if isinstance(artifact.tags, list):
                 tags = artifact.tags
             elif isinstance(artifact.tags, str):
-                import json
-
                 try:
                     tags = json.loads(artifact.tags)
                 except (json.JSONDecodeError, TypeError):
@@ -732,8 +733,6 @@ class CatalogService:
 
     def _table_to_out(self, table: CatalogTable) -> CatalogTableOut:
         """Convert a CatalogTable ORM instance to its Pydantic output schema."""
-        import json
-
         columns: list[ColumnSchema] = []
         if table.schema_json:
             try:
@@ -742,11 +741,9 @@ class CatalogService:
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
-        from pathlib import Path
-
         # Resolve source flow name if linked
         source_registration_name: str | None = None
-        if getattr(table, "source_registration_id", None):
+        if table.source_registration_id:
             reg = self.repo.get_flow(table.source_registration_id)
             if reg is not None:
                 source_registration_name = reg.name
@@ -767,9 +764,9 @@ class CatalogService:
             row_count=table.row_count,
             column_count=table.column_count,
             size_bytes=table.size_bytes,
-            source_registration_id=getattr(table, "source_registration_id", None),
+            source_registration_id=table.source_registration_id,
             source_registration_name=source_registration_name,
-            source_run_id=getattr(table, "source_run_id", None),
+            source_run_id=table.source_run_id,
             read_by_flows=read_by_flows,
             created_at=table.created_at,
             updated_at=table.updated_at,
@@ -798,11 +795,7 @@ class CatalogService:
         TableExistsError
             If a table with this name already exists in the namespace.
         """
-        import json
-        from pathlib import Path
-
         import polars as pl
-
         from shared.storage_config import storage
 
         if namespace_id is not None:
@@ -830,8 +823,6 @@ class CatalogService:
         dest_dir = storage.catalog_tables_directory
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Use a unique filename to avoid collisions
-        import uuid
-
         parquet_filename = f"{name}_{uuid.uuid4().hex[:8]}.parquet"
         dest_path = dest_dir / parquet_filename
         df.write_parquet(dest_path)
@@ -908,8 +899,6 @@ class CatalogService:
         TableNotFoundError
             If the table doesn't exist.
         """
-        from pathlib import Path
-
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
@@ -929,8 +918,6 @@ class CatalogService:
         TableNotFoundError
             If the table doesn't exist.
         """
-        from pathlib import Path
-
         import polars as pl
 
         table = self.repo.get_table(table_id)

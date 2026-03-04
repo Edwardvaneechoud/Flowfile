@@ -35,7 +35,7 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
-      <div v-if="table.source_registration_name" class="meta-card">
+      <div v-if="table.source_registration_id && table.source_registration_name" class="meta-card">
         <span class="meta-label">Produced by</span>
         <span
           class="meta-value meta-link"

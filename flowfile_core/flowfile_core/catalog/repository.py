@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
@@ -327,7 +328,6 @@ class SQLAlchemyCatalogRepository:
         """
         if not flow_ids:
             return {}
-        from sqlalchemy import func
 
         rows = (
             self._db.query(
@@ -515,8 +515,6 @@ class SQLAlchemyCatalogRepository:
         """
         if not flow_ids:
             return {}
-
-        from sqlalchemy import func
 
         # Query 1: counts per registration_id
         count_rows = (
