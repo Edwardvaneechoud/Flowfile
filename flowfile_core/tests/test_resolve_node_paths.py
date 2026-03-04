@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from flowfile_core.kernel.execution import write_inputs_to_parquet
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest
 from flowfile_core.schemas import input_schema
@@ -228,8 +229,6 @@ class TestWriteInputsToParquet:
 
     def test_unnamed_inputs_all_under_main(self, tmp_path: Path):
         """Without input_names, all files are grouped under 'main'."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -249,8 +248,6 @@ class TestWriteInputsToParquet:
 
     def test_named_inputs_grouped_by_name(self, tmp_path: Path):
         """With input_names, each table gets its own key plus a 'main' alias."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -273,8 +270,6 @@ class TestWriteInputsToParquet:
 
     def test_named_inputs_main_no_duplicate(self, tmp_path: Path):
         """When one input is named 'main', no extra 'main' alias is added."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -293,8 +288,6 @@ class TestWriteInputsToParquet:
 
     def test_unnamed_fetcher_error_raises(self, tmp_path: Path):
         """An error in ExternalDfFetcher raises RuntimeError (unnamed path)."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -309,8 +302,6 @@ class TestWriteInputsToParquet:
 
     def test_named_fetcher_error_raises(self, tmp_path: Path):
         """An error in ExternalDfFetcher raises RuntimeError (named path)."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -327,8 +318,6 @@ class TestWriteInputsToParquet:
 
     def test_empty_tuple_returns_empty_main(self, tmp_path: Path):
         """An empty tuple of tables returns {"main": []}."""
-        from flowfile_core.kernel.execution import write_inputs_to_parquet
-
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)

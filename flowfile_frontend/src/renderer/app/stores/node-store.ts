@@ -4,6 +4,7 @@ import { defineStore } from "pinia";
 import type { Node } from "@vue-flow/core";
 import type {
   NodeData,
+  NodeHandle,
   TableExample,
   NodeDescriptionDictionary,
   NodeReferenceDictionary,
@@ -352,7 +353,7 @@ export const useNodeStore = defineStore("node", {
                 if (edge.source === nodeIdStr) {
                   // Prefer output handle label for multi-output nodes
                   if (node?.data?.outputs && edge.sourceHandle) {
-                    const output = node.data.outputs.find((o: any) => o.id === edge.sourceHandle);
+                    const output = (node.data.outputs as NodeHandle[]).find((o) => o.id === edge.sourceHandle);
                     if (output?.label) {
                       edge.label = output.label;
                       continue;
@@ -366,15 +367,17 @@ export const useNodeStore = defineStore("node", {
         } else {
           console.warn("Unexpected response:", result);
         }
-      } catch (error: any) {
-        if (error.response) {
-          console.error("API error:", error.response.data.message || error.response.data.detail);
-          throw new Error(error.response.data.detail || "Failed to update reference");
-        } else if (error.request) {
-          console.error("The request was made but no response was received");
-        } else {
-          console.error("Error", error.message);
+      } catch (error: unknown) {
+        if (error instanceof Error && "response" in error) {
+          const axiosErr = error as { response?: { data?: { message?: string; detail?: string } }; request?: unknown };
+          if (axiosErr.response) {
+            console.error("API error:", axiosErr.response.data?.message || axiosErr.response.data?.detail);
+            throw new Error(axiosErr.response.data?.detail || "Failed to update reference");
+          } else if (axiosErr.request) {
+            console.error("The request was made but no response was received");
+          }
         }
+        console.error("Error", error instanceof Error ? error.message : String(error));
         throw error;
       }
     },

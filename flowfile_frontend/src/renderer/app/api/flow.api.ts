@@ -8,6 +8,7 @@ import type {
   LocalFileInfo,
   NodeConnection,
   NodePromise,
+  InputNameInfo,
   HistoryState,
   UndoRedoResult,
   OperationResponse,
@@ -354,7 +355,7 @@ export class FlowApi {
   static async getNodeInputNames(
     flowId: number,
     nodeId: number,
-  ): Promise<{ name: string; source_node_id: number; source_node_type: string }[]> {
+  ): Promise<InputNameInfo[]> {
     const response = await axios.get("/node/input_names", {
       params: { flow_id: flowId, node_id: nodeId },
       headers: { accept: "application/json" },
