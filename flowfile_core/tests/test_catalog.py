@@ -102,12 +102,8 @@ class TestNamespaces:
 
     def test_reject_deep_nesting(self):
         cat = client.post("/catalog/namespaces", json={"name": "Cat"}).json()
-        schema = client.post(
-            "/catalog/namespaces", json={"name": "S", "parent_id": cat["id"]}
-        ).json()
-        resp = client.post(
-            "/catalog/namespaces", json={"name": "Deep", "parent_id": schema["id"]}
-        )
+        schema = client.post("/catalog/namespaces", json={"name": "S", "parent_id": cat["id"]}).json()
+        resp = client.post("/catalog/namespaces", json={"name": "Deep", "parent_id": schema["id"]})
         assert resp.status_code == 422
 
     def test_duplicate_name_same_parent_rejected(self):
@@ -124,9 +120,7 @@ class TestNamespaces:
 
     def test_update_namespace(self):
         ns = client.post("/catalog/namespaces", json={"name": "Old"}).json()
-        resp = client.put(
-            f"/catalog/namespaces/{ns['id']}", json={"name": "New"}
-        )
+        resp = client.put(f"/catalog/namespaces/{ns['id']}", json={"name": "New"})
         assert resp.status_code == 200
         assert resp.json()["name"] == "New"
 
@@ -157,9 +151,7 @@ class TestNamespaces:
 class TestFlowRegistration:
     def _make_namespace(self) -> int:
         cat = client.post("/catalog/namespaces", json={"name": "FC"}).json()
-        schema = client.post(
-            "/catalog/namespaces", json={"name": "FS", "parent_id": cat["id"]}
-        ).json()
+        schema = client.post("/catalog/namespaces", json={"name": "FS", "parent_id": cat["id"]}).json()
         return schema["id"]
 
     def test_register_flow(self):
@@ -207,9 +199,7 @@ class TestFlowRegistration:
             "/catalog/flows",
             json={"name": "old", "flow_path": "/tmp/old.yaml", "namespace_id": ns_id},
         ).json()
-        resp = client.put(
-            f"/catalog/flows/{created['id']}", json={"name": "new_name"}
-        )
+        resp = client.put(f"/catalog/flows/{created['id']}", json={"name": "new_name"})
         assert resp.status_code == 200
         assert resp.json()["name"] == "new_name"
 
@@ -244,9 +234,7 @@ class TestFlowRegistration:
 class TestFavorites:
     def _make_flow(self) -> int:
         cat = client.post("/catalog/namespaces", json={"name": "FavCat"}).json()
-        schema = client.post(
-            "/catalog/namespaces", json={"name": "FavSch", "parent_id": cat["id"]}
-        ).json()
+        schema = client.post("/catalog/namespaces", json={"name": "FavSch", "parent_id": cat["id"]}).json()
         flow = client.post(
             "/catalog/flows",
             json={"name": "fav_flow", "flow_path": "/tmp/fav.yaml", "namespace_id": schema["id"]},
@@ -289,9 +277,7 @@ class TestFavorites:
 class TestFollows:
     def _make_flow(self) -> int:
         cat = client.post("/catalog/namespaces", json={"name": "FolCat"}).json()
-        schema = client.post(
-            "/catalog/namespaces", json={"name": "FolSch", "parent_id": cat["id"]}
-        ).json()
+        schema = client.post("/catalog/namespaces", json={"name": "FolSch", "parent_id": cat["id"]}).json()
         flow = client.post(
             "/catalog/flows",
             json={"name": "fol_flow", "flow_path": "/tmp/fol.yaml", "namespace_id": schema["id"]},
@@ -351,9 +337,7 @@ class TestStats:
 
     def test_stats_counts_only_catalogs(self):
         cat = client.post("/catalog/namespaces", json={"name": "StatCat"}).json()
-        client.post(
-            "/catalog/namespaces", json={"name": "StatSch", "parent_id": cat["id"]}
-        )
+        client.post("/catalog/namespaces", json={"name": "StatSch", "parent_id": cat["id"]})
         resp = client.get("/catalog/stats")
         # Only top-level catalogs should be counted
         assert resp.json()["total_namespaces"] == 1
@@ -366,18 +350,18 @@ class TestStats:
 
 class TestDefaultNamespace:
     def test_default_namespace_after_init(self):
-        """After init_db the General > user_flows namespace should exist."""
+        """After init_db the General > default namespace should exist."""
         init_db()
         resp = client.get("/catalog/default-namespace-id")
         assert resp.status_code == 200
         ns_id = resp.json()
         assert isinstance(ns_id, int)
 
-        # Verify it points to user_flows under General
+        # Verify it points to default under General
         with get_db_context() as db:
             ns = db.get(CatalogNamespace, ns_id)
             assert ns is not None
-            assert ns.name == "user_flows"
+            assert ns.name == "default"
             assert ns.level == 1
             parent = db.get(CatalogNamespace, ns.parent_id)
             assert parent is not None
@@ -388,11 +372,7 @@ class TestDefaultNamespace:
         init_db()
         init_db()
         with get_db_context() as db:
-            generals = (
-                db.query(CatalogNamespace)
-                .filter_by(name="General", parent_id=None)
-                .all()
-            )
+            generals = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).all()
             assert len(generals) == 1
 
 
@@ -416,22 +396,20 @@ class TestAutoRegisterFlow:
             return user.id
 
     def test_registers_flow_in_default_namespace(self):
-        """A new flow path is registered under General > user_flows."""
+        """A new flow path is registered under General > default."""
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
         _auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
 
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(
-                flow_path="/tmp/auto_reg_test.yaml"
-            ).first()
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/auto_reg_test.yaml").first()
             assert reg is not None
             assert reg.name == "auto_flow"
             assert reg.owner_id == user_id
             ns = db.get(CatalogNamespace, reg.namespace_id)
             assert ns is not None
-            assert ns.name == "user_flows"
+            assert ns.name == "default"
 
     def test_skips_duplicate_flow_path(self):
         """Calling twice with the same flow_path should not create a duplicate."""
@@ -442,9 +420,7 @@ class TestAutoRegisterFlow:
         _auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
 
         with get_db_context() as db:
-            regs = db.query(FlowRegistration).filter_by(
-                flow_path="/tmp/dup_auto.yaml"
-            ).all()
+            regs = db.query(FlowRegistration).filter_by(flow_path="/tmp/dup_auto.yaml").all()
             assert len(regs) == 1
             assert regs[0].name == "first"
 
@@ -455,9 +431,7 @@ class TestAutoRegisterFlow:
         _auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
 
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(
-                flow_path="/tmp/no_user.yaml"
-            ).first()
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_user.yaml").first()
             assert reg is None
 
     def test_skips_when_flow_path_is_none(self):
@@ -478,9 +452,7 @@ class TestAutoRegisterFlow:
         _auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
 
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(
-                flow_path="/tmp/no_ns.yaml"
-            ).first()
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_ns.yaml").first()
             assert reg is None
 
     def test_uses_filename_stem_when_name_is_empty(self):
@@ -491,9 +463,7 @@ class TestAutoRegisterFlow:
         _auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
 
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(
-                flow_path="/tmp/my_pipeline.yaml"
-            ).first()
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/my_pipeline.yaml").first()
             assert reg is not None
             assert reg.name == "my_pipeline"
 
@@ -549,9 +519,7 @@ class TestReadLinks:
             repo.upsert_read_link(table_id, flow_id)
 
         with get_db_context() as db:
-            link = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=flow_id
-            ).first()
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=flow_id).first()
             assert link is not None
 
     def test_upsert_read_link_is_idempotent(self):
@@ -562,9 +530,7 @@ class TestReadLinks:
             repo.upsert_read_link(table_id, flow_id)
 
         with get_db_context() as db:
-            links = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=flow_id
-            ).all()
+            links = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=flow_id).all()
             assert len(links) == 1
 
     def test_list_readers_for_table(self):
@@ -691,13 +657,15 @@ class TestTableLineage:
         schema_id, flow_id = self._make_namespace_and_flow()
         with get_db_context() as db:
             for i in range(3):
-                db.add(CatalogTable(
-                    name=f"t_{i}",
-                    namespace_id=schema_id,
-                    owner_id=1,
-                    file_path=f"/tmp/t_{i}.parquet",
-                    source_registration_id=flow_id,
-                ))
+                db.add(
+                    CatalogTable(
+                        name=f"t_{i}",
+                        namespace_id=schema_id,
+                        owner_id=1,
+                        file_path=f"/tmp/t_{i}.parquet",
+                        source_registration_id=flow_id,
+                    )
+                )
             db.commit()
 
             repo = SQLAlchemyCatalogRepository(db)
@@ -718,20 +686,24 @@ class TestTableLineage:
             db.commit()
             db.refresh(flow2)
 
-            db.add(CatalogTable(
-                name="t_a",
-                namespace_id=schema_id,
-                owner_id=1,
-                file_path="/tmp/t_a.parquet",
-                source_registration_id=flow_id,
-            ))
-            db.add(CatalogTable(
-                name="t_b",
-                namespace_id=schema_id,
-                owner_id=1,
-                file_path="/tmp/t_b.parquet",
-                source_registration_id=flow2.id,
-            ))
+            db.add(
+                CatalogTable(
+                    name="t_a",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path="/tmp/t_a.parquet",
+                    source_registration_id=flow_id,
+                )
+            )
+            db.add(
+                CatalogTable(
+                    name="t_b",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path="/tmp/t_b.parquet",
+                    source_registration_id=flow2.id,
+                )
+            )
             db.commit()
 
             repo = SQLAlchemyCatalogRepository(db)

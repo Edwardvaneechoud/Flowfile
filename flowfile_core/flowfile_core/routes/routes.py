@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from flowfile_core.configs.settings import is_electron_mode
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, Response
@@ -66,10 +67,11 @@ def get_node_model(setting_name_ref: str):
         if ref_name.lower() == setting_name_ref:
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
+    return None
 
 
 def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > user_flows) if it exists.
+    """Register a flow in the default catalog namespace (General > default) if it exists.
 
     Failures are logged at info level since users may wonder why some flows
     don't appear in the catalog.
@@ -82,9 +84,9 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             if general is None:
                 logger.info("Auto-registration skipped: 'General' catalog namespace not found")
                 return
-            user_flows = db.query(CatalogNamespace).filter_by(name="user_flows", parent_id=general.id).first()
-            if user_flows is None:
-                logger.info("Auto-registration skipped: 'user_flows' schema not found under 'General'")
+            default_schema = db.query(CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
+            if default_schema is None:
+                logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
                 return
             existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
             if existing:
@@ -92,7 +94,7 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             reg = FlowRegistration(
                 name=name or Path(flow_path).stem,
                 flow_path=flow_path,
-                namespace_id=user_flows.id,
+                namespace_id=default_schema.id,
                 owner_id=user_id,
             )
             db.add(reg)
@@ -170,7 +172,6 @@ async def get_directory_contents(
     Returns:
         A list of `FileInfo` objects representing the directory's contents.
     """
-    from flowfile_core.configs.settings import is_electron_mode
 
     # In Electron mode, allow browsing the entire filesystem (no sandbox).
     # In other modes, sandbox to the user data directory.
@@ -524,8 +525,6 @@ def add_node(
 
         # Capture batched history entry for the whole add_node operation
         if pre_snapshot is not None and flow.flow_settings.track_history:
-            from flowfile_core.schemas.history_schema import HistoryActionType
-
             flow._history_manager.capture_if_changed(
                 flow,
                 pre_snapshot,

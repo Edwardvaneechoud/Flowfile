@@ -29,10 +29,7 @@
 
       <div class="catalog-field">
         <label class="catalog-label">Write mode</label>
-        <el-select
-          v-model="nodeData.catalog_write_settings.write_mode"
-          size="small"
-        >
+        <el-select v-model="nodeData.catalog_write_settings.write_mode" size="small">
           <el-option label="Overwrite" value="overwrite" />
           <el-option label="Error if exists" value="error" />
         </el-select>

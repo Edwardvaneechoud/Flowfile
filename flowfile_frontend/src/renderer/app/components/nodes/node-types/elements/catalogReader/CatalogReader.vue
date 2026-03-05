@@ -49,11 +49,7 @@
         <div v-if="selectedTableMeta.schema_columns.length > 0" class="schema-preview">
           <label class="catalog-label">Schema</label>
           <div class="schema-list">
-            <div
-              v-for="col in selectedTableMeta.schema_columns"
-              :key="col.name"
-              class="schema-col"
-            >
+            <div v-for="col in selectedTableMeta.schema_columns" :key="col.name" class="schema-col">
               <span class="col-name">{{ col.name }}</span>
               <span class="col-type">{{ col.dtype }}</span>
             </div>
@@ -86,9 +82,7 @@ const selectedTableMeta = ref<CatalogTable | null>(null);
 
 const filteredTables = computed(() => {
   if (nodeData.value?.catalog_namespace_id == null) return allTables.value;
-  return allTables.value.filter(
-    (t) => t.namespace_id === nodeData.value?.catalog_namespace_id,
-  );
+  return allTables.value.filter((t) => t.namespace_id === nodeData.value?.catalog_namespace_id);
 });
 
 function formatNumber(n: number | null): string {
@@ -168,9 +162,7 @@ async function loadNodeData(nodeId: number) {
 
   // If there's an existing table selected, load its metadata
   if (nodeData.value?.catalog_table_id) {
-    const table = allTables.value.find(
-      (t) => t.id === nodeData.value?.catalog_table_id,
-    );
+    const table = allTables.value.find((t) => t.id === nodeData.value?.catalog_table_id);
     if (table) {
       selectedTableMeta.value = table;
     }

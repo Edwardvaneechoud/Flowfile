@@ -21,9 +21,7 @@ def run_migrations():
     """Run database migrations to update schema for existing databases."""
     with engine.connect() as conn:
         # Check if users table exists
-        result = conn.execute(text(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
-        ))
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'"))
         if not result.fetchone():
             logger.info("Users table does not exist, will be created with new schema")
             return
@@ -33,39 +31,33 @@ def run_migrations():
         columns = [row[1] for row in result.fetchall()]
 
         # Add is_admin column if missing
-        if 'is_admin' not in columns:
+        if "is_admin" not in columns:
             logger.info("Adding is_admin column to users table")
             conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
             conn.commit()
             logger.info("Migration complete: is_admin column added")
 
         # Add must_change_password column if missing
-        if 'must_change_password' not in columns:
+        if "must_change_password" not in columns:
             logger.info("Adding must_change_password column to users table")
             conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
             conn.commit()
             logger.info("Migration complete: must_change_password column added")
 
         # Migrate catalog_tables: add lineage columns
-        result = conn.execute(text(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_tables'"
-        ))
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_tables'"))
         if result.fetchone():
             result = conn.execute(text("PRAGMA table_info(catalog_tables)"))
             table_columns = [row[1] for row in result.fetchall()]
 
-            if 'source_registration_id' not in table_columns:
+            if "source_registration_id" not in table_columns:
                 logger.info("Adding source_registration_id column to catalog_tables")
-                conn.execute(text(
-                    "ALTER TABLE catalog_tables ADD COLUMN source_registration_id INTEGER"
-                ))
+                conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_registration_id INTEGER"))
                 conn.commit()
 
-            if 'source_run_id' not in table_columns:
+            if "source_run_id" not in table_columns:
                 logger.info("Adding source_run_id column to catalog_tables")
-                conn.execute(text(
-                    "ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"
-                ))
+                conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
 
@@ -78,7 +70,7 @@ db_models.Base.metadata.create_all(bind=engine)
 def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
-        random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        random_password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
         hashed_password = pwd_context.hash(random_password)
 
         local_user = db_models.User(
@@ -86,7 +78,7 @@ def create_default_local_user(db: Session):
             email="local@flowfile.app",
             full_name="Local User",
             hashed_password=hashed_password,
-            must_change_password=False  # Local user doesn't need to change password
+            must_change_password=False,  # Local user doesn't need to change password
         )
         db.add(local_user)
         db.commit()
@@ -117,9 +109,7 @@ def create_docker_admin_user(db: Session):
         return False
 
     # Check if user already exists
-    existing_user = db.query(db_models.User).filter(
-        db_models.User.username == admin_username
-    ).first()
+    existing_user = db.query(db_models.User).filter(db_models.User.username == admin_username).first()
 
     if existing_user:
         # Ensure existing admin user has is_admin=True
@@ -139,7 +129,7 @@ def create_docker_admin_user(db: Session):
         full_name="Admin User",
         hashed_password=hashed_password,
         is_admin=True,
-        must_change_password=True  # Force password change on first login
+        must_change_password=True,  # Force password change on first login
     )
     db.add(admin_user)
     db.commit()
@@ -148,16 +138,12 @@ def create_docker_admin_user(db: Session):
 
 
 def create_default_catalog_namespace(db: Session):
-    """Create the default 'General' catalog with a 'user_flows' schema if they don't exist."""
+    """Create the default 'General' catalog with a 'default' schema if they don't exist."""
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
         return
 
-    general = (
-        db.query(db_models.CatalogNamespace)
-        .filter_by(name="General", parent_id=None)
-        .first()
-    )
+    general = db.query(db_models.CatalogNamespace).filter_by(name="General", parent_id=None).first()
     if not general:
         general = db_models.CatalogNamespace(
             name="General",
@@ -170,20 +156,16 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
         db.refresh(general)
 
-    user_flows = (
-        db.query(db_models.CatalogNamespace)
-        .filter_by(name="user_flows", parent_id=general.id)
-        .first()
-    )
-    if not user_flows:
-        user_flows = db_models.CatalogNamespace(
-            name="user_flows",
+    default_schema = db.query(db_models.CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
+    if not default_schema:
+        default_schema = db_models.CatalogNamespace(
+            name="default",
             parent_id=general.id,
             level=1,
             description="Default schema for user flows",
             owner_id=local_user.id,
         )
-        db.add(user_flows)
+        db.add(default_schema)
         db.commit()
 
 
@@ -200,4 +182,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print("Local user created successfully")
-

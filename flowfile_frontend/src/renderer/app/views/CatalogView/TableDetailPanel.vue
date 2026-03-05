@@ -10,7 +10,11 @@
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
       <div class="header-actions">
-        <button class="btn-danger-outline" title="Delete table" @click="emit('deleteTable', table.id)">
+        <button
+          class="btn-danger-outline"
+          title="Delete table"
+          @click="emit('deleteTable', table.id)"
+        >
           <i class="fa-solid fa-trash"></i>
           Delete
         </button>

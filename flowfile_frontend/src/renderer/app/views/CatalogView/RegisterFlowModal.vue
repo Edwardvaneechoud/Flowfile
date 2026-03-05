@@ -25,11 +25,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-secondary" @click="$emit('close')">Cancel</button>
-        <button
-          class="btn-primary"
-          :disabled="!name.trim() || !path.trim()"
-          @click="submit"
-        >
+        <button class="btn-primary" :disabled="!name.trim() || !path.trim()" @click="submit">
           Register
         </button>
       </div>

@@ -157,7 +157,7 @@ def get_namespace_tree(
 def get_default_namespace_id(
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the ID of the default 'user_flows' schema under 'General'."""
+    """Return the ID of the default 'default' schema under 'General'."""
     return service.get_default_namespace_id()
 
 

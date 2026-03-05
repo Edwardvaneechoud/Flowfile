@@ -97,8 +97,7 @@ class CatalogService:
             file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
             artifact_count=artifact_count,
             tables_produced=[
-                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id)
-                for t in produced_tables
+                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
             ],
         )
 
@@ -142,8 +141,7 @@ class CatalogService:
                     file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
                     artifact_count=artifact_counts.get(flow.id, 0),
                     tables_produced=[
-                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id)
-                        for t in produced
+                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
                     ],
                 )
             )
@@ -386,14 +384,14 @@ class CatalogService:
         return result
 
     def get_default_namespace_id(self) -> int | None:
-        """Return the ID of the default 'user_flows' schema under 'General'."""
+        """Return the ID of the default 'default' schema under 'General'."""
         general = self.repo.get_namespace_by_name("General", parent_id=None)
         if general is None:
             return None
-        user_flows = self.repo.get_namespace_by_name("user_flows", parent_id=general.id)
-        if user_flows is None:
+        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
+        if default_schema is None:
             return None
-        return user_flows.id
+        return default_schema.id
 
     # ------------------------------------------------------------------ #
     # Flow registration operations

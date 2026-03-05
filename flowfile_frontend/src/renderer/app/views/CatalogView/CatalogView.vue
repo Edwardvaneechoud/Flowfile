@@ -22,18 +22,10 @@
         <div class="sidebar-header">
           <h3>{{ sidebarTitle }}</h3>
           <div v-if="catalogStore.activeTab === 'catalog'" class="sidebar-header-actions">
-            <button
-              class="btn-icon"
-              title="Register table"
-              @click="openRegisterTableGlobal"
-            >
+            <button class="btn-icon" title="Register table" @click="openRegisterTableGlobal">
               <i class="fa-solid fa-table"></i>
             </button>
-            <button
-              class="btn-icon"
-              title="New catalog"
-              @click="showCreateNamespace = true"
-            >
+            <button class="btn-icon" title="New catalog" @click="showCreateNamespace = true">
               <i class="fa-solid fa-plus"></i>
             </button>
           </div>
@@ -42,11 +34,7 @@
         <!-- Catalog Tree -->
         <div v-if="catalogStore.activeTab === 'catalog'" class="tree-container">
           <div class="sidebar-filters">
-            <input
-              v-model="searchQuery"
-              class="search-input"
-              placeholder="Search..."
-            />
+            <input v-model="searchQuery" class="search-input" placeholder="Search..." />
             <label class="unavailable-toggle">
               <input v-model="showUnavailable" type="checkbox" />
               <span>Show unavailable</span>
@@ -186,7 +174,10 @@
     <CreateNamespaceModal
       :visible="showCreateNamespace"
       :parent-id="createSchemaParentId"
-      @close="showCreateNamespace = false; createSchemaParentId = null"
+      @close="
+        showCreateNamespace = false;
+        createSchemaParentId = null;
+      "
     />
 
     <RegisterFlowModal
@@ -349,13 +340,14 @@ function openRegisterTableGlobal() {
       schemaNamespaces.push({ id: schema.id });
     }
   }
-  registerTableNamespaceId.value =
-    defaultNamespaceId.value ?? schemaNamespaces[0]?.id ?? null;
+  registerTableNamespaceId.value = defaultNamespaceId.value ?? schemaNamespaces[0]?.id ?? null;
   showRegisterTable.value = true;
 }
 
 async function handleDeleteTable(tableId: number) {
-  if (!confirm("Are you sure you want to delete this table? The materialized data will be removed.")) {
+  if (
+    !confirm("Are you sure you want to delete this table? The materialized data will be removed.")
+  ) {
     return;
   }
   try {
