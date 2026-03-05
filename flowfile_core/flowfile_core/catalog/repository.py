@@ -158,8 +158,6 @@ class CatalogRepository(Protocol):
 
     def count_all_tables(self) -> int: ...
 
-    def list_all_tables(self) -> list[CatalogTable]: ...
-
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
     def bulk_get_favorite_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
@@ -464,6 +462,7 @@ class SQLAlchemyCatalogRepository:
         return table
 
     def delete_table(self, table_id: int) -> None:
+        self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         table = self._db.get(CatalogTable, table_id)
         if table is not None:
             self._db.delete(table)
@@ -474,9 +473,6 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_tables(self) -> int:
         return self._db.query(CatalogTable).count()
-
-    def list_all_tables(self) -> list[CatalogTable]:
-        return self._db.query(CatalogTable).order_by(CatalogTable.name).all()
 
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 

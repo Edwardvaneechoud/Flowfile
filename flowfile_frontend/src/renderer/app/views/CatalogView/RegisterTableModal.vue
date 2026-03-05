@@ -113,14 +113,12 @@ async function submit() {
   if (!name.value.trim() || !path.value.trim()) return;
   try {
     const nsId = selectedNamespaceId.value ?? props.defaultNamespaceId;
-    await CatalogApi.registerTable(
-      {
-        name: name.value.trim(),
-        description: description.value.trim() || null,
-        namespace_id: nsId,
-      },
-      path.value.trim(),
-    );
+    await CatalogApi.registerTable({
+      name: name.value.trim(),
+      file_path: path.value.trim(),
+      description: description.value.trim() || null,
+      namespace_id: nsId,
+    });
     emit("close");
     await Promise.all([
       catalogStore.loadTree(),

@@ -2034,18 +2034,16 @@ class FlowGraph:
                             if t.name == settings.table_name:
                                 svc.delete_table(t.id)
                                 break
-                    svc.register_table(
+                    svc.register_table_from_parquet(
                         name=settings.table_name,
-                        file_path=str(dest_path),
+                        parquet_path=str(dest_path),
                         owner_id=node_catalog_writer.user_id or 1,
                         namespace_id=settings.namespace_id,
                         description=settings.description,
                         source_registration_id=self._flow_settings.source_registration_id,
                     )
             except Exception:
-                logger.warning(
-                    "Failed to register catalog table '%s'", settings.table_name, exc_info=True
-                )
+                logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
                 raise
 
             return df
@@ -3140,27 +3138,33 @@ class FlowGraph:
         source_registration_id is guaranteed to be set.
         """
         registration_id = self._flow_settings.source_registration_id
-        logger.debug(f"Found the following registration_id {registration_id}")
+        logger.debug("Found registration_id %s", registration_id)
         if not registration_id:
             return
 
+        table_ids = []
         for node in self.nodes:
             if node.node_type != "catalog_reader":
                 continue
             setting = node.setting_input
             table_id = getattr(setting, "catalog_table_id", None)
-            if not table_id:
-                continue
-            try:
-                with get_db_context() as db:
-                    repo = SQLAlchemyCatalogRepository(db)
+            if table_id:
+                table_ids.append(table_id)
+
+        if not table_ids:
+            return
+
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                for table_id in table_ids:
                     repo.upsert_read_link(table_id, registration_id)
-            except Exception:
-                logger.warning(
-                    "Failed to record catalog read link for table %s",
-                    table_id,
-                    exc_info=True,
-                )
+        except Exception:
+            logger.warning(
+                "Failed to record catalog read links for tables %s",
+                table_ids,
+                exc_info=True,
+            )
 
     def get_frontend_data(self) -> dict:
         """Formats the graph structure into a JSON-like dictionary for a specific legacy frontend.

@@ -162,10 +162,8 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async registerTable(body: CatalogTableCreate, filePath: string): Promise<CatalogTable> {
-    const response = await axios.post<CatalogTable>("/catalog/tables", body, {
-      params: { file_path: filePath },
-    });
+  static async registerTable(body: CatalogTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/tables", body);
     return response.data;
   }
 

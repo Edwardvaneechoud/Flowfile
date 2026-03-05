@@ -114,7 +114,7 @@
         v-for="table in visibleTables"
         :key="'t-' + table.id"
         class="tree-table"
-        :class="{ selected: selectedTableId === table.id, 'file-missing': (table as any).file_exists === false }"
+        :class="{ selected: selectedTableId === table.id, 'file-missing': table.file_exists === false }"
         @click.stop="$emit('selectTable', table.id)"
       >
         <i class="fa-solid fa-table table-icon"></i>
@@ -127,7 +127,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { CatalogTable, GlobalArtifact, NamespaceTree } from "../../types";
+import type { GlobalArtifact, NamespaceTree } from "../../types";
 
 interface ArtifactGroup {
   name: string;

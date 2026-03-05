@@ -173,6 +173,7 @@ class GlobalArtifactOut(BaseModel):
 
 class CatalogTableCreate(BaseModel):
     name: str
+    file_path: str
     namespace_id: int | None = None
     description: str | None = None
 

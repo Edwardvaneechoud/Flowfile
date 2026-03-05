@@ -822,12 +822,82 @@ class CatalogService:
         # Materialize as Parquet in catalog storage
         dest_dir = storage.catalog_tables_directory
         dest_dir.mkdir(parents=True, exist_ok=True)
-        # Use a unique filename to avoid collisions
         parquet_filename = f"{name}_{uuid.uuid4().hex[:8]}.parquet"
         dest_path = dest_dir / parquet_filename
         df.write_parquet(dest_path)
 
-        # Build schema metadata
+        return self._create_table_record(
+            name=name,
+            dest_path=dest_path,
+            df=df,
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+
+    def register_table_from_parquet(
+        self,
+        name: str,
+        parquet_path: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
+    ) -> CatalogTableOut:
+        """Register an already-materialized Parquet file in the catalog.
+
+        Unlike ``register_table``, this does NOT copy the file — it records
+        the given ``parquet_path`` directly. Use this when the caller has
+        already written the Parquet file to the catalog tables directory
+        (e.g. the catalog writer node in a flow graph).
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If ``namespace_id`` is given but doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        import polars as pl
+
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
+
+        dest_path = Path(parquet_path)
+        df = pl.read_parquet(dest_path)
+
+        return self._create_table_record(
+            name=name,
+            dest_path=dest_path,
+            df=df,
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+
+    def _create_table_record(
+        self,
+        name: str,
+        dest_path: Path,
+        df,
+        owner_id: int,
+        namespace_id: int | None,
+        description: str | None,
+        source_registration_id: int | None,
+        source_run_id: int | None,
+    ) -> CatalogTableOut:
+        """Create the CatalogTable DB record from an already-written Parquet file."""
         schema_list = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
         size_bytes = dest_path.stat().st_size
 
@@ -932,8 +1002,8 @@ class CatalogService:
         columns = df.columns
         dtypes = [str(df[col].dtype) for col in columns]
 
-        # Convert to list of lists (JSON-safe)
-        rows = df.to_pandas().values.tolist()
+        # Convert to list of lists (JSON-safe) using Polars native method
+        rows = df.rows()
 
         return CatalogTablePreview(
             columns=columns,

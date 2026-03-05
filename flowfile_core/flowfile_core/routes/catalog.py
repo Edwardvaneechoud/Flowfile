@@ -409,7 +409,6 @@ def list_tables(
 @router.post("/tables", response_model=CatalogTableOut, status_code=201)
 def register_table(
     body: CatalogTableCreate,
-    file_path: str = Query(..., description="Path to the source file to materialize"),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -417,7 +416,7 @@ def register_table(
     try:
         return service.register_table(
             name=body.name,
-            file_path=file_path,
+            file_path=body.file_path,
             owner_id=current_user.id,
             namespace_id=body.namespace_id,
             description=body.description,

@@ -163,6 +163,7 @@ export interface CatalogTable {
 
 export interface CatalogTableCreate {
   name: string;
+  file_path: string;
   namespace_id?: number | null;
   description?: string | null;
 }
