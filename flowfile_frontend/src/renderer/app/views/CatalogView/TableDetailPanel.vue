@@ -10,7 +10,7 @@
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
       <div class="header-actions">
-        <button class="btn-danger-outline" title="Delete table" @click="$emit('deleteTable', table.id)">
+        <button class="btn-danger-outline" title="Delete table" @click="emit('deleteTable', table.id)">
           <i class="fa-solid fa-trash"></i>
           Delete
         </button>
@@ -40,7 +40,7 @@
         <span
           class="meta-value meta-link"
           :title="table.source_registration_name"
-          @click="$emit('navigateToFlow', table.source_registration_id)"
+          @click="emit('navigateToFlow', table.source_registration_id)"
         >
           <i class="fa-solid fa-diagram-project"></i>
           <span class="meta-link-text">{{ table.source_registration_name }}</span>
@@ -73,7 +73,7 @@
               v-for="flow in table.read_by_flows"
               :key="flow.id"
               class="read-by-item"
-              @click="$emit('navigateToFlow', flow.id); showReadByModal = false"
+              @click="handleReadByClick(flow.id)"
             >
               <i class="fa-solid fa-diagram-project read-by-icon"></i>
               <span>{{ flow.name }}</span>
@@ -149,10 +149,15 @@ defineProps<{
   loadingPreview: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   deleteTable: [id: number];
   navigateToFlow: [registrationId: number];
 }>();
+
+function handleReadByClick(flowId: number) {
+  emit("navigateToFlow", flowId);
+  showReadByModal.value = false;
+}
 
 function formatNumber(n: number | null | undefined): string {
   if (n === null || n === undefined) return "--";
