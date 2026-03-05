@@ -126,6 +126,13 @@ class FlowGraphConfig(BaseModel):
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
 
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
+
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
         """
@@ -206,6 +213,13 @@ class FlowfileSettings(BaseModel):
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
 
 
 class FlowfileNode(BaseModel):

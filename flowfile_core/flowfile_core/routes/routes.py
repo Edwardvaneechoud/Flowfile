@@ -1036,13 +1036,24 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
 
 
 @router.get("/save_flow", tags=["editor"])
-def save_flow(flow_id: int, flow_path: str = None):
+def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    is_new_path = (
+        flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
+    )
+    if is_new_path:
+        flow.flow_settings.source_registration_id = None
     _resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
+    if is_new_path:
+        user_id = current_user.id if current_user else None
+        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
+        flow.flow_settings.source_registration_id = None
+        _resolve_source_registration_id(flow)
 
 
 @router.get("/flow_data", tags=["manager"])

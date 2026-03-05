@@ -970,9 +970,7 @@ class FlowGraph:
                 node._kernel_cancel_context = (kernel_id, manager)
                 node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 if node is not None:
                     node._kernel_cancel_context = None
@@ -1320,9 +1318,7 @@ class FlowGraph:
             node._kernel_cancel_context = (kernel_id, manager)
             node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 node._kernel_cancel_context = None
                 node._kernel_cancel_event = None
