@@ -2,6 +2,7 @@
 // Consolidated from features/designer/types.ts and nodes/nodeLogic.ts
 
 import type { NodeResult } from "./node.types";
+import type { Position } from "@vue-flow/core";
 
 // ============================================================================
 // Flow Execution Types
@@ -115,8 +116,6 @@ export interface NodeInput extends NodeTemplate {
 // ============================================================================
 // Handle Types
 // ============================================================================
-
-import { Position } from "@vue-flow/core";
 
 export interface NodeHandle {
   id: string;
