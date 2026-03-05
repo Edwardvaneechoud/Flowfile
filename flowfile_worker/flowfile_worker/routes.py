@@ -12,6 +12,7 @@ from flowfile_worker.create.models import ReceivedTable
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.spawner import process_manager, start_fuzzy_process, start_generic_process, start_process
+from shared.storage_config import storage
 
 router = APIRouter()
 
@@ -96,9 +97,7 @@ async def store_sample(request: Request, background_tasks: BackgroundTasks) -> m
         default_cache_dir = create_and_get_default_cache_dir(flow_id)
         file_path = os.path.join(default_cache_dir, f"{task_id}.arrow")
 
-        status = models.Status(
-            background_task_id=task_id, status="Starting", file_ref=file_path, result_type="other"
-        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="other")
         status_dict[task_id] = status
 
         background_tasks.add_task(
@@ -327,6 +326,72 @@ def create_table(
     except Exception as e:
         logger.error(f"Error creating table: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/catalog/materialize", response_model=models.CatalogMaterializeResponse)
+def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> models.CatalogMaterializeResponse:
+    source_path = os.path.abspath(payload.source_file_path)
+    src = os.path.join(source_path)
+    ext = os.path.splitext(src)[1].lower()
+
+    if ext in (".csv", ".txt", ".tsv"):
+        read_method = lambda p: pl.read_csv(p, infer_schema_length=10000)
+    elif ext == ".parquet":
+        read_method = pl.read_parquet
+    elif ext in (".xlsx", ".xls"):
+        read_method = pl.read_excel
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_type": "unsupported_file_type", "message": f"Unsupported file type: {ext}"},
+        )
+
+    try:
+        df = read_method(src)
+    except Exception as e:
+        logger.error(f"Failed to read source file {src}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error_type": "read_failure", "message": str(e)},
+        )
+
+    dest_dir = storage.catalog_tables_directory
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if payload.parquet_filename:
+        parquet_filename = payload.parquet_filename
+    elif payload.table_name:
+        parquet_filename = f"{payload.table_name}_{uuid.uuid4().hex[:8]}.parquet"
+    else:
+        parquet_filename = f"catalog_{uuid.uuid4().hex}.parquet"
+
+    dest_path = dest_dir / parquet_filename
+
+    try:
+        df.write_parquet(dest_path)
+    except Exception as e:
+        logger.error(f"Failed to write parquet to {dest_path}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error_type": "write_failure", "message": str(e)},
+        )
+
+    try:
+        size_bytes = dest_path.stat().st_size
+    except Exception as e:
+        logger.error(f"Failed to read parquet stats for {dest_path}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error_type": "metadata_failure", "message": str(e)},
+        )
+
+    schema = [models.ColumnSchema(name=col, dtype=str(df[col].dtype)) for col in df.columns]
+    return models.CatalogMaterializeResponse(
+        parquet_path=str(dest_path),
+        schema=schema,
+        row_count=df.height,
+        column_count=len(df.columns),
+        size_bytes=size_bytes,
+    )
 
 
 def validate_result(task_id: str) -> bool | None:

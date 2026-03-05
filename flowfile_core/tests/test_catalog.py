@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.catalog import CatalogService
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import init_db
 from flowfile_core.database.models import (
@@ -224,6 +225,61 @@ class TestFlowRegistration:
         ).json()
         resp = client.get(f"/catalog/flows/{created['id']}")
         assert resp.json()["file_exists"] is False
+
+
+class TestCatalogTableMaterialization:
+    def test_register_table_uses_worker_metadata(self, monkeypatch):
+        with get_db_context() as db:
+            ns = CatalogNamespace(name="Cat", level=0, owner_id=1)
+            db.add(ns)
+            db.commit()
+            db.refresh(ns)
+
+            schema = CatalogNamespace(name="Schema", level=1, parent_id=ns.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            db.refresh(schema)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            service = CatalogService(repo)
+
+            response_payload = {
+                "parquet_path": "/tmp/fake.parquet",
+                "schema": [{"name": "col_a", "dtype": "Int64"}],
+                "row_count": 12,
+                "column_count": 1,
+                "size_bytes": 2048,
+            }
+
+            class FakeResponse:
+                ok = True
+                status_code = 200
+                text = ""
+
+                def json(self):
+                    return response_payload
+
+            def fake_trigger(*args, **kwargs):
+                return FakeResponse()
+
+            monkeypatch.setattr(
+                "flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations.trigger_catalog_materialize",
+                fake_trigger,
+            )
+
+            table_out = service.register_table(
+                name="test_table",
+                file_path="/tmp/source.xlsx",
+                owner_id=1,
+                namespace_id=schema.id,
+            )
+
+            assert table_out.file_path == response_payload["parquet_path"]
+            assert table_out.row_count == response_payload["row_count"]
+            assert table_out.column_count == response_payload["column_count"]
+            assert table_out.size_bytes == response_payload["size_bytes"]
+            assert table_out.schema_columns[0].name == "col_a"
+            assert table_out.schema_columns[0].dtype == "Int64"
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,24 @@
     <!-- Header -->
     <div class="detail-header">
       <div class="header-main">
-        <h2>{{ flow.name }}</h2>
+        <div class="header-name">
+          <template v-if="isEditing">
+            <input
+              ref="editInput"
+              v-model="editName"
+              class="edit-name-input"
+              @keydown.enter="saveRename"
+              @keydown.escape="cancelRename"
+              @blur="saveRename"
+            />
+          </template>
+          <template v-else>
+            <h2>{{ flow.name }}</h2>
+            <button class="btn-icon-inline" title="Rename" @click="startRename">
+              <i class="fa-solid fa-pen"></i>
+            </button>
+          </template>
+        </div>
         <p v-if="flow.description" class="description">{{ flow.description }}</p>
       </div>
       <div class="header-actions">
@@ -30,6 +47,14 @@
         >
           <i :class="flow.is_following ? 'fa-solid fa-bell' : 'fa-regular fa-bell'"></i>
           {{ flow.is_following ? "Following" : "Follow" }}
+        </button>
+        <button
+          class="btn-danger-outline"
+          title="Delete flow"
+          @click="$emit('deleteFlow', flow.id)"
+        >
+          <i class="fa-solid fa-trash"></i>
+          Delete
         </button>
       </div>
     </div>
@@ -162,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
 
 const props = defineProps<{
@@ -171,13 +196,41 @@ const props = defineProps<{
   artifacts: GlobalArtifact[];
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   viewRun: [runId: number];
   toggleFavorite: [flowId: number];
   toggleFollow: [flowId: number];
   openFlow: [flowPath: string];
   selectTable: [tableId: number];
+  deleteFlow: [flowId: number];
+  renameFlow: [flowId: number, newName: string];
 }>();
+
+const isEditing = ref(false);
+const editName = ref("");
+const editInput = ref<HTMLInputElement | null>(null);
+
+function startRename() {
+  editName.value = props.flow.name;
+  isEditing.value = true;
+  nextTick(() => {
+    editInput.value?.focus();
+    editInput.value?.select();
+  });
+}
+
+function saveRename() {
+  if (!isEditing.value) return;
+  const trimmed = editName.value.trim();
+  isEditing.value = false;
+  if (trimmed && trimmed !== props.flow.name) {
+    emit("renameFlow", props.flow.id, trimmed);
+  }
+}
+
+function cancelRename() {
+  isEditing.value = false;
+}
 
 const statusClass = computed(() => {
   if (props.flow.last_run_success === null) return "";
@@ -233,7 +286,7 @@ function formatSize(bytes: number | null): string {
 
 <style scoped>
 .flow-detail {
-  max-width: 900px;
+  width: 100%;
 }
 
 .detail-header {
@@ -282,6 +335,61 @@ function formatSize(bytes: number | null): string {
 .action-btn-lg.active {
   color: var(--color-primary);
   border-color: var(--color-primary);
+}
+
+.header-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.btn-icon-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.btn-icon-inline:hover {
+  background: var(--color-background-hover);
+  color: var(--color-primary);
+}
+
+.edit-name-input {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-1) var(--spacing-2);
+  outline: none;
+  width: 100%;
+}
+
+.btn-danger-outline {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: transparent;
+  color: #ef4444;
+  border: 1px solid #ef4444;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-danger-outline:hover {
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .action-btn-primary {

@@ -23,18 +23,18 @@
         <button
           v-if="node.level === 1"
           class="action-btn"
-          title="Register flow"
-          @click="$emit('registerFlow', node.id)"
-        >
-          <i class="fa-solid fa-file-circle-plus"></i>
-        </button>
-        <button
-          v-if="node.level === 1"
-          class="action-btn"
           title="Register table"
           @click="$emit('registerTable', node.id)"
         >
           <i class="fa-solid fa-table"></i>
+        </button>
+        <button
+          v-if="node.level === 1"
+          class="action-btn"
+          title="Register flow"
+          @click="$emit('registerFlow', node.id)"
+        >
+          <i class="fa-solid fa-file-circle-plus"></i>
         </button>
       </div>
     </div>

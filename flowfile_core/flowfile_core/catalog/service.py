@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,6 +69,14 @@ class CatalogService:
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
+
+    @dataclass(frozen=True)
+    class CatalogMaterializationResult:
+        parquet_path: str
+        schema: list[dict[str, str]]
+        row_count: int
+        column_count: int
+        size_bytes: int
 
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         """Attach favourite/follow flags and run stats to a single registration.
@@ -770,6 +779,53 @@ class CatalogService:
             updated_at=table.updated_at,
         )
 
+    def _materialize_table_with_worker(
+        self,
+        source_file_path: str,
+        table_name: str | None = None,
+        parquet_filename: str | None = None,
+    ) -> CatalogMaterializationResult:
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+            trigger_catalog_materialize,
+        )
+
+        response = trigger_catalog_materialize(
+            source_file_path=source_file_path,
+            table_name=table_name,
+            parquet_filename=parquet_filename,
+        )
+        if response.ok:
+            data = response.json()
+            schema = [
+                {"name": col["name"], "dtype": col["dtype"]}
+                for col in data.get("schema", [])
+                if "name" in col and "dtype" in col
+            ]
+            return CatalogService.CatalogMaterializationResult(
+                parquet_path=data["parquet_path"],
+                schema=schema,
+                row_count=data["row_count"],
+                column_count=data["column_count"],
+                size_bytes=data["size_bytes"],
+            )
+
+        detail = None
+        try:
+            detail = response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+
+        if response.status_code == 422:
+            if isinstance(detail, dict) and detail.get("error_type") == "unsupported_file_type":
+                raise ValueError(detail.get("message", "Unsupported file type"))
+            raise ValueError(detail.get("message", "Unsupported file type") if isinstance(detail, dict) else "")
+
+        if isinstance(detail, dict):
+            message = detail.get("message", response.text)
+        else:
+            message = response.text
+        raise RuntimeError(f"Worker catalog materialization failed: {message}")
+
     def register_table(
         self,
         name: str,
@@ -793,9 +849,6 @@ class CatalogService:
         TableExistsError
             If a table with this name already exists in the namespace.
         """
-        import polars as pl
-        from shared.storage_config import storage
-
         if namespace_id is not None:
             ns = self.repo.get_namespace(namespace_id)
             if ns is None:
@@ -805,29 +858,18 @@ class CatalogService:
         if existing is not None:
             raise TableExistsError(name=name, namespace_id=namespace_id)
 
-        # Read source file into a Polars DataFrame
-        src = Path(file_path)
-        ext = src.suffix.lower()
-        if ext == ".csv" or ext == ".txt" or ext == ".tsv":
-            df = pl.read_csv(src, infer_schema_length=10000)
-        elif ext == ".parquet":
-            df = pl.read_parquet(src)
-        elif ext in (".xlsx", ".xls"):
-            df = pl.read_excel(src)
-        else:
-            raise ValueError(f"Unsupported file type: {ext}")
+        materialized = self._materialize_table_with_worker(
+            source_file_path=file_path,
+            table_name=name,
+        )
 
-        # Materialize as Parquet in catalog storage
-        dest_dir = storage.catalog_tables_directory
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        parquet_filename = f"{name}_{uuid.uuid4().hex[:8]}.parquet"
-        dest_path = dest_dir / parquet_filename
-        df.write_parquet(dest_path)
-
-        return self._create_table_record(
+        return self._create_table_record_from_metadata(
             name=name,
-            dest_path=dest_path,
-            df=df,
+            parquet_path=materialized.parquet_path,
+            schema=materialized.schema,
+            row_count=materialized.row_count,
+            column_count=materialized.column_count,
+            size_bytes=materialized.size_bytes,
             owner_id=owner_id,
             namespace_id=namespace_id,
             description=description,
@@ -908,6 +950,36 @@ class CatalogService:
             schema_json=json.dumps(schema_list),
             row_count=len(df),
             column_count=len(df.columns),
+            size_bytes=size_bytes,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+        table = self.repo.create_table(table)
+        return self._table_to_out(table)
+
+    def _create_table_record_from_metadata(
+        self,
+        name: str,
+        parquet_path: str,
+        schema: list[dict[str, str]],
+        row_count: int,
+        column_count: int,
+        size_bytes: int,
+        owner_id: int,
+        namespace_id: int | None,
+        description: str | None,
+        source_registration_id: int | None,
+        source_run_id: int | None,
+    ) -> CatalogTableOut:
+        table = CatalogTable(
+            name=name,
+            namespace_id=namespace_id,
+            description=description,
+            owner_id=owner_id,
+            file_path=parquet_path,
+            schema_json=json.dumps(schema),
+            row_count=row_count,
+            column_count=column_count,
             size_bytes=size_bytes,
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,

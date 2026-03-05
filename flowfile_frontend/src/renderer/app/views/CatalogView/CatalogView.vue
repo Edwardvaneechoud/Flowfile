@@ -22,12 +22,21 @@
         <div class="sidebar-header">
           <h3>{{ sidebarTitle }}</h3>
           <div v-if="catalogStore.activeTab === 'catalog'" class="sidebar-header-actions">
-            <button class="btn-icon" title="Register table" @click="openRegisterTableGlobal">
-              <i class="fa-solid fa-table"></i>
-            </button>
-            <button class="btn-icon" title="New catalog" @click="showCreateNamespace = true">
-              <i class="fa-solid fa-plus"></i>
-            </button>
+            <el-tooltip content="Register table" placement="bottom" :show-after="400">
+              <button class="btn-icon" @click="openRegisterTableGlobal">
+                <i class="fa-solid fa-table"></i>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="Register flow" placement="bottom" :show-after="400">
+              <button class="btn-icon" @click="openRegisterFlowGlobal">
+                <i class="fa-solid fa-file-circle-plus"></i>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="New catalog" placement="bottom" :show-after="400">
+              <button class="btn-icon" @click="showCreateNamespace = true">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </el-tooltip>
           </div>
         </div>
 
@@ -159,6 +168,8 @@
           @toggle-follow="catalogStore.toggleFollow($event)"
           @open-flow="openFlowInDesigner($event)"
           @select-table="selectTable($event)"
+          @delete-flow="handleDeleteFlow($event)"
+          @rename-flow="handleRenameFlow"
         />
         <!-- Stats overview -->
         <StatsPanel
@@ -344,6 +355,11 @@ function openRegisterTableGlobal() {
   showRegisterTable.value = true;
 }
 
+function openRegisterFlowGlobal() {
+  registerFlowNamespaceId.value = defaultNamespaceId.value ?? null;
+  showRegisterFlow.value = true;
+}
+
 async function handleDeleteTable(tableId: number) {
   if (
     !confirm("Are you sure you want to delete this table? The materialized data will be removed.")
@@ -360,6 +376,43 @@ async function handleDeleteTable(tableId: number) {
     ]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to delete table");
+  }
+}
+
+async function handleDeleteFlow(flowId: number) {
+  if (
+    !confirm(
+      "Are you sure you want to delete this flow registration? Run history will also be removed.",
+    )
+  ) {
+    return;
+  }
+  try {
+    await CatalogApi.deleteFlow(flowId);
+    catalogStore.selectedFlowId = null;
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadFavorites(),
+      catalogStore.loadFollowing(),
+      catalogStore.loadStats(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to delete flow");
+  }
+}
+
+async function handleRenameFlow(flowId: number, newName: string) {
+  try {
+    await CatalogApi.updateFlow(flowId, { name: newName });
+    await Promise.all([
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadFavorites(),
+      catalogStore.loadFollowing(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to rename flow");
   }
 }
 

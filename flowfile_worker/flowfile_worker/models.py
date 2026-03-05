@@ -20,7 +20,7 @@ def _decode_bytes(v: Any) -> bytes:
 Base64Bytes = Annotated[
     bytes,
     BeforeValidator(_decode_bytes),
-    PlainSerializer(lambda x: b64encode(x).decode('ascii'), return_type=str),
+    PlainSerializer(lambda x: b64encode(x).decode("ascii"), return_type=str),
 ]
 
 OperationType = Literal[
@@ -144,3 +144,22 @@ class RawLogInput(BaseModel):
     log_type: Literal["INFO", "WARNING", "ERROR"]
     node_id: int | None = None
     extra: dict | None = None
+
+
+class ColumnSchema(BaseModel):
+    name: str
+    dtype: str
+
+
+class CatalogMaterializeRequest(BaseModel):
+    source_file_path: str
+    parquet_filename: str | None = None
+    table_name: str | None = None
+
+
+class CatalogMaterializeResponse(BaseModel):
+    parquet_path: str
+    schema: list[ColumnSchema]
+    row_count: int
+    column_count: int
+    size_bytes: int

@@ -1,29 +1,48 @@
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="$emit('close')">
-    <div class="modal-card modal-card-lg">
-      <h3>Register Flow</h3>
-      <input v-model="name" class="input-field" placeholder="Flow name" />
-      <input v-model="description" class="input-field" placeholder="Description (optional)" />
-      <div class="file-browser-section">
-        <label class="field-label">Flow file</label>
-        <div v-if="path" class="selected-file-badge">
-          <i class="fa-solid fa-file"></i>
-          <span>{{ path }}</span>
-          <button class="clear-file-btn" title="Clear" @click="path = ''">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
-        </div>
-        <div class="file-browser-container">
-          <FileBrowser
-            :allowed-file-types="['yaml', 'yml', 'flowfile']"
-            mode="open"
-            context="flows"
-            :is-visible="visible"
-            @file-selected="handleFileSelected"
-          />
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Register Flow</h3>
+        <button class="close-btn" @click="$emit('close')">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <aside class="form-panel">
+          <div class="form-group">
+            <label class="field-label">Flow name</label>
+            <input v-model="name" class="input-field" placeholder="Flow name" />
+          </div>
+          <div class="form-group">
+            <label class="field-label">Description</label>
+            <input v-model="description" class="input-field" placeholder="Optional" />
+          </div>
+          <div v-if="path" class="selected-file-badge">
+            <i class="fa-solid fa-file"></i>
+            <span>{{ fileName }}</span>
+            <button class="clear-file-btn" title="Clear" @click="path = ''">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div v-else class="no-file-hint">
+            <i class="fa-solid fa-arrow-right"></i>
+            <span>Select a flow file from the browser</span>
+          </div>
+        </aside>
+        <div class="browser-panel">
+          <div class="file-browser-container">
+            <FileBrowser
+              :allowed-file-types="['yaml', 'yml', 'flowfile']"
+              mode="open"
+              context="flows"
+              :is-visible="visible"
+              @file-selected="handleFileSelected"
+              @update:model-value="handleFileClicked"
+            />
+          </div>
         </div>
       </div>
-      <div class="modal-actions">
+      <div class="modal-footer">
         <button class="btn-secondary" @click="$emit('close')">Cancel</button>
         <button class="btn-primary" :disabled="!name.trim() || !path.trim()" @click="submit">
           Register
@@ -34,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
@@ -54,6 +73,12 @@ const name = ref("");
 const path = ref("");
 const description = ref("");
 
+const fileName = computed(() => {
+  if (!path.value) return "";
+  const parts = path.value.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || path.value;
+});
+
 watch(
   () => props.visible,
   (val) => {
@@ -64,6 +89,15 @@ watch(
     }
   },
 );
+
+function handleFileClicked(file: { name: string; path: string; is_directory: boolean } | null) {
+  if (!file || file.is_directory) return;
+  path.value = file.path;
+  if (!name.value.trim()) {
+    const baseName = file.name.replace(/\.(yaml|yml|flowfile)$/i, "");
+    name.value = baseName;
+  }
+}
 
 function handleFileSelected(fileInfo: { name: string; path: string }) {
   path.value = fileInfo.path;
@@ -112,21 +146,79 @@ async function submit() {
 .modal-card {
   background: var(--color-background-primary);
   border-radius: var(--border-radius-lg);
-  padding: var(--spacing-6);
-  width: 400px;
-  max-width: 90vw;
   box-shadow: var(--shadow-lg);
+  width: 90vw;
+  max-width: 1400px;
+  height: 75vh;
+  max-height: 800px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.modal-card-lg {
-  width: 700px;
-  max-height: 85vh;
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-4) var(--spacing-5);
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+}
+
+.close-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-hover);
+}
+
+.modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.form-panel {
+  width: 260px;
+  flex-shrink: 0;
+  padding: var(--spacing-4) var(--spacing-5);
+  border-right: 1px solid var(--color-border-light);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
   overflow-y: auto;
 }
 
-.modal-card h3 {
-  margin: 0 0 var(--spacing-4) 0;
-  font-size: var(--font-size-lg);
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.field-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .input-field {
@@ -137,7 +229,6 @@ async function submit() {
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
-  margin-bottom: var(--spacing-3);
   box-sizing: border-box;
 }
 
@@ -145,60 +236,6 @@ async function submit() {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-2);
-}
-
-.btn-primary {
-  padding: var(--spacing-2) var(--spacing-4);
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-}
-
-.btn-primary:hover {
-  opacity: 0.9;
-}
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  padding: var(--spacing-2) var(--spacing-4);
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.btn-secondary:hover {
-  background: var(--color-background-hover);
-}
-
-.file-browser-section {
-  margin-bottom: var(--spacing-3);
-}
-
-.field-label {
-  display: block;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: var(--spacing-2);
 }
 
 .selected-file-badge {
@@ -209,9 +246,9 @@ async function submit() {
   background: rgba(59, 130, 246, 0.08);
   border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: var(--border-radius-md);
-  margin-bottom: var(--spacing-2);
   font-size: var(--font-size-sm);
   color: var(--color-primary);
+  margin-top: auto;
 }
 
 .selected-file-badge span {
@@ -235,6 +272,7 @@ async function submit() {
   cursor: pointer;
   border-radius: var(--border-radius-sm);
   font-size: 10px;
+  flex-shrink: 0;
 }
 
 .clear-file-btn:hover {
@@ -242,10 +280,71 @@ async function submit() {
   background: var(--color-background-hover);
 }
 
-.file-browser-container {
-  border: 1px solid var(--color-border-light);
+.no-file-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border-primary);
   border-radius: var(--border-radius-md);
-  height: 350px;
+  margin-top: auto;
+}
+
+.browser-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-browser-container {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-5);
+  border-top: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.btn-primary {
+  padding: var(--spacing-2) var(--spacing-4);
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  padding: var(--spacing-2) var(--spacing-4);
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--color-background-hover);
 }
 </style>
