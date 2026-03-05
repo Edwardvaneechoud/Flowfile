@@ -162,10 +162,7 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async registerTable(
-    body: CatalogTableCreate,
-    filePath: string,
-  ): Promise<CatalogTable> {
+  static async registerTable(body: CatalogTableCreate, filePath: string): Promise<CatalogTable> {
     const response = await axios.post<CatalogTable>("/catalog/tables", body, {
       params: { file_path: filePath },
     });
@@ -181,14 +178,9 @@ export class CatalogApi {
     await axios.delete(`/catalog/tables/${id}`);
   }
 
-  static async getTablePreview(
-    tableId: number,
-    limit = 100,
-  ): Promise<CatalogTablePreview> {
-    const response = await axios.get<CatalogTablePreview>(
-      `/catalog/tables/${tableId}/preview`,
-      { params: { limit } },
-    );
+  static async getTablePreview(tableId: number, limit = 100): Promise<CatalogTablePreview> {
+    const url = `/catalog/tables/${tableId}/preview`;
+    const response = await axios.get<CatalogTablePreview>(url, { params: { limit } });
     return response.data;
   }
 
