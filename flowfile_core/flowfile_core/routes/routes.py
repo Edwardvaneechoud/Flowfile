@@ -104,6 +104,30 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
         logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
 
 
+def _resolve_source_registration_id(flow) -> None:
+    """Resolve and set source_registration_id on a flow from the catalog registration.
+
+    Looks up the flow_registrations table by flow_path and stamps the
+    registration ID onto the in-memory flow settings so it is available
+    for run tracking and kernel nodes without needing to re-resolve later.
+    """
+    if getattr(flow.flow_settings, "source_registration_id", None) is not None:
+        return
+    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+    if not flow_path:
+        return
+    try:
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+            if reg:
+                try:
+                    flow.flow_settings.source_registration_id = reg.id
+                except (AttributeError, ValueError):
+                    object.__setattr__(flow.flow_settings, "source_registration_id", reg.id)
+    except Exception:
+        logger.info(f"Could not resolve source_registration_id for '{flow_path}' (non-critical)", exc_info=True)
+
+
 @router.post("/upload/")
 async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     """Uploads a file to the server's 'uploads' directory.
@@ -253,17 +277,10 @@ def _run_and_track(flow, user_id: int | None):
 
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
-    if flow.flow_settings.source_registration_id is None:
-        flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-        if flow_path:
-            try:
-                with get_db_context() as db:
-                    reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-                    if reg:
-                        flow.flow_settings.source_registration_id = reg.id
-            except Exception as exc:
-                logger.warning(f"Could not resolve source_registration_id for flow '{flow_name}': {exc}")
-        logger.debug(f"source_registration_id for flow '{flow_name}': {flow.flow_settings.source_registration_id}")
+    _resolve_source_registration_id(flow)
+    logger.debug(
+        f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
+    )
 
     run_info = flow.run_graph()
     if run_info is None:
@@ -295,8 +312,7 @@ def _run_and_track(flow, user_id: int | None):
             duration = (run_info.end_time - run_info.start_time).total_seconds()
 
         with get_db_context() as db:
-            # Reuse the registration ID resolved before execution
-            reg_id = flow.flow_settings.source_registration_id
+            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
             flow_path = flow.flow_settings.path or flow.flow_settings.save_location
 
             db_run = FlowRun(
@@ -705,6 +721,7 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         _auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+        _resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1014,6 +1031,7 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         _auto_register_flow(validated_path, flow.flow_settings.name, user_id)
+        _resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1023,17 +1041,7 @@ def save_flow(flow_id: int, flow_path: str = None):
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
-    # Resolve source_registration_id so catalog read links can be recorded
-    if flow.flow_settings.source_registration_id is None:
-        resolve_path = flow_path or flow.flow_settings.path or flow.flow_settings.save_location
-        if resolve_path:
-            try:
-                with get_db_context() as db:
-                    reg = db.query(FlowRegistration).filter_by(flow_path=resolve_path).first()
-                    if reg:
-                        flow.flow_settings.source_registration_id = reg.id
-            except Exception:
-                logger.warning("Could not resolve source_registration_id at save time", exc_info=True)
+    _resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
 
 
