@@ -19,9 +19,12 @@ import yaml
 from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
+from flowfile_core.catalog import CatalogService, TableExistsError
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -80,11 +83,6 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
-
-from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.database.connection import get_db_context
-
 
 try:
     __version__ = version("Flowfile")
@@ -1968,13 +1966,13 @@ class FlowGraph:
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
-                svc = CatalogService(repo)
                 if node_catalog_reader.catalog_table_id is not None:
-                    table_out = svc.get_table(node_catalog_reader.catalog_table_id)
-                    file_path = table_out.file_path
-                    resolved_table_id = table_out.id
+                    table = repo.get_table(node_catalog_reader.catalog_table_id)
+                    if table is not None:
+                        file_path = table.file_path
+                        resolved_table_id = table.id
                 elif node_catalog_reader.catalog_table_name:
-                    tables = svc.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
+                    tables = repo.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
                     for t in tables:
                         if t.name == node_catalog_reader.catalog_table_name:
                             file_path = t.file_path
@@ -2030,16 +2028,39 @@ class FlowGraph:
                             if t.name == settings.table_name:
                                 svc.delete_table(t.id)
                                 break
-                    svc.register_table_from_parquet(
-                        name=settings.table_name,
-                        parquet_path=str(dest_path),
-                        owner_id=node_catalog_writer.user_id or 1,
-                        namespace_id=settings.namespace_id,
-                        description=settings.description,
-                        source_registration_id=self._flow_settings.source_registration_id,
-                    )
+                    try:
+                        svc.register_table_from_parquet(
+                            name=settings.table_name,
+                            parquet_path=str(dest_path),
+                            owner_id=node_catalog_writer.user_id or 1,
+                            namespace_id=settings.namespace_id,
+                            description=settings.description,
+                            source_registration_id=self._flow_settings.source_registration_id,
+                        )
+                    except TableExistsError:
+                        if settings.write_mode == "overwrite":
+                            existing = svc.list_tables(namespace_id=settings.namespace_id)
+                            for t in existing:
+                                if t.name == settings.table_name:
+                                    svc.delete_table(t.id)
+                                    break
+                            svc.register_table_from_parquet(
+                                name=settings.table_name,
+                                parquet_path=str(dest_path),
+                                owner_id=node_catalog_writer.user_id or 1,
+                                namespace_id=settings.namespace_id,
+                                description=settings.description,
+                                source_registration_id=self._flow_settings.source_registration_id,
+                            )
+                        else:
+                            raise
             except Exception:
                 logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
+                if dest_path.exists():
+                    try:
+                        dest_path.unlink()
+                    except OSError:
+                        logger.warning("Failed to clean up orphan parquet %s", dest_path, exc_info=True)
                 raise
 
             return df

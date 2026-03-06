@@ -9,6 +9,7 @@ raises ``HTTPException`` — only domain-specific exceptions from
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -53,6 +54,8 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CatalogService:
     """Coordinates all catalog business logic.
@@ -89,6 +92,7 @@ class CatalogService:
         last_run = self.repo.last_run_for_flow(flow.id)
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         produced_tables = self.repo.list_tables_for_flow(flow.id)
+        read_tables = self.repo.list_read_tables_for_flow(flow.id)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -108,6 +112,7 @@ class CatalogService:
             tables_produced=[
                 CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
             ],
+            tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read_tables],
         )
 
     def _bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
@@ -121,17 +126,19 @@ class CatalogService:
 
         flow_ids = [f.id for f in flows]
 
-        # Bulk fetch all enrichment data (5 queries total)
+        # Bulk fetch all enrichment data (6 queries total)
         fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
         follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
         run_stats = self.repo.bulk_get_run_stats(flow_ids)
         artifact_counts = self.repo.bulk_get_artifact_counts(flow_ids)
         tables_by_flow = self.repo.bulk_get_tables_for_flows(flow_ids)
+        read_tables_by_flow = self.repo.bulk_get_read_tables_for_flows(flow_ids)
 
         result: list[FlowRegistrationOut] = []
         for flow in flows:
             run_count, last_run = run_stats.get(flow.id, (0, None))
             produced = tables_by_flow.get(flow.id, [])
+            read = read_tables_by_flow.get(flow.id, [])
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -152,6 +159,7 @@ class CatalogService:
                     tables_produced=[
                         CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
                     ],
+                    tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read],
                 )
             )
         return result
@@ -291,7 +299,7 @@ class CatalogService:
         flows = self.repo.count_flows_in_namespace(namespace_id)
         tables = self.repo.count_tables_in_namespace(namespace_id)
         if children > 0 or flows > 0 or tables > 0:
-            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows)
+            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows, tables=tables)
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -765,7 +773,6 @@ class CatalogService:
             namespace_id=table.namespace_id,
             description=table.description,
             owner_id=table.owner_id,
-            file_path=table.file_path,
             file_exists=Path(table.file_path).is_file() if table.file_path else False,
             schema_columns=columns,
             row_count=table.row_count,
@@ -913,12 +920,19 @@ class CatalogService:
             raise TableExistsError(name=name, namespace_id=namespace_id)
 
         dest_path = Path(parquet_path)
-        df = pl.read_parquet(dest_path)
+        lf = pl.scan_parquet(dest_path)
+        schema = lf.collect_schema()
+        schema_list = [{"name": col_name, "dtype": str(col_dtype)} for col_name, col_dtype in schema.items()]
+        row_count = lf.select(pl.len()).collect().item()
+        size_bytes = dest_path.stat().st_size
 
-        return self._create_table_record(
+        return self._create_table_record_from_metadata(
             name=name,
-            dest_path=dest_path,
-            df=df,
+            parquet_path=str(dest_path),
+            schema=schema_list,
+            row_count=row_count,
+            column_count=len(schema),
+            size_bytes=size_bytes,
             owner_id=owner_id,
             namespace_id=namespace_id,
             description=description,
@@ -1043,12 +1057,15 @@ class CatalogService:
         if table is None:
             raise TableNotFoundError(table_id=table_id)
 
-        # Remove the materialized file
-        parquet_path = Path(table.file_path)
-        if parquet_path.exists():
-            parquet_path.unlink()
-
+        file_path = table.file_path
         self.repo.delete_table(table_id)
+
+        try:
+            parquet_path = Path(file_path)
+            if parquet_path.exists():
+                parquet_path.unlink()
+        except OSError:
+            logger.warning("Failed to delete materialized file %s", file_path, exc_info=True)
 
     def get_table_preview(self, table_id: int, limit: int = 100) -> CatalogTablePreview:
         """Read the first N rows from the materialized Parquet file.
@@ -1072,8 +1089,12 @@ class CatalogService:
         columns = df.columns
         dtypes = [str(df[col].dtype) for col in columns]
 
-        # Convert to list of lists (JSON-safe) using Polars native method
-        rows = df.rows()
+        def _make_json_safe(val: object) -> object:
+            if val is None or isinstance(val, bool | int | float | str):
+                return val
+            return str(val)
+
+        rows = [[_make_json_safe(v) for v in row] for row in df.rows()]
 
         return CatalogTablePreview(
             columns=columns,

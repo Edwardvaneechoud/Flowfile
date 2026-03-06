@@ -148,6 +148,22 @@
       </div>
     </div>
 
+    <!-- Tables Read -->
+    <div v-if="flow.tables_read && flow.tables_read.length > 0" class="section">
+      <h3>Tables Read</h3>
+      <div class="tables-produced-list">
+        <div
+          v-for="table in flow.tables_read"
+          :key="table.id"
+          class="table-produced-item"
+          @click="$emit('selectTable', table.id)"
+        >
+          <i class="fa-solid fa-table table-read-icon"></i>
+          <span>{{ table.name }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Artifacts Section -->
     <div class="section">
       <h3>Global Artifacts</h3>
@@ -588,6 +604,11 @@ function formatSize(bytes: number | null): string {
 
 .table-produced-icon {
   color: var(--color-primary);
+  font-size: var(--font-size-xs);
+}
+
+.table-read-icon {
+  color: var(--color-text-muted);
   font-size: var(--font-size-xs);
 }
 

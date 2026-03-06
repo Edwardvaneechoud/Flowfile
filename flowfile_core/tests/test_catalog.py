@@ -274,7 +274,6 @@ class TestCatalogTableMaterialization:
                 namespace_id=schema.id,
             )
 
-            assert table_out.file_path == response_payload["parquet_path"]
             assert table_out.row_count == response_payload["row_count"]
             assert table_out.column_count == response_payload["column_count"]
             assert table_out.size_bytes == response_payload["size_bytes"]

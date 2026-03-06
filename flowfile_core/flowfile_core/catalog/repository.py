@@ -577,9 +577,7 @@ class SQLAlchemyCatalogRepository:
     def upsert_read_link(self, table_id: int, registration_id: int) -> None:
         """Record that a flow reads from a catalog table (idempotent)."""
         existing = (
-            self._db.query(CatalogTableReadLink)
-            .filter_by(table_id=table_id, registration_id=registration_id)
-            .first()
+            self._db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=registration_id).first()
         )
         if not existing:
             self._db.add(CatalogTableReadLink(table_id=table_id, registration_id=registration_id))
@@ -588,9 +586,7 @@ class SQLAlchemyCatalogRepository:
     def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]:
         """Return all flows that read from a given table."""
         link_rows = (
-            self._db.query(CatalogTableReadLink.registration_id)
-            .filter(CatalogTableReadLink.table_id == table_id)
-            .all()
+            self._db.query(CatalogTableReadLink.registration_id).filter(CatalogTableReadLink.table_id == table_id).all()
         )
         reg_ids = [r[0] for r in link_rows]
         if not reg_ids:
@@ -612,9 +608,28 @@ class SQLAlchemyCatalogRepository:
         table_ids = [r[0] for r in link_rows]
         if not table_ids:
             return []
-        return (
-            self._db.query(CatalogTable)
+        return self._db.query(CatalogTable).filter(CatalogTable.id.in_(table_ids)).order_by(CatalogTable.name).all()
+
+    def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]:
+        """Return tables read by each flow_id in one query."""
+        if not flow_ids:
+            return {}
+        link_rows = (
+            self._db.query(CatalogTableReadLink).filter(CatalogTableReadLink.registration_id.in_(flow_ids)).all()
+        )
+        table_ids = list({link.table_id for link in link_rows})
+        if not table_ids:
+            return {}
+        tables_by_id = {
+            t.id: t
+            for t in self._db.query(CatalogTable)
             .filter(CatalogTable.id.in_(table_ids))
             .order_by(CatalogTable.name)
             .all()
-        )
+        }
+        result: dict[int, list[CatalogTable]] = {}
+        for link in link_rows:
+            table = tables_by_id.get(link.table_id)
+            if table:
+                result.setdefault(link.registration_id, []).append(table)
+        return result

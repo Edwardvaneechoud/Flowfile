@@ -35,6 +35,8 @@ from flowfile_core.catalog import (
     TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
+from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
     CatalogTableCreate,
@@ -298,12 +300,26 @@ def open_run_snapshot(
     except NoSnapshotError:
         raise HTTPException(422, "No flow snapshot available for this run")
 
-    # Determine file extension based on content
+    # Parse snapshot and assign a new unique flow_id so the imported
+    # snapshot opens as a separate tab instead of overwriting an
+    # already-open flow that shares the same original ID.
     try:
-        json.loads(snapshot_data)
+        parsed = json.loads(snapshot_data)
         suffix = ".json"
     except (json.JSONDecodeError, TypeError):
+        import yaml
+
+        parsed = yaml.safe_load(snapshot_data)
         suffix = ".yaml"
+
+    parsed["flowfile_id"] = create_unique_id()
+
+    if suffix == ".json":
+        snapshot_data = json.dumps(parsed)
+    else:
+        import yaml
+
+        snapshot_data = yaml.dump(parsed)
 
     # Write to the flows temp directory (safe location for import)
     temp_dir = storage.temp_directory_for_flows
@@ -400,6 +416,7 @@ def remove_follow(
 @router.get("/tables", response_model=list[CatalogTableOut])
 def list_tables(
     namespace_id: int | None = None,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List catalog tables, optionally filtered by namespace."""
@@ -414,9 +431,10 @@ def register_table(
 ):
     """Register a new table by materializing a source file as Parquet."""
     try:
+        validated_path = validate_path_under_cwd(body.file_path)
         return service.register_table(
             name=body.name,
-            file_path=body.file_path,
+            file_path=validated_path,
             owner_id=current_user.id,
             namespace_id=body.namespace_id,
             description=body.description,
@@ -432,6 +450,7 @@ def register_table(
 @router.get("/tables/{table_id}", response_model=CatalogTableOut)
 def get_table(
     table_id: int,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -444,6 +463,7 @@ def get_table(
 def update_table(
     table_id: int,
     body: CatalogTableUpdate,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -460,6 +480,7 @@ def update_table(
 @router.delete("/tables/{table_id}", status_code=204)
 def delete_table(
     table_id: int,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -472,6 +493,7 @@ def delete_table(
 def get_table_preview(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Preview the first N rows of a catalog table."""

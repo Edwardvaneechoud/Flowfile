@@ -77,6 +77,7 @@ class FlowRegistrationOut(BaseModel):
     file_exists: bool = True
     artifact_count: int = 0
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
+    tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -195,7 +196,6 @@ class CatalogTableOut(BaseModel):
     namespace_id: int | None = None
     description: str | None = None
     owner_id: int
-    file_path: str
     file_exists: bool = True
     schema_columns: list[ColumnSchema] = Field(default_factory=list)
     row_count: int | None = None

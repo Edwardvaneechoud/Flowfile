@@ -55,6 +55,7 @@ export interface FlowRegistration {
   file_exists: boolean;
   artifact_count: number;
   tables_produced: CatalogTableSummary[];
+  tables_read: CatalogTableSummary[];
 }
 
 export interface FlowRegistrationCreate {
@@ -147,7 +148,6 @@ export interface CatalogTable {
   namespace_id: number | null;
   description: string | null;
   owner_id: number;
-  file_path: string;
   file_exists: boolean;
   schema_columns: ColumnSchema[];
   row_count: number | null;

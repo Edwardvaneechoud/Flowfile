@@ -60,6 +60,20 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
+        # Rename legacy 'user_flows' namespace to 'default'
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_namespaces'"))
+        if result.fetchone():
+            row = conn.execute(
+                text("SELECT id FROM catalog_namespaces WHERE name = 'user_flows' AND level = 1")
+            ).fetchone()
+            if row:
+                logger.info("Renaming legacy 'user_flows' namespace to 'default'")
+                conn.execute(
+                    text("UPDATE catalog_namespaces SET name = 'default' WHERE id = :ns_id"),
+                    {"ns_id": row[0]},
+                )
+                conn.commit()
+
 
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
