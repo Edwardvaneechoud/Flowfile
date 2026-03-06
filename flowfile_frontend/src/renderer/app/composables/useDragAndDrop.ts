@@ -5,6 +5,7 @@ import { ref, watch, markRaw, nextTick } from "vue";
 import type {
   NodeTemplate,
   NodeInput,
+  NodeHandle,
   VueFlowInput,
   NodeCopyInput,
   NodePromise,
@@ -363,7 +364,7 @@ export default function useDragAndDrop() {
       if (!editorStore.showEdgeLabels) return edge;
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
-        const output = sourceNode.data.outputs.find((o: any) => o.id === edge.sourceHandle);
+        const output = (sourceNode.data.outputs as NodeHandle[]).find((o) => o.id === edge.sourceHandle);
         if (output?.label) {
           return { ...edge, label: output.label };
         }
@@ -552,7 +553,7 @@ export default function useDragAndDrop() {
         const sourceNodeInfo = multiCopyValue.nodes.find(
           (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
         );
-        const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""));
+        const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""), 10);
         const outputLabel =
           sourceNodeInfo?.nodeTemplate?.output_names &&
           sourceNodeInfo.nodeTemplate.output_names.length > 1

@@ -248,6 +248,7 @@ import { useEditorStore } from "../../../../../stores/editor-store";
 import { useFlowStore } from "../../../../../stores/flow-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import type { NodePythonScript, NotebookCell } from "../../../../../types/node.types";
+import type { InputNameInfo } from "../../../../../types/flow.types";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
@@ -272,11 +273,6 @@ const nodeData = ref<NodeData | null>(null);
 const cells = ref<NotebookCell[]>([]);
 
 // Named inputs/outputs state
-interface InputNameInfo {
-  name: string;
-  source_node_id: number;
-  source_node_type: string;
-}
 const inputNames = ref<InputNameInfo[]>([]);
 const outputNames = ref<string[]>(["main"]);
 

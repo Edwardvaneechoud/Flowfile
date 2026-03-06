@@ -149,6 +149,7 @@ class FlowSettings(FlowGraphConfig):
         auto_save (bool): Flag to enable or disable automatic saving.
         modified_on (Optional[float]): Timestamp of the last modification.
         show_detailed_progress (bool): Flag to show detailed progress during execution.
+        show_edge_labels (bool): Flag to show or hide named edge labels on connections.
         is_running (bool): Indicates if the flow is currently running.
         is_canceled (bool): Indicates if the flow execution has been canceled.
         track_history (bool): Flag to enable or disable undo/redo history tracking.

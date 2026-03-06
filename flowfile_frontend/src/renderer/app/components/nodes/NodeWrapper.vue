@@ -171,7 +171,7 @@ import { toSnakeCase } from "../../views/DesignerView/utils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
-import type { NodeTemplate } from "../../types";
+import type { NodeTemplate, NodeHandle } from "../../types";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -199,24 +199,16 @@ const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
-// Define the data structure
+// Define the data structure for VueFlow node data
 interface NodeData {
   id: number;
   label: string;
-  component?: any; // Made optional since we might use nodeTemplate instead
+  component?: ReturnType<typeof import("vue")["defineComponent"]>;
   nodeReference?: string;
-  inputs: Array<{
-    id: string;
-    position: any;
-    label?: string;
-  }>;
-  outputs: Array<{
-    id: string;
-    position: any;
-    label?: string;
-  }>;
-  nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
-  nodeItem?: string; // Optional node item name for backward compatibility
+  inputs: NodeHandle[];
+  outputs: NodeHandle[];
+  nodeTemplate?: NodeTemplate;
+  nodeItem?: string;
 }
 
 const props = defineProps({

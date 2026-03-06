@@ -57,7 +57,7 @@ def write_inputs_to_parquet(
     # Named inputs: each table gets its own key
     result: dict[str, list[str]] = {}
     all_paths: list[str] = []
-    for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names)):
+    for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):
         local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
         fetcher = ExternalDfFetcher(
             flow_id=flow_id,

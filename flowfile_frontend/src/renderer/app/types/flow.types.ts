@@ -2,6 +2,7 @@
 // Consolidated from features/designer/types.ts and nodes/nodeLogic.ts
 
 import type { NodeResult } from "./node.types";
+import type { Position } from "@vue-flow/core";
 
 // ============================================================================
 // Flow Execution Types
@@ -110,6 +111,26 @@ export interface NodeInput extends NodeTemplate {
   pos_x: number;
   pos_y: number;
   node_reference?: string;
+}
+
+// ============================================================================
+// Handle Types
+// ============================================================================
+
+export interface NodeHandle {
+  id: string;
+  position: Position;
+  label?: string;
+}
+
+// ============================================================================
+// Input Name Info (for kernel node autocomplete)
+// ============================================================================
+
+export interface InputNameInfo {
+  name: string;
+  source_node_id: number;
+  source_node_type: string;
 }
 
 // ============================================================================

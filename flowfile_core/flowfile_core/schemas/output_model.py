@@ -72,6 +72,14 @@ class TableExample(BaseModel):
     has_run_with_current_setup: bool = False
 
 
+class NodeInputNameInfo(BaseModel):
+    """Describes a named input available for a kernel node."""
+
+    name: str
+    source_node_id: int
+    source_node_type: str
+
+
 class NodeData(BaseModel):
     """A comprehensive model holding the complete state and data for a single node.
 
