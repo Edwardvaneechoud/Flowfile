@@ -6,6 +6,7 @@ each piece independently testable.
 
 import logging
 import os
+import re
 
 from flowfile_core.configs.settings import SERVER_PORT
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -14,6 +15,14 @@ from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
 
 logger = logging.getLogger(__name__)
+
+_SAFE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _assert_safe_name(name: str) -> None:
+    """Raise if *name* is not a safe filesystem identifier."""
+    if not _SAFE_NAME_RE.match(name):
+        raise ValueError(f"Unsafe input/output name rejected: {name!r}")
 
 
 def write_inputs_to_parquet(
@@ -58,6 +67,7 @@ def write_inputs_to_parquet(
     result: dict[str, list[str]] = {}
     all_paths: list[str] = []
     for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):
+        _assert_safe_name(name)
         local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
         fetcher = ExternalDfFetcher(
             flow_id=flow_id,

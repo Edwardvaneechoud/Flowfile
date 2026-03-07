@@ -190,9 +190,9 @@ class TestResolveNodePaths:
 class TestFlowSettingsShowEdgeLabels:
     """Tests for the show_edge_labels field on FlowSettings."""
 
-    def test_defaults_true(self):
+    def test_defaults_false(self):
         settings = FlowSettings(flow_id=1, name="test", path=".")
-        assert settings.show_edge_labels is True
+        assert settings.show_edge_labels is False
 
     def test_explicit_false(self):
         settings = FlowSettings(flow_id=1, name="test", path=".", show_edge_labels=False)
@@ -205,10 +205,10 @@ class TestFlowSettingsShowEdgeLabels:
         assert restored.show_edge_labels is False
 
     def test_backward_compat_missing_field(self):
-        """Old data without show_edge_labels defaults to True."""
+        """Old data without show_edge_labels defaults to False."""
         data = {"flow_id": 1, "name": "test", "path": "."}
         settings = FlowSettings.model_validate(data)
-        assert settings.show_edge_labels is True
+        assert settings.show_edge_labels is False
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +257,7 @@ class TestWriteInputsToParquet:
             "flowfile_core.kernel.execution.ExternalDfFetcher",
             side_effect=lambda **kw: _mock_fetcher(),
         ):
-            result = write_inputs_to_parquet(
-                (ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"]
-            )
+            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"])
 
         assert "orders" in result
         assert "clients" in result
@@ -279,9 +277,7 @@ class TestWriteInputsToParquet:
             "flowfile_core.kernel.execution.ExternalDfFetcher",
             side_effect=lambda **kw: _mock_fetcher(),
         ):
-            result = write_inputs_to_parquet(
-                (ft1,), mgr, input_dir, 1, 2, input_names=["main"]
-            )
+            result = write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
 
         assert list(result.keys()) == ["main"]
         assert len(result["main"]) == 1
@@ -312,9 +308,7 @@ class TestWriteInputsToParquet:
             side_effect=lambda **kw: _mock_fetcher(has_error=True, error_description="disk full"),
         ):
             with pytest.raises(RuntimeError, match="orders"):
-                write_inputs_to_parquet(
-                    (ft1,), mgr, input_dir, 1, 2, input_names=["orders"]
-                )
+                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["orders"])
 
     def test_empty_tuple_returns_empty_main(self, tmp_path: Path):
         """An empty tuple of tables returns {"main": []}."""
@@ -339,28 +333,20 @@ class TestOutputNamesSchema:
         assert node.output_names == ["main"]
 
     def test_python_script_custom_output_names(self):
-        node = input_schema.NodePythonScript(
-            flow_id=1, node_id=1, output_names=["result", "errors"]
-        )
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, output_names=["result", "errors"])
         assert node.output_names == ["result", "errors"]
 
     def test_python_script_roundtrip(self):
-        node = input_schema.NodePythonScript(
-            flow_id=1, node_id=1, output_names=["a", "b"]
-        )
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, output_names=["a", "b"])
         restored = input_schema.NodePythonScript.model_validate(node.model_dump())
         assert restored.output_names == ["a", "b"]
 
     def test_user_defined_node_defaults_to_main(self):
-        node = input_schema.UserDefinedNode(
-            flow_id=1, node_id=1, settings={}, kernel_id=None
-        )
+        node = input_schema.UserDefinedNode(flow_id=1, node_id=1, settings={}, kernel_id=None)
         assert node.output_names == ["main"]
 
     def test_user_defined_node_custom_output_names(self):
-        node = input_schema.UserDefinedNode(
-            flow_id=1, node_id=1, settings={}, output_names=["out1", "out2"]
-        )
+        node = input_schema.UserDefinedNode(flow_id=1, node_id=1, settings={}, output_names=["out1", "out2"])
         assert node.output_names == ["out1", "out2"]
 
 
@@ -391,3 +377,39 @@ class TestNodeReferenceValidator:
     def test_rejects_spaces(self):
         with pytest.raises(Exception, match="spaces"):
             input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="my ref")
+
+    def test_rejects_path_traversal(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="../../etc/passwd")
+
+    def test_rejects_slashes(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="foo/bar")
+
+    def test_rejects_dots(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="foo.bar")
+
+    def test_rejects_starts_with_digit(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, node_reference="1abc")
+
+
+class TestOutputNamesValidator:
+    """Tests for the output_names field_validator on NodePythonScript and UserDefinedNode."""
+
+    def test_rejects_unsafe_chars(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, output_names=["../evil"])
+
+    def test_rejects_duplicates(self):
+        with pytest.raises(Exception, match="unique"):
+            input_schema.NodePythonScript(flow_id=1, node_id=1, output_names=["out", "out"])
+
+    def test_valid_names_pass(self):
+        node = input_schema.NodePythonScript(flow_id=1, node_id=1, output_names=["clean", "rejected"])
+        assert node.output_names == ["clean", "rejected"]
+
+    def test_user_defined_node_rejects_unsafe(self):
+        with pytest.raises(Exception, match="lowercase letters, digits, and underscores"):
+            input_schema.UserDefinedNode(flow_id=1, node_id=1, settings={}, output_names=["foo/bar"])

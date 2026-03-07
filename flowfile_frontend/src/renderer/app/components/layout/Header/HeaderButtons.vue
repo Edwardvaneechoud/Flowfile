@@ -287,7 +287,7 @@ const loadFlowSettings = async () => {
   if (!flowSettings.value) return;
 
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
-  flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? true;
+  flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
   editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
   editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 

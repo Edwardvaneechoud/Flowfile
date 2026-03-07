@@ -970,9 +970,7 @@ class FlowGraph:
                 node._kernel_cancel_context = (kernel_id, manager)
                 node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 if node is not None:
                     node._kernel_cancel_context = None
@@ -1325,9 +1323,7 @@ class FlowGraph:
                 node._kernel_cancel_context = (kernel_id, manager)
                 node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 if node is not None:
                     node._kernel_cancel_context = None
@@ -2595,8 +2591,9 @@ class FlowGraph:
 
         Uses the source node's ``node_reference`` when set, otherwise
         falls back to ``df_{node_id}``.  Returns ``None`` when no node
-        is available or there are no input tables (original unnamed
-        behaviour).
+        is available, there are no input tables, or the number of
+        connected sources doesn't match ``table_count`` (original
+        unnamed behaviour).
         """
         if node is None or table_count == 0:
             return None
@@ -2605,6 +2602,8 @@ class FlowGraph:
             ref = getattr(source_node.setting_input, "node_reference", None)
             name = ref if ref else f"df_{source_node.node_id}"
             input_names.append(name)
+        if len(input_names) != table_count:
+            return None
         return input_names
 
     def _get_upstream_node_ids(self, node_id: int) -> list[int]:
