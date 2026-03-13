@@ -1084,6 +1084,38 @@ class NodeOutput(NodeSingleInput):
         return result
 
 
+class CatalogWriteSettings(BaseModel):
+    """Settings for writing data to the catalog as a Parquet table."""
+
+    table_name: str = ""
+    namespace_id: int | None = None
+    description: str | None = None
+    write_mode: str = "overwrite"  # "overwrite" or "error"
+
+
+class NodeCatalogWriter(NodeSingleInput):
+    """Settings for a node that writes its input to the catalog."""
+
+    catalog_write_settings: CatalogWriteSettings = Field(default_factory=CatalogWriteSettings)
+
+    def get_default_description(self) -> str:
+        s = self.catalog_write_settings
+        return f"Catalog: {s.table_name}" if s.table_name else "Write to Catalog"
+
+
+class NodeCatalogReader(NodeBase):
+    """Settings for a node that reads a table from the catalog."""
+
+    catalog_table_id: int | None = None
+    catalog_table_name: str | None = None
+    catalog_namespace_id: int | None = None
+
+    def get_default_description(self) -> str:
+        if self.catalog_table_name:
+            return f"Catalog: {self.catalog_table_name}"
+        return "Read from Catalog"
+
+
 class NodeOutputConnection(BaseModel):
     """Represents the output side of a connection between two nodes."""
 

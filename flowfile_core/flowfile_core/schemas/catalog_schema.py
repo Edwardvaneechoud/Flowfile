@@ -41,6 +41,7 @@ class NamespaceTree(NamespaceOut):
     children: list["NamespaceTree"] = Field(default_factory=list)
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
+    tables: list["CatalogTableOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -75,8 +76,20 @@ class FlowRegistrationOut(BaseModel):
     last_run_success: bool | None = None
     file_exists: bool = True
     artifact_count: int = 0
+    tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
+    tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
+
+
+class CatalogTableSummary(BaseModel):
+    """Lightweight reference to a catalog table (used in flow detail views)."""
+
+    id: int
+    name: str
+    namespace_id: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Flow Run Schemas ====================
@@ -156,6 +169,66 @@ class GlobalArtifactOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ==================== Catalog Table Schemas ====================
+
+
+class CatalogTableCreate(BaseModel):
+    name: str
+    file_path: str
+    namespace_id: int | None = None
+    description: str | None = None
+
+
+class CatalogTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+
+
+class ColumnSchema(BaseModel):
+    name: str
+    dtype: str
+
+
+class CatalogTableOut(BaseModel):
+    id: int
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    owner_id: int
+    file_exists: bool = True
+    schema_columns: list[ColumnSchema] = Field(default_factory=list)
+    row_count: int | None = None
+    column_count: int | None = None
+    size_bytes: int | None = None
+    source_registration_id: int | None = None
+    source_registration_name: str | None = None
+    source_run_id: int | None = None
+    read_by_flows: list["FlowSummary"] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlowSummary(BaseModel):
+    """Lightweight reference to a registered flow."""
+
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CatalogTablePreview(BaseModel):
+    """Preview data: column names + rows of values."""
+
+    columns: list[str]
+    dtypes: list[str]
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+
+
 # ==================== Catalog Overview ====================
 
 
@@ -165,9 +238,12 @@ class CatalogStats(BaseModel):
     total_runs: int = 0
     total_favorites: int = 0
     total_artifacts: int = 0
+    total_tables: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
 
 
 # Rebuild forward-referenced models
+CatalogTableOut.model_rebuild()
+FlowRegistrationOut.model_rebuild()
 NamespaceTree.model_rebuild()

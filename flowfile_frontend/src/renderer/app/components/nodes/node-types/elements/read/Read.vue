@@ -218,30 +218,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-}
-
-.context-menu button {
-  display: block;
-  background: none;
-  border: none;
-  padding: 4px 8px;
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-}
-
-.context-menu button:hover {
-  background-color: var(--color-background-secondary);
-}
-
 .file-upload-wrapper {
   position: relative;
   width: 100%;
@@ -273,19 +249,5 @@ defineExpose({
 .file-label-text {
   flex-grow: 1;
   margin-left: 10px;
-}
-
-input[type="text"] {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.2s ease;
-}
-
-input[type="text"]:focus {
-  border-color: #3498db;
-  outline: none;
 }
 </style>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Background circular shape -->
+  <circle cx="100" cy="100" r="100" fill="#027789" />
+
+  <!-- Open book / catalog shape -->
+  <path d="M60 55 L60 125 Q100 115 100 115 Q100 115 140 125 L140 55 Q100 65 100 65 Q100 65 60 55 Z" fill="#FFFFFF" fill-opacity="0.2" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round" />
+
+  <!-- Book spine -->
+  <line x1="100" y1="65" x2="100" y2="115" stroke="#FFFFFF" stroke-width="2" />
+
+  <!-- Data lines on left page -->
+  <line x1="70" y1="72" x2="93" y2="76" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+  <line x1="70" y1="82" x2="93" y2="84" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+  <line x1="70" y1="92" x2="93" y2="92" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+
+  <!-- Data lines on right page -->
+  <line x1="107" y1="76" x2="130" y2="72" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+  <line x1="107" y1="84" x2="130" y2="82" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+  <line x1="107" y1="92" x2="130" y2="92" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" />
+
+  <!-- Write arrow (into book) -->
+  <line x1="100" y1="152" x2="100" y2="130" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+  <polyline points="90,138 100,128 110,138" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Label -->
+  <text x="100" y="172" font-family="Arial" font-size="22" font-weight="bold" text-anchor="middle" fill="#FFFFFF">CATALOG</text>
+</svg>

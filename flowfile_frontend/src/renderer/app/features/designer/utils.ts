@@ -9,6 +9,8 @@ const BUILTIN_ICONS = new Set([
   "cloud_storage_reader.png",
   "cloud_storage_writer.png",
   "cross_join.png",
+  "catalog_reader.svg",
+  "catalog_writer.svg",
   "database_reader.svg",
   "database_writer.svg",
   "explore_data.png",

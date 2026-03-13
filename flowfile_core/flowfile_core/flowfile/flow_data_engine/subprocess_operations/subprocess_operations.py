@@ -141,6 +141,20 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
     return Status(**f.json())
 
 
+def trigger_catalog_materialize(
+    source_file_path: str,
+    table_name: str | None = None,
+    parquet_filename: str | None = None,
+):
+    payload = {
+        "source_file_path": source_file_path,
+        "table_name": table_name,
+        "parquet_filename": parquet_filename,
+    }
+    response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
+    return response
+
+
 def get_results(file_ref: str) -> Status | None:
     f = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if f.status_code == 200:
@@ -584,7 +598,11 @@ class ExternalDfFetcher(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
-            lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id,
+            lf=lf,
+            file_ref=self.file_ref,
+            operation_type=operation_type,
+            node_id=node_id,
+            flow_id=flow_id,
             kwargs=kwargs,
         )
         self.running = r.status == "Processing"

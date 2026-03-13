@@ -42,6 +42,8 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "database_writer": input_schema.NodeDatabaseWriter,
     "cloud_storage_reader": input_schema.NodeCloudStorageReader,
     "cloud_storage_writer": input_schema.NodeCloudStorageWriter,
+    "catalog_reader": input_schema.NodeCatalogReader,
+    "catalog_writer": input_schema.NodeCatalogWriter,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
@@ -123,6 +125,13 @@ class FlowGraphConfig(BaseModel):
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
 
     @field_validator("execution_location", mode="before")
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
@@ -206,6 +215,13 @@ class FlowfileSettings(BaseModel):
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str) -> ExecutionModeLiteral:
+        if v not in ("Development", "Performance"):
+            return "Performance"
+        return v
 
 
 class FlowfileNode(BaseModel):

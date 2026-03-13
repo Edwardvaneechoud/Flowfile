@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from flowfile_core.configs.settings import is_electron_mode
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, Response
@@ -66,10 +67,11 @@ def get_node_model(setting_name_ref: str):
         if ref_name.lower() == setting_name_ref:
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
+    return None
 
 
 def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > user_flows) if it exists.
+    """Register a flow in the default catalog namespace (General > default) if it exists.
 
     Failures are logged at info level since users may wonder why some flows
     don't appear in the catalog.
@@ -82,9 +84,9 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             if general is None:
                 logger.info("Auto-registration skipped: 'General' catalog namespace not found")
                 return
-            user_flows = db.query(CatalogNamespace).filter_by(name="user_flows", parent_id=general.id).first()
-            if user_flows is None:
-                logger.info("Auto-registration skipped: 'user_flows' schema not found under 'General'")
+            default_schema = db.query(CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
+            if default_schema is None:
+                logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
                 return
             existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
             if existing:
@@ -92,7 +94,7 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             reg = FlowRegistration(
                 name=name or Path(flow_path).stem,
                 flow_path=flow_path,
-                namespace_id=user_flows.id,
+                namespace_id=default_schema.id,
                 owner_id=user_id,
             )
             db.add(reg)
@@ -100,6 +102,30 @@ def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
             logger.info(f"Auto-registered flow '{reg.name}' in default namespace")
     except Exception:
         logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
+
+
+def _resolve_source_registration_id(flow) -> None:
+    """Resolve and set source_registration_id on a flow from the catalog registration.
+
+    Looks up the flow_registrations table by flow_path and stamps the
+    registration ID onto the in-memory flow settings so it is available
+    for run tracking and kernel nodes without needing to re-resolve later.
+    """
+    if getattr(flow.flow_settings, "source_registration_id", None) is not None:
+        return
+    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+    if not flow_path:
+        return
+    try:
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+            if reg:
+                try:
+                    flow.flow_settings.source_registration_id = reg.id
+                except (AttributeError, ValueError):
+                    object.__setattr__(flow.flow_settings, "source_registration_id", reg.id)
+    except Exception:
+        logger.info(f"Could not resolve source_registration_id for '{flow_path}' (non-critical)", exc_info=True)
 
 
 @router.post("/upload/")
@@ -170,7 +196,6 @@ async def get_directory_contents(
     Returns:
         A list of `FileInfo` objects representing the directory's contents.
     """
-    from flowfile_core.configs.settings import is_electron_mode
 
     # In Electron mode, allow browsing the entire filesystem (no sandbox).
     # In other modes, sandbox to the user data directory.
@@ -252,17 +277,10 @@ def _run_and_track(flow, user_id: int | None):
 
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
-    if flow.flow_settings.source_registration_id is None:
-        flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-        if flow_path:
-            try:
-                with get_db_context() as db:
-                    reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-                    if reg:
-                        flow.flow_settings.source_registration_id = reg.id
-            except Exception as exc:
-                logger.warning(f"Could not resolve source_registration_id for flow '{flow_name}': {exc}")
-        logger.debug(f"source_registration_id for flow '{flow_name}': {flow.flow_settings.source_registration_id}")
+    _resolve_source_registration_id(flow)
+    logger.debug(
+        f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
+    )
 
     run_info = flow.run_graph()
     if run_info is None:
@@ -294,8 +312,7 @@ def _run_and_track(flow, user_id: int | None):
             duration = (run_info.end_time - run_info.start_time).total_seconds()
 
         with get_db_context() as db:
-            # Reuse the registration ID resolved before execution
-            reg_id = flow.flow_settings.source_registration_id
+            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
             flow_path = flow.flow_settings.path or flow.flow_settings.save_location
 
             db_run = FlowRun(
@@ -524,8 +541,6 @@ def add_node(
 
         # Capture batched history entry for the whole add_node operation
         if pre_snapshot is not None and flow.flow_settings.track_history:
-            from flowfile_core.schemas.history_schema import HistoryActionType
-
             flow._history_manager.capture_if_changed(
                 flow,
                 pre_snapshot,
@@ -706,6 +721,7 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         _auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+        _resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1042,16 +1058,29 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
         _auto_register_flow(validated_path, flow.flow_settings.name, user_id)
+        _resolve_source_registration_id(flow)
     return flow_id
 
 
 @router.get("/save_flow", tags=["editor"])
-def save_flow(flow_id: int, flow_path: str = None):
+def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    is_new_path = (
+        flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
+    )
+    if is_new_path:
+        flow.flow_settings.source_registration_id = None
+    _resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
+    if is_new_path:
+        user_id = current_user.id if current_user else None
+        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
+        flow.flow_settings.source_registration_id = None
+        _resolve_source_registration_id(flow)
 
 
 @router.get("/flow_data", tags=["manager"])

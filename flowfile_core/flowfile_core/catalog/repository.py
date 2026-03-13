@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
     CatalogNamespace,
+    CatalogTable,
+    CatalogTableReadLink,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -135,6 +138,26 @@ class CatalogRepository(Protocol):
 
     def count_all_flows(self) -> int: ...
 
+    # -- Catalog table operations -----------------------------------------------
+
+    def get_table(self, table_id: int) -> CatalogTable | None: ...
+
+    def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None: ...
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
+
+    def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]: ...
+
+    def create_table(self, table: CatalogTable) -> CatalogTable: ...
+
+    def update_table(self, table: CatalogTable) -> CatalogTable: ...
+
+    def delete_table(self, table_id: int) -> None: ...
+
+    def count_tables_in_namespace(self, namespace_id: int) -> int: ...
+
+    def count_all_tables(self) -> int: ...
+
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
     def bulk_get_favorite_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
@@ -142,6 +165,18 @@ class CatalogRepository(Protocol):
     def bulk_get_follow_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
 
     def bulk_get_run_stats(self, flow_ids: list[int]) -> dict[int, tuple[int, FlowRun | None]]: ...
+
+    def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
+
+    def bulk_get_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
+
+    def upsert_read_link(self, table_id: int, registration_id: int) -> None: ...
+
+    def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]: ...
+
+    def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
+
+    def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +328,6 @@ class SQLAlchemyCatalogRepository:
         """
         if not flow_ids:
             return {}
-        from sqlalchemy import func
 
         rows = (
             self._db.query(
@@ -401,6 +435,47 @@ class SQLAlchemyCatalogRepository:
     def count_all_flows(self) -> int:
         return self._db.query(FlowRegistration).count()
 
+    # -- Catalog table operations -----------------------------------------------
+
+    def get_table(self, table_id: int) -> CatalogTable | None:
+        return self._db.get(CatalogTable, table_id)
+
+    def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None:
+        return self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).first()
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
+        q = self._db.query(CatalogTable)
+        if namespace_id is not None:
+            q = q.filter_by(namespace_id=namespace_id)
+        return q.order_by(CatalogTable.name).all()
+
+    def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]:
+        return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).order_by(CatalogTable.name).all()
+
+    def create_table(self, table: CatalogTable) -> CatalogTable:
+        self._db.add(table)
+        self._db.commit()
+        self._db.refresh(table)
+        return table
+
+    def update_table(self, table: CatalogTable) -> CatalogTable:
+        self._db.commit()
+        self._db.refresh(table)
+        return table
+
+    def delete_table(self, table_id: int) -> None:
+        self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
+        table = self._db.get(CatalogTable, table_id)
+        if table is not None:
+            self._db.delete(table)
+            self._db.commit()
+
+    def count_tables_in_namespace(self, namespace_id: int) -> int:
+        return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).count()
+
+    def count_all_tables(self) -> int:
+        return self._db.query(CatalogTable).count()
+
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
     def bulk_get_favorite_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]:
@@ -439,8 +514,6 @@ class SQLAlchemyCatalogRepository:
         if not flow_ids:
             return {}
 
-        from sqlalchemy import func
-
         # Query 1: counts per registration_id
         count_rows = (
             self._db.query(
@@ -477,4 +550,88 @@ class SQLAlchemyCatalogRepository:
         result: dict[int, tuple[int, FlowRun | None]] = {}
         for fid in flow_ids:
             result[fid] = (counts.get(fid, 0), last_runs.get(fid))
+        return result
+
+    def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]:
+        """Return all catalog tables produced by a specific flow."""
+        return (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.source_registration_id == registration_id)
+            .order_by(CatalogTable.name)
+            .all()
+        )
+
+    def bulk_get_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]:
+        """Return tables produced by each flow_id in one query."""
+        if not flow_ids:
+            return {}
+        rows = (
+            self._db.query(CatalogTable)
+            .filter(CatalogTable.source_registration_id.in_(flow_ids))
+            .order_by(CatalogTable.name)
+            .all()
+        )
+        result: dict[int, list[CatalogTable]] = {}
+        for table in rows:
+            result.setdefault(table.source_registration_id, []).append(table)
+        return result
+
+    def upsert_read_link(self, table_id: int, registration_id: int) -> None:
+        """Record that a flow reads from a catalog table (idempotent)."""
+        existing = (
+            self._db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=registration_id).first()
+        )
+        if not existing:
+            self._db.add(CatalogTableReadLink(table_id=table_id, registration_id=registration_id))
+            self._db.commit()
+
+    def list_readers_for_table(self, table_id: int) -> list[FlowRegistration]:
+        """Return all flows that read from a given table."""
+        link_rows = (
+            self._db.query(CatalogTableReadLink.registration_id).filter(CatalogTableReadLink.table_id == table_id).all()
+        )
+        reg_ids = [r[0] for r in link_rows]
+        if not reg_ids:
+            return []
+        return (
+            self._db.query(FlowRegistration)
+            .filter(FlowRegistration.id.in_(reg_ids))
+            .order_by(FlowRegistration.name)
+            .all()
+        )
+
+    def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]:
+        """Return all tables that a given flow reads from."""
+        link_rows = (
+            self._db.query(CatalogTableReadLink.table_id)
+            .filter(CatalogTableReadLink.registration_id == registration_id)
+            .all()
+        )
+        table_ids = [r[0] for r in link_rows]
+        if not table_ids:
+            return []
+        return self._db.query(CatalogTable).filter(CatalogTable.id.in_(table_ids)).order_by(CatalogTable.name).all()
+
+    def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]:
+        """Return tables read by each flow_id in one query."""
+        if not flow_ids:
+            return {}
+        link_rows = (
+            self._db.query(CatalogTableReadLink).filter(CatalogTableReadLink.registration_id.in_(flow_ids)).all()
+        )
+        table_ids = list({link.table_id for link in link_rows})
+        if not table_ids:
+            return {}
+        tables_by_id = {
+            t.id: t
+            for t in self._db.query(CatalogTable)
+            .filter(CatalogTable.id.in_(table_ids))
+            .order_by(CatalogTable.name)
+            .all()
+        }
+        result: dict[int, list[CatalogTable]] = {}
+        for link in link_rows:
+            table = tables_by_id.get(link.table_id)
+            if table:
+                result.setdefault(link.registration_id, []).append(table)
         return result
