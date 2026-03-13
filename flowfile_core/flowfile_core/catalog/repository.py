@@ -176,6 +176,8 @@ class CatalogRepository(Protocol):
 
     def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
 
+    def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
+
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy implementation

@@ -2022,38 +2022,19 @@ class FlowGraph:
                 with get_db_context() as db:
                     repo = SQLAlchemyCatalogRepository(db)
                     svc = CatalogService(repo)
-                    if settings.write_mode == "overwrite":
-                        existing = svc.list_tables(namespace_id=settings.namespace_id)
-                        for t in existing:
-                            if t.name == settings.table_name:
-                                svc.delete_table(t.id)
-                                break
-                    try:
-                        svc.register_table_from_parquet(
-                            name=settings.table_name,
-                            parquet_path=str(dest_path),
-                            owner_id=node_catalog_writer.user_id or 1,
-                            namespace_id=settings.namespace_id,
-                            description=settings.description,
-                            source_registration_id=self._flow_settings.source_registration_id,
-                        )
-                    except TableExistsError:
-                        if settings.write_mode == "overwrite":
-                            existing = svc.list_tables(namespace_id=settings.namespace_id)
-                            for t in existing:
-                                if t.name == settings.table_name:
-                                    svc.delete_table(t.id)
-                                    break
-                            svc.register_table_from_parquet(
-                                name=settings.table_name,
-                                parquet_path=str(dest_path),
-                                owner_id=node_catalog_writer.user_id or 1,
-                                namespace_id=settings.namespace_id,
-                                description=settings.description,
-                                source_registration_id=self._flow_settings.source_registration_id,
-                            )
-                        else:
-                            raise
+                    existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+                    if existing is not None:
+                        if settings.write_mode != "overwrite":
+                            raise TableExistsError(name=settings.table_name, namespace_id=settings.namespace_id)
+                        svc.delete_table(existing.id)
+                    svc.register_table_from_parquet(
+                        name=settings.table_name,
+                        parquet_path=str(dest_path),
+                        owner_id=node_catalog_writer.user_id or 1,
+                        namespace_id=settings.namespace_id,
+                        description=settings.description,
+                        source_registration_id=self._flow_settings.source_registration_id,
+                    )
             except Exception:
                 logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
                 if dest_path.exists():

@@ -126,7 +126,6 @@ class CatalogService:
 
         flow_ids = [f.id for f in flows]
 
-        # Bulk fetch all enrichment data (6 queries total)
         fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
         follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
         run_stats = self.repo.bulk_get_run_stats(flow_ids)
@@ -939,37 +938,6 @@ class CatalogService:
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
         )
-
-    def _create_table_record(
-        self,
-        name: str,
-        dest_path: Path,
-        df,
-        owner_id: int,
-        namespace_id: int | None,
-        description: str | None,
-        source_registration_id: int | None,
-        source_run_id: int | None,
-    ) -> CatalogTableOut:
-        """Create the CatalogTable DB record from an already-written Parquet file."""
-        schema_list = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
-        size_bytes = dest_path.stat().st_size
-
-        table = CatalogTable(
-            name=name,
-            namespace_id=namespace_id,
-            description=description,
-            owner_id=owner_id,
-            file_path=str(dest_path),
-            schema_json=json.dumps(schema_list),
-            row_count=len(df),
-            column_count=len(df.columns),
-            size_bytes=size_bytes,
-            source_registration_id=source_registration_id,
-            source_run_id=source_run_id,
-        )
-        table = self.repo.create_table(table)
-        return self._table_to_out(table)
 
     def _create_table_record_from_metadata(
         self,
