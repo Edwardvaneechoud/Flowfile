@@ -4,6 +4,8 @@ import { CatalogApi } from "../api/catalog.api";
 import type {
   CatalogStats,
   CatalogTab,
+  CatalogTable,
+  CatalogTablePreview,
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
@@ -25,6 +27,11 @@ interface CatalogState {
   selectedArtifact: GlobalArtifact | null;
   flowArtifacts: GlobalArtifact[];
   loadingArtifacts: boolean;
+  selectedTableId: number | null;
+  selectedTable: CatalogTable | null;
+  tablePreview: CatalogTablePreview | null;
+  loadingTablePreview: boolean;
+  allTables: CatalogTable[];
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -45,6 +52,11 @@ export const useCatalogStore = defineStore("catalog", {
     selectedArtifact: null,
     flowArtifacts: [],
     loadingArtifacts: false,
+    selectedTableId: null,
+    selectedTable: null,
+    tablePreview: null,
+    loadingTablePreview: false,
+    allTables: [],
     activeTab: "catalog",
     loading: false,
     error: null,
@@ -178,6 +190,65 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedArtifact = null;
     },
 
+    // -- Catalog Table actions --
+
+    async loadAllTables() {
+      try {
+        this.allTables = await CatalogApi.getTables();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load tables";
+      }
+    },
+
+    selectTable(tableId: number | null) {
+      this.selectedTableId = tableId;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.selectedArtifactId = null;
+      this.selectedArtifact = null;
+      this.tablePreview = null;
+
+      if (tableId !== null) {
+        this.selectedTable = this.findTableInTree(tableId) ?? null;
+        this.loadTablePreview(tableId);
+      } else {
+        this.selectedTable = null;
+      }
+    },
+
+    clearTableSelection() {
+      this.selectedTableId = null;
+      this.selectedTable = null;
+      this.tablePreview = null;
+    },
+
+    async loadTablePreview(tableId: number, limit = 100) {
+      this.loadingTablePreview = true;
+      try {
+        this.tablePreview = await CatalogApi.getTablePreview(tableId, limit);
+      } catch {
+        this.tablePreview = null;
+      } finally {
+        this.loadingTablePreview = false;
+      }
+    },
+
+    /** Walk the namespace tree to find a table by ID. */
+    findTableInTree(tableId: number): CatalogTable | null {
+      for (const cat of this.tree) {
+        for (const t of cat.tables ?? []) {
+          if (t.id === tableId) return t;
+        }
+        for (const schema of cat.children) {
+          for (const t of schema.tables ?? []) {
+            if (t.id === tableId) return t;
+          }
+        }
+      }
+      return null;
+    },
+
     /** Walk the namespace tree to find an artifact by ID. */
     findArtifactInTree(artifactId: number): GlobalArtifact | null {
       for (const cat of this.tree) {
@@ -197,6 +268,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedFlowId = flowId;
       this.selectedRunId = null;
       this.selectedRunDetail = null;
+      this.clearTableSelection();
       if (flowId !== null) {
         this.loadRuns(flowId);
         this.loadFlowArtifacts(flowId);
@@ -215,6 +287,7 @@ export const useCatalogStore = defineStore("catalog", {
       await Promise.all([
         this.loadTree(),
         this.loadAllFlows(),
+        this.loadAllTables(),
         this.loadStats(),
         this.loadFavorites(),
       ]);

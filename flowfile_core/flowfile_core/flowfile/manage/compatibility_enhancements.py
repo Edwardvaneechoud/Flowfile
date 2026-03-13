@@ -400,6 +400,21 @@ def ensure_description(node: input_schema.NodeBase):
         node.description = ""
 
 
+def ensure_compatibility_node_manual_input(node_manual_input: input_schema.NodeManualInput):
+    """Migrate old NodeManualInput structure:
+    - raw_data (list of dicts) -> raw_data_format (RawData)
+    """
+    if hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format is not None:
+        return
+
+    raw_data = getattr(node_manual_input, "raw_data", None)
+    if raw_data is not None and isinstance(raw_data, list) and len(raw_data) > 0:
+        raw_data_format = input_schema.RawData.from_pylist(raw_data)
+        object.__setattr__(
+            node_manual_input, "__dict__", {**node_manual_input.__dict__, "raw_data_format": raw_data_format}
+        )
+
+
 def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
     """Migrate old NodePolarsCode structure:
     - depending_on_id (single) -> depending_on_ids (list)
@@ -458,13 +473,13 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     # serialized before this field existed. Use object.__setattr__ to bypass
     # Pydantic validation which would reject adding a new field.
     if "track_history" not in fs.__dict__:
-        object.__setattr__(fs, '__dict__', {**fs.__dict__, 'track_history': True})
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "track_history": True})
 
     if "max_parallel_workers" not in fs.__dict__ or fs.max_parallel_workers is None:
-        object.__setattr__(fs, '__dict__', {**fs.__dict__, 'max_parallel_workers': 4})
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "max_parallel_workers": 4})
 
     if "source_registration_id" not in fs.__dict__:
-        object.__setattr__(fs, '__dict__', {**fs.__dict__, 'source_registration_id': None})
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "source_registration_id": None})
 
     return flow_storage_obj
 
@@ -480,6 +495,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
 
     Handles migrations for:
     - FlowSettings structure
+    - NodeManualInput (raw_data list of dicts -> raw_data_format RawData)
     - NodeRead (ReceivedTable with table_settings)
     - NodeOutput (OutputSettings with table_settings)
     - NodeSelect (position attributes, dataclass -> BaseModel)
@@ -503,6 +519,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_output(setting_input)
         elif class_name in ("NodeJoin", "NodeFuzzyMatch"):
             ensure_compatibility_node_joins(setting_input)
+        elif class_name == "NodeManualInput":
+            ensure_compatibility_node_manual_input(setting_input)
         elif class_name == "NodePolarsCode":
             ensure_compatibility_node_polars(setting_input)
         elif class_name == "NodeFilter":

@@ -20,6 +20,7 @@ export interface NamespaceTree extends CatalogNamespace {
   children: NamespaceTree[];
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
+  tables: CatalogTable[];
 }
 
 export interface NamespaceCreate {
@@ -53,6 +54,8 @@ export interface FlowRegistration {
   last_run_success: boolean | null;
   file_exists: boolean;
   artifact_count: number;
+  tables_produced: CatalogTableSummary[];
+  tables_read: CatalogTableSummary[];
 }
 
 export interface FlowRegistrationCreate {
@@ -120,6 +123,65 @@ export interface GlobalArtifact {
 }
 
 // ============================================================================
+// Catalog Table
+// ============================================================================
+
+export interface ColumnSchema {
+  name: string;
+  dtype: string;
+}
+
+export interface CatalogTableSummary {
+  id: number;
+  name: string;
+  namespace_id: number | null;
+}
+
+export interface FlowSummary {
+  id: number;
+  name: string;
+}
+
+export interface CatalogTable {
+  id: number;
+  name: string;
+  namespace_id: number | null;
+  description: string | null;
+  owner_id: number;
+  file_exists: boolean;
+  schema_columns: ColumnSchema[];
+  row_count: number | null;
+  column_count: number | null;
+  size_bytes: number | null;
+  source_registration_id: number | null;
+  source_registration_name: string | null;
+  source_run_id: number | null;
+  read_by_flows: FlowSummary[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogTableCreate {
+  name: string;
+  file_path: string;
+  namespace_id?: number | null;
+  description?: string | null;
+}
+
+export interface CatalogTableUpdate {
+  name?: string;
+  description?: string;
+  namespace_id?: number | null;
+}
+
+export interface CatalogTablePreview {
+  columns: string[];
+  dtypes: string[];
+  rows: any[][];
+  total_rows: number;
+}
+
+// ============================================================================
 // Catalog Stats
 // ============================================================================
 
@@ -129,6 +191,7 @@ export interface CatalogStats {
   total_runs: number;
   total_favorites: number;
   total_artifacts: number;
+  total_tables: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];
 }

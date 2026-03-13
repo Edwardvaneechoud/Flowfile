@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
-from uuid import uuid1
+from uuid import uuid1, uuid4
 
 import fastexcel
 import polars as pl
@@ -19,9 +19,12 @@ import yaml
 from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
+from flowfile_core.catalog import CatalogService, TableExistsError
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -965,9 +968,7 @@ class FlowGraph:
                 node._kernel_cancel_context = (kernel_id, manager)
                 node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 if node is not None:
                     node._kernel_cancel_context = None
@@ -1315,9 +1316,7 @@ class FlowGraph:
             node._kernel_cancel_context = (kernel_id, manager)
             node._kernel_cancel_event = cancel_event
             try:
-                result = manager.execute_sync(
-                    kernel_id, request, self.flow_logger, cancel_event=cancel_event
-                )
+                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
                 node._kernel_cancel_context = None
                 node._kernel_cancel_event = None
@@ -1949,6 +1948,115 @@ class FlowGraph:
             input_columns=[],
             node_type="output",
             setting_input=output_file,
+            schema_callback=schema_callback,
+            input_node_ids=[input_node_id],
+        )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_catalog_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
+        """Adds a node that reads a table from the catalog.
+
+        Resolves the catalog table by ID (or name + namespace) and reads
+        the materialized Parquet file.
+        """
+
+        # Resolve catalog table metadata ahead of time so we can build a schema callback.
+        file_path: str | None = None
+        resolved_table_id: int | None = None
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                if node_catalog_reader.catalog_table_id is not None:
+                    table = repo.get_table(node_catalog_reader.catalog_table_id)
+                    if table is not None:
+                        file_path = table.file_path
+                        resolved_table_id = table.id
+                elif node_catalog_reader.catalog_table_name:
+                    tables = repo.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
+                    for t in tables:
+                        if t.name == node_catalog_reader.catalog_table_name:
+                            file_path = t.file_path
+                            resolved_table_id = t.id
+                            break
+        except Exception:
+            logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
+
+        resolved_path = file_path
+
+        def _func() -> FlowDataEngine:
+            if not resolved_path:
+                raise ValueError("Catalog table could not be resolved — no file path found")
+            return FlowDataEngine(pl.scan_parquet(resolved_path))
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+        )
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
+        """Adds a node that writes its input to the catalog as a Parquet table."""
+
+        def _func(df: FlowDataEngine) -> FlowDataEngine:
+            from shared.storage_config import storage
+
+            settings = node_catalog_writer.catalog_write_settings
+            if not settings.table_name:
+                raise ValueError("Catalog writer requires a table name")
+
+            # Materialize the dataframe to a temporary parquet, then register via the catalog service.
+            dest_dir = storage.catalog_tables_directory
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            parquet_filename = f"{settings.table_name}_{uuid4().hex[:8]}.parquet"
+            dest_path = dest_dir / parquet_filename
+
+            collected = df.collect()
+            collected.write_parquet(dest_path)
+
+            try:
+                with get_db_context() as db:
+                    repo = SQLAlchemyCatalogRepository(db)
+                    svc = CatalogService(repo)
+                    existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+                    if existing is not None:
+                        if settings.write_mode != "overwrite":
+                            raise TableExistsError(name=settings.table_name, namespace_id=settings.namespace_id)
+                        svc.delete_table(existing.id)
+                    svc.register_table_from_parquet(
+                        name=settings.table_name,
+                        parquet_path=str(dest_path),
+                        owner_id=node_catalog_writer.user_id or 1,
+                        namespace_id=settings.namespace_id,
+                        description=settings.description,
+                        source_registration_id=self._flow_settings.source_registration_id,
+                    )
+            except Exception:
+                logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
+                if dest_path.exists():
+                    try:
+                        dest_path.unlink()
+                    except OSError:
+                        logger.warning("Failed to clean up orphan parquet %s", dest_path, exc_info=True)
+                raise
+
+            return df
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
+            return input_node.schema
+
+        input_node_id = node_catalog_writer.depending_on_id if hasattr(node_catalog_writer, "depending_on_id") else None
+        self.add_node_step(
+            node_id=node_catalog_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_writer",
+            setting_input=node_catalog_writer,
             schema_callback=schema_callback,
             input_node_ids=[input_node_id],
         )
@@ -3018,6 +3126,43 @@ class FlowGraph:
             raise
 
         self.flow_settings.path = flow_path
+        self._sync_catalog_read_links()
+
+    def _sync_catalog_read_links(self):
+        """Record which catalog tables this flow reads from.
+
+        Scans all nodes for catalog_reader types and upserts read links
+        in the catalog database.  Runs at save time so that
+        source_registration_id is guaranteed to be set.
+        """
+        registration_id = self._flow_settings.source_registration_id
+        logger.debug("Found registration_id %s", registration_id)
+        if not registration_id:
+            return
+
+        table_ids = []
+        for node in self.nodes:
+            if node.node_type != "catalog_reader":
+                continue
+            setting = node.setting_input
+            table_id = getattr(setting, "catalog_table_id", None)
+            if table_id:
+                table_ids.append(table_id)
+
+        if not table_ids:
+            return
+
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                for table_id in table_ids:
+                    repo.upsert_read_link(table_id, registration_id)
+        except Exception:
+            logger.warning(
+                "Failed to record catalog read links for tables %s",
+                table_ids,
+                exc_info=True,
+            )
 
     def get_frontend_data(self) -> dict:
         """Formats the graph structure into a JSON-like dictionary for a specific legacy frontend.

@@ -25,6 +25,13 @@
         </div>
       </div>
       <div class="stat-card">
+        <i class="fa-solid fa-table stat-icon"></i>
+        <div class="stat-info">
+          <span class="stat-value">{{ stats.total_tables }}</span>
+          <span class="stat-label">Tables</span>
+        </div>
+      </div>
+      <div class="stat-card">
         <i class="fa-solid fa-star stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_favorites }}</span>

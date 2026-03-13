@@ -47,15 +47,9 @@ def _make_unpickleable_error(obj: Any, original_error: Exception) -> Unpickleabl
 
     # Provide specific guidance based on error type
     if "local object" in error_str or "local class" in error_str:
-        hint = (
-            "Classes defined inside functions cannot be pickled. "
-            "Move the class definition to module level."
-        )
+        hint = "Classes defined inside functions cannot be pickled. " "Move the class definition to module level."
     elif "lambda" in error_str:
-        hint = (
-            "Lambda functions cannot be pickled. "
-            "Define a regular function instead."
-        )
+        hint = "Lambda functions cannot be pickled. " "Define a regular function instead."
     elif "file" in error_str or "socket" in error_str:
         hint = (
             "Objects with open file handles or network connections cannot be pickled. "
@@ -68,8 +62,7 @@ def _make_unpickleable_error(obj: Any, original_error: Exception) -> Unpickleabl
         )
 
     return UnpickleableObjectError(
-        f"Cannot publish object of type '{obj_type}' to global artifact store: {original_error}\n\n"
-        f"Hint: {hint}"
+        f"Cannot publish object of type '{obj_type}' to global artifact store: {original_error}\n\n" f"Hint: {hint}"
     )
 
 
@@ -101,6 +94,7 @@ def check_pickleable(obj: Any) -> None:
     # double-serialization overhead (error will be caught during actual serialization)
     try:
         import sys
+
         estimated_size = sys.getsizeof(obj)
         # For containers, getsizeof only returns shallow size, so we use a heuristic
         # If it has __len__ and is large, skip the check
@@ -192,6 +186,7 @@ def serialize_to_bytes(obj: Any, format: str | None = None) -> tuple[bytes, str]
         _serialize_parquet_buffer(obj, buf)
     elif format == "joblib":
         import joblib
+
         joblib.dump(obj, buf)
     else:
         cloudpickle.dump(obj, buf)
@@ -225,9 +220,11 @@ def deserialize_from_file(path: str, format: str) -> Any:
         return _deserialize_parquet(path)
     elif format == "joblib":
         import joblib
+
         return joblib.load(path)
     else:
         import pickle  # cloudpickle files are compatible with standard pickle.load
+
         with open(path, "rb") as f:
             return pickle.load(f)
 
@@ -250,9 +247,11 @@ def deserialize_from_bytes(blob: bytes, format: str) -> Any:
         return _deserialize_parquet_buffer(buf)
     elif format == "joblib":
         import joblib
+
         return joblib.load(buf)
     else:
         import pickle  # cloudpickle files are compatible with standard pickle.load
+
         return pickle.load(buf)
 
 
@@ -295,7 +294,15 @@ def _serialize_parquet(obj: Any, path: Path) -> None:
     """Serialize DataFrame to parquet file."""
     module = type(obj).__module__.split(".")[0]
     if module == "polars":
-        obj.write_parquet(path)
+        if hasattr(obj, "write_parquet"):
+            obj.write_parquet(path)
+        elif hasattr(obj, "sink_parquet"):
+            obj.sink_parquet(str(path))
+        else:
+            raise TypeError(
+                f"Polars object of type '{type(obj).__name__}' does not support parquet serialization. "
+                f"Expected a DataFrame or LazyFrame."
+            )
     else:  # pandas
         obj.to_parquet(path)
 
@@ -304,7 +311,15 @@ def _serialize_parquet_buffer(obj: Any, buf: io.BytesIO) -> None:
     """Serialize DataFrame to parquet in memory buffer."""
     module = type(obj).__module__.split(".")[0]
     if module == "polars":
-        obj.write_parquet(buf)
+        if hasattr(obj, "write_parquet"):
+            obj.write_parquet(buf)
+        elif hasattr(obj, "collect"):
+            obj.collect().write_parquet(buf)
+        else:
+            raise TypeError(
+                f"Polars object of type '{type(obj).__name__}' does not support parquet serialization. "
+                f"Expected a DataFrame or LazyFrame."
+            )
     else:  # pandas
         obj.to_parquet(buf)
 
@@ -312,18 +327,21 @@ def _serialize_parquet_buffer(obj: Any, buf: io.BytesIO) -> None:
 def _deserialize_parquet(path: Path) -> Any:
     """Deserialize parquet file to DataFrame."""
     import polars as pl
+
     return pl.read_parquet(path)
 
 
 def _deserialize_parquet_buffer(buf: io.BytesIO) -> Any:
     """Deserialize parquet from memory buffer to DataFrame."""
     import polars as pl
+
     return pl.read_parquet(buf)
 
 
 def _serialize_joblib(obj: Any, path: Path) -> None:
     """Serialize object using joblib."""
     import joblib
+
     joblib.dump(obj, path)
 
 

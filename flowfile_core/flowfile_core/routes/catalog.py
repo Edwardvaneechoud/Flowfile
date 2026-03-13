@@ -31,10 +31,18 @@ from flowfile_core.catalog import (
     NoSnapshotError,
     RunNotFoundError,
     SQLAlchemyCatalogRepository,
+    TableExistsError,
+    TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
+from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
+    CatalogTableCreate,
+    CatalogTableOut,
+    CatalogTablePreview,
+    CatalogTableUpdate,
     FavoriteOut,
     FlowRegistrationCreate,
     FlowRegistrationOut,
@@ -151,7 +159,7 @@ def get_namespace_tree(
 def get_default_namespace_id(
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the ID of the default 'user_flows' schema under 'General'."""
+    """Return the ID of the default 'default' schema under 'General'."""
     return service.get_default_namespace_id()
 
 
@@ -292,12 +300,26 @@ def open_run_snapshot(
     except NoSnapshotError:
         raise HTTPException(422, "No flow snapshot available for this run")
 
-    # Determine file extension based on content
+    # Parse snapshot and assign a new unique flow_id so the imported
+    # snapshot opens as a separate tab instead of overwriting an
+    # already-open flow that shares the same original ID.
     try:
-        json.loads(snapshot_data)
+        parsed = json.loads(snapshot_data)
         suffix = ".json"
     except (json.JSONDecodeError, TypeError):
+        import yaml
+
+        parsed = yaml.safe_load(snapshot_data)
         suffix = ".yaml"
+
+    parsed["flowfile_id"] = create_unique_id()
+
+    if suffix == ".json":
+        snapshot_data = json.dumps(parsed)
+    else:
+        import yaml
+
+        snapshot_data = yaml.dump(parsed)
 
     # Write to the flows temp directory (safe location for import)
     temp_dir = storage.temp_directory_for_flows
@@ -384,6 +406,101 @@ def remove_follow(
         service.remove_follow(user_id=current_user.id, registration_id=flow_id)
     except FollowNotFoundError:
         raise HTTPException(404, "Follow not found")
+
+
+# ---------------------------------------------------------------------------
+# Catalog Tables
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tables", response_model=list[CatalogTableOut])
+def list_tables(
+    namespace_id: int | None = None,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List catalog tables, optionally filtered by namespace."""
+    return service.list_tables(namespace_id=namespace_id)
+
+
+@router.post("/tables", response_model=CatalogTableOut, status_code=201)
+def register_table(
+    body: CatalogTableCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Register a new table by materializing a source file as Parquet."""
+    try:
+        validated_path = validate_path_under_cwd(body.file_path)
+        return service.register_table(
+            name=body.name,
+            file_path=validated_path,
+            owner_id=current_user.id,
+            namespace_id=body.namespace_id,
+            description=body.description,
+        )
+    except NamespaceNotFoundError:
+        raise HTTPException(404, "Namespace not found")
+    except TableExistsError:
+        raise HTTPException(409, "A table with this name already exists in this namespace")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/tables/{table_id}", response_model=CatalogTableOut)
+def get_table(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.get_table(table_id)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found")
+
+
+@router.put("/tables/{table_id}", response_model=CatalogTableOut)
+def update_table(
+    table_id: int,
+    body: CatalogTableUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.update_table(
+            table_id=table_id,
+            name=body.name,
+            description=body.description,
+            namespace_id=body.namespace_id,
+        )
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found")
+
+
+@router.delete("/tables/{table_id}", status_code=204)
+def delete_table(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        service.delete_table(table_id)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found")
+
+
+@router.get("/tables/{table_id}/preview", response_model=CatalogTablePreview)
+def get_table_preview(
+    table_id: int,
+    limit: int = Query(100, ge=1, le=10000),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Preview the first N rows of a catalog table."""
+    try:
+        return service.get_table_preview(table_id, limit=limit)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found")
 
 
 # ---------------------------------------------------------------------------

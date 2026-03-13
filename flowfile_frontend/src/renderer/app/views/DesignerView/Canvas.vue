@@ -427,8 +427,11 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
 
 const handleResetLayoutGraph = async () => {
   await applyStandardLayout(flowStore.flowId);
+  sessionStorage.removeItem(getViewportStorageKey(flowStore.flowId));
   await loadFlow();
   // loadFlow already fetches history state
+  fitView({ padding: 0.2 });
+  saveViewportToSession();
 };
 
 const hideLogViewer = () => {
@@ -515,7 +518,7 @@ const handleSelectionEnd = () => {
 // Viewport persistence helpers
 const getViewportStorageKey = (flowId: number) => `flowfile_viewport_${flowId}`;
 
-const saveViewport = () => {
+const saveViewportToSession = () => {
   const viewport = instance.getViewport();
   const key = getViewportStorageKey(flowStore.flowId);
   sessionStorage.setItem(key, JSON.stringify(viewport));
@@ -526,16 +529,15 @@ const restoreViewport = () => {
   const saved = sessionStorage.getItem(key);
   if (saved) {
     try {
-      const viewport = JSON.parse(saved);
-      instance.setViewport(viewport);
+      instance.setViewport(JSON.parse(saved));
     } catch (e) {
-      console.error("Failed to restore viewport:", e);
+      console.error("Failed to restore viewport from session:", e);
     }
   }
 };
 
 const handleMoveEnd = () => {
-  saveViewport();
+  saveViewportToSession();
 };
 
 onMounted(async () => {

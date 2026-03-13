@@ -8,8 +8,13 @@ raises ``HTTPException`` — only domain-specific exceptions from
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
@@ -22,10 +27,13 @@ from flowfile_core.catalog.exceptions import (
     NestingLimitError,
     NoSnapshotError,
     RunNotFoundError,
+    TableExistsError,
+    TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.database.models import (
     CatalogNamespace,
+    CatalogTable,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -34,12 +42,19 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
+    CatalogTableOut,
+    CatalogTablePreview,
+    CatalogTableSummary,
+    ColumnSchema,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
+    FlowSummary,
     GlobalArtifactOut,
     NamespaceTree,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CatalogService:
@@ -58,6 +73,14 @@ class CatalogService:
     # Private helpers
     # ------------------------------------------------------------------ #
 
+    @dataclass(frozen=True)
+    class CatalogMaterializationResult:
+        parquet_path: str
+        schema: list[dict[str, str]]
+        row_count: int
+        column_count: int
+        size_bytes: int
+
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         """Attach favourite/follow flags and run stats to a single registration.
 
@@ -68,6 +91,8 @@ class CatalogService:
         run_count = self.repo.count_run_for_flow(flow.id)
         last_run = self.repo.last_run_for_flow(flow.id)
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
+        produced_tables = self.repo.list_tables_for_flow(flow.id)
+        read_tables = self.repo.list_read_tables_for_flow(flow.id)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -84,6 +109,10 @@ class CatalogService:
             last_run_success=last_run.success if last_run else None,
             file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
             artifact_count=artifact_count,
+            tables_produced=[
+                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
+            ],
+            tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read_tables],
         )
 
     def _bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
@@ -97,15 +126,18 @@ class CatalogService:
 
         flow_ids = [f.id for f in flows]
 
-        # Bulk fetch all enrichment data (4 queries total)
         fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
         follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
         run_stats = self.repo.bulk_get_run_stats(flow_ids)
         artifact_counts = self.repo.bulk_get_artifact_counts(flow_ids)
+        tables_by_flow = self.repo.bulk_get_tables_for_flows(flow_ids)
+        read_tables_by_flow = self.repo.bulk_get_read_tables_for_flows(flow_ids)
 
         result: list[FlowRegistrationOut] = []
         for flow in flows:
             run_count, last_run = run_stats.get(flow.id, (0, None))
+            produced = tables_by_flow.get(flow.id, [])
+            read = read_tables_by_flow.get(flow.id, [])
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -123,6 +155,10 @@ class CatalogService:
                     last_run_success=last_run.success if last_run else None,
                     file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
                     artifact_count=artifact_counts.get(flow.id, 0),
+                    tables_produced=[
+                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
+                    ],
+                    tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read],
                 )
             )
         return result
@@ -153,8 +189,6 @@ class CatalogService:
             if isinstance(artifact.tags, list):
                 tags = artifact.tags
             elif isinstance(artifact.tags, str):
-                import json
-
                 try:
                     tags = json.loads(artifact.tags)
                 except (json.JSONDecodeError, TypeError):
@@ -262,8 +296,9 @@ class CatalogService:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
-        if children > 0 or flows > 0:
-            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows)
+        tables = self.repo.count_tables_in_namespace(namespace_id)
+        if children > 0 or flows > 0 or tables > 0:
+            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows, tables=tables)
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
@@ -294,6 +329,7 @@ class CatalogService:
         all_flows: list[FlowRegistration] = []
         namespace_flow_map: dict[int, list[FlowRegistration]] = {}
         namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
+        namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
@@ -302,6 +338,7 @@ class CatalogService:
             namespace_artifact_map[cat.id] = [
                 self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
             ]
+            namespace_table_map[cat.id] = [self._table_to_out(t) for t in self.repo.list_tables_for_namespace(cat.id)]
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
@@ -309,6 +346,9 @@ class CatalogService:
                 all_flows.extend(schema_flows)
                 namespace_artifact_map[schema.id] = [
                     self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
+                ]
+                namespace_table_map[schema.id] = [
+                    self._table_to_out(t) for t in self.repo.list_tables_for_namespace(schema.id)
                 ]
 
         # Bulk enrich all flows at once
@@ -336,6 +376,7 @@ class CatalogService:
                         children=[],
                         flows=flow_outs,
                         artifacts=namespace_artifact_map.get(schema.id, []),
+                        tables=namespace_table_map.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -353,19 +394,20 @@ class CatalogService:
                     children=children,
                     flows=root_flow_outs,
                     artifacts=namespace_artifact_map.get(cat.id, []),
+                    tables=namespace_table_map.get(cat.id, []),
                 )
             )
         return result
 
     def get_default_namespace_id(self) -> int | None:
-        """Return the ID of the default 'user_flows' schema under 'General'."""
+        """Return the ID of the default 'default' schema under 'General'."""
         general = self.repo.get_namespace_by_name("General", parent_id=None)
         if general is None:
             return None
-        user_flows = self.repo.get_namespace_by_name("user_flows", parent_id=general.id)
-        if user_flows is None:
+        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
+        if default_schema is None:
             return None
-        return user_flows.id
+        return default_schema.id
 
     # ------------------------------------------------------------------ #
     # Flow registration operations
@@ -700,6 +742,336 @@ class CatalogService:
         return self._bulk_enrich_flows(flows, user_id)
 
     # ------------------------------------------------------------------ #
+    # Catalog table operations
+    # ------------------------------------------------------------------ #
+
+    def _table_to_out(self, table: CatalogTable) -> CatalogTableOut:
+        """Convert a CatalogTable ORM instance to its Pydantic output schema."""
+        columns: list[ColumnSchema] = []
+        if table.schema_json:
+            try:
+                raw = json.loads(table.schema_json)
+                columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        # Resolve source flow name if linked
+        source_registration_name: str | None = None
+        if table.source_registration_id:
+            reg = self.repo.get_flow(table.source_registration_id)
+            if reg is not None:
+                source_registration_name = reg.name
+
+        # Resolve flows that read from this table
+        readers = self.repo.list_readers_for_table(table.id)
+        read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
+
+        return CatalogTableOut(
+            id=table.id,
+            name=table.name,
+            namespace_id=table.namespace_id,
+            description=table.description,
+            owner_id=table.owner_id,
+            file_exists=Path(table.file_path).is_file() if table.file_path else False,
+            schema_columns=columns,
+            row_count=table.row_count,
+            column_count=table.column_count,
+            size_bytes=table.size_bytes,
+            source_registration_id=table.source_registration_id,
+            source_registration_name=source_registration_name,
+            source_run_id=table.source_run_id,
+            read_by_flows=read_by_flows,
+            created_at=table.created_at,
+            updated_at=table.updated_at,
+        )
+
+    def _materialize_table_with_worker(
+        self,
+        source_file_path: str,
+        table_name: str | None = None,
+        parquet_filename: str | None = None,
+    ) -> CatalogMaterializationResult:
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+            trigger_catalog_materialize,
+        )
+
+        response = trigger_catalog_materialize(
+            source_file_path=source_file_path,
+            table_name=table_name,
+            parquet_filename=parquet_filename,
+        )
+        if response.ok:
+            data = response.json()
+            schema = [
+                {"name": col["name"], "dtype": col["dtype"]}
+                for col in data.get("schema", [])
+                if "name" in col and "dtype" in col
+            ]
+            return CatalogService.CatalogMaterializationResult(
+                parquet_path=data["parquet_path"],
+                schema=schema,
+                row_count=data["row_count"],
+                column_count=data["column_count"],
+                size_bytes=data["size_bytes"],
+            )
+
+        detail = None
+        try:
+            detail = response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+
+        if response.status_code == 422:
+            if isinstance(detail, dict) and detail.get("error_type") == "unsupported_file_type":
+                raise ValueError(detail.get("message", "Unsupported file type"))
+            raise ValueError(detail.get("message", "Unsupported file type") if isinstance(detail, dict) else "")
+
+        if isinstance(detail, dict):
+            message = detail.get("message", response.text)
+        else:
+            message = response.text
+        raise RuntimeError(f"Worker catalog materialization failed: {message}")
+
+    def register_table(
+        self,
+        name: str,
+        file_path: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
+    ) -> CatalogTableOut:
+        """Register a new table in the catalog by materializing it as Parquet.
+
+        The caller must provide ``file_path`` pointing to a supported source
+        file (CSV, Parquet, Excel). The service reads the file, writes a
+        Parquet copy to the catalog tables directory, and records metadata.
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If ``namespace_id`` is given but doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
+
+        materialized = self._materialize_table_with_worker(
+            source_file_path=file_path,
+            table_name=name,
+        )
+
+        return self._create_table_record_from_metadata(
+            name=name,
+            parquet_path=materialized.parquet_path,
+            schema=materialized.schema,
+            row_count=materialized.row_count,
+            column_count=materialized.column_count,
+            size_bytes=materialized.size_bytes,
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+
+    def register_table_from_parquet(
+        self,
+        name: str,
+        parquet_path: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
+    ) -> CatalogTableOut:
+        """Register an already-materialized Parquet file in the catalog.
+
+        Unlike ``register_table``, this does NOT copy the file — it records
+        the given ``parquet_path`` directly. Use this when the caller has
+        already written the Parquet file to the catalog tables directory
+        (e.g. the catalog writer node in a flow graph).
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If ``namespace_id`` is given but doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        import polars as pl
+
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
+
+        dest_path = Path(parquet_path)
+        lf = pl.scan_parquet(dest_path)
+        schema = lf.collect_schema()
+        schema_list = [{"name": col_name, "dtype": str(col_dtype)} for col_name, col_dtype in schema.items()]
+        row_count = lf.select(pl.len()).collect().item()
+        size_bytes = dest_path.stat().st_size
+
+        return self._create_table_record_from_metadata(
+            name=name,
+            parquet_path=str(dest_path),
+            schema=schema_list,
+            row_count=row_count,
+            column_count=len(schema),
+            size_bytes=size_bytes,
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+
+    def _create_table_record_from_metadata(
+        self,
+        name: str,
+        parquet_path: str,
+        schema: list[dict[str, str]],
+        row_count: int,
+        column_count: int,
+        size_bytes: int,
+        owner_id: int,
+        namespace_id: int | None,
+        description: str | None,
+        source_registration_id: int | None,
+        source_run_id: int | None,
+    ) -> CatalogTableOut:
+        table = CatalogTable(
+            name=name,
+            namespace_id=namespace_id,
+            description=description,
+            owner_id=owner_id,
+            file_path=parquet_path,
+            schema_json=json.dumps(schema),
+            row_count=row_count,
+            column_count=column_count,
+            size_bytes=size_bytes,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+        )
+        table = self.repo.create_table(table)
+        return self._table_to_out(table)
+
+    def get_table(self, table_id: int) -> CatalogTableOut:
+        """Get a catalog table by ID.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        return self._table_to_out(table)
+
+    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTableOut]:
+        """List tables, optionally filtered by namespace."""
+        tables = self.repo.list_tables(namespace_id=namespace_id)
+        return [self._table_to_out(t) for t in tables]
+
+    def update_table(
+        self,
+        table_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        namespace_id: int | None = None,
+    ) -> CatalogTableOut:
+        """Update a catalog table's metadata.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        if name is not None:
+            table.name = name
+        if description is not None:
+            table.description = description
+        if namespace_id is not None:
+            table.namespace_id = namespace_id
+        table = self.repo.update_table(table)
+        return self._table_to_out(table)
+
+    def delete_table(self, table_id: int) -> None:
+        """Delete a catalog table and its materialized Parquet file.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        file_path = table.file_path
+        self.repo.delete_table(table_id)
+
+        try:
+            parquet_path = Path(file_path)
+            if parquet_path.exists():
+                parquet_path.unlink()
+        except OSError:
+            logger.warning("Failed to delete materialized file %s", file_path, exc_info=True)
+
+    def get_table_preview(self, table_id: int, limit: int = 100) -> CatalogTablePreview:
+        """Read the first N rows from the materialized Parquet file.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        import polars as pl
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        parquet_path = Path(table.file_path)
+        if not parquet_path.exists():
+            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+
+        df = pl.read_parquet(parquet_path, n_rows=limit)
+        columns = df.columns
+        dtypes = [str(df[col].dtype) for col in columns]
+
+        def _make_json_safe(val: object) -> object:
+            if val is None or isinstance(val, bool | int | float | str):
+                return val
+            return str(val)
+
+        rows = [[_make_json_safe(v) for v in row] for row in df.rows()]
+
+        return CatalogTablePreview(
+            columns=columns,
+            dtypes=dtypes,
+            rows=rows,
+            total_rows=table.row_count or len(df),
+        )
+
+    # ------------------------------------------------------------------ #
     # Dashboard / Stats
     # ------------------------------------------------------------------ #
 
@@ -713,6 +1085,7 @@ class CatalogService:
         total_runs = self.repo.count_runs()
         total_favs = self.repo.count_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
+        total_tables = self.repo.count_all_tables()
 
         recent_runs = self.repo.list_runs(limit=10, offset=0)
         recent_out = [self._run_to_out(r) for r in recent_runs]
@@ -732,6 +1105,7 @@ class CatalogService:
             total_runs=total_runs,
             total_favorites=total_favs,
             total_artifacts=total_artifacts,
+            total_tables=total_tables,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
         )
