@@ -6,6 +6,7 @@ each piece independently testable.
 
 import logging
 import os
+import re
 
 from flowfile_core.configs.settings import SERVER_PORT
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -15,6 +16,14 @@ from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
 
 logger = logging.getLogger(__name__)
 
+_SAFE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _assert_safe_name(name: str) -> None:
+    """Raise if *name* is not a safe filesystem identifier."""
+    if not _SAFE_NAME_RE.match(name):
+        raise ValueError(f"Unsafe input/output name rejected: {name!r}")
+
 
 def write_inputs_to_parquet(
     flowfile_tables: tuple[FlowDataEngine, ...],
@@ -22,14 +31,44 @@ def write_inputs_to_parquet(
     input_dir: str,
     flow_id: int,
     node_id: int,
+    input_names: list[str] | None = None,
 ) -> dict[str, list[str]]:
     """Serialize input tables to parquet on the shared volume.
 
+    When *input_names* is provided, each table gets its own named key in the
+    returned dict (e.g. ``{"orders": [...], "customers": [...]}``).  A
+    ``"main"`` key is always included pointing to **all** input files so that
+    ``flowfile.read_input("main")`` continues to work.
+
+    When *input_names* is ``None``, falls back to the original behaviour
+    where every input is grouped under ``"main"``.
+
     Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
-    main_paths: list[str] = []
-    for idx, ft in enumerate(flowfile_tables):
-        local_path = os.path.join(input_dir, f"main_{idx}.parquet")
+    if input_names is None:
+        # Original behaviour: all inputs under "main"
+        main_paths: list[str] = []
+        for idx, ft in enumerate(flowfile_tables):
+            local_path = os.path.join(input_dir, f"main_{idx}.parquet")
+            fetcher = ExternalDfFetcher(
+                flow_id=flow_id,
+                node_id=node_id,
+                lf=ft.data_frame,
+                wait_on_completion=True,
+                operation_type="write_parquet",
+                kwargs={"output_path": local_path},
+            )
+            if fetcher.has_error:
+                raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
+            main_paths.append(manager.to_kernel_path(local_path))
+        return {"main": main_paths}
+
+    # Named inputs: each table gets its own key
+    result: dict[str, list[str]] = {}
+    all_paths: list[str] = []
+    for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):
+        _assert_safe_name(name)
+        local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
         fetcher = ExternalDfFetcher(
             flow_id=flow_id,
             node_id=node_id,
@@ -39,9 +78,16 @@ def write_inputs_to_parquet(
             kwargs={"output_path": local_path},
         )
         if fetcher.has_error:
-            raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
-        main_paths.append(manager.to_kernel_path(local_path))
-    return {"main": main_paths}
+            raise RuntimeError(f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}")
+        kernel_path = manager.to_kernel_path(local_path)
+        result.setdefault(name, []).append(kernel_path)
+        all_paths.append(kernel_path)
+
+    # Always include "main" as a backward-compatible alias for all inputs
+    if "main" not in result:
+        result["main"] = all_paths
+
+    return result
 
 
 def build_execute_request(

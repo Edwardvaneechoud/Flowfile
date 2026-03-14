@@ -29,5 +29,6 @@ export const createPythonScriptNode = (
     depending_on_ids: null,
     python_script_input: pythonScriptInput,
     cache_results: false,
+    output_names: ["main"],
   };
 };

@@ -201,11 +201,25 @@ class KernelManager:
             "outputs",
         )
 
-        # Discover parquet files in the input directory
+        # Discover parquet files in the input directory and group by input name.
+        # Files are named {name}_{index}.parquet (e.g. orders_0.parquet, clients_1.parquet).
         if os.path.isdir(input_dir):
             parquet_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
             if parquet_files:
-                request.input_paths = {"main": [self.to_kernel_path(os.path.join(input_dir, f)) for f in parquet_files]}
+                input_paths: dict[str, list[str]] = {}
+                all_paths: list[str] = []
+                for f in parquet_files:
+                    kernel_path = self.to_kernel_path(os.path.join(input_dir, f))
+                    all_paths.append(kernel_path)
+                    # Extract name from filename pattern: name_index.parquet
+                    stem = f[: -len(".parquet")]
+                    parts = stem.rsplit("_", 1)
+                    name = parts[0] if len(parts) == 2 and parts[1].isdigit() else "main"
+                    input_paths.setdefault(name, []).append(kernel_path)
+                # Always include "main" as backward-compatible alias for all inputs
+                if "main" not in input_paths:
+                    input_paths["main"] = all_paths
+                request.input_paths = input_paths
 
         request.output_dir = self.to_kernel_path(output_dir)
 

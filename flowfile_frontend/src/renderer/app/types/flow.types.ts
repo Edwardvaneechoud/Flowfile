@@ -2,6 +2,7 @@
 // Consolidated from features/designer/types.ts and nodes/nodeLogic.ts
 
 import type { NodeResult } from "./node.types";
+import type { Position } from "@vue-flow/core";
 
 // ============================================================================
 // Flow Execution Types
@@ -25,6 +26,7 @@ export interface FlowSettings {
   execution_mode: ExecutionMode;
   execution_location: ExecutionLocation;
   show_detailed_progress: boolean;
+  show_edge_labels: boolean;
   is_running: boolean;
   max_parallel_workers: number;
 }
@@ -101,12 +103,34 @@ export interface NodeTemplate {
   drawer_title: string;
   drawer_intro: string;
   custom_node: boolean;
+  output_names?: string[];
 }
 
 export interface NodeInput extends NodeTemplate {
   id: number;
   pos_x: number;
   pos_y: number;
+  node_reference?: string;
+}
+
+// ============================================================================
+// Handle Types
+// ============================================================================
+
+export interface NodeHandle {
+  id: string;
+  position: Position;
+  label?: string;
+}
+
+// ============================================================================
+// Input Name Info (for kernel node autocomplete)
+// ============================================================================
+
+export interface InputNameInfo {
+  name: string;
+  source_node_id: number;
+  source_node_type: string;
 }
 
 // ============================================================================
@@ -119,6 +143,7 @@ export interface EdgeInput {
   target: string;
   sourceHandle: string;
   targetHandle: string;
+  label?: string;
 }
 
 // ============================================================================

@@ -51,7 +51,16 @@ import {
   ContextMenuAction,
   CursorPosition,
 } from "./types";
+import type { NodeHandle } from "../../types/flow.types";
+import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
+
+/** Typed subset of VueFlow node data used for edge label computation. */
+interface FlowNodeData {
+  id?: number;
+  nodeReference?: string;
+  outputs?: NodeHandle[];
+}
 
 const itemStore = useItemStore();
 const availableHeight = ref(0);
@@ -174,19 +183,75 @@ const selectNodeExternally = (nodeId: number) => {
   fitView({ nodes: [nodeId.toString()] });
 };
 
-async function onConnect(params: any) {
+/**
+ * Compute the label for an edge based on its source node.
+ * Priority: output handle label > nodeReference > df_{nodeId} default.
+ */
+function computeEdgeLabel(
+  sourceNode: ReturnType<typeof instance.findNode>,
+  sourceHandle?: string,
+): string {
+  const data = sourceNode?.data as FlowNodeData | undefined;
+  if (data?.outputs && sourceHandle) {
+    const output = data.outputs.find((o) => o.id === sourceHandle);
+    if (output?.label) {
+      return output.label;
+    }
+  }
+  if (data?.nodeReference) {
+    return data.nodeReference;
+  }
+  return `df_${data?.id ?? sourceNode?.id ?? ""}`;
+}
+
+/**
+ * Refresh labels on all edges (respects showEdgeLabels toggle).
+ */
+function refreshAllEdgeLabels() {
+  const allEdges = instance.getEdges.value;
+  for (const edge of allEdges) {
+    if (editorStore.showEdgeLabels) {
+      const sourceNode = instance.findNode(edge.source);
+      edge.label = computeEdgeLabel(sourceNode, edge.sourceHandle ?? undefined);
+    } else {
+      edge.label = undefined;
+    }
+  }
+}
+
+/**
+ * Update edge labels for all outgoing edges of a specific node.
+ */
+function updateEdgeLabelsForNode(nodeId: string) {
+  if (!editorStore.showEdgeLabels) return;
+  const allEdges = instance.getEdges.value;
+  const sourceNode = instance.findNode(nodeId);
+  for (const edge of allEdges) {
+    if (edge.source === nodeId) {
+      edge.label = computeEdgeLabel(sourceNode, edge.sourceHandle ?? undefined);
+    }
+  }
+}
+
+async function onConnect(params: Connection & { label?: string }) {
   if (params.target && params.source) {
     const nodeConnection: NodeConnection = {
       input_connection: {
-        node_id: parseInt(params.target),
-        connection_class: params.targetHandle,
+        node_id: parseInt(params.target, 10),
+        connection_class: params.targetHandle as NodeConnection["input_connection"]["connection_class"],
       },
       output_connection: {
-        node_id: parseInt(params.source),
-        connection_class: params.sourceHandle,
+        node_id: parseInt(params.source, 10),
+        connection_class: params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
       },
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);
+
+    if (editorStore.showEdgeLabels) {
+      const sourceNode = instance.findNode(params.source);
+      params.label = computeEdgeLabel(sourceNode, params.sourceHandle ?? undefined);
+    }
+
     addEdges([params]);
     // Update history state from response
     if (response?.history) {
@@ -558,6 +623,14 @@ onMounted(async () => {
       }
     },
   );
+
+  // Refresh edge labels when toggle changes
+  watch(
+    () => editorStore.showEdgeLabels,
+    () => {
+      refreshAllEdgeLabels();
+    },
+  );
 });
 
 onUnmounted(() => {
@@ -566,6 +639,8 @@ onUnmounted(() => {
 
 defineExpose({
   loadFlow,
+  updateEdgeLabelsForNode,
+  refreshAllEdgeLabels,
 });
 </script>
 
@@ -717,6 +792,23 @@ body,
 
 .custom-node-flow .vue-flow__edges {
   filter: invert(100%);
+}
+
+.custom-node-flow .vue-flow__edge-textwrapper {
+  filter: invert(100%);
+}
+
+.custom-node-flow .vue-flow__edge-text {
+  font-size: 11px;
+  font-weight: 500;
+  fill: #555;
+}
+
+.custom-node-flow .vue-flow__edge-textbg {
+  fill: #fff;
+  rx: 4;
+  ry: 4;
+  opacity: 0.9;
 }
 
 .animated-bg-gradient {

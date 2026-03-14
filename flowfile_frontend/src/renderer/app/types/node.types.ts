@@ -810,6 +810,7 @@ export interface NodePolarsCode extends NodeSingleInput {
 
 export interface NodePythonScript extends NodeMultiInput {
   python_script_input: PythonScriptInput;
+  output_names?: string[];
 }
 
 export interface NodeUnique extends NodeSingleInput {

@@ -347,6 +347,9 @@ class OutputSettings(BaseModel):
         return self
 
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
 class NodeBase(BaseModel):
     """Base model for all nodes in a FlowGraph. Contains common metadata."""
 
@@ -367,7 +370,7 @@ class NodeBase(BaseModel):
     @field_validator("node_reference", mode="before")
     @classmethod
     def validate_node_reference(cls, v):
-        """Validates that node_reference is lowercase and contains no spaces."""
+        """Validates that node_reference is a safe identifier (lowercase letters, digits, underscores)."""
         if v is None or v == "":
             return None
         if not isinstance(v, str):
@@ -376,6 +379,10 @@ class NodeBase(BaseModel):
             raise ValueError("node_reference cannot contain spaces")
         if v != v.lower():
             raise ValueError("node_reference must be lowercase")
+        if not _SAFE_IDENTIFIER_RE.match(v):
+            raise ValueError(
+                "node_reference must start with a letter and contain only lowercase letters, digits, and underscores"
+            )
         return v
 
     def get_default_description(self) -> str:
@@ -806,8 +813,7 @@ class DatabaseSettings(BaseModel):
             for part in parts:
                 if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
                     raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. "
-                        f"Only letters, numbers, and underscores are allowed."
+                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
                     )
         return v
 
@@ -845,8 +851,7 @@ class DatabaseWriteSettings(BaseModel):
             for part in parts:
                 if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
                     raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. "
-                        f"Only letters, numbers, and underscores are allowed."
+                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
                     )
         return v
 
@@ -1219,10 +1224,29 @@ class PythonScriptInput(BaseModel):
     cells: list[NotebookCell] | None = None
 
 
+def _validate_output_names(v: list[str]) -> list[str]:
+    """Validate that output_names entries are safe identifiers and unique."""
+    for name in v:
+        if not _SAFE_IDENTIFIER_RE.match(name):
+            raise ValueError(
+                f"output name {name!r} must start with a letter and contain only lowercase letters, digits, "
+                "and underscores"
+            )
+    if len(v) != len(set(v)):
+        raise ValueError("output_names must be unique")
+    return v
+
+
 class NodePythonScript(NodeMultiInput):
     """Node that executes Python code on a kernel container."""
 
     python_script_input: PythonScriptInput = PythonScriptInput()
+    output_names: list[str] = Field(default_factory=lambda: ["main"])
+
+    @field_validator("output_names")
+    @classmethod
+    def validate_output_names(cls, v: list[str]) -> list[str]:
+        return _validate_output_names(v)
 
 
 class UserDefinedNode(NodeMultiInput):
@@ -1231,3 +1255,8 @@ class UserDefinedNode(NodeMultiInput):
     settings: Any
     kernel_id: str | None = None
     output_names: list[str] = Field(default_factory=lambda: ["main"])
+
+    @field_validator("output_names")
+    @classmethod
+    def validate_output_names(cls, v: list[str]) -> list[str]:
+        return _validate_output_names(v)

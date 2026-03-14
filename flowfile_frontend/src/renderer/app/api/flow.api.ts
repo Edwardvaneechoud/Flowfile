@@ -8,6 +8,7 @@ import type {
   LocalFileInfo,
   NodeConnection,
   NodePromise,
+  InputNameInfo,
   HistoryState,
   UndoRedoResult,
   OperationResponse,
@@ -345,5 +346,20 @@ export class FlowApi {
       headers: { accept: "application/json" },
     });
     return response.data.upstream_node_ids;
+  }
+
+  /**
+   * Get the named input keys available for a kernel node.
+   * Each entry has: name, source_node_id, source_node_type.
+   */
+  static async getNodeInputNames(
+    flowId: number,
+    nodeId: number,
+  ): Promise<InputNameInfo[]> {
+    const response = await axios.get("/node/input_names", {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
   }
 }

@@ -67,6 +67,9 @@
         class="handle-input"
         :style="getHandleStyle(index, data.inputs.length)"
       >
+        <span v-if="input.label && data.inputs.length > 1" class="handle-label handle-label--input">
+          {{ input.label }}
+        </span>
         <Handle :id="input.id" type="target" :position="input.position" />
       </div>
       <div
@@ -76,6 +79,9 @@
         :style="getHandleStyle(index, data.outputs.length)"
       >
         <Handle :id="output.id" type="source" :position="output.position" />
+        <span v-if="output.label && data.outputs.length > 1" class="handle-label handle-label--output">
+          {{ output.label }}
+        </span>
       </div>
 
       <!-- Teleport Context Menu to body -->
@@ -165,7 +171,7 @@ import { toSnakeCase } from "../../views/DesignerView/utils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
-import type { NodeTemplate } from "../../types";
+import type { NodeTemplate, NodeHandle } from "../../types";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -193,21 +199,16 @@ const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
-// Define the data structure
+// Define the data structure for VueFlow node data
 interface NodeData {
   id: number;
   label: string;
-  component?: any; // Made optional since we might use nodeTemplate instead
-  inputs: Array<{
-    id: string;
-    position: any;
-  }>;
-  outputs: Array<{
-    id: string;
-    position: any;
-  }>;
-  nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
-  nodeItem?: string; // Optional node item name for backward compatibility
+  component?: ReturnType<typeof import("vue")["defineComponent"]>;
+  nodeReference?: string;
+  inputs: NodeHandle[];
+  outputs: NodeHandle[];
+  nodeTemplate?: NodeTemplate;
+  nodeItem?: string;
 }
 
 const props = defineProps({
@@ -625,6 +626,25 @@ onMounted(async () => {
 .handle-output {
   position: absolute;
   right: -8px;
+}
+
+.handle-label {
+  position: absolute;
+  font-size: 0.55rem;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.8;
+}
+
+.handle-label--input {
+  left: 14px;
+}
+
+.handle-label--output {
+  right: 14px;
 }
 
 .context-menu {

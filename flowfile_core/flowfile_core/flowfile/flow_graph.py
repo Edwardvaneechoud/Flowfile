@@ -945,8 +945,14 @@ class FlowGraph:
             os.makedirs(input_dir, exist_ok=True)
             os.makedirs(output_dir, exist_ok=True)
 
+            # Resolve named input keys from connected source nodes
+            node = self.get_node(node_id)
+            input_names = self._resolve_input_names(node, len(flow_data_engine))
+
             # Write inputs to parquet
-            input_paths = write_inputs_to_parquet(flow_data_engine, manager, input_dir, flow_id, node_id)
+            input_paths = write_inputs_to_parquet(
+                flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
+            )
 
             # Generate the kernel code from the custom node's process method
             code = custom_node.generate_kernel_code()
@@ -962,7 +968,6 @@ class FlowGraph:
                 source_registration_id=self._flow_settings.source_registration_id,
             )
 
-            node = self.get_node(node_id)
             cancel_event = threading.Event()
             if node is not None:
                 node._kernel_cancel_context = (kernel_id, manager)
@@ -995,7 +1000,6 @@ class FlowGraph:
                 )
 
             # Read outputs and populate named outputs on the FlowNode
-            node = self.get_node(node_id)
             primary_result: FlowDataEngine | None = None
             for i, name in enumerate(output_names):
                 output_path = os.path.join(output_dir, f"{name}.parquet")
@@ -1298,7 +1302,13 @@ class FlowGraph:
             os.makedirs(output_dir, exist_ok=True)
             self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
 
-            input_paths = write_inputs_to_parquet(flowfile_tables, manager, input_dir, flow_id, node_id)
+            # Resolve named input keys from connected source nodes
+            node = self.get_node(node_id)
+            input_names = self._resolve_input_names(node, len(flowfile_tables))
+
+            input_paths = write_inputs_to_parquet(
+                flowfile_tables, manager, input_dir, flow_id, node_id, input_names=input_names
+            )
 
             # 3. Build request and execute on the kernel
             request = build_execute_request(
@@ -1311,15 +1321,16 @@ class FlowGraph:
                 source_registration_id=self._flow_settings.source_registration_id,
             )
 
-            node = self.get_node(node_id)
             cancel_event = threading.Event()
-            node._kernel_cancel_context = (kernel_id, manager)
-            node._kernel_cancel_event = cancel_event
+            if node is not None:
+                node._kernel_cancel_context = (kernel_id, manager)
+                node._kernel_cancel_event = cancel_event
             try:
                 result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
             finally:
-                node._kernel_cancel_context = None
-                node._kernel_cancel_event = None
+                if node is not None:
+                    node._kernel_cancel_context = None
+                    node._kernel_cancel_event = None
 
             # 4. Forward kernel stdout/stderr and check for errors
             forward_kernel_logs(result, node_logger)
@@ -1340,10 +1351,21 @@ class FlowGraph:
                     artifact_names=result.artifacts_deleted,
                 )
 
-            # 6. Read output parquet or pass through first input
-            output_path = os.path.join(output_dir, "main.parquet")
-            if os.path.exists(output_path):
-                return FlowDataEngine(pl.scan_parquet(output_path))
+            # 6. Read named output parquets or pass through first input
+            output_names = node_python_script.output_names
+            primary_result: FlowDataEngine | None = None
+            for i, name in enumerate(output_names):
+                output_path = os.path.join(output_dir, f"{name}.parquet")
+                if os.path.exists(output_path):
+                    fde = FlowDataEngine(pl.scan_parquet(output_path))
+                    handle = f"output-{i}"
+                    if node is not None:
+                        node._named_outputs[handle] = fde
+                    if i == 0:
+                        primary_result = fde
+
+            if primary_result is not None:
+                return primary_result
             return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
 
         def schema_callback():
@@ -1376,6 +1398,13 @@ class FlowGraph:
             input_node_ids=node_python_script.depending_on_ids,
             schema_callback=schema_callback,
         )
+
+        # Override the template output count when multiple outputs are configured
+        output_names = node_python_script.output_names
+        if len(output_names) > 1:
+            node = self.get_node(node_python_script.node_id)
+            if node is not None:
+                node.node_template = node.node_template.model_copy(update={"output": len(output_names)})
 
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
         """Adds a special node that directly injects a Polars LazyFrame into the graph.
@@ -2667,6 +2696,27 @@ class FlowGraph:
     # ------------------------------------------------------------------
     # Artifact helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
+        """Derive named input keys from connected source nodes.
+
+        Uses the source node's ``node_reference`` when set, otherwise
+        falls back to ``df_{node_id}``.  Returns ``None`` when no node
+        is available, there are no input tables, or the number of
+        connected sources doesn't match ``table_count`` (original
+        unnamed behaviour).
+        """
+        if node is None or table_count == 0:
+            return None
+        input_names: list[str] = []
+        for source_node in node.all_inputs:
+            ref = getattr(source_node.setting_input, "node_reference", None)
+            name = ref if ref else f"df_{source_node.node_id}"
+            input_names.append(name)
+        if len(input_names) != table_count:
+            return None
+        return input_names
 
     def _get_upstream_node_ids(self, node_id: int) -> list[int]:
         """Get all upstream node IDs (direct and transitive) for *node_id*.
