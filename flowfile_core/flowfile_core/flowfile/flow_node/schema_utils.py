@@ -63,7 +63,8 @@ def create_schema_callback_with_output_config(
         if output_field_config and output_field_config.enabled and output_field_config.fields:
             logger.info(
                 f"wrapped_schema_callback: Using output_field_config for schema prediction "
-                f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields)"
+                f"(validation_mode={output_field_config.validation_mode_behavior}, "
+                f"{len(output_field_config.fields)} fields)"
             )
             return create_schema_from_output_field_config(output_field_config)
 
@@ -72,7 +73,9 @@ def create_schema_callback_with_output_config(
             logger.debug("wrapped_schema_callback: Falling back to base_schema_callback")
             return base_schema_callback()
         else:
-            logger.warning("wrapped_schema_callback: No base_schema_callback and no output_field_config, returning None")
+            logger.warning(
+                "wrapped_schema_callback: No base_schema_callback and no output_field_config, returning None"
+            )
             return None
 
     return wrapped_schema_callback

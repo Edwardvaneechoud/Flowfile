@@ -103,11 +103,11 @@ async def stream_log_file(
     except FileNotFoundError:
         error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
         yield error_msg
-        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}")
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}") from None
     except Exception as e:
         error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
         yield error_msg
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}") from e
 
 
 @router.get("/logs/{flow_id}", tags=["flow_logging"])

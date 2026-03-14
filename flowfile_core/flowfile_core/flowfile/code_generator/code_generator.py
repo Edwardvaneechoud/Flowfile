@@ -568,7 +568,7 @@ class FlowGraphToPolarsConverter:
                 - reverse_action: Mapping to rename __DROP__ columns after join
                 - after_join_drop_cols: Left join keys marked for dropping
         """
-        left_join_keys_to_keep = [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
+        [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
             f'pl.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
             for rjk in settings.right_select.join_key_selects
@@ -915,13 +915,11 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"{right_df} = {left_df}")
 
         if fuzzy_match_handler.left_select.has_drop_cols():
-            self._add_code(
-                f"{left_df} = {left_df}.drop({[c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]})"
-            )
+            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
+            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
         if fuzzy_match_handler.right_select.has_drop_cols():
-            self._add_code(
-                f"{right_df} = {right_df}.drop({[c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]})"
-            )
+            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
+            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
         self._add_code(
@@ -937,7 +935,8 @@ class FlowGraphToPolarsConverter:
 
         if settings.unique_input.columns:
             self._add_code(
-                f"{var_name} = {input_df}.unique(subset={settings.unique_input.columns}, keep='{settings.unique_input.strategy}')"
+                f"{var_name} = {input_df}.unique("
+                f"subset={settings.unique_input.columns}, keep='{settings.unique_input.strategy}')"
             )
         else:
             self._add_code(f"{var_name} = {input_df}.unique(keep='{settings.unique_input.strategy}')")
@@ -976,18 +975,21 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"    .with_columns(pl.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
             self._add_code(
-                f"    (pl.cum_count('{record_input.output_column_name}').over({record_input.group_by_columns}) + {record_input.offset} - 1)"
+                f"    (pl.cum_count('{record_input.output_column_name}')"
+                f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
             )
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
+            out_col = record_input.output_column_name
             self._add_code(
-                f".select(['{record_input.output_column_name}'] + [col for col in {input_df}.columns if col != '{record_input.output_column_name}'])"
+                f".select(['{out_col}'] + [col for col in {input_df}.columns if col != '{out_col}'])"
             )
             self._add_code(")")
         else:
             # Simple row number
             self._add_code(
-                f"{var_name} = {input_df}.with_row_count(name='{record_input.output_column_name}', offset={record_input.offset})"
+                f"{var_name} = {input_df}.with_row_count("
+                f"name='{record_input.output_column_name}', offset={record_input.offset})"
             )
         self._add_code("")
 
@@ -1006,7 +1008,11 @@ class FlowGraphToPolarsConverter:
     ) -> None:
         """Handle cloud storage writer nodes."""
         input_df = input_vars.get("main", "df")
-        # def write_csv_to_cloud_storage(self, path: str, connection_name: typing.Optional[str] = None, delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8', description: Optional[str] = None) -> 'FlowFrame': ...
+        # def write_csv_to_cloud_storage(
+        #     self, path: str, connection_name: typing.Optional[str] = None,
+        #     delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8',
+        #     description: Optional[str] = None
+        # ) -> 'FlowFrame': ...
 
         output_settings = settings.cloud_storage_settings
         self.imports.add("import flowfile as ff")
@@ -1105,7 +1111,7 @@ class FlowGraphToPolarsConverter:
             # If no explicit return, try to detect what to return
             if "return" not in code:
                 # Try to find the last assignment
-                lines = [l.strip() for l in code.split("\n") if l.strip() and "=" in l]
+                lines = [line.strip() for line in code.split("\n") if line.strip() and "=" in line]
                 if lines:
                     last_assignment = lines[-1]
                     if "=" in last_assignment:
@@ -1358,11 +1364,18 @@ class FlowGraphToPolarsConverter:
                         node_type,
                         f"Could not retrieve source code for user-defined node: {e}"
                     ))
-                    self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable")
+                    self._add_comment(
+                        f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
+                    )
                     return
 
             # Add necessary imports
-            self.imports.add("from flowfile_core.flowfile.node_designer import CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, IncomingColumns, ColumnSelector, NumericInput, TextInput, DropdownSelector, TextArea, Toggle")
+            self.imports.add(
+                "from flowfile_core.flowfile.node_designer import ("
+                "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
+                "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
+                "DropdownSelector, TextArea, Toggle)"
+            )
 
         # Get settings values to initialize the node
         settings_dict = getattr(settings, "settings", {}) or {}
@@ -1371,14 +1384,16 @@ class FlowGraphToPolarsConverter:
         needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
         # Generate the code to instantiate and run the custom node
-        self._add_code(f"# User-defined node: {custom_node_class.model_fields.get('node_name', type('', (), {'default': node_type})).default}")
+        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node_type}))
+        self._add_code(f"# User-defined node: {_node_name_field.default}")
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 
         # If there are settings, apply them
         if settings_dict:
             self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
             self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
-            self._add_code(f"    _custom_node_{node.node_id}.settings_schema.populate_values(_custom_node_{node.node_id}_settings)")
+            node_var = f"_custom_node_{node.node_id}"
+            self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
 
         # Prepare input arguments based on whether we need to collect
         if len(input_vars) == 0:
@@ -1627,7 +1642,7 @@ class FlowGraphToPolarsConverter:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
             lines.append("")
-            for class_name, source_code in self.custom_node_classes.items():
+            for _class_name, source_code in self.custom_node_classes.items():
                 for source_line in source_code.split("\n"):
                     lines.append(source_line)
                 lines.append("")

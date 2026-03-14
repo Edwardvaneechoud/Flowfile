@@ -82,9 +82,9 @@ async def prepare_upload(
         result = service.prepare_upload(body, owner_id=current_user.id)
         return result
     except FlowNotFoundError:
-        raise HTTPException(404, "Source registration not found")
+        raise HTTPException(404, "Source registration not found") from None
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found")
+        raise HTTPException(404, "Namespace not found") from None
 
 
 @router.post(
@@ -107,11 +107,11 @@ def finalize_upload(
         )
         return result
     except ArtifactNotFoundError:
-        raise HTTPException(404, "Artifact not found")
+        raise HTTPException(404, "Artifact not found") from None
     except ArtifactNotActiveError as e:
-        raise HTTPException(400, f"Artifact not in pending state: {e.status}")
+        raise HTTPException(400, f"Artifact not in pending state: {e.status}") from e
     except ArtifactUploadError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ def get_artifact_by_name(
             version=version,
         )
     except ArtifactNotFoundError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
 
 
 @router.get(
@@ -208,7 +208,7 @@ def get_artifact_versions(
             namespace_id=namespace_id,
         )
     except ArtifactNotFoundError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
 
 
 @router.get(
@@ -225,7 +225,7 @@ def get_artifact_by_id(
     try:
         return service.get_artifact_by_id(artifact_id)
     except ArtifactNotFoundError:
-        raise HTTPException(404, "Artifact not found")
+        raise HTTPException(404, "Artifact not found") from None
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ async def delete_artifact(
             versions_deleted=1,
         )
     except ArtifactNotFoundError:
-        raise HTTPException(404, "Artifact not found")
+        raise HTTPException(404, "Artifact not found") from None
 
 
 @router.delete(
@@ -286,4 +286,4 @@ async def delete_artifact_by_name(
             versions_deleted=versions_deleted,
         )
     except ArtifactNotFoundError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e

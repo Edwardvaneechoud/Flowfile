@@ -17,12 +17,12 @@ import gc
 import os
 import threading
 import uuid
+from base64 import b64encode
 from dataclasses import dataclass
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from typing import Any
 
-from base64 import b64encode
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock

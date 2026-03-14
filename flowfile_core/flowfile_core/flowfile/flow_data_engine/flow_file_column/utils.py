@@ -73,7 +73,7 @@ def safe_eval_pl_type(type_string: str):
     try:
         return eval(type_string, safe_dict, {})
     except Exception as e:
-        raise ValueError(f"Failed to safely evaluate type string '{type_string}': {e}")
+        raise ValueError(f"Failed to safely evaluate type string '{type_string}': {e}") from e
 
 
 dtype_to_pl_str = {k: v.__name__ for k, v in dtype_to_pl.items()}

@@ -1,14 +1,14 @@
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, cast
 
 import polars as pl
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_frame.callable_utils import resolve_callable
 from flowfile_frame.expr import Expr
 from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
-from flowfile_frame.callable_utils import resolve_callable
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -162,7 +162,7 @@ def _process_argument(arg: Any, can_be_expr: bool) -> tuple[str, Any, bool, str 
         Tuple of (repr_string, processed_arg_for_polars, convertible_to_code, function_source)
     """
     # Special handling for callables (but not Expr objects which might be callable)
-    if callable(arg) and not isinstance(arg, (Expr, pl.Expr)) and not hasattr(arg, "expr"):
+    if callable(arg) and not isinstance(arg, Expr | pl.Expr) and not hasattr(arg, "expr"):
         return _process_callable_arg(arg)
     repr_str = _deep_get_repr(arg, can_be_expr)
 
@@ -363,7 +363,7 @@ def _check_for_non_serializable_functions(args: list[Any], kwargs: dict[str, Any
 
     def check_value(value: Any, path: str) -> None:
         """Recursively check for non-serializable functions."""
-        if callable(value) and not isinstance(value, (type, pl.Expr)):
+        if callable(value) and not isinstance(value, type | pl.Expr):
             # Check if it's a lambda or local function
             if hasattr(value, "__name__"):
                 if value.__name__ == "<lambda>":
@@ -456,7 +456,8 @@ def _create_expr_result(
 
     except Exception as e:
         print(
-            f"Warning: Polars function '{polars_func_name}' failed to create an expression with provided arguments. Error: {e}"
+            f"Warning: Polars function '{polars_func_name}' failed to create an expression "
+            f"with provided arguments. Error: {e}"
         )
         if "serialization not supported" in str(e).lower():
             serialization_error = str(e)
@@ -563,7 +564,7 @@ def polars_function_wrapper(
                         name="flow_graph",
                         kind=inspect.Parameter.KEYWORD_ONLY,
                         default=None,
-                        annotation=Optional[FlowGraph],  # Corrected annotation
+                        annotation=FlowGraph | None,  # Corrected annotation
                     )
                     var_kw_idx = next(
                         (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1
@@ -646,7 +647,7 @@ def polars_function_wrapper(
                         name="flow_graph",
                         kind=inspect.Parameter.KEYWORD_ONLY,
                         default=None,
-                        annotation=Optional[FlowGraph],  # Corrected annotation
+                        annotation=FlowGraph | None,  # Corrected annotation
                     )
                     var_kw_idx = next(
                         (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1

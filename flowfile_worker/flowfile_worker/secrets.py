@@ -97,7 +97,7 @@ def get_docker_secret_key() -> str | None:
             return env_key
         except Exception:
             logger.error("FLOWFILE_MASTER_KEY environment variable is not a valid Fernet key")
-            raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key")
+            raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key") from None
 
     # Then, check for Docker secret file
     secret_path = "/run/secrets/flowfile_master_key"
@@ -110,7 +110,7 @@ def get_docker_secret_key() -> str | None:
                 return key
         except Exception as e:
             logger.error(f"Failed to read or validate master key from Docker secret: {e}")
-            raise RuntimeError("Failed to read master key from Docker secret")
+            raise RuntimeError("Failed to read master key from Docker secret") from e
 
     # No key configured
     return None

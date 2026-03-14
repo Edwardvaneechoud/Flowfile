@@ -198,7 +198,7 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
+                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}") from e
             # Create a FlowDataEngine to get data in the right format for manual input
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
@@ -291,7 +291,7 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}")
+                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}") from e
 
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
@@ -345,7 +345,7 @@ class FlowFrame:
                 parent_node_id=self.node_id,
             )
         except AttributeError:
-            raise ValueError("Could not execute the function")
+            raise ValueError("Could not execute the function") from None
 
     @staticmethod
     def _generate_sort_polars_code(
@@ -405,7 +405,7 @@ class FlowFrame:
         if maintain_order or not multithreaded:
             use_polars_code_path = True
 
-        is_nulls_last_list = isinstance(nulls_last, (list, tuple))
+        is_nulls_last_list = isinstance(nulls_last, list | tuple)
         if is_nulls_last_list and any(val for val in nulls_last if val is not False):
             use_polars_code_path = True
         elif not is_nulls_last_list and nulls_last is not False:
@@ -550,7 +550,8 @@ class FlowFrame:
                 target_obj = getattr(self.data, effective_method_name)(*group_expr_list, **group_kwargs)
                 if not pl_expr_list:
                     raise ValueError(
-                        "Aggregation expressions (polars_expr) are required for group_by().agg() in serialization fallback."
+                        "Aggregation expressions (polars_expr) are required for "
+                    "group_by().agg() in serialization fallback."
                     )
                 result_lazyframe_or_expr = target_obj.agg(*pl_expr_list, **current_kwargs_expr)
             elif effective_method_name:
@@ -559,7 +560,8 @@ class FlowFrame:
                 )
             else:
                 raise ValueError(
-                    "Cannot execute Polars operation: method_name is missing and could not be inferred for serialization fallback."
+                    "Cannot execute Polars operation: method_name is missing and "
+                    "could not be inferred for serialization fallback."
                 )
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
@@ -1083,7 +1085,7 @@ class FlowFrame:
 
             processed_predicates = []
             for pred_item in predicates:
-                if isinstance(pred_item, (tuple, list, Iterator)):
+                if isinstance(pred_item, tuple | list | Iterator):
                     # If it's a sequence, extend the processed_predicates with its elements
                     processed_predicates.extend(list(pred_item))
                 else:
@@ -1207,7 +1209,7 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        is_path_input = isinstance(path, (str, os.PathLike))
+        is_path_input = isinstance(path, str | os.PathLike)
         if isinstance(path, os.PathLike):
             file_str = str(path)
         elif isinstance(path, str):
@@ -1277,7 +1279,7 @@ class FlowFrame:
         **kwargs: Any,
     ) -> FlowFrame:
         new_node_id = generate_node_id()
-        is_path_input = isinstance(file, (str, os.PathLike))
+        is_path_input = isinstance(file, str | os.PathLike)
         if isinstance(file, os.PathLike):
             file_str = str(file)
         elif isinstance(file, str):
@@ -1490,7 +1492,7 @@ class FlowFrame:
                 by_cols.append(col_expr)
             elif isinstance(col_expr, Selector):
                 by_cols.append(col_expr)
-            elif isinstance(col_expr, (list, tuple)):
+            elif isinstance(col_expr, list | tuple):
                 by_cols.extend(col_expr)
 
         for new_name, col_expr in named_by.items():
@@ -1663,7 +1665,7 @@ class FlowFrame:
             code = f"""
     # Perform pivot operation
     result = input_df.pivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         values={values_repr},
         aggregate_function='{aggregate_function}',
@@ -1729,7 +1731,7 @@ class FlowFrame:
         can_use_native = True
         if on is None:
             value_columns = []
-        elif isinstance(on, (str, Selector)):
+        elif isinstance(on, str | Selector):
             if isinstance(on, Selector):
                 can_use_native = False
             value_columns = [on]
@@ -1775,7 +1777,7 @@ class FlowFrame:
             code = f"""
     # Perform unpivot operation
     output_df = input_df.unpivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         variable_name="{variable_name}",
         value_name="{value_name}"
@@ -2190,7 +2192,7 @@ class FlowFrame:
 
         all_columns = []
 
-        if isinstance(columns, (list, tuple)):
+        if isinstance(columns, list | tuple):
             all_columns.extend([col.column_name if isinstance(col, Column) else col for col in columns])
         else:
             all_columns.append(columns.column_name if isinstance(columns, Column) else columns)
@@ -2352,7 +2354,7 @@ class FlowFrame:
         can_use_native = True
         if subset is not None:
             # Convert to list if single item
-            if not isinstance(subset, (list, tuple)):
+            if not isinstance(subset, list | tuple):
                 subset = [subset]
 
             # Extract column names
@@ -2396,7 +2398,7 @@ class FlowFrame:
             # Generate polars code for more complex cases
             if subset is None:
                 subset_str = "None"
-            elif isinstance(subset, (list, tuple)):
+            elif isinstance(subset, list | tuple):
                 # Format each item in the subset list
                 items = []
                 for item in subset:

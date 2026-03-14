@@ -13,7 +13,6 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Low-level extraction helpers
 # ---------------------------------------------------------------------------
@@ -41,9 +40,9 @@ def _get_function_source(func) -> tuple[str | None, bool]:
 
 def _is_safely_representable(value: Any) -> bool:
     """Check if a value can be safely round-tripped through repr()."""
-    if isinstance(value, (int, float, bool, str, bytes, type(None))):
+    if isinstance(value, int | float | bool | str | bytes | type(None)):
         return True
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return all(_is_safely_representable(item) for item in value)
     if isinstance(value, dict):
         return all(
@@ -102,7 +101,7 @@ def _extract_lambda_source(func) -> tuple[str | None, str | None]:
     # Capture closure variables
     closure_defs: list[str] = []
     if func.__code__.co_freevars and func.__closure__:
-        for var_name, cell in zip(func.__code__.co_freevars, func.__closure__):
+        for var_name, cell in zip(func.__code__.co_freevars, func.__closure__, strict=False):
             try:
                 value = cell.cell_contents
             except ValueError:

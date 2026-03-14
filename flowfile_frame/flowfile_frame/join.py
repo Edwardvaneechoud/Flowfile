@@ -16,7 +16,7 @@ def _normalize_columns_to_list(columns):
         return []
     elif isinstance(columns, str):
         return [columns]
-    elif isinstance(columns, (list, tuple)):
+    elif isinstance(columns, list | tuple):
         return list(columns)
     else:
         return [columns]  # Single non-string item

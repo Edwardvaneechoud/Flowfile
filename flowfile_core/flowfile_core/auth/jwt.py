@@ -89,7 +89,7 @@ def get_current_user_sync(token: str, db: Session):
             raise credentials_exception
         token_data = TokenData(username=username)
     except JWTError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
@@ -137,7 +137,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             raise credentials_exception
         token_data = TokenData(username=username)
     except JWTError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
@@ -209,7 +209,7 @@ async def get_current_user_from_query(
             raise credentials_exception
         token_data = TokenData(username=username)
     except JWTError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     # Handle authentication based on deployment mode (same as your existing logic)
     if os.environ.get("FLOWFILE_MODE") == "electron":

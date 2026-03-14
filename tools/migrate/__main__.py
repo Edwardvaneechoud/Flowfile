@@ -87,7 +87,7 @@ Examples:
     # Check for yaml dependency
     if args.format == "yaml":
         try:
-            import yaml
+            import yaml  # noqa: F401
         except ImportError:
             print("Error: PyYAML is required for YAML output.", file=sys.stderr)
             print("Install with: pip install pyyaml", file=sys.stderr)

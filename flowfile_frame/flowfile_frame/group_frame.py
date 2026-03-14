@@ -41,7 +41,7 @@ class GroupByFrame:
         """Convert various column specifications to Expr objects."""
         if isinstance(col_, str):
             return col(col_)
-        elif isinstance(col_, (Column, Expr)):
+        elif isinstance(col_, Column | Expr):
             return col_
         else:
             return lit(col_)

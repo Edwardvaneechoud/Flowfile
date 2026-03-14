@@ -583,11 +583,17 @@ class FlowNode:
         Returns:
             A list of FlowfileColumn objects representing the predicted schema.
         """
+        _has_output_field_config = (
+            hasattr(self._setting_input, "output_field_config")
+            and self._setting_input.output_field_config is not None
+            if self._setting_input
+            else False
+        )
         logger.info(
             f"get_predicted_schema: node_id={self.node_id}, node_type={self.node_type}, force={force}, "
             f"has_predicted_schema={self.node_schema.predicted_schema is not None}, "
             f"has_schema_callback={self.schema_callback is not None}, "
-            f"has_output_field_config={hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config is not None if self._setting_input else False}"
+            f"has_output_field_config={_has_output_field_config}"
         )
 
         if self.node_schema.predicted_schema and not force:
@@ -734,8 +740,10 @@ class FlowNode:
                                         v._execution_lock.acquire()
                                         input_locks.append(v._execution_lock)
                                         input_result = self._resolve_input_result(v)
+                                        _df_type = type(input_result.data_frame) if input_result else "None"
                                         self.print(
-                                            f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}"
+                                            f"Input {i} data type: {type(input_result)}, "
+                                            f"dataframe type: {_df_type}"
                                         )
                                         input_data.append(input_result)
                                     self.print(f"All {len(input_data)} inputs collected, calling node function")
@@ -832,8 +840,7 @@ class FlowNode:
         """
         for node in self.leads_to_nodes:
             yield node
-            for n in node.get_all_dependent_nodes():
-                yield n
+            yield from node.get_all_dependent_nodes()
 
     def get_all_dependent_node_ids(self) -> Generator[int, None, None]:
         """Yields the IDs of all downstream nodes recursively.
@@ -843,8 +850,7 @@ class FlowNode:
         """
         for node in self.leads_to_nodes:
             yield node.node_id
-            for n in node.get_all_dependent_node_ids():
-                yield n
+            yield from node.get_all_dependent_node_ids()
 
     @property
     def schema(self) -> list[FlowfileColumn]:
@@ -1113,7 +1119,7 @@ class FlowNode:
                     raise e
                 else:
                     self.results.errors = external_df_fetcher.error_description
-                    raise Exception(external_df_fetcher.error_description)
+                    raise Exception(external_df_fetcher.error_description) from e
             finally:
                 self._fetch_cached_df = None
 

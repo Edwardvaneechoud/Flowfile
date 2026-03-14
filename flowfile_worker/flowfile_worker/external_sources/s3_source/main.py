@@ -48,7 +48,7 @@ def _write_parquet_to_cloud(
 
     except Exception as e:
         logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
-        raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}")
+        raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
 
 
 def _write_delta_to_cloud(
@@ -102,7 +102,7 @@ def _write_csv_to_cloud(
 
     except Exception as e:
         logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
-        raise Exception(f"Failed to write CSV to cloud storage: {str(e)}")
+        raise Exception(f"Failed to write CSV to cloud storage: {str(e)}") from e
 
 
 def _write_json_to_cloud(
@@ -137,7 +137,7 @@ def _write_json_to_cloud(
 
     except Exception as e:
         logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
-        raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
+        raise Exception(f"Failed to write JSON to cloud storage: {str(e)}") from e
 
 
 writers = {

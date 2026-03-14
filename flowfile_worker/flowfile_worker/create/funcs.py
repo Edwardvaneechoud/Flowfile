@@ -34,7 +34,7 @@ def create_from_path_json(received_table: ReceivedTable):
             )
             df.head(1).collect()
             return df
-        except:
+        except Exception:
             try:
                 df = pl.scan_csv(
                     f,
@@ -46,7 +46,7 @@ def create_from_path_json(received_table: ReceivedTable):
                     ignore_errors=True,
                 )
                 return df
-            except:
+            except Exception:
                 df = pl.scan_csv(
                     f,
                     low_memory=low_mem,
@@ -91,7 +91,7 @@ def create_from_path_csv(received_table: ReceivedTable) -> pl.DataFrame:
             )
             df.head(1).collect()
             return df
-        except:
+        except Exception:
             try:
                 df = pl.scan_csv(
                     f,
@@ -103,7 +103,7 @@ def create_from_path_csv(received_table: ReceivedTable) -> pl.DataFrame:
                     ignore_errors=True,
                 )
                 return df
-            except:
+            except Exception:
                 df = pl.scan_csv(
                     f,
                     low_memory=low_mem,

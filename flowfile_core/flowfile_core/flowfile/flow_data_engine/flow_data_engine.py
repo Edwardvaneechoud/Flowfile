@@ -40,7 +40,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
     cast_str_to_polars_type,
     get_polars_type,
-    safe_eval_pl_type,
 )
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
@@ -208,7 +207,9 @@ class FlowDataEngine:
 
     def __init__(
         self,
-        raw_data: list[dict] | list[Any] | dict[str, Any] | ParquetFile | pl.DataFrame | pl.LazyFrame | input_schema.RawData = None,
+        raw_data: (
+            list[dict] | list[Any] | dict[str, Any] | ParquetFile | pl.DataFrame | pl.LazyFrame | input_schema.RawData
+        ) = None,
         path_ref: str = None,
         name: str = None,
         optimize_memory: bool = True,
@@ -275,7 +276,7 @@ class FlowDataEngine:
             self._handle_polars_dataframe(raw_data, number_of_records)
         elif isinstance(raw_data, pl.LazyFrame):
             self._handle_polars_lazy_frame(raw_data, number_of_records, optimize_memory)
-        elif isinstance(raw_data, (list, dict)):
+        elif isinstance(raw_data, list | dict):
             self._handle_python_data(raw_data)
 
     def _handle_polars_dataframe(self, df: pl.DataFrame, number_of_records: int | None):
@@ -305,7 +306,7 @@ class FlowDataEngine:
         """(Internal) Initializes the engine from a Python dictionary."""
         if len(data) == 0:
             self.initialize_empty_fl()
-        lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
+        lengths = [len(v) if isinstance(v, list | tuple) else 1 for v in data.values()]
 
         if len(set(lengths)) == 1 and lengths[0] > 1:
             self.number_of_records = lengths[0]
@@ -363,9 +364,9 @@ class FlowDataEngine:
             try:
                 return pl.DataFrame(data).to_dicts()
             except TypeError:
-                raise Exception("Value must be able to be converted to dictionary")
+                raise Exception("Value must be able to be converted to dictionary") from None
             except Exception as e:
-                raise Exception(f"Value must be able to be converted to dictionary: {e}")
+                raise Exception(f"Value must be able to be converted to dictionary: {e}") from e
 
         if not isinstance(data[0], dict):
             data = [row.__dict__ for row in data]
@@ -447,7 +448,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}")
+            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
 
     def _write_delta_to_cloud(
         self,
@@ -497,7 +498,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}")
+            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}") from e
 
     def _write_json_to_cloud(
         self,
@@ -520,7 +521,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
+            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}") from e
 
     @classmethod
     def from_cloud_storage_obj(
@@ -649,7 +650,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
-            raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}")
+            raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}") from e
 
     @classmethod
     def _read_delta_from_cloud(
@@ -680,7 +681,7 @@ class FlowDataEngine:
             )
         except Exception as e:
             logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
-            raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}")
+            raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}") from e
 
     @classmethod
     def _read_csv_from_cloud(
@@ -723,7 +724,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
-            raise Exception(f"Failed to read CSV from cloud storage: {str(e)}")
+            raise Exception(f"Failed to read CSV from cloud storage: {str(e)}") from e
 
     @classmethod
     def _read_json_from_cloud(
@@ -755,7 +756,7 @@ class FlowDataEngine:
 
         except Exception as e:
             logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
-            raise Exception(f"Failed to read JSON from cloud storage: {str(e)}")
+            raise Exception(f"Failed to read JSON from cloud storage: {str(e)}") from e
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handles file path reference input."""
@@ -763,7 +764,7 @@ class FlowDataEngine:
             pf = ParquetFile(path_ref)
         except Exception as e:
             logger.error(e)
-            raise Exception("Provided ref is not a parquet file")
+            raise Exception("Provided ref is not a parquet file") from e
 
         self.number_of_records = pf.metadata.num_rows
         if optimize_memory:
@@ -944,7 +945,7 @@ class FlowDataEngine:
             try:
                 _ = self.data_frame.select(c).head(n_records).collect()
                 ok_cols.append(c)
-            except:
+            except Exception:
                 error_cols.append((c, self.data_frame.schema[c]))
         return ok_cols, error_cols
 
@@ -2015,7 +2016,7 @@ class FlowDataEngine:
                         engine="streaming" if self._streamable else "auto"
                     )[0, 0]
                 except Exception:
-                    raise ValueError("Could not get number of records")
+                    raise ValueError("Could not get number of records") from None
             else:
                 self.number_of_records = self.data_frame.__len__()
         return self.number_of_records

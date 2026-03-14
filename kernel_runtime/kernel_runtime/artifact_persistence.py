@@ -35,7 +35,7 @@ class RecoveryMode(str, Enum):
     CLEAR = "clear"  # Clears all persisted artifacts on startup
 
     @classmethod
-    def _missing_(cls, value: object) -> "RecoveryMode | None":
+    def _missing_(cls, value: object) -> RecoveryMode | None:
         """Handle 'none' as an alias for 'clear' for backwards compatibility."""
         if isinstance(value, str) and value.lower() == "none":
             logger.warning(

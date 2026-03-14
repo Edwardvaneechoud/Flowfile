@@ -16,8 +16,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
 from flowfile_core.artifacts.exceptions import (
     ArtifactNotFoundError,
     ArtifactStateError,
@@ -39,6 +37,8 @@ from flowfile_core.schemas.artifact_schema import (
 
 if TYPE_CHECKING:
     from shared.artifact_storage import ArtifactStorageBackend
+
+logger = logging.getLogger(__name__)
 
 
 class ArtifactService:
@@ -173,7 +173,10 @@ class ArtifactService:
             # Exhausted all retries
             raise ArtifactUploadError(
                 artifact_id=0,
-                reason=f"Failed to create artifact after {_max_retries} attempts due to version conflicts: {last_error}",
+                reason=(
+                    f"Failed to create artifact after {_max_retries} attempts "
+                    f"due to version conflicts: {last_error}"
+                ),
             )
 
         # Get upload target from storage backend
@@ -233,11 +236,11 @@ class ArtifactService:
         except FileNotFoundError:
             artifact.status = "failed"
             self.db.commit()
-            raise ArtifactUploadError(artifact_id, "Blob not found in storage")
+            raise ArtifactUploadError(artifact_id, "Blob not found in storage") from None
         except ValueError as e:
             artifact.status = "failed"
             self.db.commit()
-            raise ArtifactUploadError(artifact_id, str(e))
+            raise ArtifactUploadError(artifact_id, str(e)) from e
 
         # Activate artifact
         artifact.status = "active"

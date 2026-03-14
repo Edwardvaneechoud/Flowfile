@@ -56,7 +56,7 @@ def get_simple_custom_object(flow_id: int, node_id: int):
     try:
         node = flow_file_handler.get_node(flow_id=flow_id, node_id=node_id)
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     user_defined_node = CUSTOM_NODE_STORE.get(node.node_type)
 
     if not user_defined_node:
@@ -114,7 +114,7 @@ def save_custom_node(request: SaveCustomNodeRequest):
         raise HTTPException(
             status_code=400,
             detail=f"Python syntax error at line {e.lineno}: {e.msg}"
-        )
+        ) from e
 
     # Get the directory path
     nodes_dir = storage.user_defined_nodes_directory
@@ -127,7 +127,7 @@ def save_custom_node(request: SaveCustomNodeRequest):
         logger.info(f"Saved custom node to {file_path}")
     except Exception as e:
         logger.error(f"Failed to save custom node: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}") from e
 
     # Try to load and register the node using the centralized loader
     try:
@@ -244,7 +244,7 @@ def get_custom_node(file_name: str) -> dict[str, Any]:
         with open(file_path, encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}") from e
 
     # Parse the file to extract metadata and sections
     result = {
@@ -341,7 +341,10 @@ def delete_custom_node(file_name: str) -> dict[str, Any]:
     try:
         info = _extract_node_info_from_file(file_path)
         file_stem = file_path.stem  # filename without .py extension
-        logger.info(f"Extracted node info: node_name='{info.node_name}', file_name='{info.file_name}', file_stem='{file_stem}'")
+        logger.info(
+            f"Extracted node info: node_name='{info.node_name}', "
+            f"file_name='{info.file_name}', file_stem='{file_stem}'"
+        )
 
         # Use the centralized remove function which cleans up all stores
         # Pass both the computed key from node_name and the file_stem as fallback
@@ -365,7 +368,7 @@ def delete_custom_node(file_name: str) -> dict[str, Any]:
         logger.info(f"Deleted custom node file: {file_path}")
     except Exception as e:
         logger.error(f"Failed to delete custom node file: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}") from e
 
     return {
         "success": True,
@@ -454,7 +457,7 @@ async def upload_icon(file: UploadFile = File(...)) -> dict[str, Any]:
         logger.info(f"Uploaded icon: {file_path} (size: {len(content)} bytes)")
     except Exception as e:
         logger.error(f"Failed to save icon: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save icon: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save icon: {str(e)}") from e
 
     return {
         "success": True,
@@ -527,7 +530,7 @@ def delete_icon(file_name: str) -> dict[str, Any]:
         logger.info(f"Deleted icon: {file_path}")
     except Exception as e:
         logger.error(f"Failed to delete icon: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete icon: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete icon: {str(e)}") from e
 
     return {
         "success": True,

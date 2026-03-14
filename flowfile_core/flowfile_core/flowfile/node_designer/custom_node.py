@@ -8,8 +8,8 @@ import polars as pl
 from pydantic import BaseModel, Field
 
 from flowfile_core.flowfile.node_designer.ui_components import (
-    FlowfileInComponent,
     AvailableArtifacts,
+    FlowfileInComponent,
     IncomingColumns,
     SecretSelector,
     Section,

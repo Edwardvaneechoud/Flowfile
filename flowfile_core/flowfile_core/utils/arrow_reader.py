@@ -43,7 +43,7 @@ def open_validated_file(file_path: str, n: int) -> pa.OSFile:
         return file
     except FileNotFoundError:
         logger.error(f"File not found: {file_path}")
-        raise FileNotFoundError(f"Could not find file: {file_path}")
+        raise FileNotFoundError(f"Could not find file: {file_path}") from None
 
 
 def create_reader(source: pa.OSFile) -> pa.ipc.RecordBatchFileReader:
@@ -73,7 +73,7 @@ def create_reader(source: pa.OSFile) -> pa.ipc.RecordBatchFileReader:
         return reader
     except pa.ArrowInvalid:
         logger.error("Failed to create reader: Invalid Arrow file format")
-        raise ValueError("Invalid Arrow file format")
+        raise ValueError("Invalid Arrow file format") from None
 
 
 def iter_batches(reader: pa.ipc.RecordBatchFileReader, n: int, rows_collected: int) -> Iterator[pa.RecordBatch]:

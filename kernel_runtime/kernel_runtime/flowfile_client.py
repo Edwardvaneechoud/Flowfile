@@ -47,7 +47,7 @@ _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("flowf
 _log_client: contextvars.ContextVar[httpx.Client | None] = contextvars.ContextVar("flowfile_log_client", default=None)
 
 # Display outputs collector (reset at start of each execution)
-_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar("flowfile_displays", default=[])
+_displays: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar("flowfile_displays", default=None)
 
 
 def _set_context(
@@ -270,8 +270,8 @@ def publish_global(
     from kernel_runtime.serialization import (
         check_pickleable,
         detect_format,
-        serialize_to_file,
         serialize_to_bytes,
+        serialize_to_file,
     )
 
     serialization_format = fmt or detect_format(obj)
@@ -396,7 +396,7 @@ def get_global(
         >>> model = flowfile.get_global("my_model")
         >>> model_v1 = flowfile.get_global("my_model", version=1)
     """
-    from kernel_runtime.serialization import deserialize_from_file, deserialize_from_bytes
+    from kernel_runtime.serialization import deserialize_from_bytes, deserialize_from_file
 
     # 1. Get metadata and download source from Core
     params = {}

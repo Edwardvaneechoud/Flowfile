@@ -66,7 +66,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import models as
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
@@ -92,7 +92,7 @@ except PackageNotFoundError:
 
 def represent_list_json(dumper, data):
     """Use inline style for short simple lists, block style for complex ones."""
-    if len(data) <= 10 and all(isinstance(item, (int, str, float, bool, type(None))) for item in data):
+    if len(data) <= 10 and all(isinstance(item, int | str | float | bool | type(None)) for item in data):
         return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
 
@@ -224,7 +224,7 @@ def execution_order_message(flow_logger: FlowLogger, stages: list[ExecutionStage
         node_strs = ", ".join(str(node) for node in stage)
         parallel_tag = " (parallel)" if len(stage) > 1 else ""
         lines.append(f"  Stage {i}{parallel_tag}: [{node_strs}]")
-    flow_logger.info(f"execution order:\n" + "\n".join(lines))
+    flow_logger.info("execution order:\n" + "\n".join(lines))
 
 
 def get_xlsx_schema_callback(
@@ -903,7 +903,7 @@ class FlowGraph:
             accessed_secrets = custom_node.get_accessed_secrets()
             if accessed_secrets:
                 logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
-            if isinstance(output, (pl.LazyFrame, pl.DataFrame)):
+            if isinstance(output, pl.LazyFrame | pl.DataFrame):
                 return FlowDataEngine(output)
             return None
 
@@ -1874,7 +1874,8 @@ class FlowGraph:
             if output_field_config.enabled:
                 logger.info(
                     f"add_node_step: Creating/wrapping schema_callback for node {node_id} with output_field_config "
-                    f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields, "
+                    f"(validation_mode={output_field_config.validation_mode_behavior}, "
+                    f"{len(output_field_config.fields)} fields, "
                     f"base_callback={'present' if schema_callback else 'None'})"
                 )
             else:
@@ -1991,7 +1992,6 @@ class FlowGraph:
 
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None
-        resolved_table_id: int | None = None
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
@@ -1999,13 +1999,11 @@ class FlowGraph:
                     table = repo.get_table(node_catalog_reader.catalog_table_id)
                     if table is not None:
                         file_path = table.file_path
-                        resolved_table_id = table.id
                 elif node_catalog_reader.catalog_table_name:
                     tables = repo.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
                     for t in tables:
                         if t.name == node_catalog_reader.catalog_table_name:
                             file_path = t.file_path
-                            resolved_table_id = t.id
                             break
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
@@ -3252,7 +3250,7 @@ class FlowGraph:
                 for o in node_info.outputs:
                     outputs[o] += 1
                 connections = []
-                for output_node_id, n_connections in outputs.items():
+                for output_node_id, _n_connections in outputs.items():
                     leading_to_node = self.get_node(output_node_id)
                     input_types = leading_to_node.get_input_type(node_info.id)
                     for input_type in input_types:

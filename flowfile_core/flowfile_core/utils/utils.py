@@ -33,7 +33,7 @@ def ensure_similarity_dicts(datas: list[dict], respect_order: bool = True):
 def convert_to_string(v):
     try:
         return str(v)
-    except:
+    except Exception:
         return None
 
 

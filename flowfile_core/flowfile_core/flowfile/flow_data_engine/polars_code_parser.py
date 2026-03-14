@@ -114,7 +114,7 @@ def remove_comments_and_docstrings(source: str) -> str:
 
         def visit_Expr(self, node):
             # Remove standalone string literals
-            if isinstance(node.value, (ast.Str, ast.Constant)) and isinstance(getattr(node.value, "value", None), str):
+            if isinstance(node.value, ast.Str | ast.Constant) and isinstance(getattr(node.value, "value", None), str):
                 return None
             return self.generic_visit(node)
 
@@ -202,7 +202,7 @@ class PolarsCodeParser:
             tree = ast.parse(code)
             for node in ast.walk(tree):
                 # Block imports
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
 
                 # Block exec/eval
@@ -217,7 +217,7 @@ class PolarsCodeParser:
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
 
         except SyntaxError as e:
-            raise ValueError(f"Invalid Python syntax: {str(e)}")
+            raise ValueError(f"Invalid Python syntax: {str(e)}") from e
 
     def _wrap_in_function(self, code: str, num_inputs: int = 1) -> str:
         """
@@ -282,7 +282,7 @@ class PolarsCodeParser:
             transform_func = local_namespace["_transform"]
             return transform_func
         except Exception as e:
-            raise ValueError(f"Error executing code: {str(e)}")
+            raise ValueError(f"Error executing code: {str(e)}") from e
 
     def validate_code(self, code: str):
         """

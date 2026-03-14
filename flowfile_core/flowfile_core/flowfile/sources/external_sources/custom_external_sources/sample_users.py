@@ -18,7 +18,7 @@ def getter(data: SampleUsers) -> Generator[dict[str, Any], None, None]:
 
     """
     index_pos = 0
-    for i in range(data.size):
+    for _i in range(data.size):
         sleep(0.01)
         headers = {"x-api-key": "reqres-free-v1"}
 

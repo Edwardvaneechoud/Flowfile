@@ -269,7 +269,7 @@ class SecureFileExplorer:
                         continue
 
         except PermissionError:
-            raise PermissionError(f"Permission denied to access directory: {self.current_directory}")
+            raise PermissionError(f"Permission denied to access directory: {self.current_directory}") from None
 
         # Sort results
         sort_key = {

@@ -251,7 +251,7 @@ def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extensio
                 raise ValueError(f"No objects found in s3://{bucket_name}/{base_prefix}")
         raise ValueError(f"No {file_extension} files found in s3://{bucket_name}/{base_prefix}")
     except ClientError as e:
-        raise ValueError(f"Failed to list files in s3://{bucket_name}/{base_prefix}: {e}")
+        raise ValueError(f"Failed to list files in s3://{bucket_name}/{base_prefix}: {e}") from e
 
 
 def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["csv", "parquet", "json"]):

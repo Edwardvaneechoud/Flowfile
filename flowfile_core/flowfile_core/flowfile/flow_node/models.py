@@ -48,8 +48,8 @@ class ExecutionDecision:
 if False:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine  # noqa: E402
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn  # noqa: E402
 
 
 @dataclass
@@ -100,7 +100,8 @@ class NodeStepStats:
         Initializes the node's statistics.
 
         :param error: Any error message from the last run.
-        :param has_run_with_current_setup: Flag indicating if the node has run successfully with its current configuration.
+        :param has_run_with_current_setup: Flag indicating if the node has run successfully with its current
+            configuration.
         :param has_completed_last_run: Flag indicating if the last triggered run finished (successfully or not).
         :param active: Flag indicating if the node is active in the flow.
         :param is_canceled: Flag indicating if the last run was canceled.

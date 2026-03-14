@@ -1,7 +1,7 @@
 """Utility module for applying output field configuration to FlowDataEngine results."""
 
-from typing import List, Set
 import polars as pl
+
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn

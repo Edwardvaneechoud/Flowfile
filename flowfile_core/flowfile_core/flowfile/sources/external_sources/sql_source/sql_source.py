@@ -326,7 +326,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
                     logger.warning(f"Error getting column info for table {self.table_name}: {e}")
                     c = self._get_columns_from_polars(self.get_sample_query())
                     if len(c) == 0:
-                        raise ValueError("No columns found in the query")
+                        raise ValueError("No columns found in the query") from e
             else:
                 c = self._get_columns_from_polars(self.get_sample_query())
                 if len(c) == 0:
@@ -338,8 +338,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
     def get_iter(self) -> Generator[dict[str, Any], None, None]:
         logger.warning("Getting data in iteration, this is suboptimal")
         data = self.data_getter()
-        for row in data:
-            yield row
+        yield from data
 
     def get_df(self):
         df = self.get_pl_df()

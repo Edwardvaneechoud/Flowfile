@@ -610,7 +610,7 @@ async def persistence_info():
 
     # Build per-artifact status
     artifact_status = {}
-    for (fid, name), meta in persisted.items():
+    for (fid, name), _meta in persisted.items():
         artifact_status[name] = {
             "flow_id": fid,
             "persisted": True,

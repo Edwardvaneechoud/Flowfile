@@ -117,7 +117,10 @@ class HistoryManager:
         Returns:
             True if snapshot was captured, False if skipped (disabled or restoring).
         """
-        logger.info(f"History: capture_snapshot called for '{description}' (enabled={self._config.enabled}, restoring={self._is_restoring})")
+        logger.info(
+            f"History: capture_snapshot called for '{description}' "
+            f"(enabled={self._config.enabled}, restoring={self._is_restoring})"
+        )
 
         if not self._config.enabled:
             logger.info(f"History: Skipping '{description}' - history disabled")

@@ -39,10 +39,10 @@ def create_cloud_storage_connection(
     try:
         store_cloud_connection(db, input_connection, current_user.id)
     except ValueError:
-        raise HTTPException(422, "Connection name already exists")
+        raise HTTPException(422, "Connection name already exists") from None
     except Exception as e:
         logger.error(e)
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     return {"message": "Cloud connection created successfully"}
 
 

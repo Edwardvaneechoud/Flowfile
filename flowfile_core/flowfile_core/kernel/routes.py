@@ -31,7 +31,7 @@ def _get_manager():
         raise HTTPException(
             status_code=503,
             detail="Docker is not available. Please ensure Docker is installed and running.",
-        )
+        ) from exc
 
 
 router = APIRouter(prefix="/kernels", dependencies=[Depends(get_current_active_user)])
@@ -47,7 +47,7 @@ async def create_kernel(config: KernelConfig, current_user=Depends(get_current_a
     try:
         return await _get_manager().create_kernel(config, user_id=current_user.id)
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/docker-status", response_model=DockerStatus)
@@ -97,7 +97,7 @@ async def delete_kernel(kernel_id: str, current_user=Depends(get_current_active_
         await manager.delete_kernel(kernel_id)
         return {"status": "deleted", "kernel_id": kernel_id}
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/start", response_model=KernelInfo)
@@ -111,7 +111,7 @@ async def start_kernel(kernel_id: str, current_user=Depends(get_current_active_u
     try:
         return await manager.start_kernel(kernel_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/stop")
@@ -126,7 +126,7 @@ async def stop_kernel(kernel_id: str, current_user=Depends(get_current_active_us
         await manager.stop_kernel(kernel_id)
         return {"status": "stopped", "kernel_id": kernel_id}
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/execute", response_model=ExecuteResult)
@@ -141,7 +141,7 @@ async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Dep
         manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/execute_cell", response_model=ExecuteResult)
@@ -162,7 +162,7 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
         manager.resolve_node_paths(request)
         return await manager.execute(kernel_id, request)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/artifacts")
@@ -179,7 +179,7 @@ async def get_artifacts(kernel_id: str, current_user=Depends(get_current_active_
     try:
         return await manager.list_kernel_artifacts(kernel_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/clear")
@@ -194,7 +194,7 @@ async def clear_artifacts(kernel_id: str, current_user=Depends(get_current_activ
         await manager.clear_artifacts(kernel_id)
         return {"status": "cleared", "kernel_id": kernel_id}
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/clear_node_artifacts", response_model=ClearNodeArtifactsResult)
@@ -213,7 +213,7 @@ async def clear_node_artifacts(
     try:
         return await manager.clear_node_artifacts(kernel_id, request.node_ids, flow_id=request.flow_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/clear_namespace")
@@ -233,7 +233,7 @@ async def clear_namespace(
         await manager.clear_namespace(kernel_id, flow_id)
         return {"status": "cleared", "kernel_id": kernel_id, "flow_id": flow_id}
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/artifacts/node/{node_id}")
@@ -254,7 +254,7 @@ async def get_node_artifacts(
     try:
         return await manager.get_node_artifacts(kernel_id, node_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/display_outputs")
@@ -295,7 +295,7 @@ async def recover_artifacts(kernel_id: str, current_user=Depends(get_current_act
     try:
         return await manager.recover_artifacts(kernel_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/recovery-status", response_model=RecoveryStatus)
@@ -310,7 +310,7 @@ async def get_recovery_status(kernel_id: str, current_user=Depends(get_current_a
     try:
         return await manager.get_recovery_status(kernel_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{kernel_id}/cleanup", response_model=CleanupResult)
@@ -329,7 +329,7 @@ async def cleanup_artifacts(
     try:
         return await manager.cleanup_artifacts(kernel_id, request)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/persistence", response_model=ArtifactPersistenceInfo)
@@ -344,7 +344,7 @@ async def get_persistence_info(kernel_id: str, current_user=Depends(get_current_
     try:
         return await manager.get_persistence_info(kernel_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{kernel_id}/memory", response_model=KernelMemoryInfo)

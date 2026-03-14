@@ -1,5 +1,7 @@
 # Comprehensive mapping from SQLAlchemy types to Polars types
-from typing import TYPE_CHECKING, Any, Union, cast
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote_plus
 
 import polars as pl
@@ -65,68 +67,68 @@ from sqlalchemy.sql.sqltypes import (
 from sqlalchemy.sql.type_api import ExternalType, TypeDecorator, TypeEngine, UserDefinedType, Variant
 
 if TYPE_CHECKING:
-    SqlType = Union[
-        type[_Binary],
-        type[ARRAY],
-        type[BIGINT],
-        type[BigInteger],
-        type[BINARY],
-        type[BLOB],
-        type[BOOLEAN],
-        type[Boolean],
-        type[CHAR],
-        type[CLOB],
-        type[Concatenable],
-        type[DATE],
-        type[Date],
-        type[DATETIME],
-        type[DateTime],
-        type[DECIMAL],
-        type[DOUBLE],
-        type[Double],
-        type[DOUBLE_PRECISION],
-        type[Enum],
-        type[FLOAT],
-        type[Float],
-        type[Indexable],
-        type[INT],
-        type[INTEGER],
-        type[Integer],
-        type[Interval],
-        type[JSON],
-        type[LargeBinary],
-        type[MatchType],
-        type[NCHAR],
-        type[NULLTYPE],
-        type[NullType],
-        type[NUMERIC],
-        type[Numeric],
-        type[NVARCHAR],
-        type[PickleType],
-        type[REAL],
-        type[SchemaType],
-        type[SMALLINT],
-        type[SmallInteger],
-        type[String],
-        type[STRINGTYPE],
-        type[TEXT],
-        type[Text],
-        type[TIME],
-        type[Time],
-        type[TIMESTAMP],
-        type[TupleType],
-        type[Unicode],
-        type[UnicodeText],
-        type[UUID],
-        type[Uuid],
-        type[VARBINARY],
-        type[VARCHAR],
-        type[TypeDecorator],
-        type[TypeEngine],
-        type[UserDefinedType],
-        type[Variant],
-        type[ExternalType],
-    ]
+    SqlType = (
+        type[_Binary]
+        | type[ARRAY]
+        | type[BIGINT]
+        | type[BigInteger]
+        | type[BINARY]
+        | type[BLOB]
+        | type[BOOLEAN]
+        | type[Boolean]
+        | type[CHAR]
+        | type[CLOB]
+        | type[Concatenable]
+        | type[DATE]
+        | type[Date]
+        | type[DATETIME]
+        | type[DateTime]
+        | type[DECIMAL]
+        | type[DOUBLE]
+        | type[Double]
+        | type[DOUBLE_PRECISION]
+        | type[Enum]
+        | type[FLOAT]
+        | type[Float]
+        | type[Indexable]
+        | type[INT]
+        | type[INTEGER]
+        | type[Integer]
+        | type[Interval]
+        | type[JSON]
+        | type[LargeBinary]
+        | type[MatchType]
+        | type[NCHAR]
+        | type[NULLTYPE]
+        | type[NullType]
+        | type[NUMERIC]
+        | type[Numeric]
+        | type[NVARCHAR]
+        | type[PickleType]
+        | type[REAL]
+        | type[SchemaType]
+        | type[SMALLINT]
+        | type[SmallInteger]
+        | type[String]
+        | type[STRINGTYPE]
+        | type[TEXT]
+        | type[Text]
+        | type[TIME]
+        | type[Time]
+        | type[TIMESTAMP]
+        | type[TupleType]
+        | type[Unicode]
+        | type[UnicodeText]
+        | type[UUID]
+        | type[Uuid]
+        | type[VARBINARY]
+        | type[VARCHAR]
+        | type[TypeDecorator]
+        | type[TypeEngine]
+        | type[UserDefinedType]
+        | type[Variant]
+        | type[ExternalType]
+    )
 else:
     SqlType = Any
 
