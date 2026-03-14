@@ -32,6 +32,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
     Callable
         A wrapper method appropriate for your Expr class.
     """
+
     @wraps(original_method)
     def wrapper(self: Expr, *args, **kwargs):
         # Check if we have a valid underlying expression

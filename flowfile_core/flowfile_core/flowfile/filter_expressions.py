@@ -67,9 +67,7 @@ def _format_field(field_name: str) -> str:
     return f"[{field_name}]"
 
 
-def _build_comparison_expression(
-    field: str, operator_symbol: str, value: str, should_quote: bool
-) -> str:
+def _build_comparison_expression(field: str, operator_symbol: str, value: str, should_quote: bool) -> str:
     """Build a simple comparison expression.
 
     Args:
@@ -198,9 +196,7 @@ def _build_not_in_expression(field: str, value: str, field_data_type: str | None
     return " & ".join(conditions)
 
 
-def _build_between_expression(
-    field: str, value: str, value2: str, field_data_type: str | None
-) -> str:
+def _build_between_expression(field: str, value: str, value2: str, field_data_type: str | None) -> str:
     """Build a BETWEEN expression for range filtering.
 
     Args:
@@ -234,9 +230,7 @@ def _build_between_expression(
     return f"{lower} & {upper}"
 
 
-def build_filter_expression(
-    basic_filter: BasicFilter, field_data_type: str | None = None
-) -> str:
+def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | None = None) -> str:
     """Build a filter expression string from a BasicFilter object.
 
     Uses the Flowfile expression language that is compatible with polars_expr_transformer.

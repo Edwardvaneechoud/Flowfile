@@ -19,7 +19,13 @@ from shared.storage_config import storage
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 ALLOWED_EXTENSIONS = {
-    "csv", "parquet", "xlsx", "xls", "json", "txt", "tsv",
+    "csv",
+    "parquet",
+    "xlsx",
+    "xls",
+    "json",
+    "txt",
+    "tsv",
 }
 
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
@@ -69,8 +75,7 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             400,
-            f"File type '.{suffix}' not allowed. "
-            f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+            f"File type '.{suffix}' not allowed. " f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
         )
 
     uploads_dir = storage.uploads_directory

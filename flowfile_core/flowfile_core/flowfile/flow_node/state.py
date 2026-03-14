@@ -2,6 +2,7 @@
 Node execution state - separable from node definition.
 Can be persisted to database/cache for stateless operation.
 """
+
 from __future__ import annotations
 
 import os
@@ -22,6 +23,7 @@ class SourceFileInfo:
     Tracks source file state for cache invalidation.
     Used by read nodes to detect when source files change.
     """
+
     path: str
     mtime: float
     size: int
@@ -65,6 +67,7 @@ class NodeExecutionState:
 
     Kept separate from FlowNode to enable stateless execution patterns.
     """
+
     # Execution tracking
     has_run_with_current_setup: bool = False
     has_completed_last_run: bool = False

@@ -42,8 +42,7 @@ def validate_sql_identifier(identifier: str, identifier_type: str = "identifier"
     for part in parts:
         if not part:
             raise UnsafeSQLError(
-                f"Invalid SQL {identifier_type}: '{identifier}'. "
-                f"Identifier parts cannot be empty."
+                f"Invalid SQL {identifier_type}: '{identifier}'. " f"Identifier parts cannot be empty."
             )
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
             raise UnsafeSQLError(
@@ -444,9 +443,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         """
         try:
             df = pl.read_database_uri(query, self.connection_string)
-            columns = [
-                FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns
-            ]
+            columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns]
             return columns
         except Exception as e:
             logger.error(f"Error getting column info for query: {e}")

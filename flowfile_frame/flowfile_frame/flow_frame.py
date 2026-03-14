@@ -551,7 +551,7 @@ class FlowFrame:
                 if not pl_expr_list:
                     raise ValueError(
                         "Aggregation expressions (polars_expr) are required for "
-                    "group_by().agg() in serialization fallback."
+                        "group_by().agg() in serialization fallback."
                     )
                 result_lazyframe_or_expr = target_obj.agg(*pl_expr_list, **current_kwargs_expr)
             elif effective_method_name:

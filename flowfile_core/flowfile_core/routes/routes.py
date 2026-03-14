@@ -904,11 +904,13 @@ def get_node_input_names(flow_id: int, node_id: int) -> list[output_model.NodeIn
     for source_node in node.all_inputs:
         ref = getattr(source_node.setting_input, "node_reference", None)
         name = ref if ref else f"df_{source_node.node_id}"
-        result.append(output_model.NodeInputNameInfo(
-            name=name,
-            source_node_id=source_node.node_id,
-            source_node_type=source_node.node_type,
-        ))
+        result.append(
+            output_model.NodeInputNameInfo(
+                name=name,
+                source_node_id=source_node.node_id,
+                source_node_type=source_node.node_type,
+            )
+        )
     return result
 
 

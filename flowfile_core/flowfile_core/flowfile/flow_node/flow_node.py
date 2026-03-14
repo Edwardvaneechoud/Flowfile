@@ -584,8 +584,7 @@ class FlowNode:
             A list of FlowfileColumn objects representing the predicted schema.
         """
         _has_output_field_config = (
-            hasattr(self._setting_input, "output_field_config")
-            and self._setting_input.output_field_config is not None
+            hasattr(self._setting_input, "output_field_config") and self._setting_input.output_field_config is not None
             if self._setting_input
             else False
         )
@@ -742,8 +741,7 @@ class FlowNode:
                                         input_result = self._resolve_input_result(v)
                                         _df_type = type(input_result.data_frame) if input_result else "None"
                                         self.print(
-                                            f"Input {i} data type: {type(input_result)}, "
-                                            f"dataframe type: {_df_type}"
+                                            f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}"
                                         )
                                         input_data.append(input_result)
                                     self.print(f"All {len(input_data)} inputs collected, calling node function")

@@ -37,8 +37,7 @@ def create_schema_from_output_field_config(output_field_config: OutputFieldConfi
 
 
 def create_schema_callback_with_output_config(
-    base_schema_callback: callable,
-    output_field_config: OutputFieldConfig | None
+    base_schema_callback: callable, output_field_config: OutputFieldConfig | None
 ) -> callable:
     """Wraps a schema callback to use output_field_config when available.
 

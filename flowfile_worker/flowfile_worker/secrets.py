@@ -197,7 +197,7 @@ def decrypt_secret(encrypted_value: str) -> SecretStr:
     # Check for new versioned format with embedded user_id
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
-        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX):]
+        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
         parts = remainder.split("$", 1)
         if len(parts) != 2:
             raise ValueError("Invalid encrypted secret format")

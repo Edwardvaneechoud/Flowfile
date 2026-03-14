@@ -45,10 +45,7 @@ def _is_safely_representable(value: Any) -> bool:
     if isinstance(value, list | tuple):
         return all(_is_safely_representable(item) for item in value)
     if isinstance(value, dict):
-        return all(
-            _is_safely_representable(k) and _is_safely_representable(v)
-            for k, v in value.items()
-        )
+        return all(_is_safely_representable(k) and _is_safely_representable(v) for k, v in value.items())
     if isinstance(value, set):
         return all(_is_safely_representable(item) for item in value)
     return False

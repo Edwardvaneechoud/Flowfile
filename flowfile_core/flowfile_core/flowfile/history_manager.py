@@ -41,7 +41,7 @@ class HistoryManager:
     - HistoryEntry uses __slots__ for reduced memory overhead
     """
 
-    __slots__ = ('_config', '_undo_stack', '_redo_stack', '_is_restoring', '_last_snapshot_hash')
+    __slots__ = ("_config", "_undo_stack", "_redo_stack", "_is_restoring", "_last_snapshot_hash")
 
     def __init__(self, config: HistoryConfig | None = None):
         """Initialize the HistoryManager.

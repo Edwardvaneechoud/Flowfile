@@ -412,9 +412,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
 
         # Persist display outputs for later retrieval by the frontend
-        _display_output_store[(request.flow_id, request.node_id)] = [
-            d.model_dump() for d in display_outputs
-        ]
+        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
 
         # Collect output parquet files
         output_paths: list[str] = []
@@ -452,9 +450,7 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
     except Exception as exc:
         # Still collect any display outputs that were generated before the error
         display_outputs = [DisplayOutput(**d) for d in flowfile_client._get_displays()]
-        _display_output_store[(request.flow_id, request.node_id)] = [
-            d.model_dump() for d in display_outputs
-        ]
+        _display_output_store[(request.flow_id, request.node_id)] = [d.model_dump() for d in display_outputs]
         elapsed = (time.perf_counter() - start) * 1000
         return ExecuteResponse(
             success=False,

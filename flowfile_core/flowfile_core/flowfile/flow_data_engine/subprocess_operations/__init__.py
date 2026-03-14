@@ -1,3 +1,6 @@
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
+    Status as Status,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     BaseFetcher as BaseFetcher,
 )

@@ -4,6 +4,7 @@ Node execution logic - separate from node definition.
 Handles the 'how to run' independently from 'what to run'.
 Enables stateless execution by accepting external state providers.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
@@ -74,7 +75,7 @@ class NodeExecutor:
     instantiation on FlowNode._executor to avoid repeated object creation.
     """
 
-    __slots__ = ('node', 'state_provider')
+    __slots__ = ("node", "state_provider")
 
     def __init__(
         self,
@@ -120,12 +121,14 @@ class NodeExecutor:
         decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
 
         # Override for wide transforms when optimizing for downstream
-        if (decision.should_run
+        if (
+            decision.should_run
             and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
             and self.node.node_default
             and self.node.node_default.transform_type == "wide"
             and optimize_for_downstream
-            and run_location != "local"):
+            and run_location != "local"
+        ):
             decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
 
         if not decision.should_run:
@@ -225,8 +228,7 @@ class NodeExecutor:
 
         # Narrow transforms are lightweight column-level operations that can
         # run locally with an external sampler for preview data
-        if (self.node.node_default is not None
-                and self.node.node_default.transform_type == "narrow"):
+        if self.node.node_default is not None and self.node.node_default.transform_type == "narrow":
             return ExecutionStrategy.LOCAL_WITH_SAMPLING
 
         # Full remote execution for wide transforms and everything else
@@ -262,12 +264,7 @@ class NodeExecutor:
             if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
 
-    def _do_local_with_sampling(
-        self,
-        state: NodeExecutionState,
-        performance_mode: bool,
-        flow_id: int
-    ) -> None:
+    def _do_local_with_sampling(self, state: NodeExecutionState, performance_mode: bool, flow_id: int) -> None:
         """
         In-process execution with external sampler for preview data.
 
@@ -280,12 +277,7 @@ class NodeExecutor:
         if self.node.results.errors is None and not self.node.node_stats.is_canceled:
             state.mark_successful()
 
-    def _do_remote(
-        self,
-        state: NodeExecutionState,
-        performance_mode: bool,
-        node_logger: NodeLogger
-    ) -> None:
+    def _do_remote(self, state: NodeExecutionState, performance_mode: bool, node_logger: NodeLogger) -> None:
         """
         Full remote worker execution.
 
@@ -318,14 +310,14 @@ class NodeExecutor:
     def _get_source_path(self) -> str | None:
         """Get the source file path for read nodes."""
         setting_input = self.node.setting_input
-        if not hasattr(setting_input, 'received_file') or not setting_input.received_file:
+        if not hasattr(setting_input, "received_file") or not setting_input.received_file:
             return None
 
         rf = setting_input.received_file
         # Prefer absolute path if available
-        if hasattr(rf, 'abs_file_path') and rf.abs_file_path:
+        if hasattr(rf, "abs_file_path") and rf.abs_file_path:
             return rf.abs_file_path
-        return rf.path if hasattr(rf, 'path') else None
+        return rf.path if hasattr(rf, "path") else None
 
     def _update_source_file_info(self, state: NodeExecutionState) -> None:
         """Update source file tracking after successful execution."""

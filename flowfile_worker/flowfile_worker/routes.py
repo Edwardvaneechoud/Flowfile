@@ -335,6 +335,7 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
     ext = os.path.splitext(src)[1].lower()
 
     if ext in (".csv", ".txt", ".tsv"):
+
         def read_method(p):
             return pl.read_csv(p, infer_schema_length=10000)
     elif ext == ".parquet":

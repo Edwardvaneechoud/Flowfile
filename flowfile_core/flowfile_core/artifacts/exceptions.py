@@ -47,9 +47,7 @@ class ArtifactStateError(ArtifactError):
         self.status = actual_status  # Keep for backwards compatibility
         self.actual_status = actual_status
         self.expected_status = expected_status
-        super().__init__(
-            f"Artifact {artifact_id} is in '{actual_status}' state, expected '{expected_status}'"
-        )
+        super().__init__(f"Artifact {artifact_id} is in '{actual_status}' state, expected '{expected_status}'")
 
 
 # Backwards compatibility alias - TODO: Remove after deprecation period

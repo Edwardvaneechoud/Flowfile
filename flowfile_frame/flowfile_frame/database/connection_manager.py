@@ -157,11 +157,7 @@ def get_all_available_database_connections() -> list[FullDatabaseConnectionInter
 
     user_id = get_current_user_id()
     with get_db_context() as db:
-        connections = (
-            db.query(DBConnectionModel)
-            .filter(DBConnectionModel.user_id == user_id)
-            .all()
-        )
+        connections = db.query(DBConnectionModel).filter(DBConnectionModel.user_id == user_id).all()
 
         return [
             FullDatabaseConnectionInterface(

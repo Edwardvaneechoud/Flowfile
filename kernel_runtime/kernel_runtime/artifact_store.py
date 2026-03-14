@@ -284,10 +284,7 @@ class ArtifactStore:
                     return self._artifacts[key]["object"]
 
         # If we get here, the artifact was in lazy_index but failed to load
-        raise KeyError(
-            f"Artifact '{name}' exists on disk but failed to load. "
-            "Check logs for details."
-        )
+        raise KeyError(f"Artifact '{name}' exists on disk but failed to load. " "Check logs for details.")
 
     def list_all(self, flow_id: int | None = None) -> dict[str, dict[str, Any]]:
         """Return metadata for all artifacts, optionally filtered by *flow_id*.
@@ -319,14 +316,10 @@ class ArtifactStore:
                 self._artifacts.clear()
                 self._lazy_index.clear()
             else:
-                to_remove = [
-                    key for key in self._artifacts if key[0] == flow_id
-                ]
+                to_remove = [key for key in self._artifacts if key[0] == flow_id]
                 for key in to_remove:
                     del self._artifacts[key]
-                lazy_remove = [
-                    key for key in self._lazy_index if key[0] == flow_id
-                ]
+                lazy_remove = [key for key in self._lazy_index if key[0] == flow_id]
                 for key in lazy_remove:
                     del self._lazy_index[key]
 
@@ -337,7 +330,9 @@ class ArtifactStore:
                 logger.warning("Failed to clear persisted artifacts: %s", exc)
 
     def clear_by_node_ids(
-        self, node_ids: set[int], flow_id: int | None = None,
+        self,
+        node_ids: set[int],
+        flow_id: int | None = None,
     ) -> list[str]:
         """Remove all artifacts published by the given *node_ids*.
 
@@ -353,8 +348,7 @@ class ArtifactStore:
             to_remove = [
                 key
                 for key, meta in self._artifacts.items()
-                if meta["node_id"] in node_ids
-                and (flow_id is None or key[0] == flow_id)
+                if meta["node_id"] in node_ids and (flow_id is None or key[0] == flow_id)
             ]
             removed_names = [self._artifacts[key]["name"] for key in to_remove]
             for key in to_remove:
@@ -363,8 +357,7 @@ class ArtifactStore:
             lazy_remove = [
                 key
                 for key, meta in self._lazy_index.items()
-                if meta.get("node_id") in node_ids
-                and (flow_id is None or key[0] == flow_id)
+                if meta.get("node_id") in node_ids and (flow_id is None or key[0] == flow_id)
             ]
             for key in lazy_remove:
                 name = self._lazy_index[key].get("name", key[1])
@@ -384,7 +377,9 @@ class ArtifactStore:
         return removed_names
 
     def list_by_node_id(
-        self, node_id: int, flow_id: int | None = None,
+        self,
+        node_id: int,
+        flow_id: int | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Return metadata for artifacts published by *node_id*."""
         with self._lock:

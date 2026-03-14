@@ -92,10 +92,17 @@ class ArtifactPersistence:
     # ------------------------------------------------------------------
 
     # Fields that should be persisted to meta.json (whitelist approach)
-    _PERSISTABLE_FIELDS = frozenset([
-        "name", "type_name", "module", "node_id", "flow_id",
-        "created_at", "size_bytes",
-    ])
+    _PERSISTABLE_FIELDS = frozenset(
+        [
+            "name",
+            "type_name",
+            "module",
+            "node_id",
+            "flow_id",
+            "created_at",
+            "size_bytes",
+        ]
+    )
 
     def save(self, name: str, obj: Any, metadata: dict[str, Any], flow_id: int = 0) -> None:
         """Persist *obj* to disk alongside its *metadata*.
@@ -114,10 +121,7 @@ class ArtifactPersistence:
         data_path.write_bytes(data)
 
         # Explicitly select only the fields we want to persist (whitelist)
-        meta = {
-            k: v for k, v in metadata.items()
-            if k in self._PERSISTABLE_FIELDS
-        }
+        meta = {k: v for k, v in metadata.items() if k in self._PERSISTABLE_FIELDS}
         meta["checksum"] = checksum
         meta["persisted_at"] = datetime.now(timezone.utc).isoformat()
         meta["data_size_bytes"] = len(data)
@@ -142,9 +146,7 @@ class ArtifactPersistence:
             meta = json.loads(meta_path.read_text())
             expected = meta.get("checksum")
             if expected and _sha256(data) != expected:
-                raise ValueError(
-                    f"Checksum mismatch for artifact '{name}' — the persisted file may be corrupt"
-                )
+                raise ValueError(f"Checksum mismatch for artifact '{name}' — the persisted file may be corrupt")
 
         return cloudpickle.loads(data)
 
@@ -185,8 +187,7 @@ class ArtifactPersistence:
         """
         result: dict[tuple[int, str], dict[str, Any]] = {}
         flow_dirs = (
-            [self._base / str(flow_id)] if flow_id is not None
-            else [d for d in self._base.iterdir() if d.is_dir()]
+            [self._base / str(flow_id)] if flow_id is not None else [d for d in self._base.iterdir() if d.is_dir()]
         )
         for flow_dir in flow_dirs:
             if not flow_dir.exists():

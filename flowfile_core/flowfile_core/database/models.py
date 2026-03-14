@@ -302,6 +302,4 @@ class CatalogTableReadLink(Base):
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),
-    )
+    __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)

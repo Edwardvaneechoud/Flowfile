@@ -283,6 +283,7 @@ async def get_display_outputs(
 # Artifact Persistence & Recovery endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/{kernel_id}/recover", response_model=RecoveryStatus)
 async def recover_artifacts(kernel_id: str, current_user=Depends(get_current_active_user)):
     """Trigger manual artifact recovery from persisted storage."""
