@@ -27,11 +27,13 @@ docker compose build flowfile-kernel
 
 The Kernel Manager is the central dashboard for creating, starting, stopping, and monitoring kernels. Open it from the **sidebar menu**.
 ![Kernel Manager overview](../../assets/images/guides/kernels/kernel-manager-overview.png)
+
 *The Kernel Manager showing configured kernels with status, resource usage, and actions*
 
 When Docker is not running or the kernel image has not been built, a status banner appears at the top of the page with instructions on how to resolve the issue.
 
 ![Docker status warning](../../assets/images/guides/kernels/docker-status-warning.png)
+
 *Warning banner shown when Docker is unavailable or the kernel image is missing*
 
 ---
@@ -42,6 +44,7 @@ When Docker is not running or the kernel image has not been built, a status bann
 2. Fill in the configuration fields:
 
 ![Create Kernel form](../../assets/images/guides/kernels/create-kernel-form.png)
+
 *The kernel creation form with resource configuration options*
 
 | Setting | Description | Default |
@@ -61,6 +64,7 @@ When Docker is not running or the kernel image has not been built, a status bann
 Each kernel is displayed as a card showing its current state, resource allocation, and live memory usage.
 
 ![Kernel card](../../assets/images/guides/kernels/kernel-card.png)
+
 *A kernel card showing status badge, CPU/memory allocation, installed packages, and memory usage bar*
 
 The status badge indicates the kernel's current state:
@@ -86,6 +90,7 @@ Add a **Python Script** node to your flow to write and execute Python code in a 
 In the node settings panel, the kernel dropdown shows all available kernels with their current state.
 
 ![Kernel selection in node settings](../../assets/images/guides/kernels/node-kernel-selection.png)
+
 *Kernel dropdown in the Python Script node settings, showing available kernels and their state*
 
 !!! warning "Kernel Required"
@@ -96,6 +101,7 @@ In the node settings panel, the kernel dropdown shows all available kernels with
 The code editor uses a Jupyter-style notebook interface with multiple cells. Each cell can be executed independently.
 
 ![Notebook editor with cells](../../assets/images/guides/kernels/notebook-editor.png)
+
 *The notebook editor showing multiple code cells with execution counters, a toolbar, and output*
 
 **Toolbar actions:**
@@ -120,6 +126,7 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 After executing a cell, the output area shows results, stdout, and any errors.
 
 ![Cell output with rich display](../../assets/images/guides/kernels/cell-output-display.png)
+
 *Cell output showing a rendered matplotlib chart, execution time, and stdout*
 
 Output types rendered:
@@ -139,6 +146,7 @@ Click **Expand Editor** to open a fullscreen code editing view. The expanded edi
 The node settings panel shows artifacts available from upstream nodes and artifacts published by the current node.
 
 ![Artifacts panel](../../assets/images/guides/kernels/artifacts-panel.png)
+
 *Artifacts panel showing available upstream artifacts and published artifacts for the current node*
 
 ### API Reference
@@ -153,6 +161,18 @@ Inside a Python Script node connected to a kernel, you write standard Python cod
 
 ### Reading Input Data
 
+When multiple nodes are connected to a Python Script node, each input gets a **name** derived from the source node's **node reference**. These names are visible as **edge labels** on the canvas, so you can see at a glance which data flows into which input.
+
+![Named connections on canvas](../../assets/images/guides/kernels/named-connections-canvas.png)
+
+*Edge labels on the canvas showing the names of each connection into the Python Script node*
+
+The Python Script node settings panel displays an **Available Inputs** section that lists all connected inputs by name and source node type. Use these names with `flowfile.read_input("name")` to read a specific input.
+
+![Available Inputs panel](../../assets/images/guides/kernels/available-inputs-panel.png)
+
+*The Available Inputs panel showing input names and their source node types*
+
 ```python
 # Read the main input as a Polars LazyFrame
 df = flowfile.read_input()
@@ -166,15 +186,31 @@ all_inputs = flowfile.read_inputs()
 # Returns: {"main": [LazyFrame, ...], "orders": [LazyFrame, ...]}
 ```
 
+!!! tip "Setting input names"
+    Input names come from the **node reference** of each source node. You can set or change a node's reference in its settings panel. If no reference is set, the default name is `df_{node_id}`. Names must be lowercase and can only contain letters, digits, and underscores.
+
+!!! tip "Showing connection names on the canvas"
+    To display connection names on the canvas, enable **Show edge labels** in the [Flow Settings](building-flows.md#1-flow-settings).
+
 ### Writing Output Data
 
+A Python Script node can publish multiple named outputs, each flowing to a different downstream node. To set this up:
+
+1. In the node settings panel, add output names under **Output Names** (e.g. `total_sales`, `sales_per_city`)
+2. In your code, use `flowfile.publish_output(df, "name")` to publish data to each named output
+
+![Named output configuration](../../assets/images/guides/kernels/named-output-connections.png)
+
+*The Python Script node settings showing two named outputs (`total_sales` and `sales_per_city`) and the code that publishes to them*
+
 ```python
-# Process data and publish the result
+# Publish a single (default) output
 result = df.filter(pl.col("amount") > 100).select("id", "amount", "date")
 flowfile.publish_output(result)
 
-# Publish a named output
-flowfile.publish_output(summary, name="summary")
+# Publish multiple named outputs
+flowfile.publish_output(sales_df, "total_sales")
+flowfile.publish_output(unique_output, "sales_per_city")
 ```
 
 Both `pl.LazyFrame` and `pl.DataFrame` are accepted by `publish_output`.
@@ -365,7 +401,6 @@ For details on building custom nodes, see [Node Designer](node-designer.md#kerne
 
 Kernel execution is in beta. The following limitations are known and being worked on:
 
-- **Named reads from inputs** — Currently all inputs are named `main` and provided as a list of DataFrames. Ideally inputs would be named based on their source connections, allowing you to read them by name (e.g. `flowfile.read_input("orders")`). This is not yet implemented.
 - **Flow-to-code export** — Python Script nodes that use kernel execution are not yet included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes will be skipped in the generated code.
 - **Artifact state visibility** — There is currently no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile.list_artifacts()` in code, but there is no visual artifact explorer yet.
 - **Python package versioning** — Packages specified during kernel creation are installed via `pip install` at container startup without version pinning. There is no lock file or reproducible environment mechanism yet. To pin versions, specify them explicitly in the packages field (e.g. `scikit-learn==1.4.0, pandas==2.1.0`).
