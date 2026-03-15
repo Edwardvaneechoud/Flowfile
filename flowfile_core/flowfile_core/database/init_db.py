@@ -60,8 +60,6 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
-
-
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
 # Then create any new tables (this will include is_admin for new databases)

@@ -162,3 +162,12 @@ class TableExistsError(CatalogError):
         self.name = name
         self.namespace_id = namespace_id
         super().__init__(f"Catalog table '{name}' already exists in namespace_id={namespace_id}")
+
+
+class TableFavoriteNotFoundError(CatalogError):
+    """Raised when a table favorite record is not found."""
+
+    def __init__(self, user_id: int, table_id: int):
+        self.user_id = user_id
+        self.table_id = table_id
+        super().__init__(f"Table favorite not found for user={user_id}, table={table_id}")

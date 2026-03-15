@@ -1,4 +1,4 @@
-"""Pydantic schemas for the Flow Catalog system.
+"""Pydantic schemas for the Catalog system.
 
 Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
 run history, favorites and follows.
@@ -197,6 +197,7 @@ class CatalogTableOut(BaseModel):
     description: str | None = None
     owner_id: int
     file_exists: bool = True
+    is_favorite: bool = False
     schema_columns: list[ColumnSchema] = Field(default_factory=list)
     row_count: int | None = None
     column_count: int | None = None
@@ -232,15 +233,26 @@ class CatalogTablePreview(BaseModel):
 # ==================== Catalog Overview ====================
 
 
+class TableFavoriteOut(BaseModel):
+    id: int
+    user_id: int
+    table_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CatalogStats(BaseModel):
     total_namespaces: int = 0
     total_flows: int = 0
     total_runs: int = 0
     total_favorites: int = 0
+    total_table_favorites: int = 0
     total_artifacts: int = 0
     total_tables: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
+    favorite_tables: list[CatalogTableOut] = Field(default_factory=list)
 
 
 # Rebuild forward-referenced models

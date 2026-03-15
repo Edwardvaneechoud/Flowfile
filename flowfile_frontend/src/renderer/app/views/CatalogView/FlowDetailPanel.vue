@@ -1,5 +1,8 @@
 <template>
   <div class="flow-detail">
+    <button class="back-btn" @click="$emit('close')">
+      <i class="fa-solid fa-arrow-left"></i> Back
+    </button>
     <!-- Header -->
     <div class="detail-header">
       <div class="header-main">
@@ -39,14 +42,6 @@
         >
           <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ flow.is_favorite ? "Favorited" : "Favorite" }}
-        </button>
-        <button
-          class="action-btn-lg"
-          :class="{ active: flow.is_following }"
-          @click="$emit('toggleFollow', flow.id)"
-        >
-          <i :class="flow.is_following ? 'fa-solid fa-bell' : 'fa-regular fa-bell'"></i>
-          {{ flow.is_following ? "Following" : "Follow" }}
         </button>
         <button
           class="btn-danger-outline"
@@ -213,9 +208,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  close: [];
   viewRun: [runId: number];
   toggleFavorite: [flowId: number];
-  toggleFollow: [flowId: number];
   openFlow: [flowPath: string];
   selectTable: [tableId: number];
   deleteFlow: [flowId: number];
@@ -303,6 +298,26 @@ function formatSize(bytes: number | null): string {
 <style scoped>
 .flow-detail {
   width: 100%;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-bottom: var(--spacing-3);
+}
+
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .detail-header {

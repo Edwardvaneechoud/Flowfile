@@ -1,4 +1,4 @@
-"""API routes for the Flow Catalog system.
+"""API routes for the Catalog system.
 
 Provides endpoints for:
 - Namespace management (Unity Catalog-style catalog / schema hierarchy)
@@ -32,6 +32,7 @@ from flowfile_core.catalog import (
     RunNotFoundError,
     SQLAlchemyCatalogRepository,
     TableExistsError,
+    TableFavoriteNotFoundError,
     TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
@@ -55,6 +56,7 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    TableFavoriteOut,
 )
 from shared.storage_config import storage
 
@@ -420,7 +422,7 @@ def list_tables(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List catalog tables, optionally filtered by namespace."""
-    return service.list_tables(namespace_id=namespace_id)
+    return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
 @router.post("/tables", response_model=CatalogTableOut, status_code=201)
@@ -454,7 +456,7 @@ def get_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.get_table(table_id)
+        return service.get_table(table_id, user_id=current_user.id)
     except TableNotFoundError:
         raise HTTPException(404, "Catalog table not found") from None
 
@@ -501,6 +503,43 @@ def get_table_preview(
         return service.get_table_preview(table_id, limit=limit)
     except TableNotFoundError:
         raise HTTPException(404, "Catalog table not found") from None
+
+
+# ---------------------------------------------------------------------------
+# Table Favorites
+# ---------------------------------------------------------------------------
+
+
+@router.get("/table-favorites", response_model=list[CatalogTableOut])
+def list_table_favorites(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.list_table_favorites(user_id=current_user.id)
+
+
+@router.post("/tables/{table_id}/favorite", response_model=TableFavoriteOut, status_code=201)
+def add_table_favorite(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.add_table_favorite(user_id=current_user.id, table_id=table_id)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found") from None
+
+
+@router.delete("/tables/{table_id}/favorite", status_code=204)
+def remove_table_favorite(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
+    except TableFavoriteNotFoundError:
+        raise HTTPException(404, "Table favorite not found") from None
 
 
 # ---------------------------------------------------------------------------

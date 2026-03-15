@@ -1,4 +1,4 @@
-"""Data-access abstraction for the Flow Catalog system.
+"""Data-access abstraction for the Catalog system.
 
 Defines a ``CatalogRepository`` :pep:`544` Protocol and provides a concrete
 ``SQLAlchemyCatalogRepository`` implementation backed by SQLAlchemy.
@@ -20,6 +20,7 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowRun,
     GlobalArtifact,
+    TableFavorite,
 )
 
 # ---------------------------------------------------------------------------
@@ -158,6 +159,18 @@ class CatalogRepository(Protocol):
 
     def count_all_tables(self) -> int: ...
 
+    # -- Table Favorites -----------------------------------------------------
+
+    def get_table_favorite(self, user_id: int, table_id: int) -> TableFavorite | None: ...
+
+    def add_table_favorite(self, fav: TableFavorite) -> TableFavorite: ...
+
+    def remove_table_favorite(self, user_id: int, table_id: int) -> None: ...
+
+    def list_table_favorites(self, user_id: int) -> list[TableFavorite]: ...
+
+    def count_table_favorites(self, user_id: int) -> int: ...
+
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
     def bulk_get_favorite_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
@@ -165,6 +178,8 @@ class CatalogRepository(Protocol):
     def bulk_get_follow_flow_ids(self, user_id: int, flow_ids: list[int]) -> set[int]: ...
 
     def bulk_get_run_stats(self, flow_ids: list[int]) -> dict[int, tuple[int, FlowRun | None]]: ...
+
+    def bulk_get_favorite_table_ids(self, user_id: int, table_ids: list[int]) -> set[int]: ...
 
     def list_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
 
@@ -465,6 +480,7 @@ class SQLAlchemyCatalogRepository:
 
     def delete_table(self, table_id: int) -> None:
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
+        self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
         table = self._db.get(CatalogTable, table_id)
         if table is not None:
             self._db.delete(table)
@@ -475,6 +491,31 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_tables(self) -> int:
         return self._db.query(CatalogTable).count()
+
+    # -- Table Favorites -----------------------------------------------------
+
+    def get_table_favorite(self, user_id: int, table_id: int) -> TableFavorite | None:
+        return self._db.query(TableFavorite).filter_by(user_id=user_id, table_id=table_id).first()
+
+    def add_table_favorite(self, fav: TableFavorite) -> TableFavorite:
+        self._db.add(fav)
+        self._db.commit()
+        self._db.refresh(fav)
+        return fav
+
+    def remove_table_favorite(self, user_id: int, table_id: int) -> None:
+        fav = self._db.query(TableFavorite).filter_by(user_id=user_id, table_id=table_id).first()
+        if fav is not None:
+            self._db.delete(fav)
+            self._db.commit()
+
+    def list_table_favorites(self, user_id: int) -> list[TableFavorite]:
+        return (
+            self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
+        )
+
+    def count_table_favorites(self, user_id: int) -> int:
+        return self._db.query(TableFavorite).filter_by(user_id=user_id).count()
 
     # -- Bulk enrichment helpers (for N+1 elimination) -----------------------
 
@@ -501,6 +542,20 @@ class SQLAlchemyCatalogRepository:
             .filter(
                 FlowFollow.user_id == user_id,
                 FlowFollow.registration_id.in_(flow_ids),
+            )
+            .all()
+        )
+        return {r[0] for r in rows}
+
+    def bulk_get_favorite_table_ids(self, user_id: int, table_ids: list[int]) -> set[int]:
+        """Return the subset of table_ids that the user has favourited."""
+        if not table_ids:
+            return set()
+        rows = (
+            self._db.query(TableFavorite.table_id)
+            .filter(
+                TableFavorite.user_id == user_id,
+                TableFavorite.table_id.in_(table_ids),
             )
             .all()
         )

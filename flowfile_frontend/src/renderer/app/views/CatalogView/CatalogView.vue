@@ -13,6 +13,12 @@
         <span>{{ tab.label }}</span>
         <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
       </button>
+      <div class="tab-spacer"></div>
+      <el-tooltip content="About the Catalog" placement="bottom" :show-after="400">
+        <button class="catalog-tab info-btn" @click="showInfoModal = true">
+          <i class="fa-solid fa-circle-info"></i>
+        </button>
+      </el-tooltip>
     </div>
 
     <!-- Main Content -->
@@ -70,7 +76,7 @@
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
-              @toggle-follow="catalogStore.toggleFollow($event)"
+              @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
               @register-table="openRegisterTable($event)"
               @create-schema="openCreateSchema($event)"
@@ -91,24 +97,6 @@
             :selected="catalogStore.selectedFlowId === flow.id"
             @select="catalogStore.selectFlow(flow.id)"
             @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
-            @toggle-follow="catalogStore.toggleFollow(flow.id)"
-          />
-        </div>
-
-        <!-- Following List -->
-        <div v-else-if="catalogStore.activeTab === 'following'" class="list-container">
-          <div v-if="catalogStore.following.length === 0" class="empty-state">
-            <p>No followed flows.</p>
-            <p class="muted">Follow flows you want to keep track of.</p>
-          </div>
-          <FlowListItem
-            v-for="flow in catalogStore.following"
-            :key="flow.id"
-            :flow="flow"
-            :selected="catalogStore.selectedFlowId === flow.id"
-            @select="catalogStore.selectFlow(flow.id)"
-            @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
-            @toggle-follow="catalogStore.toggleFollow(flow.id)"
           />
         </div>
 
@@ -146,6 +134,7 @@
           v-else-if="catalogStore.selectedArtifact"
           :artifact="catalogStore.selectedArtifact"
           :versions="selectedArtifactVersions"
+          @close="catalogStore.clearArtifactSelection()"
           @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Table detail view -->
@@ -154,7 +143,9 @@
           :table="catalogStore.selectedTable"
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
+          @close="catalogStore.clearTableSelection()"
           @delete-table="handleDeleteTable($event)"
+          @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
           @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Flow detail view -->
@@ -163,6 +154,7 @@
           :flow="catalogStore.selectedFlow"
           :runs="catalogStore.flowRuns"
           :artifacts="catalogStore.flowArtifacts"
+          @close="catalogStore.selectFlow(null)"
           @view-run="catalogStore.loadRunDetail($event)"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
@@ -175,8 +167,13 @@
         <StatsPanel
           v-else
           :stats="catalogStore.stats"
+          :flows="catalogStore.allFlows"
+          :tables="catalogStore.allTables"
+          :favorites="catalogStore.favorites"
+          :runs="catalogStore.runs"
           @view-run="catalogStore.loadRunDetail($event)"
           @view-flow="navigateToFlow($event)"
+          @view-table="selectTable($event)"
         />
       </div>
     </div>
@@ -204,6 +201,48 @@
       :default-namespace-id="defaultNamespaceId"
       @close="showRegisterTable = false"
     />
+
+    <!-- Info Modal -->
+    <el-dialog
+      v-model="showInfoModal"
+      title="About the Catalog"
+      width="600px"
+      :append-to-body="true"
+    >
+      <div class="info-modal-content">
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-folder-tree"></i>
+            <h4>Organization</h4>
+          </div>
+          <p>
+            Flows and tables are organized into <strong>catalogs</strong> and
+            <strong>schemas</strong>. Use catalogs for broad groupings (e.g. by team or domain) and
+            schemas for finer separation within them.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <h4>Run history</h4>
+          </div>
+          <p>
+            Every registered flow tracks its executions automatically. View status, duration, and
+            node-level progress for each run, or open a snapshot to inspect a past state.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-table"></i>
+            <h4>Tables &amp; artifacts</h4>
+          </div>
+          <p>
+            Register datasets as catalog tables to preview and track them centrally. Artifacts
+            produced by flows are versioned and linked back to the run that created them.
+          </p>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -246,12 +285,6 @@ const tabs = computed(() => [
     badge: catalogStore.stats?.total_favorites ?? null,
   },
   {
-    key: "following" as CatalogTab,
-    label: "Following",
-    icon: "fa-solid fa-bell",
-    badge: null,
-  },
-  {
     key: "runs" as CatalogTab,
     label: "Run History",
     icon: "fa-solid fa-clock-rotate-left",
@@ -265,8 +298,6 @@ const sidebarTitle = computed(() => {
       return "Catalogs";
     case "favorites":
       return "Favorites";
-    case "following":
-      return "Following";
     case "runs":
       return "Run History";
     default:
@@ -279,6 +310,7 @@ const searchQuery = ref("");
 const showUnavailable = ref(false);
 
 // Modal state
+const showInfoModal = ref(false);
 const showCreateNamespace = ref(false);
 const createSchemaParentId = ref<number | null>(null);
 const showRegisterFlow = ref(false);
@@ -508,6 +540,18 @@ onMounted(async () => {
   line-height: 18px;
 }
 
+.tab-spacer {
+  flex: 1;
+}
+
+.info-btn {
+  color: var(--color-text-muted);
+}
+
+.info-btn:hover {
+  color: var(--color-primary);
+}
+
 /* ========== Content Layout ========== */
 .catalog-content {
   display: flex;
@@ -653,5 +697,41 @@ onMounted(async () => {
 .btn-sm {
   padding: var(--spacing-1) var(--spacing-3);
   font-size: var(--font-size-xs);
+}
+
+/* ========== Info Modal ========== */
+.info-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.info-card {
+  padding: var(--spacing-4);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+.info-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
+  color: var(--color-primary);
+}
+
+.info-card-header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.info-card p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
 }
 </style>
