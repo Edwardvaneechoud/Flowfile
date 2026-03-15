@@ -160,9 +160,7 @@ class ArtifactContext:
             # Remember which nodes produced these artifacts so we can
             # force them to re-run if this deleter node is re-executed.
             for pid in publisher_ids:
-                self._deletion_origins.setdefault(node_id, []).append(
-                    (kernel_id, name, pid)
-                )
+                self._deletion_origins.setdefault(node_id, []).append((kernel_id, name, pid))
             # NOTE: We do NOT remove from publisher's published list here.
             # The published list serves as a permanent historical record
             # for visualization (badges showing what the node produced).
@@ -256,7 +254,8 @@ class ArtifactContext:
         return result
 
     def get_producer_nodes_for_deletions(
-        self, deleter_node_ids: set[int],
+        self,
+        deleter_node_ids: set[int],
     ) -> set[int]:
         """Return node IDs that produced artifacts deleted by *deleter_node_ids*.
 
@@ -287,18 +286,13 @@ class ArtifactContext:
 
         # Clean deletion origin entries for this kernel
         for nid in list(self._deletion_origins):
-            self._deletion_origins[nid] = [
-                entry for entry in self._deletion_origins[nid]
-                if entry[0] != kernel_id
-            ]
+            self._deletion_origins[nid] = [entry for entry in self._deletion_origins[nid] if entry[0] != kernel_id]
             if not self._deletion_origins[nid]:
                 del self._deletion_origins[nid]
 
         self._kernel_artifacts.pop(kernel_id, None)
         for state in self._node_states.values():
-            state.available = {
-                k: v for k, v in state.available.items() if v.kernel_id != kernel_id
-            }
+            state.available = {k: v for k, v in state.available.items() if v.kernel_id != kernel_id}
 
     def clear_all(self) -> None:
         """Remove all tracking data."""
@@ -335,9 +329,7 @@ class ArtifactContext:
                     if not pub_set:
                         del self._publisher_index[key]
 
-        logger.debug(
-            "Cleared artifact metadata for node(s): %s", sorted(node_ids)
-        )
+        logger.debug("Cleared artifact metadata for node(s): %s", sorted(node_ids))
 
     def snapshot_node_states(self) -> dict[int, NodeArtifactState]:
         """Return a shallow copy of the current per-node states.
@@ -394,13 +386,15 @@ class ArtifactContext:
                 if key in seen:
                     continue
                 seen.add(key)
-                edges.append({
-                    "source": ref.source_node_id,
-                    "target": nid,
-                    "artifact_name": art_name,
-                    "artifact_type": ref.type_name,
-                    "kernel_id": ref.kernel_id,
-                })
+                edges.append(
+                    {
+                        "source": ref.source_node_id,
+                        "target": nid,
+                        "artifact_name": art_name,
+                        "artifact_type": ref.type_name,
+                        "kernel_id": ref.kernel_id,
+                    }
+                )
 
         return edges
 
@@ -433,12 +427,8 @@ class ArtifactContext:
                 "consumed": [
                     {
                         "name": name,
-                        "source_node_id": state.available[name].source_node_id
-                        if name in state.available
-                        else None,
-                        "type_name": state.available[name].type_name
-                        if name in state.available
-                        else "",
+                        "source_node_id": state.available[name].source_node_id if name in state.available else None,
+                        "type_name": state.available[name].type_name if name in state.available else "",
                     }
                     for name in state.consumed
                 ],
@@ -454,12 +444,9 @@ class ArtifactContext:
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable summary of the context."""
         return {
-            "nodes": {
-                str(nid): state.to_dict() for nid, state in self._node_states.items()
-            },
+            "nodes": {str(nid): state.to_dict() for nid, state in self._node_states.items()},
             "kernels": {
-                kid: {name: ref.to_dict() for name, ref in refs.items()}
-                for kid, refs in self._kernel_artifacts.items()
+                kid: {name: ref.to_dict() for name, ref in refs.items()} for kid, refs in self._kernel_artifacts.items()
             },
         }
 

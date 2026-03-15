@@ -250,7 +250,7 @@ def cancel_task(file_ref: str) -> bool:
             return True
         return False
     except requests.RequestException as e:
-        raise Exception(f"Failed to cancel task: {str(e)}")
+        raise Exception(f"Failed to cancel task: {str(e)}") from e
 
 
 class BaseFetcher:

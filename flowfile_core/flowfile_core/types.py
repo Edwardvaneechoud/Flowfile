@@ -17,8 +17,10 @@ Usage:
     ColumnSelector(data_types=[Types.Numeric, Types.String])
 """
 
+from __future__ import annotations
+
 from enum import Enum
-from typing import Literal, Union
+from typing import Literal
 
 import polars as pl
 
@@ -166,11 +168,11 @@ class Types:
 
 
 # Type alias for better type hints
-TypeSpec = Union[
-    TypeGroup,
-    DataType,
-    str,
-    list[TypeGroup | DataType | str | type[pl.DataType] | pl.DataType],
-    type[pl.DataType],
-    pl.DataType,
-]
+TypeSpec = (
+    TypeGroup
+    | DataType
+    | str
+    | list[TypeGroup | DataType | str | type[pl.DataType] | pl.DataType]
+    | type[pl.DataType]
+    | pl.DataType
+)

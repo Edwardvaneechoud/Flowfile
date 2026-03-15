@@ -21,7 +21,7 @@ def _decode_bytes(v: Any) -> bytes:
 Base64Bytes = Annotated[
     bytes,
     BeforeValidator(_decode_bytes),
-    PlainSerializer(lambda x: b64encode(x).decode('ascii'), return_type=str),
+    PlainSerializer(lambda x: b64encode(x).decode("ascii"), return_type=str),
 ]
 
 

@@ -31,7 +31,7 @@ def create_from_json(received_table: input_schema.ReceivedTable):
             )
             data.head(1).collect()
             return data
-        except:
+        except Exception:
             try:
                 data = pl.scan_csv(
                     f,
@@ -43,7 +43,7 @@ def create_from_json(received_table: input_schema.ReceivedTable):
                     ignore_errors=True,
                 )
                 return data
-            except:
+            except Exception:
                 data = pl.scan_csv(
                     f,
                     low_memory=low_mem,
@@ -101,7 +101,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
             )
             data.head(1).collect()
             return data
-        except:
+        except Exception:
             try:
                 data = pl.scan_csv(
                     f,
@@ -113,7 +113,7 @@ def create_from_path_csv(received_table: input_schema.ReceivedTable) -> pl.LazyF
                     ignore_errors=True,
                 )
                 return data
-            except:
+            except Exception:
                 data = pl.scan_csv(
                     f,
                     low_memory=False,

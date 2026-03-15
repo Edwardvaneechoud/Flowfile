@@ -13,7 +13,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from flowfile_core.configs.settings import is_electron_mode
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, Response
@@ -28,6 +27,7 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
+from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowRun
 
@@ -204,10 +204,10 @@ async def get_directory_contents(
         directory_explorer = SecureFileExplorer(directory, sandbox_root)
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
     except PermissionError:
-        raise HTTPException(403, "Access denied: path is outside the allowed directory")
+        raise HTTPException(403, "Access denied: path is outside the allowed directory") from None
     except Exception as e:
         logger.error(e)
-        raise HTTPException(404, "Could not access the directory")
+        raise HTTPException(404, "Could not access the directory") from e
 
 
 @router.post("/files/create_directory", response_model=output_model.OutputDir, tags=["file manager"])
@@ -259,7 +259,7 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
         try:
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
-            raise HTTPException(422, str(e))
+            raise HTTPException(422, str(e)) from e
         background_tasks.add_task(flow.trigger_fetch_node, node_id)
     return JSONResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
@@ -338,7 +338,7 @@ def _run_and_track(flow, user_id: int | None):
                 f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}, "
                 f"duration={duration:.2f}s"
                 if duration
-                else f"duration=N/A"
+                else "duration=N/A"
             )
     except Exception as exc:
         logger.error(
@@ -428,7 +428,7 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
     flow = flow_file_handler.get_flow(input_data.flow_id)
     try:
         flow.add_datasource(input_data)
-    except:
+    except Exception:
         input_data.file_ref = os.path.join("db_data", input_data.file_ref)
         flow.add_datasource(input_data)
 
@@ -478,7 +478,7 @@ def copy_node(
 
     except Exception as e:
         logger.error(e)
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/editor/add_node/", tags=["editor"], response_model=OperationResponse)
@@ -585,7 +585,8 @@ def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConne
     """
     flow_id = int(flow_id)
     logger.info(
-        f"Deleting connection node {node_connection.output_connection.node_id} to node {node_connection.input_connection.node_id}"
+        f"Deleting connection node {node_connection.output_connection.node_id} "
+        f"to node {node_connection.input_connection.node_id}"
     )
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
@@ -612,10 +613,10 @@ def create_db_connection(
     try:
         store_database_connection(db, input_connection, current_user.id)
     except ValueError:
-        raise HTTPException(422, "Connection name already exists")
+        raise HTTPException(422, "Connection name already exists") from None
     except Exception as e:
         logger.error(e)
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     return {"message": "Database connection created successfully"}
 
 
@@ -837,7 +838,7 @@ def add_generic_settings(
         if ref:
             parsed_input = ref(**input_data)
     except Exception as e:
-        raise HTTPException(421, str(e))
+        raise HTTPException(421, str(e)) from e
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
     try:
@@ -845,7 +846,7 @@ def add_generic_settings(
         add_func(parsed_input)
     except Exception as e:
         logger.error(e)
-        raise HTTPException(419, str(f"error: {e}"))
+        raise HTTPException(419, str(f"error: {e}")) from e
 
     return OperationResponse(success=True, history=flow.get_history_state())
 
@@ -862,7 +863,7 @@ def get_list_of_saved_flows(path: str):
         return get_files_from_directory(
             str(validated_path), types=["flowfile"], sandbox_root=storage.user_data_directory
         )
-    except:
+    except Exception:
         return []
 
 
@@ -903,11 +904,13 @@ def get_node_input_names(flow_id: int, node_id: int) -> list[output_model.NodeIn
     for source_node in node.all_inputs:
         ref = getattr(source_node.setting_input, "node_reference", None)
         name = ref if ref else f"df_{source_node.node_id}"
-        result.append(output_model.NodeInputNameInfo(
-            name=name,
-            source_node_id=source_node.node_id,
-            source_node_type=source_node.node_type,
-        ))
+        result.append(
+            output_model.NodeInputNameInfo(
+                name=name,
+                source_node_id=source_node.node_id,
+                source_node_type=source_node.node_type,
+            )
+        )
     return result
 
 
@@ -916,8 +919,8 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
     """Updates the description text for a specific node."""
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except:
-        raise HTTPException(404, "Could not find the node")
+    except Exception:
+        raise HTTPException(404, "Could not find the node") from None
     node.setting_input.description = description
     return True
 
@@ -933,8 +936,8 @@ def get_description_node(flow_id: int, node_id: int):
     """
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except:
-        raise HTTPException(404, "Could not find the node")
+    except Exception:
+        raise HTTPException(404, "Could not find the node") from None
     if node is None:
         raise HTTPException(404, "Could not find the node")
     user_description = node.setting_input.description if hasattr(node.setting_input, "description") else ""
@@ -958,8 +961,8 @@ def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)
     try:
         flow = flow_file_handler.get_flow(flow_id)
         node = flow.get_node(node_id)
-    except:
-        raise HTTPException(404, "Could not find the node")
+    except Exception:
+        raise HTTPException(404, "Could not find the node") from None
     if node is None:
         raise HTTPException(404, "Could not find the node")
 
@@ -990,8 +993,8 @@ def get_reference_node(flow_id: int, node_id: int):
     """Retrieves the reference identifier for a specific node."""
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except:
-        raise HTTPException(404, "Could not find the node")
+    except Exception:
+        raise HTTPException(404, "Could not find the node") from None
     if node is None:
         raise HTTPException(404, "Could not find the node")
     return node.setting_input.node_reference or ""
@@ -1006,8 +1009,8 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
     """
     try:
         flow = flow_file_handler.get_flow(flow_id)
-    except:
-        raise HTTPException(404, "Could not find the flow")
+    except Exception:
+        raise HTTPException(404, "Could not find the flow") from None
 
     # Handle empty reference (always valid - means use default)
     if reference == "" or reference is None:
@@ -1195,7 +1198,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
         result = await asyncio.to_thread(get_instant_func_results, node, func_string)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/api/get_xlsx_sheet_names", tags=["excel_reader"], response_model=list[str])
@@ -1220,4 +1223,4 @@ async def validate_db_settings(
         sql_source.validate()
         return {"message": "Query settings are valid"}
     except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e

@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from functools import wraps
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import polars as pl
 
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
+
+if TYPE_CHECKING:
+    from flowfile_frame.expr import Expr
 
 ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
@@ -27,7 +32,6 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
     Callable
         A wrapper method appropriate for your Expr class.
     """
-    from flowfile_frame.expr import Expr
 
     @wraps(original_method)
     def wrapper(self: Expr, *args, **kwargs):

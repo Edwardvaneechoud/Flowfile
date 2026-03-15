@@ -58,14 +58,14 @@ def write_polars_frame(
         write_method = getattr(_df, "write_" + data_type)
         write_method(path)
         return True
-    except:
+    except Exception:
         return False
 
 
 def collect(df: pl.LazyFrame, streamable: bool = True):
     try:
         return df.collect(engine="streaming" if streamable else "auto")
-    except:
+    except Exception:
         return df.collect(engine="auto")
 
 
@@ -199,10 +199,10 @@ def find_first_positions(lst: list[str]) -> dict[str, int]:
     return first_positions
 
 
-def match_order(l: list[str], ref: list[str]) -> list[str]:
+def match_order(lst: list[str], ref: list[str]) -> list[str]:
     ref_order = find_first_positions(ref)
     order = []
-    for v in l:
+    for v in lst:
         org_order = ref_order.get(v, float("inf"))
         order.append(org_order)
-    return [v for _, v in sorted(zip(order, l, strict=False))]
+    return [v for _, v in sorted(zip(order, lst, strict=False))]

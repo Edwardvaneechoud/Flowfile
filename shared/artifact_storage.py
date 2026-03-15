@@ -233,7 +233,7 @@ class S3Storage(ArtifactStorageBackend):
         try:
             import boto3
         except ImportError:
-            raise ImportError("boto3 is required for S3 storage backend. " "Install with: pip install boto3")
+            raise ImportError("boto3 is required for S3 storage backend. " "Install with: pip install boto3") from None
 
         self.bucket = bucket
         self.prefix = prefix
@@ -284,7 +284,7 @@ class S3Storage(ArtifactStorageBackend):
             )
         except self.client.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "404":
-                raise FileNotFoundError(f"S3 object not found: {s3_key}")
+                raise FileNotFoundError(f"S3 object not found: {s3_key}") from e
             raise
 
         return head["ContentLength"]

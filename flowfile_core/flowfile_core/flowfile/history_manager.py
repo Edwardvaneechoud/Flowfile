@@ -41,7 +41,7 @@ class HistoryManager:
     - HistoryEntry uses __slots__ for reduced memory overhead
     """
 
-    __slots__ = ('_config', '_undo_stack', '_redo_stack', '_is_restoring', '_last_snapshot_hash')
+    __slots__ = ("_config", "_undo_stack", "_redo_stack", "_is_restoring", "_last_snapshot_hash")
 
     def __init__(self, config: HistoryConfig | None = None):
         """Initialize the HistoryManager.
@@ -117,7 +117,10 @@ class HistoryManager:
         Returns:
             True if snapshot was captured, False if skipped (disabled or restoring).
         """
-        logger.info(f"History: capture_snapshot called for '{description}' (enabled={self._config.enabled}, restoring={self._is_restoring})")
+        logger.info(
+            f"History: capture_snapshot called for '{description}' "
+            f"(enabled={self._config.enabled}, restoring={self._is_restoring})"
+        )
 
         if not self._config.enabled:
             logger.info(f"History: Skipping '{description}' - history disabled")

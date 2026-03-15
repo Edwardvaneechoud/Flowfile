@@ -17,12 +17,12 @@ import gc
 import os
 import threading
 import uuid
+from base64 import b64encode
 from dataclasses import dataclass
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from typing import Any
 
-from base64 import b64encode
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, status_dict, status_dict_lock
@@ -43,9 +43,11 @@ def _get_result_type(operation: str) -> str:
 # Task context
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _TaskContext:
     """Parsed and resolved metadata for a WebSocket task."""
+
     task_id: str
     operation: str
     flow_id: int
@@ -99,6 +101,7 @@ def _register_status(ctx: _TaskContext) -> None:
 # Subprocess management
 # ---------------------------------------------------------------------------
 
+
 def _spawn_subprocess(ctx: _TaskContext, polars_bytes: bytes) -> tuple[Process, Any, Any, Queue]:
     """Spawn a worker subprocess and return (process, progress, error_message, queue)."""
     process_task = getattr(funcs, ctx.operation)
@@ -145,6 +148,7 @@ def _set_error_status(task_id: str, msg: str) -> None:
 # Progress monitoring
 # ---------------------------------------------------------------------------
 
+
 async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_message, task_id: str) -> bool:
     """Stream progress updates while subprocess is alive.
 
@@ -178,6 +182,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
 # Result handling
 # ---------------------------------------------------------------------------
 
+
 def _update_completed_status(task_id: str, result_data: Any) -> None:
     """Update status_dict for a successfully completed task."""
     with status_dict_lock:
@@ -190,19 +195,20 @@ def _update_completed_status(task_id: str, result_data: Any) -> None:
                 status_dict[task_id].results = result_data
 
 
-async def _send_completion(websocket: WebSocket, task_id: str, result_type: str,
-                           file_path: str, queue: Queue) -> None:
+async def _send_completion(websocket: WebSocket, task_id: str, result_type: str, file_path: str, queue: Queue) -> None:
     """Send completion message and result data over WebSocket."""
     result_data = queue.get() if not queue.empty() else None
     _update_completed_status(task_id, result_data)
 
     has_result = result_data is not None
-    await websocket.send_json({
-        "type": "complete",
-        "result_type": result_type,
-        "file_ref": file_path,
-        "has_result": has_result,
-    })
+    await websocket.send_json(
+        {
+            "type": "complete",
+            "result_type": result_type,
+            "file_ref": file_path,
+            "has_result": has_result,
+        }
+    )
 
     if has_result:
         if isinstance(result_data, bytes):
@@ -225,15 +231,18 @@ async def _send_final_error(websocket: WebSocket, task_id: str, progress, error_
     else:
         with status_dict_lock:
             status_dict[task_id].status = "Unknown Error"
-        await websocket.send_json({
-            "type": "error",
-            "error_message": "Process ended unexpectedly",
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "error_message": "Process ended unexpectedly",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # Disconnect handling
 # ---------------------------------------------------------------------------
+
 
 def _handoff_to_background(task_id: str, p: Process, progress, error_message, queue: Queue) -> None:
     """Hand off a running subprocess to a background thread for REST status updates."""
@@ -250,6 +259,7 @@ def _handoff_to_background(task_id: str, p: Process, progress, error_message, qu
 # Cleanup
 # ---------------------------------------------------------------------------
 
+
 def _cleanup_process(task_id: str | None, p: Process | None) -> None:
     """Clean up subprocess resources."""
     if p is not None:
@@ -264,6 +274,7 @@ def _cleanup_process(task_id: str | None, p: Process | None) -> None:
 # ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
+
 
 @streaming_router.websocket("/ws/submit")
 async def ws_submit(websocket: WebSocket):

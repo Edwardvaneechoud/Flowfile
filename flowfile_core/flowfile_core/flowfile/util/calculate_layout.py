@@ -70,7 +70,6 @@ def calculate_layered_layout(
     current_in_degree = defaultdict(int, in_degree)
 
     while queue:
-        stage_size = len(queue)
         processing_order = sorted(list(queue))
         queue.clear()
         nodes_in_current_stage = []

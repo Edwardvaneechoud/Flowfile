@@ -47,7 +47,7 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
-from flowfile_frame.cloud_storage.secret_manager import (
+from flowfile_frame.cloud_storage.secret_manager import (  # noqa: F401
     create_cloud_storage_connection,
     create_cloud_storage_connection_if_not_exists,
     del_cloud_storage_connection,
@@ -55,7 +55,7 @@ from flowfile_frame.cloud_storage.secret_manager import (
 )
 
 # Database I/O
-from flowfile_frame.database import (
+from flowfile_frame.database import (  # noqa: F401
     create_database_connection,
     create_database_connection_if_not_exists,
     del_database_connection,
@@ -101,7 +101,7 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     scan_parquet,
     scan_parquet_from_cloud_storage,
 )
-from flowfile_frame.lazy import fold
+from flowfile_frame.lazy import fold  # noqa: F401
 
 # Selector utilities
 from flowfile_frame.selectors import (  # noqa: F401
@@ -126,7 +126,7 @@ from flowfile_frame.selectors import (  # noqa: F401
     temporal,
     time,
 )
-from flowfile_frame.series import Series
+from flowfile_frame.series import Series  # noqa: F401
 from flowfile_frame.utils import create_flow_graph  # noqa: F401
 
 try:

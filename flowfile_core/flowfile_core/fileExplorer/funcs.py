@@ -138,7 +138,6 @@ class SecureFileExplorer:
         try:
             # Handle relative paths from current directoryb
             if isinstance(path, str):
-
                 # Remove any suspicious patterns
                 if path.startswith("/"):
                     # For absolute paths or parent references, resolve from sandbox root
@@ -269,7 +268,7 @@ class SecureFileExplorer:
                         continue
 
         except PermissionError:
-            raise PermissionError(f"Permission denied to access directory: {self.current_directory}")
+            raise PermissionError(f"Permission denied to access directory: {self.current_directory}") from None
 
         # Sort results
         sort_key = {
@@ -386,7 +385,7 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
     """
     try:
         # Block obvious path traversal patterns early
-        if '..' in user_path:
+        if ".." in user_path:
             return None
 
         # Get the base path as a normalized, real path string
@@ -437,8 +436,8 @@ def validate_path_under_cwd(user_path: str) -> str:
         # Normalize and resolve the path
         normalized_path = os.path.normpath(os.path.expanduser(user_path))
         # Block path traversal patterns even in Electron mode
-        if '..' in user_path:
-            raise HTTPException(403, 'Access denied: path traversal not allowed')
+        if ".." in user_path:
+            raise HTTPException(403, "Access denied: path traversal not allowed")
         return normalized_path
 
     # In Docker/package mode, enforce strict sandboxing
@@ -461,7 +460,7 @@ def validate_path_under_cwd(user_path: str) -> str:
     if fullpath.startswith(base_path):
         return fullpath
 
-    raise HTTPException(403, 'Access denied')
+    raise HTTPException(403, "Access denied")
 
 
 # Alias for backward compatibility

@@ -53,9 +53,7 @@ def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = 
     return ExecutionPlan(skip_nodes=skip_nodes, stages=stages)
 
 
-def determine_execution_order(
-    all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None
-) -> list[ExecutionStage]:
+def determine_execution_order(all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> list[ExecutionStage]:
     """
     Determines the execution order of nodes using topological sorting based on node dependencies.
     Returns stages of nodes where each stage contains nodes that can execute in parallel.

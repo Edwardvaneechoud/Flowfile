@@ -30,6 +30,7 @@ def _get_ws_url() -> str:
 # Message building
 # ---------------------------------------------------------------------------
 
+
 def _build_metadata(
     task_id: str,
     operation_type: str,
@@ -52,6 +53,7 @@ def _build_metadata(
 # ---------------------------------------------------------------------------
 # Message receiving
 # ---------------------------------------------------------------------------
+
 
 def _handle_complete_message(data: dict, task_id: str) -> Status:
     """Build a partial Status from a 'complete' protocol message.
@@ -112,9 +114,7 @@ def _receive_raw_result(ws, task_id: str) -> tuple[Any, Status | None]:
     return raw_result, status
 
 
-def _deserialize_and_populate_status(
-    raw_result: Any, status: Status
-) -> tuple[Any, Status]:
+def _deserialize_and_populate_status(raw_result: Any, status: Status) -> tuple[Any, Status]:
     """Deserialize the raw result and fill ``status.results``.
 
     For polars results (bytes): deserializes into a LazyFrame and stores

@@ -47,7 +47,7 @@ class CompressedSnapshot:
     This is not a Pydantic model to avoid serialization overhead.
     """
 
-    __slots__ = ('_compressed_data', '_hash')
+    __slots__ = ("_compressed_data", "_hash")
 
     def __init__(self, snapshot_dict: dict, compression_level: int = 6):
         """Create a compressed snapshot from a dictionary.
@@ -88,11 +88,13 @@ class CompressedSnapshot:
         settings = snapshot_dict.get("flowfile_settings", {})
         settings_tuple = tuple(sorted(settings.items())) if isinstance(settings, dict) else hash(str(settings))
 
-        return hash((
-            snapshot_dict.get("flowfile_id"),
-            settings_tuple,
-            tuple(node_signatures),
-        ))
+        return hash(
+            (
+                snapshot_dict.get("flowfile_id"),
+                settings_tuple,
+                tuple(node_signatures),
+            )
+        )
 
     def decompress(self) -> dict:
         """Decompress and return the original snapshot dictionary."""
@@ -125,7 +127,7 @@ class HistoryEntry:
     Uses __slots__ for memory efficiency.
     """
 
-    __slots__ = ('_snapshot', 'action_type', 'description', 'timestamp', 'node_id')
+    __slots__ = ("_snapshot", "action_type", "description", "timestamp", "node_id")
 
     def __init__(
         self,
@@ -187,12 +189,8 @@ class HistoryState(BaseModel):
 
     can_undo: bool = Field(default=False, description="Whether undo is available")
     can_redo: bool = Field(default=False, description="Whether redo is available")
-    undo_description: str | None = Field(
-        default=None, description="Description of the action that would be undone"
-    )
-    redo_description: str | None = Field(
-        default=None, description="Description of the action that would be redone"
-    )
+    undo_description: str | None = Field(default=None, description="Description of the action that would be undone")
+    redo_description: str | None = Field(default=None, description="Description of the action that would be redone")
     undo_count: int = Field(default=0, description="Number of available undo steps")
     redo_count: int = Field(default=0, description="Number of available redo steps")
 
@@ -201,12 +199,8 @@ class UndoRedoResult(BaseModel):
     """Result of an undo or redo operation."""
 
     success: bool = Field(..., description="Whether the operation succeeded")
-    action_description: str | None = Field(
-        default=None, description="Description of the action that was undone/redone"
-    )
-    error_message: str | None = Field(
-        default=None, description="Error message if the operation failed"
-    )
+    action_description: str | None = Field(default=None, description="Description of the action that was undone/redone")
+    error_message: str | None = Field(default=None, description="Error message if the operation failed")
 
 
 class OperationResponse(BaseModel):

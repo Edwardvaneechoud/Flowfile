@@ -133,7 +133,7 @@ class FlowLogger:
 
         try:
             # Create an empty file
-            with open(self.log_file_path, "w") as f:
+            with open(self.log_file_path, "w"):
                 pass
 
             # Re-setup the logger
@@ -224,7 +224,7 @@ class FlowLogger:
             # Ensure parent directory exists
             self.refresh_logger_if_needed()
             # Truncate file
-            with open(self.log_file_path, "w") as f:
+            with open(self.log_file_path, "w"):
                 pass
             main_logger.info(f"Log file cleared for flow {self.flow_id}")
         except Exception as e:
@@ -348,7 +348,7 @@ class FlowLogger:
         """Cleanup instance on deletion."""
         try:
             self.cleanup_instance(self.flow_id)
-        except:
+        except Exception:
             pass  # Ignore errors during deletion
 
 

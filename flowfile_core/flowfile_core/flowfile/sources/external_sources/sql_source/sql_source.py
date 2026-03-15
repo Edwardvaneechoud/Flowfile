@@ -42,8 +42,7 @@ def validate_sql_identifier(identifier: str, identifier_type: str = "identifier"
     for part in parts:
         if not part:
             raise UnsafeSQLError(
-                f"Invalid SQL {identifier_type}: '{identifier}'. "
-                f"Identifier parts cannot be empty."
+                f"Invalid SQL {identifier_type}: '{identifier}'. " f"Identifier parts cannot be empty."
             )
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
             raise UnsafeSQLError(
@@ -326,7 +325,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
                     logger.warning(f"Error getting column info for table {self.table_name}: {e}")
                     c = self._get_columns_from_polars(self.get_sample_query())
                     if len(c) == 0:
-                        raise ValueError("No columns found in the query")
+                        raise ValueError("No columns found in the query") from e
             else:
                 c = self._get_columns_from_polars(self.get_sample_query())
                 if len(c) == 0:
@@ -338,8 +337,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
     def get_iter(self) -> Generator[dict[str, Any], None, None]:
         logger.warning("Getting data in iteration, this is suboptimal")
         data = self.data_getter()
-        for row in data:
-            yield row
+        yield from data
 
     def get_df(self):
         df = self.get_pl_df()
@@ -445,9 +443,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         """
         try:
             df = pl.read_database_uri(query, self.connection_string)
-            columns = [
-                FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns
-            ]
+            columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in df.columns]
             return columns
         except Exception as e:
             logger.error(f"Error getting column info for query: {e}")

@@ -12,12 +12,13 @@ PASSWORD_REQUIREMENTS = {
     "min_length": PASSWORD_MIN_LENGTH,
     "require_number": True,
     "require_special": True,
-    "special_chars": "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    "special_chars": "!@#$%^&*()_+-=[]{}|;:,.<>?",
 }
 
 
 class PasswordValidationError(Exception):
     """Raised when password doesn't meet requirements."""
+
     pass
 
 
@@ -39,10 +40,10 @@ def validate_password(password: str) -> tuple[bool, str]:
     if len(password) < PASSWORD_MIN_LENGTH:
         return False, f"Password must be at least {PASSWORD_MIN_LENGTH} characters long"
 
-    if not re.search(r'\d', password):
+    if not re.search(r"\d", password):
         return False, "Password must contain at least one number"
 
-    if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]', password):
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]", password):
         return False, "Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)"
 
     return True, ""

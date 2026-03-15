@@ -71,7 +71,7 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
 
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/store_sample/")
@@ -116,7 +116,7 @@ async def store_sample(request: Request, background_tasks: BackgroundTasks) -> m
 
     except Exception as e:
         logger.error(f"Error storing sample: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/write_data_to_cloud/")
@@ -152,7 +152,7 @@ def write_data_to_cloud(
         return status
     except Exception as e:
         logger.error(f"Error in write operation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/store_database_write_result/")
@@ -192,7 +192,7 @@ def store_in_database(
 
     except Exception as e:
         logger.error(f"Error in write operation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/write_results/")
@@ -239,7 +239,7 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
 
     except Exception as e:
         logger.error(f"Error in write operation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/store_database_read_result")
@@ -279,7 +279,7 @@ def store_sql_db_result(
 
     except Exception as e:
         logger.error(f"Error processing sql source: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/create_table/{file_type}")
@@ -325,7 +325,7 @@ def create_table(
 
     except Exception as e:
         logger.error(f"Error creating table: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/catalog/materialize", response_model=models.CatalogMaterializeResponse)
@@ -335,7 +335,9 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
     ext = os.path.splitext(src)[1].lower()
 
     if ext in (".csv", ".txt", ".tsv"):
-        read_method = lambda p: pl.read_csv(p, infer_schema_length=10000)
+
+        def read_method(p):
+            return pl.read_csv(p, infer_schema_length=10000)
     elif ext == ".parquet":
         read_method = pl.read_parquet
     elif ext in (".xlsx", ".xls"):
@@ -353,7 +355,7 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
         raise HTTPException(
             status_code=500,
             detail={"error_type": "read_failure", "message": str(e)},
-        )
+        ) from e
 
     dest_dir = storage.catalog_tables_directory
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -373,7 +375,7 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
         raise HTTPException(
             status_code=500,
             detail={"error_type": "write_failure", "message": str(e)},
-        )
+        ) from e
 
     try:
         size_bytes = dest_path.stat().st_size
@@ -382,7 +384,7 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
         raise HTTPException(
             status_code=500,
             detail={"error_type": "metadata_failure", "message": str(e)},
-        )
+        ) from e
 
     schema = [models.ColumnSchema(name=col, dtype=str(df[col].dtype)) for col in df.columns]
     return models.CatalogMaterializeResponse(
@@ -471,7 +473,7 @@ async def fetch_results(task_id: str):
         return {"task_id": task_id, "result": lf.serialize()}
     except Exception as e:
         logger.error(f"Error reading results: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error reading results")
+        raise HTTPException(status_code=500, detail="Error reading results") from e
 
 
 @router.get("/memory_usage/{task_id}")
@@ -536,7 +538,7 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
         return status
     except Exception as e:
         logger.error(f"Error in fuzzy join: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/clear_task/{task_id}")

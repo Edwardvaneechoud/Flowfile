@@ -464,7 +464,7 @@ class KernelManager:
                 f"Docker image '{_KERNEL_IMAGE}' not found. "
                 "Please build or pull the kernel image before starting a kernel."
             )
-            raise RuntimeError(kernel.error_message)
+            raise RuntimeError(kernel.error_message) from None
 
         # Allocate a port if needed (local mode only, not needed for DinD)
         if kernel.port is None and not self._kernel_volume:
@@ -508,7 +508,7 @@ class KernelManager:
                 f"Docker image '{_KERNEL_IMAGE}' not found. "
                 "Please build or pull the kernel image before starting a kernel."
             ) if flow_logger else None
-            raise RuntimeError(kernel.error_message)
+            raise RuntimeError(kernel.error_message) from None
 
         if kernel.port is None and not self._kernel_volume:
             kernel.port = self._allocate_port()

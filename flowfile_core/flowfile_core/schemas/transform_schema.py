@@ -71,7 +71,7 @@ class FilterOperator(str, Enum):
         try:
             return cls(symbol)
         except ValueError:
-            raise ValueError(f"Unknown filter operator symbol: {symbol}")
+            raise ValueError(f"Unknown filter operator symbol: {symbol}") from None
 
     def to_symbol(self) -> str:
         """Convert FilterOperator to UI-friendly symbol."""
@@ -541,7 +541,7 @@ class CrossJoinInput(BaseModel):
                     result.append(jm)
                 elif isinstance(jm, dict):
                     result.append(JoinMap(**jm))
-                elif isinstance(jm, (tuple, list)) and len(jm) == 2:
+                elif isinstance(jm, tuple | list) and len(jm) == 2:
                     result.append(JoinMap(left_col=jm[0], right_col=jm[1]))
                 elif isinstance(jm, str):
                     result.append(JoinMap(left_col=jm, right_col=jm))
@@ -654,7 +654,7 @@ class JoinInput(BaseModel):
                     result.append(jm)
                 elif isinstance(jm, dict):
                     result.append(JoinMap(**jm))
-                elif isinstance(jm, (tuple, list)) and len(jm) == 2:
+                elif isinstance(jm, tuple | list) and len(jm) == 2:
                     result.append(JoinMap(left_col=jm[0], right_col=jm[1]))
                 elif isinstance(jm, str):
                     result.append(JoinMap(left_col=jm, right_col=jm))
@@ -1544,7 +1544,7 @@ class FuzzyMatchInputManager(JoinInputManager):
         fuzz_mapping: list[FuzzyMapping] | tuple[str, str] | str | FuzzyMapping | list[dict],
     ) -> list[FuzzyMapping]:
         """Parses various input formats into a list of FuzzyMapping objects."""
-        if isinstance(fuzz_mapping, (tuple, list)):
+        if isinstance(fuzz_mapping, tuple | list):
             if len(fuzz_mapping) == 0:
                 raise ValueError("Fuzzy mapping cannot be empty")
 

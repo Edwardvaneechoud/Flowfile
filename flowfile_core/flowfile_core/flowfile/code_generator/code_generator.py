@@ -21,9 +21,7 @@ class UnsupportedNodeError(Exception):
         self.node_type = node_type
         self.node_id = node_id
         self.reason = reason
-        super().__init__(
-            f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}"
-        )
+        super().__init__(f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}")
 
 
 class FlowGraphToPolarsConverter:
@@ -105,7 +103,7 @@ class FlowGraphToPolarsConverter:
             return
         # Create variable name for this node's output
         # Use node_reference if set, otherwise default to df_{node_id}
-        node_reference = getattr(settings, 'node_reference', None)
+        node_reference = getattr(settings, "node_reference", None)
         var_name = node_reference if node_reference else f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
         self.handle_output_node(node, var_name)
@@ -125,11 +123,9 @@ class FlowGraphToPolarsConverter:
             handler(settings, var_name, input_vars)
         else:
             # Unknown node type - add to unsupported list
-            self.unsupported_nodes.append((
-                node.node_id,
-                node_type,
-                f"No code generator implemented for node type '{node_type}'"
-            ))
+            self.unsupported_nodes.append(
+                (node.node_id, node_type, f"No code generator implemented for node type '{node_type}'")
+            )
             self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
             self._add_comment("# This node type is not supported for code export")
 
@@ -568,7 +564,7 @@ class FlowGraphToPolarsConverter:
                 - reverse_action: Mapping to rename __DROP__ columns after join
                 - after_join_drop_cols: Left join keys marked for dropping
         """
-        left_join_keys_to_keep = [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
+        [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
             f'pl.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
             for rjk in settings.right_select.join_key_selects
@@ -915,13 +911,11 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"{right_df} = {left_df}")
 
         if fuzzy_match_handler.left_select.has_drop_cols():
-            self._add_code(
-                f"{left_df} = {left_df}.drop({[c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]})"
-            )
+            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
+            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
         if fuzzy_match_handler.right_select.has_drop_cols():
-            self._add_code(
-                f"{right_df} = {right_df}.drop({[c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]})"
-            )
+            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
+            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
         self._add_code(
@@ -937,7 +931,8 @@ class FlowGraphToPolarsConverter:
 
         if settings.unique_input.columns:
             self._add_code(
-                f"{var_name} = {input_df}.unique(subset={settings.unique_input.columns}, keep='{settings.unique_input.strategy}')"
+                f"{var_name} = {input_df}.unique("
+                f"subset={settings.unique_input.columns}, keep='{settings.unique_input.strategy}')"
             )
         else:
             self._add_code(f"{var_name} = {input_df}.unique(keep='{settings.unique_input.strategy}')")
@@ -976,18 +971,19 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"    .with_columns(pl.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
             self._add_code(
-                f"    (pl.cum_count('{record_input.output_column_name}').over({record_input.group_by_columns}) + {record_input.offset} - 1)"
+                f"    (pl.cum_count('{record_input.output_column_name}')"
+                f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
             )
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
-            self._add_code(
-                f".select(['{record_input.output_column_name}'] + [col for col in {input_df}.columns if col != '{record_input.output_column_name}'])"
-            )
+            out_col = record_input.output_column_name
+            self._add_code(f".select(['{out_col}'] + [col for col in {input_df}.columns if col != '{out_col}'])")
             self._add_code(")")
         else:
             # Simple row number
             self._add_code(
-                f"{var_name} = {input_df}.with_row_count(name='{record_input.output_column_name}', offset={record_input.offset})"
+                f"{var_name} = {input_df}.with_row_count("
+                f"name='{record_input.output_column_name}', offset={record_input.offset})"
             )
         self._add_code("")
 
@@ -1006,7 +1002,11 @@ class FlowGraphToPolarsConverter:
     ) -> None:
         """Handle cloud storage writer nodes."""
         input_df = input_vars.get("main", "df")
-        # def write_csv_to_cloud_storage(self, path: str, connection_name: typing.Optional[str] = None, delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8', description: Optional[str] = None) -> 'FlowFrame': ...
+        # def write_csv_to_cloud_storage(
+        #     self, path: str, connection_name: typing.Optional[str] = None,
+        #     delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8',
+        #     description: Optional[str] = None
+        # ) -> 'FlowFrame': ...
 
         output_settings = settings.cloud_storage_settings
         self.imports.add("import flowfile as ff")
@@ -1105,7 +1105,7 @@ class FlowGraphToPolarsConverter:
             # If no explicit return, try to detect what to return
             if "return" not in code:
                 # Try to find the last assignment
-                lines = [l.strip() for l in code.split("\n") if l.strip() and "=" in l]
+                lines = [line.strip() for line in code.split("\n") if line.strip() and "=" in line]
                 if lines:
                     last_assignment = lines[-1]
                     if "=" in last_assignment:
@@ -1139,21 +1139,21 @@ class FlowGraphToPolarsConverter:
 
         # Only reference mode is supported for code generation
         if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append((
-                settings.node_id,
-                "database_reader",
-                "Database Reader nodes with inline connections cannot be exported. "
-                "Please use a named connection (reference mode) instead."
-            ))
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "database_reader",
+                    "Database Reader nodes with inline connections cannot be exported. "
+                    "Please use a named connection (reference mode) instead.",
+                )
+            )
             self._add_comment(f"# Node {settings.node_id}: Database Reader - Inline connections not supported")
             return
 
         if not db_settings.database_connection_name:
-            self.unsupported_nodes.append((
-                settings.node_id,
-                "database_reader",
-                "Database Reader node is missing a connection name"
-            ))
+            self.unsupported_nodes.append(
+                (settings.node_id, "database_reader", "Database Reader node is missing a connection name")
+            )
             return
 
         self.imports.add("import flowfile as ff")
@@ -1163,7 +1163,7 @@ class FlowGraphToPolarsConverter:
 
         if db_settings.query_mode == "query" and db_settings.query:
             # Query mode - use triple quotes to preserve query formatting
-            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f"{var_name} = ff.read_database(")
             self._add_code(f'    "{connection_name}",')
             self._add_code('    query="""')
             # Add each line of the query with proper indentation
@@ -1173,7 +1173,7 @@ class FlowGraphToPolarsConverter:
             self._add_code(")")
         else:
             # Table mode
-            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f"{var_name} = ff.read_database(")
             self._add_code(f'    "{connection_name}",')
             if db_settings.table_name:
                 self._add_code(f'    table_name="{db_settings.table_name}",')
@@ -1191,21 +1191,21 @@ class FlowGraphToPolarsConverter:
 
         # Only reference mode is supported for code generation
         if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append((
-                settings.node_id,
-                "database_writer",
-                "Database Writer nodes with inline connections cannot be exported. "
-                "Please use a named connection (reference mode) instead."
-            ))
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "database_writer",
+                    "Database Writer nodes with inline connections cannot be exported. "
+                    "Please use a named connection (reference mode) instead.",
+                )
+            )
             self._add_comment(f"# Node {settings.node_id}: Database Writer - Inline connections not supported")
             return
 
         if not db_settings.database_connection_name:
-            self.unsupported_nodes.append((
-                settings.node_id,
-                "database_writer",
-                "Database Writer node is missing a connection name"
-            ))
+            self.unsupported_nodes.append(
+                (settings.node_id, "database_writer", "Database Writer node is missing a connection name")
+            )
             return
 
         self.imports.add("import flowfile as ff")
@@ -1230,11 +1230,13 @@ class FlowGraphToPolarsConverter:
         self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle external_source nodes - these are not supported for code generation."""
-        self.unsupported_nodes.append((
-            settings.node_id,
-            "external_source",
-            "External Source nodes use dynamic data sources that cannot be included in generated code"
-        ))
+        self.unsupported_nodes.append(
+            (
+                settings.node_id,
+                "external_source",
+                "External Source nodes use dynamic data sources that cannot be included in generated code",
+            )
+        )
         self._add_comment(f"# Node {settings.node_id}: External Source - Not supported for code export")
         self._add_comment("# (External data sources require runtime configuration)")
 
@@ -1250,7 +1252,7 @@ class FlowGraphToPolarsConverter:
         needs_collect = True  # Default: assume needs DataFrame input
         needs_lazy = True  # Default: assume returns DataFrame
 
-        process_method = getattr(custom_node_class, 'process', None)
+        process_method = getattr(custom_node_class, "process", None)
         if process_method is None:
             return needs_collect, needs_lazy
 
@@ -1259,10 +1261,10 @@ class FlowGraphToPolarsConverter:
             type_hints = typing.get_type_hints(process_method)
 
             # Check return type
-            return_type = type_hints.get('return')
+            return_type = type_hints.get("return")
             if return_type is not None:
                 return_type_str = str(return_type)
-                if 'LazyFrame' in return_type_str:
+                if "LazyFrame" in return_type_str:
                     needs_lazy = False
 
             # Check input parameter types (look for *inputs parameter or first param after self)
@@ -1271,13 +1273,13 @@ class FlowGraphToPolarsConverter:
             for param in params[1:]:  # Skip 'self'
                 if param.annotation != inspect.Parameter.empty:
                     param_type_str = str(param.annotation)
-                    if 'LazyFrame' in param_type_str:
+                    if "LazyFrame" in param_type_str:
                         needs_collect = False
                         break
                 # Also check the type_hints dict for this param
                 if param.name in type_hints:
                     hint_str = str(type_hints[param.name])
-                    if 'LazyFrame' in hint_str:
+                    if "LazyFrame" in hint_str:
                         needs_collect = False
                         break
         except Exception as e:
@@ -1301,9 +1303,7 @@ class FlowGraphToPolarsConverter:
         except (OSError, TypeError):
             return None
 
-    def _handle_user_defined(
-        self, node: FlowNode, var_name: str, input_vars: dict[str, str]
-    ) -> None:
+    def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle user-defined custom nodes by including their class definition and calling process()."""
         node_type = node.node_type
         settings = node.setting_input
@@ -1311,11 +1311,9 @@ class FlowGraphToPolarsConverter:
         # Get the custom node class from the registry
         custom_node_class = CUSTOM_NODE_STORE.get(node_type)
         if custom_node_class is None:
-            self.unsupported_nodes.append((
-                node.node_id,
-                node_type,
-                f"User-defined node type '{node_type}' not found in the custom node registry"
-            ))
+            self.unsupported_nodes.append(
+                (node.node_id, node_type, f"User-defined node type '{node_type}' not found in the custom node registry")
+            )
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
             return
 
@@ -1326,43 +1324,48 @@ class FlowGraphToPolarsConverter:
             file_source = self._read_custom_node_source_file(custom_node_class)
             if file_source:
                 # Remove import lines from the file since we handle imports separately
-                lines = file_source.split('\n')
+                lines = file_source.split("\n")
                 non_import_lines = []
                 in_multiline_import = False
                 for line in lines:
                     stripped = line.strip()
                     # Track multi-line imports (using parentheses)
-                    if stripped.startswith('import ') or stripped.startswith('from '):
-                        if '(' in stripped and ')' not in stripped:
+                    if stripped.startswith("import ") or stripped.startswith("from "):
+                        if "(" in stripped and ")" not in stripped:
                             in_multiline_import = True
                         continue
                     if in_multiline_import:
-                        if ')' in stripped:
+                        if ")" in stripped:
                             in_multiline_import = False
                         continue
                     # Skip comments at the very start (like "# Auto-generated custom node")
-                    if stripped.startswith('#') and not non_import_lines:
+                    if stripped.startswith("#") and not non_import_lines:
                         continue
                     non_import_lines.append(line)
                 # Remove leading empty lines
                 while non_import_lines and not non_import_lines[0].strip():
                     non_import_lines.pop(0)
-                self.custom_node_classes[class_name] = '\n'.join(non_import_lines)
+                self.custom_node_classes[class_name] = "\n".join(non_import_lines)
             else:
                 # Fallback to just the class source
                 try:
                     self.custom_node_classes[class_name] = inspect.getsource(custom_node_class)
                 except (OSError, TypeError) as e:
-                    self.unsupported_nodes.append((
-                        node.node_id,
-                        node_type,
-                        f"Could not retrieve source code for user-defined node: {e}"
-                    ))
-                    self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable")
+                    self.unsupported_nodes.append(
+                        (node.node_id, node_type, f"Could not retrieve source code for user-defined node: {e}")
+                    )
+                    self._add_comment(
+                        f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable"
+                    )
                     return
 
             # Add necessary imports
-            self.imports.add("from flowfile_core.flowfile.node_designer import CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, IncomingColumns, ColumnSelector, NumericInput, TextInput, DropdownSelector, TextArea, Toggle")
+            self.imports.add(
+                "from flowfile_core.flowfile.node_designer import ("
+                "CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, "
+                "IncomingColumns, ColumnSelector, NumericInput, TextInput, "
+                "DropdownSelector, TextArea, Toggle)"
+            )
 
         # Get settings values to initialize the node
         settings_dict = getattr(settings, "settings", {}) or {}
@@ -1371,14 +1374,16 @@ class FlowGraphToPolarsConverter:
         needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
         # Generate the code to instantiate and run the custom node
-        self._add_code(f"# User-defined node: {custom_node_class.model_fields.get('node_name', type('', (), {'default': node_type})).default}")
+        _node_name_field = custom_node_class.model_fields.get("node_name", type("", (), {"default": node_type}))
+        self._add_code(f"# User-defined node: {_node_name_field.default}")
         self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
 
         # If there are settings, apply them
         if settings_dict:
             self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
             self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
-            self._add_code(f"    _custom_node_{node.node_id}.settings_schema.populate_values(_custom_node_{node.node_id}_settings)")
+            node_var = f"_custom_node_{node.node_id}"
+            self._add_code(f"    {node_var}.settings_schema.populate_values({node_var}_settings)")
 
         # Prepare input arguments based on whether we need to collect
         if len(input_vars) == 0:
@@ -1627,7 +1632,7 @@ class FlowGraphToPolarsConverter:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
             lines.append("")
-            for class_name, source_code in self.custom_node_classes.items():
+            for _class_name, source_code in self.custom_node_classes.items():
                 for source_line in source_code.split("\n"):
                     lines.append(source_line)
                 lines.append("")

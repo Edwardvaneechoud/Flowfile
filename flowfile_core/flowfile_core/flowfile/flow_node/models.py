@@ -12,10 +12,11 @@ class ExecutionStrategy(Enum):
 
     Used by NodeExecutor to dispatch to the correct execution method.
     """
-    SKIP = auto()                  # Already up-to-date, don't execute
-    FULL_LOCAL = auto()            # 100% in-process (WASM, simple cases)
-    LOCAL_WITH_SAMPLING = auto()   # In-process + external sampler for preview
-    REMOTE = auto()                # Full external worker execution
+
+    SKIP = auto()  # Already up-to-date, don't execute
+    FULL_LOCAL = auto()  # 100% in-process (WASM, simple cases)
+    LOCAL_WITH_SAMPLING = auto()  # In-process + external sampler for preview
+    REMOTE = auto()  # Full external worker execution
 
 
 class InvalidationReason(Enum):
@@ -24,13 +25,14 @@ class InvalidationReason(Enum):
 
     Used for logging and debugging execution decisions.
     """
-    NEVER_RAN = auto()             # First execution
-    SETTINGS_CHANGED = auto()      # Node configuration changed
-    SOURCE_FILE_CHANGED = auto()   # Input file modified (read nodes)
-    CACHE_MISSING = auto()         # Cache enabled but no cached result
-    FORCED_REFRESH = auto()        # User requested reset_cache=True
-    OUTPUT_NODE = auto()           # Output nodes always execute
-    PERFORMANCE_MODE = auto()      # Running in performance mode (no caching)
+
+    NEVER_RAN = auto()  # First execution
+    SETTINGS_CHANGED = auto()  # Node configuration changed
+    SOURCE_FILE_CHANGED = auto()  # Input file modified (read nodes)
+    CACHE_MISSING = auto()  # Cache enabled but no cached result
+    FORCED_REFRESH = auto()  # User requested reset_cache=True
+    OUTPUT_NODE = auto()  # Output nodes always execute
+    PERFORMANCE_MODE = auto()  # Running in performance mode (no caching)
 
 
 @dataclass
@@ -40,16 +42,18 @@ class ExecutionDecision:
 
     Encapsulates the execution decision logic result.
     """
+
     should_run: bool
     strategy: ExecutionStrategy
     reason: InvalidationReason | None = None
+
 
 # Forward declaration for type hints to avoid circular imports
 if False:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine  # noqa: E402
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn  # noqa: E402
 
 
 @dataclass
@@ -100,7 +104,8 @@ class NodeStepStats:
         Initializes the node's statistics.
 
         :param error: Any error message from the last run.
-        :param has_run_with_current_setup: Flag indicating if the node has run successfully with its current configuration.
+        :param has_run_with_current_setup: Flag indicating if the node has run successfully with its current
+            configuration.
         :param has_completed_last_run: Flag indicating if the last triggered run finished (successfully or not).
         :param active: Flag indicating if the node is active in the flow.
         :param is_canceled: Flag indicating if the last run was canceled.

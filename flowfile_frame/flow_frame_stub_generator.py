@@ -52,7 +52,7 @@ def format_default_value(param: inspect.Parameter) -> str | None:
 
     default = param.default
 
-    if isinstance(default, (str, int, float, bool, type(None))):
+    if isinstance(default, str | int | float | bool | type(None)):
         return repr(default)
 
     type_name = type(default).__name__
@@ -255,7 +255,8 @@ def generate_improved_type_stub(
         "import sys",
         "import typing",
         "from io import IOBase",
-        "from typing import List, Optional, ForwardRef, TypeVar, Any, Iterable, Sequence, Mapping, Collection, Callable, Literal, IO, Union",
+        "from typing import (List, Optional, ForwardRef, TypeVar, Any, Iterable, "
+        "Sequence, Mapping, Collection, Callable, Literal, IO, Union)",
         "from datetime import timedelta",
         "from pathlib import Path",
         "from collections.abc import Awaitable",
@@ -271,7 +272,9 @@ def generate_improved_type_stub(
         "from polars import LazyFrame, DataFrame, QueryOptFlags",
         "from polars.io.parquet import ParquetFieldOverwrites",
         "from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS",
-        "from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)",
+        "from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, "
+        "RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, "
+        "ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)",
         "",
         "# Local application/library specific imports",
         "import flowfile_frame",
@@ -306,7 +309,9 @@ def generate_improved_type_stub(
                 "def _contains_lambda_pattern(text: str) -> bool: ...",
                 "def _to_string_val(v) -> str: ...",
                 "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
-                "def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None, group_expr: pl.Expr | None = None) -> None: ...",
+                "def _check_ok_for_serialization("
+                "method_name: str = None, polars_expr: pl.Expr | None = None, "
+                "group_expr: pl.Expr | None = None) -> None: ...",
                 "",
             ]
         )
@@ -339,7 +344,10 @@ def generate_improved_type_stub(
     def handle_special_methods(name: str, sig: inspect.Signature) -> str | None:
         """Handle methods that need special formatting in the stub file."""
         if name == "group_by":
-            return "    def group_by(self, *by, description: Optional[str] = None, maintain_order: bool = False, **named_by) -> group_frame.GroupByFrame: ..."
+            return (
+                "    def group_by(self, *by, description: Optional[str] = None, "
+                "maintain_order: bool = False, **named_by) -> group_frame.GroupByFrame: ..."
+            )
         if name == "with_columns":  # This specific one is from FlowFrame
             return (
                 "    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], "  # Match FlowFrame signature
@@ -734,7 +742,8 @@ if __name__ == "__main__":
 
     except ImportError:
         print(
-            f"Error: Could not import module '{args.module}'. Ensure it's in PYTHONPATH and all dependencies are installed."
+            f"Error: Could not import module '{args.module}'. "
+            f"Ensure it's in PYTHONPATH and all dependencies are installed."
         )
         sys.exit(1)
     except AttributeError:

@@ -105,11 +105,11 @@ def create_namespace(
             description=body.description,
         )
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Parent namespace not found")
+        raise HTTPException(404, "Parent namespace not found") from None
     except NamespaceExistsError:
-        raise HTTPException(409, "Namespace with this name already exists at this level")
+        raise HTTPException(409, "Namespace with this name already exists at this level") from None
     except NestingLimitError:
-        raise HTTPException(422, "Cannot nest deeper than catalog -> schema")
+        raise HTTPException(422, "Cannot nest deeper than catalog -> schema") from None
 
 
 @router.put("/namespaces/{namespace_id}", response_model=NamespaceOut)
@@ -125,7 +125,7 @@ def update_namespace(
             description=body.description,
         )
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found")
+        raise HTTPException(404, "Namespace not found") from None
 
 
 @router.delete("/namespaces/{namespace_id}", status_code=204)
@@ -136,9 +136,9 @@ def delete_namespace(
     try:
         service.delete_namespace(namespace_id)
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found")
+        raise HTTPException(404, "Namespace not found") from None
     except NamespaceNotEmptyError:
-        raise HTTPException(422, "Cannot delete namespace with children or flows")
+        raise HTTPException(422, "Cannot delete namespace with children or flows") from None
 
 
 @router.get("/namespaces/tree", response_model=list[NamespaceTree])
@@ -192,7 +192,7 @@ def register_flow(
             description=body.description,
         )
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found")
+        raise HTTPException(404, "Namespace not found") from None
 
 
 @router.get("/flows/{flow_id}", response_model=FlowRegistrationOut)
@@ -204,7 +204,7 @@ def get_flow(
     try:
         return service.get_flow(registration_id=flow_id, user_id=current_user.id)
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
 
 
 @router.put("/flows/{flow_id}", response_model=FlowRegistrationOut)
@@ -223,7 +223,7 @@ def update_flow(
             namespace_id=body.namespace_id,
         )
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
 
 
 @router.delete("/flows/{flow_id}", status_code=204)
@@ -234,9 +234,9 @@ def delete_flow(
     try:
         service.delete_flow(registration_id=flow_id)
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
     except FlowHasArtifactsError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get(
@@ -251,7 +251,7 @@ def list_flow_artifacts(
     try:
         return service.list_artifacts_for_flow(flow_id)
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +278,7 @@ def get_run_detail(
     try:
         return service.get_run_detail(run_id)
     except RunNotFoundError:
-        raise HTTPException(404, "Run not found")
+        raise HTTPException(404, "Run not found") from None
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +296,9 @@ def open_run_snapshot(
     try:
         snapshot_data = service.get_run_snapshot(run_id)
     except RunNotFoundError:
-        raise HTTPException(404, "Run not found")
+        raise HTTPException(404, "Run not found") from None
     except NoSnapshotError:
-        raise HTTPException(422, "No flow snapshot available for this run")
+        raise HTTPException(422, "No flow snapshot available for this run") from None
 
     # Parse snapshot and assign a new unique flow_id so the imported
     # snapshot opens as a separate tab instead of overwriting an
@@ -356,7 +356,7 @@ def add_favorite(
     try:
         return service.add_favorite(user_id=current_user.id, registration_id=flow_id)
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
 
 
 @router.delete("/flows/{flow_id}/favorite", status_code=204)
@@ -368,7 +368,7 @@ def remove_favorite(
     try:
         service.remove_favorite(user_id=current_user.id, registration_id=flow_id)
     except FavoriteNotFoundError:
-        raise HTTPException(404, "Favorite not found")
+        raise HTTPException(404, "Favorite not found") from None
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ def add_follow(
     try:
         return service.add_follow(user_id=current_user.id, registration_id=flow_id)
     except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found")
+        raise HTTPException(404, "Flow not found") from None
 
 
 @router.delete("/flows/{flow_id}/follow", status_code=204)
@@ -405,7 +405,7 @@ def remove_follow(
     try:
         service.remove_follow(user_id=current_user.id, registration_id=flow_id)
     except FollowNotFoundError:
-        raise HTTPException(404, "Follow not found")
+        raise HTTPException(404, "Follow not found") from None
 
 
 # ---------------------------------------------------------------------------
@@ -440,11 +440,11 @@ def register_table(
             description=body.description,
         )
     except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found")
+        raise HTTPException(404, "Namespace not found") from None
     except TableExistsError:
-        raise HTTPException(409, "A table with this name already exists in this namespace")
+        raise HTTPException(409, "A table with this name already exists in this namespace") from None
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/tables/{table_id}", response_model=CatalogTableOut)
@@ -456,7 +456,7 @@ def get_table(
     try:
         return service.get_table(table_id)
     except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found")
+        raise HTTPException(404, "Catalog table not found") from None
 
 
 @router.put("/tables/{table_id}", response_model=CatalogTableOut)
@@ -474,7 +474,7 @@ def update_table(
             namespace_id=body.namespace_id,
         )
     except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found")
+        raise HTTPException(404, "Catalog table not found") from None
 
 
 @router.delete("/tables/{table_id}", status_code=204)
@@ -486,7 +486,7 @@ def delete_table(
     try:
         service.delete_table(table_id)
     except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found")
+        raise HTTPException(404, "Catalog table not found") from None
 
 
 @router.get("/tables/{table_id}/preview", response_model=CatalogTablePreview)
@@ -500,7 +500,7 @@ def get_table_preview(
     try:
         return service.get_table_preview(table_id, limit=limit)
     except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found")
+        raise HTTPException(404, "Catalog table not found") from None
 
 
 # ---------------------------------------------------------------------------

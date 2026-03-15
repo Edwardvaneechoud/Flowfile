@@ -160,7 +160,7 @@ class ExprListNameSpace:
         other_expr = None
 
         # Handle different types of 'other'
-        if isinstance(other, (Expr, str)):
+        if isinstance(other, Expr | str):
             if isinstance(other, Expr):
                 other_expr = other.expr
             else:
@@ -168,7 +168,7 @@ class ExprListNameSpace:
         elif isinstance(other, pl.Series):
             other_expr = pl.lit(other)
         elif isinstance(other, list):
-            if len(other) > 0 and isinstance(other[0], (Expr, str, pl.Series)):
+            if len(other) > 0 and isinstance(other[0], Expr | str | pl.Series):
                 # List of expressions
                 other_expr = [o.expr if hasattr(o, "expr") else (pl.col(o) if isinstance(o, str) else o) for o in other]
             else:
