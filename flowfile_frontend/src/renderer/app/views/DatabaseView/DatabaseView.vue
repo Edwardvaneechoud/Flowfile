@@ -102,6 +102,7 @@
       <DatabaseConnectionForm
         :initial-connection="activeConnection"
         :is-submitting="isSubmitting"
+        :is-editing="isEditing"
         @submit="handleFormSubmit"
         @cancel="dialogVisible = false"
       />
@@ -138,6 +139,7 @@ import { ElDialog, ElButton, ElMessage } from "element-plus";
 import {
   fetchDatabaseConnectionsInterfaces,
   createDatabaseConnectionApi,
+  updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
 import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
@@ -201,7 +203,11 @@ const showDeleteModal = (connectionName: string) => {
 const handleFormSubmit = async (connection: FullDatabaseConnection) => {
   isSubmitting.value = true;
   try {
-    await createDatabaseConnectionApi(connection);
+    if (isEditing.value) {
+      await updateDatabaseConnectionApi(connection);
+    } else {
+      await createDatabaseConnectionApi(connection);
+    }
     await fetchConnections();
     dialogVisible.value = false;
     ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);

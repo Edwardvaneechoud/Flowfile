@@ -10,6 +10,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_all_cloud_connections_interface,
     get_cloud_connection_schema,
     store_cloud_connection,
+    update_cloud_connection,
 )
 
 # Schema and models
@@ -44,6 +45,24 @@ def create_cloud_storage_connection(
         logger.error(e)
         raise HTTPException(422, str(e)) from e
     return {"message": "Cloud connection created successfully"}
+
+
+@router.put("/cloud_connection", tags=["cloud_connections"])
+def update_cloud_storage_connection(
+    input_connection: FullCloudStorageConnection,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Update an existing cloud storage connection."""
+    logger.info(f"Update cloud connection {input_connection.connection_name}")
+    try:
+        update_cloud_connection(db, input_connection, current_user.id)
+    except ValueError:
+        raise HTTPException(404, "Cloud connection not found") from None
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(422, str(e)) from e
+    return {"message": "Cloud connection updated successfully"}
 
 
 @router.delete("/cloud_connection", tags=["cloud_connections"])

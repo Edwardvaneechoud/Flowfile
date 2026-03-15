@@ -6,7 +6,7 @@ from flowfile_core.database.models import DatabaseConnection as DBConnectionMode
 from flowfile_core.database.models import Secret
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
-from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, store_secret
+from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
@@ -42,6 +42,39 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
     db.commit()
     db.refresh(db_connection)
 
+    return db_connection
+
+
+def update_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
+    """
+    Update an existing database connection. If password is provided (non-empty), update it;
+    otherwise keep the existing password.
+    """
+    db_connection = get_database_connection(db, connection.connection_name, user_id)
+    if db_connection is None:
+        raise ValueError(f"Database connection with name '{connection.connection_name}' not found for user {user_id}.")
+
+    # Update non-secret fields
+    db_connection.host = connection.host
+    db_connection.port = connection.port
+    db_connection.database = connection.database
+    db_connection.database_type = connection.database_type
+    db_connection.username = connection.username
+    db_connection.ssl_enabled = connection.ssl_enabled
+
+    # Update password only if a new one is provided
+    password_value = connection.password.get_secret_value()
+    if password_value:
+        password_secret = db.query(Secret).filter(Secret.id == db_connection.password_id).first()
+        if password_secret:
+            password_secret.encrypted_value = encrypt_secret(password_value, user_id)
+        else:
+            secret_input = SecretInput(name=connection.connection_name, value=connection.password)
+            new_secret = store_secret(db, secret_input, user_id)
+            db_connection.password_id = new_secret.id
+
+    db.commit()
+    db.refresh(db_connection)
     return db_connection
 
 
@@ -239,6 +272,83 @@ def store_cloud_connection(
     db.commit()
     db.refresh(db_cloud_connection)
     return db_cloud_connection
+
+
+def _update_cloud_secret(
+    db: Session, existing_secret_id: int | None, secret_value: str, secret_name: str, user_id: int
+) -> int | None:
+    """Helper to update a cloud connection secret field. Returns the secret ID to use."""
+    if secret_value:
+        # New value provided — update existing or create new
+        if existing_secret_id:
+            secret_record = db.query(Secret).filter(Secret.id == existing_secret_id).first()
+            if secret_record:
+                secret_record.encrypted_value = encrypt_secret(secret_value, user_id)
+                return existing_secret_id
+        # No existing secret record, create new
+        from pydantic import SecretStr
+
+        new_secret = store_secret(db, SecretInput(name=secret_name, value=SecretStr(secret_value)), user_id)
+        return new_secret.id
+    # Empty value — keep existing secret unchanged
+    return existing_secret_id
+
+
+def update_cloud_connection(
+    db: Session, connection: FullCloudStorageConnection, user_id: int
+) -> DBCloudStorageConnection:
+    """
+    Update an existing cloud storage connection. Secret fields are only updated
+    if a new non-empty value is provided; otherwise the existing secret is kept.
+    """
+    db_connection = get_cloud_connection(db, connection.connection_name, user_id)
+    if db_connection is None:
+        raise ValueError(f"Cloud connection with name '{connection.connection_name}' not found for user {user_id}.")
+
+    # Update non-secret fields
+    db_connection.storage_type = connection.storage_type
+    db_connection.auth_method = connection.auth_method
+    db_connection.aws_region = connection.aws_region
+    db_connection.aws_access_key_id = connection.aws_access_key_id
+    db_connection.aws_role_arn = connection.aws_role_arn
+    db_connection.aws_allow_unsafe_html = connection.aws_allow_unsafe_html
+    db_connection.azure_account_name = connection.azure_account_name
+    db_connection.azure_tenant_id = connection.azure_tenant_id
+    db_connection.azure_client_id = connection.azure_client_id
+    db_connection.endpoint_url = connection.endpoint_url
+    db_connection.verify_ssl = connection.verify_ssl
+
+    # Update secret fields only if new values are provided
+    aws_secret_value = connection.aws_secret_access_key.get_secret_value() if connection.aws_secret_access_key else ""
+    db_connection.aws_secret_access_key_id = _update_cloud_secret(
+        db,
+        db_connection.aws_secret_access_key_id,
+        aws_secret_value,
+        connection.connection_name + "_aws_secret_access_key",
+        user_id,
+    )
+
+    azure_key_value = connection.azure_account_key.get_secret_value() if connection.azure_account_key else ""
+    db_connection.azure_account_key_id = _update_cloud_secret(
+        db,
+        db_connection.azure_account_key_id,
+        azure_key_value,
+        connection.connection_name + "azure_account_key",
+        user_id,
+    )
+
+    azure_secret_value = connection.azure_client_secret.get_secret_value() if connection.azure_client_secret else ""
+    db_connection.azure_client_secret_id = _update_cloud_secret(
+        db,
+        db_connection.azure_client_secret_id,
+        azure_secret_value,
+        connection.connection_name + "azure_client_secret",
+        user_id,
+    )
+
+    db.commit()
+    db.refresh(db_connection)
+    return db_connection
 
 
 def get_full_cloud_storage_interface_from_db(

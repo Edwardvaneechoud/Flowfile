@@ -129,6 +129,25 @@ export const createCloudStorageConnectionApi = async (
 };
 
 /**
+ * Updates an existing cloud storage connection via the API.
+ * @param connectionData - The cloud storage connection configuration to update.
+ * @returns A promise that resolves when the connection is updated.
+ */
+export const updateCloudStorageConnectionApi = async (
+  connectionData: FullCloudStorageConnection,
+): Promise<void> => {
+  try {
+    const pythonFormattedData = toPythonFormat(connectionData);
+    await axios.put(API_BASE_URL + "/cloud_connection", pythonFormattedData);
+  } catch (error) {
+    console.error("API Error: Failed to update cloud storage connection:", error);
+    const errorMsg =
+      (error as any).response?.data?.detail || "Failed to update cloud storage connection";
+    throw new Error(errorMsg);
+  }
+};
+
+/**
  * Deletes a cloud storage connection via the API.
  * @param connectionName - The name of the connection to delete.
  * @returns A promise that resolves when the connection is deleted.
