@@ -320,17 +320,8 @@ flowfile.delete_global_artifact("sales_model_v2")
 !!! note "Registered Flows Required"
     `publish_global` requires the flow to be registered in the catalog. It is not available in interactive (cell) mode.
 
----
-
-## Persistence & Recovery
-
-When persistence is enabled, local artifacts are automatically saved to disk inside the container. If the kernel restarts, artifacts are recovered based on the configured recovery mode:
-
-| Recovery Mode | Behavior |
-|---------------|----------|
-| **Lazy** (default) | Artifacts are indexed on disk but loaded into memory only when accessed |
-| **Eager** | All artifacts are loaded into memory immediately on startup |
-| **Clear** | All persisted artifacts are deleted on startup |
+!!! tip "Artifact Persistence"
+    Local artifacts are automatically saved to disk and recovered if the kernel restarts — no configuration needed.
 
 ---
 
@@ -345,26 +336,6 @@ df.collect().write_csv(output_path)
 
 # The file is now accessible from other nodes and services
 ```
-
----
-
-## Cancelling Execution
-
-To interrupt a long-running code execution:
-
-1. Click the **Stop** button in the node's execution panel
-2. The kernel receives a `KeyboardInterrupt` signal
-3. Execution halts and control returns to the idle state
-
-This works the same way as pressing `Ctrl+C` in a Python terminal.
-
----
-
-## Resource Monitoring
-
-The kernel tracks memory usage via the container's cgroup filesystem. You can view current memory consumption both on the kernel card in the Kernel Manager and in the Python Script node header.
-
-If a kernel exceeds its memory limit, Docker terminates the container and Flowfile reports an out-of-memory error.
 
 ---
 
@@ -413,12 +384,11 @@ The following functions are available inside kernel code via the `flowfile` modu
 
 ### Data I/O
 
-| Function | Description |
-|----------|-------------|
-| `read_input(name="main")` | Read input data as a `pl.LazyFrame` |
-| `read_first(name="main")` | Read only the first input file |
-| `read_inputs()` | Read all named inputs as `dict[str, list[LazyFrame]]` |
-| `publish_output(df, name="main")` | Write a DataFrame/LazyFrame as output |
+| Function | Description                                                                                                   |
+|----------|---------------------------------------------------------------------------------------------------------------|
+| `read_input(name="main")` | Read input data as a `pl.LazyFrame` if more then one sources are provided. It attempts to concat all sources. |
+| `read_inputs()` | Read all named inputs as `dict[str, list[LazyFrame]]`                                                         |
+| `publish_output(df, name="main")` | Write a DataFrame/LazyFrame as output                                                                         |
 
 ### Local Artifacts
 

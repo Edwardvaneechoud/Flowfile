@@ -2,7 +2,7 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog provides a Unity Catalog-inspired namespace hierarchy for managing flows,
+The Catalog provides a namespace hierarchy for managing flows,
 tracking run history, registering data tables, and sharing artifacts across flows.
 
 <!-- PLACEHOLDER: Screenshot of the full Catalog view showing the sidebar tree and stats panel -->
@@ -59,11 +59,11 @@ A default catalog and schema are created automatically on first use.
 
 The sidebar offers four tabs:
 
-| Tab | Badge | Description |
-|-----|-------|-------------|
-| **Catalog** | — | Browse the namespace tree with flows, tables, and artifacts |
-| **Favorites** | Count | Your starred flows for quick access |
-| **Run History** | — | Chronological list of all flow executions |
+| Tab | Description |
+|-----|-------------|
+| **Catalog** | Browse the namespace tree with flows, tables, and artifacts |
+| **Favorites** | Your starred flows for quick access |
+| **Run History** | Chronological list of all flow executions |
 
 ---
 
@@ -171,6 +171,7 @@ Use the **Catalog Reader** input node to read a catalog table and the **Catalog 
 ### Lineage
 
 The catalog tracks which flows produce and consume each table:
+
 - **Source**: which registered flow and run created the table
 - **Consumers**: which flows read from the table via Catalog Reader nodes
 
