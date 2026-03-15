@@ -89,7 +89,7 @@ def filter(node_data: "NodeData") -> NodeData:
 
 
 @setting_updator_method
-def join_updator(node_data: NodeData):
+def join(node_data: NodeData):  # noqa: F811
     if node_data.right_input and node_data.main_input:
         setting_input: input_schema.NodeJoin = node_data.setting_input
         left_columns = set(node_data.main_input.columns)
@@ -120,7 +120,7 @@ def join_updator(node_data: NodeData):
 
 
 @setting_updator_method
-def cross_join_updator(node_data: NodeData):
+def cross_join(node_data: NodeData):  # noqa: F811
     if node_data.right_input and node_data.main_input:
         setting_input: input_schema.NodeCrossJoin = node_data.setting_input
         left_columns = set(node_data.main_input.columns)
