@@ -114,6 +114,69 @@ The **Cloud Storage Writer** node allows you to save your processed data directl
 
 ---
 
+### ![Database Writer](../../../assets/images/nodes/database_reader.png){ width="50" height="50" } Database Writer
+
+The **Database Writer** node saves processed data to a database table. It supports PostgreSQL and MySQL.
+
+#### **Connection Modes:**
+
+| Mode | Description |
+|------|-------------|
+| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
+| **Inline** | Enter connection credentials directly in the node settings |
+
+#### **Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Schema** | Target database schema (e.g., `public`) |
+| **Table** | Target table name |
+| **Write Mode** | How to handle existing data: **Append**, **Replace**, or **Fail** |
+
+#### **Write Modes:**
+
+| Mode | Description |
+|------|-------------|
+| **Append** | Add rows to the existing table |
+| **Replace** | Drop and recreate the table with new data |
+| **Fail** | Error if the table already exists |
+
+<!-- PLACEHOLDER: Screenshot of the Database Writer node settings panel -->
+![Database Writer settings](../../../assets/images/guides/nodes/database-writer-settings.png)
+*Database Writer configured to replace a table using a saved connection*
+
+For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-connectivity.md).
+
+---
+
+### Catalog Writer
+
+The **Catalog Writer** node saves data as a table in the [Catalog](../catalog.md). The data is materialized as a Parquet file and registered with schema metadata, row count, and lineage information.
+
+#### **Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Table Name** | Name for the catalog table |
+| **Catalog / Schema** | Target namespace in the catalog hierarchy |
+| **Write Mode** | **Overwrite** (replace existing) or **Error if exists** |
+| **Description** | Optional description for the table |
+
+#### **Usage:**
+
+1. Add a **Catalog Writer** node to your flow
+2. Enter a table name
+3. Select the target catalog/schema namespace
+4. Choose a write mode
+5. Optionally add a description
+6. Run the flow to materialize and register the table
+
+<!-- PLACEHOLDER: Screenshot of the Catalog Writer node settings panel -->
+![Catalog Writer settings](../../../assets/images/guides/nodes/catalog-writer-settings.png)
+*Catalog Writer configured to write a table to the default schema*
+
+---
+
 ### ![Explore Data](../../../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
 
 The Explore Data node provides interactive data exploration and analysis capabilities.

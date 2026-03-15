@@ -295,4 +295,26 @@ output_df = filtered.with_columns(pl.col('Name').alias('Customer_Name')) # this 
 ```
 
 ---
+
+### Python Script
+
+The **Python Script** node executes custom Python code in an isolated Docker [kernel](../kernels.md) container. It supports multiple named inputs and outputs, persistent namespaces, and the full `flowfile` API.
+
+#### **Key Features:**
+- Jupyter-style notebook editor with multiple code cells
+- Named inputs and outputs for connecting to multiple data sources
+- Access to the `flowfile` API for data I/O, artifacts, display, and logging
+- Persistent variables across executions within the same flow
+
+#### **Settings:**
+
+| Parameter | Description |
+|-----------|-------------|
+| **Kernel** | Select a running kernel from the dropdown |
+| **Code** | Python code written in the notebook editor |
+| **Output Names** | Configure named outputs (default: `main`) |
+
+For full documentation, see [Kernel Execution](../kernels.md).
+
+---
 [← Read data](input.md) | [Next: Combine data →](combine.md)
