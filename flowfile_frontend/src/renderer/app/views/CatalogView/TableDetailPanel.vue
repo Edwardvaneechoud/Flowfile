@@ -1,5 +1,8 @@
 <template>
   <div class="table-detail">
+    <button class="back-btn" @click="emit('close')">
+      <i class="fa-solid fa-arrow-left"></i> Back
+    </button>
     <!-- Header -->
     <div class="detail-header">
       <div class="header-main">
@@ -10,6 +13,14 @@
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
       <div class="header-actions">
+        <button
+          class="action-btn-lg"
+          :class="{ active: table.is_favorite }"
+          @click="emit('toggleTableFavorite', table.id)"
+        >
+          <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+          {{ table.is_favorite ? "Favorited" : "Favorite" }}
+        </button>
         <button
           class="btn-danger-outline"
           title="Delete table"
@@ -154,7 +165,9 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  close: [];
   deleteTable: [id: number];
+  toggleTableFavorite: [id: number];
   navigateToFlow: [registrationId: number];
 }>();
 
@@ -197,6 +210,26 @@ function formatCell(value: any): string {
 }
 
 /* ========== Header ========== */
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-bottom: var(--spacing-3);
+}
+
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 .detail-header {
   display: flex;
   justify-content: space-between;
@@ -230,6 +263,28 @@ function formatCell(value: any): string {
 .header-actions {
   display: flex;
   gap: var(--spacing-2);
+}
+
+.action-btn-lg {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.action-btn-lg:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.action-btn-lg.active {
+  color: #f59e0b;
+  border-color: #f59e0b;
 }
 
 .btn-danger-outline {

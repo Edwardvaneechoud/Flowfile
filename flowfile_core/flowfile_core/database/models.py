@@ -104,7 +104,7 @@ class Kernel(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 
-# ==================== Flow Catalog Models ====================
+# ==================== Catalog Models ====================
 
 
 class CatalogNamespace(Base):
@@ -190,6 +190,19 @@ class FlowFollow(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
+
+
+class TableFavorite(Base):
+    """Allows a user to bookmark/favorite a catalog table."""
+
+    __tablename__ = "table_favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "table_id", name="uq_user_table_favorite"),)
 
 
 # ==================== Global Artifacts ====================

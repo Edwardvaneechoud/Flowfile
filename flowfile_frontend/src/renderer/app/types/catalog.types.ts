@@ -1,4 +1,4 @@
-// Flow Catalog TypeScript interfaces
+// Catalog TypeScript interfaces
 // Maps to backend schemas in catalog_schema.py
 
 // ============================================================================
@@ -149,6 +149,7 @@ export interface CatalogTable {
   description: string | null;
   owner_id: number;
   file_exists: boolean;
+  is_favorite: boolean;
   schema_columns: ColumnSchema[];
   row_count: number | null;
   column_count: number | null;
@@ -190,10 +191,12 @@ export interface CatalogStats {
   total_flows: number;
   total_runs: number;
   total_favorites: number;
+  total_table_favorites: number;
   total_artifacts: number;
   total_tables: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];
+  favorite_tables: CatalogTable[];
 }
 
 // ============================================================================

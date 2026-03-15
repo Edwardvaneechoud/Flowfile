@@ -148,6 +148,21 @@ export class CatalogApi {
     return response.data;
   }
 
+  // ====== Table Favorites ======
+
+  static async getTableFavorites(): Promise<CatalogTable[]> {
+    const response = await axios.get<CatalogTable[]>("/catalog/table-favorites");
+    return response.data;
+  }
+
+  static async addTableFavorite(tableId: number): Promise<void> {
+    await axios.post(`/catalog/tables/${tableId}/favorite`);
+  }
+
+  static async removeTableFavorite(tableId: number): Promise<void> {
+    await axios.delete(`/catalog/tables/${tableId}/favorite`);
+  }
+
   // ====== Catalog Tables ======
 
   static async getTables(namespaceId?: number | null): Promise<CatalogTable[]> {
