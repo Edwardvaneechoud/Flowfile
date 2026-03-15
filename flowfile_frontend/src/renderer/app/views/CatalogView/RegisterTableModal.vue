@@ -37,13 +37,17 @@
           </div>
           <div v-else class="no-file-hint">
             <i class="fa-solid fa-arrow-right"></i>
-            <span>Select a source file from the browser</span>
+            <span>Select a Parquet file from the browser</span>
           </div>
+          <p class="parquet-hint">
+            Only Parquet files can be registered directly. For CSV, Excel, or other formats, use a
+            Flow to transform and output to the catalog.
+          </p>
         </aside>
         <div class="browser-panel">
           <div class="file-browser-container">
             <FileBrowser
-              :allowed-file-types="['csv', 'txt', 'tsv', 'parquet', 'xlsx', 'xls']"
+              :allowed-file-types="['parquet']"
               mode="open"
               context="dataFiles"
               :is-visible="visible"
@@ -55,8 +59,8 @@
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" @click="$emit('close')">Cancel</button>
-        <button class="btn-primary" :disabled="!name.trim() || !path.trim()" @click="submit">
-          Register
+        <button class="btn-primary" :disabled="!name.trim() || !path.trim() || submitting" @click="submit">
+          {{ submitting ? "Registering..." : "Register" }}
         </button>
       </div>
     </div>
@@ -65,6 +69,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
@@ -84,6 +89,7 @@ const name = ref("");
 const path = ref("");
 const description = ref("");
 const selectedNamespaceId = ref<number | null>(null);
+const submitting = ref(false);
 
 const fileName = computed(() => {
   if (!path.value) return "";
@@ -116,7 +122,7 @@ watch(
 function handleFileSelected(fileInfo: { name: string; path: string }) {
   path.value = fileInfo.path;
   if (!name.value.trim()) {
-    const baseName = fileInfo.name.replace(/\.(csv|txt|tsv|parquet|xlsx|xls)$/i, "");
+    const baseName = fileInfo.name.replace(/\.parquet$/i, "");
     name.value = baseName;
   }
 }
@@ -129,6 +135,7 @@ function handleFileUpdate(file: { name: string; path: string; is_directory: bool
 
 async function submit() {
   if (!name.value.trim() || !path.value.trim()) return;
+  submitting.value = true;
   try {
     const nsId = selectedNamespaceId.value ?? props.defaultNamespaceId;
     await CatalogApi.registerTable({
@@ -137,6 +144,7 @@ async function submit() {
       description: description.value.trim() || null,
       namespace_id: nsId,
     });
+    ElMessage.success("Table registered successfully");
     emit("close");
     await Promise.all([
       catalogStore.loadTree(),
@@ -144,7 +152,9 @@ async function submit() {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to register table");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to register table");
+  } finally {
+    submitting.value = false;
   }
 }
 </script>
@@ -320,6 +330,13 @@ select.input-field {
   border: 1px dashed var(--color-border-primary);
   border-radius: var(--border-radius-md);
   margin-top: auto;
+}
+
+.parquet-hint {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
 }
 
 .browser-panel {

@@ -123,7 +123,9 @@ function collectTablesFromTree(nodes: NamespaceTree[]): CatalogTable[] {
   return result;
 }
 
-onMounted(async () => {
+let catalogLoadPromise: Promise<void> | null = null;
+
+async function loadCatalogData() {
   try {
     const tree = await CatalogApi.getNamespaceTree();
     for (const catalog of tree) {
@@ -138,6 +140,10 @@ onMounted(async () => {
   } catch {
     // Catalog not available
   }
+}
+
+onMounted(() => {
+  catalogLoadPromise = loadCatalogData();
 });
 
 async function loadNodeData(nodeId: number) {
@@ -160,7 +166,9 @@ async function loadNodeData(nodeId: number) {
   }
   dataLoaded.value = true;
 
-  // If there's an existing table selected, load its metadata
+  // Ensure catalog data is loaded before looking up the table
+  if (catalogLoadPromise) await catalogLoadPromise;
+
   if (nodeData.value?.catalog_table_id) {
     const table = allTables.value.find((t) => t.id === nodeData.value?.catalog_table_id);
     if (table) {
