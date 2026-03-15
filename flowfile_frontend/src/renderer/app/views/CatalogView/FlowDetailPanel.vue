@@ -94,7 +94,7 @@
 
     <!-- Run History Table -->
     <div class="section">
-      <h3>Run History</h3>
+      <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
       <div v-if="runs.length === 0" class="empty-runs">No runs recorded yet.</div>
       <table v-else class="runs-table">
         <thead>
@@ -127,42 +127,68 @@
       </table>
     </div>
 
-    <!-- Tables Produced -->
-    <div v-if="flow.tables_produced && flow.tables_produced.length > 0" class="section">
-      <h3>Tables Produced</h3>
-      <div class="tables-produced-list">
-        <div
-          v-for="table in flow.tables_produced"
-          :key="table.id"
-          class="table-produced-item"
-          @click="$emit('selectTable', table.id)"
-        >
-          <i class="fa-solid fa-table table-produced-icon"></i>
-          <span>{{ table.name }}</span>
+    <!-- Data Lineage -->
+    <div
+      v-if="
+        (flow.tables_produced && flow.tables_produced.length > 0) ||
+        (flow.tables_read && flow.tables_read.length > 0)
+      "
+      class="section"
+    >
+      <h3><i class="fa-solid fa-diagram-project section-icon"></i> Data Lineage</h3>
+      <div class="lineage-grid">
+        <!-- Tables Read -->
+        <div v-if="flow.tables_read && flow.tables_read.length > 0" class="lineage-group">
+          <div class="lineage-group-header">
+            <span class="lineage-label read-label">
+              <i class="fa-solid fa-arrow-right-to-bracket"></i> Reads
+            </span>
+            <span class="lineage-count">{{ flow.tables_read.length }}</span>
+          </div>
+          <div class="lineage-items">
+            <div
+              v-for="table in flow.tables_read"
+              :key="table.id"
+              class="lineage-item read-item"
+              @click="$emit('selectTable', table.id)"
+            >
+              <i class="fa-solid fa-table lineage-item-icon"></i>
+              <span class="lineage-item-name">{{ table.name }}</span>
+              <i class="fa-solid fa-chevron-right lineage-item-arrow"></i>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-
-    <!-- Tables Read -->
-    <div v-if="flow.tables_read && flow.tables_read.length > 0" class="section">
-      <h3>Tables Read</h3>
-      <div class="tables-produced-list">
-        <div
-          v-for="table in flow.tables_read"
-          :key="table.id"
-          class="table-produced-item"
-          @click="$emit('selectTable', table.id)"
-        >
-          <i class="fa-solid fa-table table-read-icon"></i>
-          <span>{{ table.name }}</span>
+        <!-- Tables Produced -->
+        <div v-if="flow.tables_produced && flow.tables_produced.length > 0" class="lineage-group">
+          <div class="lineage-group-header">
+            <span class="lineage-label produced-label">
+              <i class="fa-solid fa-arrow-right-from-bracket"></i> Produces
+            </span>
+            <span class="lineage-count">{{ flow.tables_produced.length }}</span>
+          </div>
+          <div class="lineage-items">
+            <div
+              v-for="table in flow.tables_produced"
+              :key="table.id"
+              class="lineage-item produced-item"
+              @click="$emit('selectTable', table.id)"
+            >
+              <i class="fa-solid fa-table lineage-item-icon"></i>
+              <span class="lineage-item-name">{{ table.name }}</span>
+              <i class="fa-solid fa-chevron-right lineage-item-arrow"></i>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Artifacts Section -->
     <div class="section">
-      <h3>Global Artifacts</h3>
-      <div v-if="artifacts.length === 0" class="empty-runs">No artifacts published yet.</div>
+      <h3><i class="fa-solid fa-cube section-icon"></i> Global Artifacts</h3>
+      <div v-if="artifacts.length === 0" class="empty-state">
+        <i class="fa-solid fa-cube empty-state-icon"></i>
+        <span>No artifacts published yet</span>
+      </div>
       <table v-else class="runs-table">
         <thead>
           <tr>
@@ -486,8 +512,14 @@ function formatSize(bytes: number | null): string {
   color: #ef4444;
 }
 
-/* ========== Run History Table ========== */
+/* ========== Sections ========== */
+.section {
+  margin-bottom: var(--spacing-5);
+}
+
 .section h3 {
+  display: flex;
+  align-items: center;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   margin: 0 0 var(--spacing-3) 0;
@@ -592,14 +624,68 @@ function formatSize(bytes: number | null): string {
   color: var(--color-text-secondary);
 }
 
-/* ========== Tables Produced ========== */
-.tables-produced-list {
+/* ========== Section Icons ========== */
+.section-icon {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-right: var(--spacing-1);
+}
+
+/* ========== Data Lineage ========== */
+.lineage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: var(--spacing-4);
+}
+
+.lineage-group {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: var(--spacing-2);
 }
 
-.table-produced-item {
+.lineage-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--spacing-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.lineage-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.read-label {
+  color: var(--color-text-secondary);
+}
+
+.produced-label {
+  color: var(--color-text-secondary);
+}
+
+.lineage-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background: var(--color-background-secondary);
+  padding: 0 var(--spacing-2);
+  border-radius: var(--border-radius-full);
+  line-height: 1.8;
+}
+
+.lineage-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.lineage-item {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -612,19 +698,59 @@ function formatSize(bytes: number | null): string {
   transition: all var(--transition-fast);
 }
 
-.table-produced-item:hover {
+.lineage-item:hover {
   border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--color-background-hover);
 }
 
-.table-produced-icon {
-  color: var(--color-primary);
+.lineage-item-icon {
   font-size: var(--font-size-xs);
+  flex-shrink: 0;
 }
 
-.table-read-icon {
+.read-item .lineage-item-icon {
   color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+}
+
+.produced-item .lineage-item-icon {
+  color: var(--color-text-muted);
+}
+
+.lineage-item-name {
+  flex: 1;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.lineage-item-arrow {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.lineage-item:hover .lineage-item-arrow {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+/* ========== Empty State ========== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-5) var(--spacing-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  background: var(--color-background-secondary);
+  border: 1px dashed var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+.empty-state-icon {
+  font-size: var(--font-size-xl);
+  opacity: 0.4;
 }
 
 /* ========== Missing File Banner ========== */

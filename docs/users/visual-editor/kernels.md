@@ -27,11 +27,13 @@ docker compose build flowfile-kernel
 
 The Kernel Manager is the central dashboard for creating, starting, stopping, and monitoring kernels. Open it from the **sidebar menu**.
 ![Kernel Manager overview](../../assets/images/guides/kernels/kernel-manager-overview.png)
+
 *The Kernel Manager showing configured kernels with status, resource usage, and actions*
 
 When Docker is not running or the kernel image has not been built, a status banner appears at the top of the page with instructions on how to resolve the issue.
 
 ![Docker status warning](../../assets/images/guides/kernels/docker-status-warning.png)
+
 *Warning banner shown when Docker is unavailable or the kernel image is missing*
 
 ---
@@ -42,6 +44,7 @@ When Docker is not running or the kernel image has not been built, a status bann
 2. Fill in the configuration fields:
 
 ![Create Kernel form](../../assets/images/guides/kernels/create-kernel-form.png)
+
 *The kernel creation form with resource configuration options*
 
 | Setting | Description | Default |
@@ -61,6 +64,7 @@ When Docker is not running or the kernel image has not been built, a status bann
 Each kernel is displayed as a card showing its current state, resource allocation, and live memory usage.
 
 ![Kernel card](../../assets/images/guides/kernels/kernel-card.png)
+
 *A kernel card showing status badge, CPU/memory allocation, installed packages, and memory usage bar*
 
 The status badge indicates the kernel's current state:
@@ -86,6 +90,7 @@ Add a **Python Script** node to your flow to write and execute Python code in a 
 In the node settings panel, the kernel dropdown shows all available kernels with their current state.
 
 ![Kernel selection in node settings](../../assets/images/guides/kernels/node-kernel-selection.png)
+
 *Kernel dropdown in the Python Script node settings, showing available kernels and their state*
 
 !!! warning "Kernel Required"
@@ -96,6 +101,7 @@ In the node settings panel, the kernel dropdown shows all available kernels with
 The code editor uses a Jupyter-style notebook interface with multiple cells. Each cell can be executed independently.
 
 ![Notebook editor with cells](../../assets/images/guides/kernels/notebook-editor.png)
+
 *The notebook editor showing multiple code cells with execution counters, a toolbar, and output*
 
 **Toolbar actions:**
@@ -120,6 +126,7 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 After executing a cell, the output area shows results, stdout, and any errors.
 
 ![Cell output with rich display](../../assets/images/guides/kernels/cell-output-display.png)
+
 *Cell output showing a rendered matplotlib chart, execution time, and stdout*
 
 Output types rendered:
@@ -139,6 +146,7 @@ Click **Expand Editor** to open a fullscreen code editing view. The expanded edi
 The node settings panel shows artifacts available from upstream nodes and artifacts published by the current node.
 
 ![Artifacts panel](../../assets/images/guides/kernels/artifacts-panel.png)
+
 *Artifacts panel showing available upstream artifacts and published artifacts for the current node*
 
 ### API Reference

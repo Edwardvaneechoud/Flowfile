@@ -17,6 +17,17 @@
             <label class="field-label">Description</label>
             <input v-model="description" class="input-field" placeholder="Optional" />
           </div>
+          <div class="form-group">
+            <label class="field-label">Catalog / Schema</label>
+            <select v-model="selectedNamespaceId" class="input-field">
+              <option v-for="ns in schemaNamespaces" :key="ns.id" :value="ns.id">
+                {{ ns.label }}
+              </option>
+            </select>
+            <p v-if="schemaNamespaces.length === 0" class="ns-hint">
+              No schemas available. Create a catalog and schema first.
+            </p>
+          </div>
           <div v-if="path" class="selected-file-badge">
             <i class="fa-solid fa-file"></i>
             <span>{{ fileName }}</span>
@@ -72,6 +83,17 @@ const catalogStore = useCatalogStore();
 const name = ref("");
 const path = ref("");
 const description = ref("");
+const selectedNamespaceId = ref<number | null>(null);
+
+const schemaNamespaces = computed(() => {
+  const result: { id: number; label: string }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      result.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
+    }
+  }
+  return result;
+});
 
 const fileName = computed(() => {
   if (!path.value) return "";
@@ -86,6 +108,7 @@ watch(
       name.value = "";
       path.value = "";
       description.value = "";
+      selectedNamespaceId.value = props.namespaceId;
     }
   },
 );
@@ -110,7 +133,7 @@ function handleFileSelected(fileInfo: { name: string; path: string }) {
 async function submit() {
   if (!name.value.trim() || !path.value.trim()) return;
   try {
-    const nsId = props.namespaceId ?? props.defaultNamespaceId;
+    const nsId = selectedNamespaceId.value ?? props.defaultNamespaceId;
     await CatalogApi.registerFlow({
       name: name.value.trim(),
       flow_path: path.value.trim(),
@@ -346,5 +369,15 @@ async function submit() {
 
 .btn-secondary:hover {
   background: var(--color-background-hover);
+}
+
+select.input-field {
+  appearance: auto;
+}
+
+.ns-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 </style>

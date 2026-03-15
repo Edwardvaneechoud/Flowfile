@@ -141,8 +141,8 @@ The **Database Writer** node saves processed data to a database table. It suppor
 | **Replace** | Drop and recreate the table with new data |
 | **Fail** | Error if the table already exists |
 
-<!-- PLACEHOLDER: Screenshot of the Database Writer node settings panel -->
 ![Database Writer settings](../../../assets/images/guides/nodes/database-writer-settings.png)
+
 *Database Writer configured to replace a table using a saved connection*
 
 For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-connectivity.md).
@@ -173,6 +173,7 @@ The **Catalog Writer** node saves data as a table in the [Catalog](../catalog.md
 
 <!-- PLACEHOLDER: Screenshot of the Catalog Writer node settings panel -->
 ![Catalog Writer settings](../../../assets/images/guides/nodes/catalog-writer-settings.png)
+
 *Catalog Writer configured to write a table to the default schema*
 
 ---

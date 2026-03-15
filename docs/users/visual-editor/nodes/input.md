@@ -128,6 +128,7 @@ The **Database Reader** node loads data from database tables or custom SQL queri
 
 <!-- PLACEHOLDER: Screenshot of the Database Reader node settings panel -->
 ![Database Reader settings](../../../assets/images/guides/nodes/database-reader-settings.png)
+
 *Database Reader node configured with a reference connection*
 
 For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-connectivity.md).
@@ -160,6 +161,7 @@ Once a table is selected, the node displays metadata:
 
 <!-- PLACEHOLDER: Screenshot of the Catalog Reader node settings panel -->
 ![Catalog Reader settings](../../../assets/images/guides/nodes/catalog-reader-settings.png)
+
 *Catalog Reader showing table selection and schema preview*
 
 ---

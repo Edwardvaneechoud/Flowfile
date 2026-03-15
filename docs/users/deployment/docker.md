@@ -133,6 +133,7 @@ The File Manager provides a web-based interface for uploading and downloading da
 
 <!-- PLACEHOLDER: Screenshot of the File Manager page -->
 ![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
+
 *The File Manager showing uploaded files*
 
 ### Supported Formats
