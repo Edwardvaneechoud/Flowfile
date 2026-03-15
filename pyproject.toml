@@ -63,7 +63,6 @@ pl-fuzzy-frame-match = ">=0.4.0"
 pyyaml = "^6.0.3"
 pandas = "^2.3.1"
 sqlalchemy = "^2.0.27"
-psycopg2-binary = "^2.9.9"
 
 
 [tool.poetry.scripts]
@@ -87,6 +86,7 @@ pyinstaller = "^6.11.0"
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.5.46"
+psycopg2-binary = "^2.9.9"
 pytest = "^8.4.1"
 pytest-cov = "^6.0"
 testcontainers = "^4.10.0"
