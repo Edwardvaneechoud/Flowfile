@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import uuid
@@ -5,7 +6,7 @@ import uuid
 import polars as pl
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
-from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
+from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
@@ -331,31 +332,13 @@ def create_table(
 @router.post("/catalog/materialize", response_model=models.CatalogMaterializeResponse)
 def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> models.CatalogMaterializeResponse:
     source_path = os.path.abspath(payload.source_file_path)
-    src = os.path.join(source_path)
-    ext = os.path.splitext(src)[1].lower()
+    ext = os.path.splitext(source_path)[1].lower()
 
-    if ext in (".csv", ".txt", ".tsv"):
-
-        def read_method(p):
-            return pl.read_csv(p, infer_schema_length=10000)
-    elif ext == ".parquet":
-        read_method = pl.read_parquet
-    elif ext in (".xlsx", ".xls"):
-        read_method = pl.read_excel
-    else:
+    if ext not in (".csv", ".txt", ".tsv", ".parquet", ".xlsx", ".xls"):
         raise HTTPException(
             status_code=422,
             detail={"error_type": "unsupported_file_type", "message": f"Unsupported file type: {ext}"},
         )
-
-    try:
-        df = read_method(src)
-    except Exception as e:
-        logger.error(f"Failed to read source file {src}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error_type": "read_failure", "message": str(e)},
-        ) from e
 
     dest_dir = storage.catalog_tables_directory
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -366,34 +349,50 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
     else:
         parquet_filename = f"catalog_{uuid.uuid4().hex}.parquet"
 
-    dest_path = dest_dir / parquet_filename
+    dest_path = str(dest_dir / parquet_filename)
 
-    try:
-        df.write_parquet(dest_path)
-    except Exception as e:
-        logger.error(f"Failed to write parquet to {dest_path}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error_type": "write_failure", "message": str(e)},
-        ) from e
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
 
-    try:
-        size_bytes = dest_path.stat().st_size
-    except Exception as e:
-        logger.error(f"Failed to read parquet stats for {dest_path}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error_type": "metadata_failure", "message": str(e)},
-        ) from e
-
-    schema = [models.ColumnSchema(name=col, dtype=str(df[col].dtype)) for col in df.columns]
-    return models.CatalogMaterializeResponse(
-        parquet_path=str(dest_path),
-        schema=schema,
-        row_count=df.height,
-        column_count=len(df.columns),
-        size_bytes=size_bytes,
+    p = mp_context.Process(
+        target=funcs.materialize_catalog_table_task,
+        kwargs={
+            "source_file_path": source_path,
+            "dest_path": dest_path,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+        },
     )
+    p.start()
+    p.join()
+
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+
+        if final_progress != 100:
+            with error_message.get_lock():
+                err = error_message.value.decode().rstrip("\x00")
+            logger.error(f"Catalog materialize subprocess failed: {err}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error_type": "materialize_failure", "message": err},
+            )
+
+        result = queue.get(timeout=5)
+        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        return models.CatalogMaterializeResponse(
+            parquet_path=result["parquet_path"],
+            schema=schema,
+            row_count=result["row_count"],
+            column_count=result["column_count"],
+            size_bytes=result["size_bytes"],
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
 
 
 def validate_result(task_id: str) -> bool | None:

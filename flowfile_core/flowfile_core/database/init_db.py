@@ -60,33 +60,6 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
-        # Rename legacy 'user_flows' namespace to 'default'
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_namespaces'"))
-        if result.fetchone():
-            row = conn.execute(
-                text("SELECT id, parent_id FROM catalog_namespaces WHERE name = 'user_flows' AND level = 1")
-            ).fetchone()
-            if row:
-                # Only rename if 'default' doesn't already exist with the same parent
-                existing_default = conn.execute(
-                    text("SELECT id FROM catalog_namespaces WHERE name = 'default' AND parent_id = :pid"),
-                    {"pid": row[1]},
-                ).fetchone()
-                if existing_default:
-                    logger.info("'default' namespace already exists, removing legacy 'user_flows' namespace")
-                    conn.execute(
-                        text("DELETE FROM catalog_namespaces WHERE id = :ns_id"),
-                        {"ns_id": row[0]},
-                    )
-                else:
-                    logger.info("Renaming legacy 'user_flows' namespace to 'default'")
-                    conn.execute(
-                        text("UPDATE catalog_namespaces SET name = 'default' WHERE id = :ns_id"),
-                        {"ns_id": row[0]},
-                    )
-                conn.commit()
-
-
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
 # Then create any new tables (this will include is_admin for new databases)

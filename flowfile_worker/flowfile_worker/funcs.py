@@ -434,6 +434,49 @@ def write_parquet(
             progress.value = -1
 
 
+def materialize_catalog_table_task(
+    source_file_path: str,
+    dest_path: str,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+):
+    """Subprocess task: reads a source file and materializes it as parquet, returning metadata via queue."""
+    try:
+        ext = os.path.splitext(source_file_path)[1].lower()
+        if ext in (".csv", ".txt", ".tsv"):
+            df = pl.scan_csv(source_file_path, infer_schema_length=10000, encoding="utf8-lossy")
+        elif ext == ".parquet":
+            df = pl.read_parquet(source_file_path)
+        elif ext in (".xlsx", ".xls"):
+            df = pl.read_excel(source_file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
+
+        df.write_parquet(dest_path)
+        size_bytes = os.path.getsize(dest_path)
+        schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+
+        queue.put({
+            "parquet_path": dest_path,
+            "schema": schema,
+            "row_count": df.height,
+            "column_count": len(df.columns),
+            "size_bytes": size_bytes,
+        })
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
 def generic_task(
     func: Callable,
     progress: Value,
