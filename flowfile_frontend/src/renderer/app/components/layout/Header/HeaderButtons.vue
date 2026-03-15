@@ -118,74 +118,80 @@
 
   <el-dialog
     v-model="modalVisibleForSettings"
-    title="Execution Settings"
+    title="Flow Settings"
     width="30%"
     custom-class="high-z-index-dialog"
   >
     <div v-if="flowSettings">
       <div class="settings-modal-content">
-        <div class="form-group">
-          <label>Execution Mode:</label>
-          <el-select
-            v-model="flowSettings.execution_mode"
-            size="small"
-            placeholder="Select run mode"
-            style="width: 100%"
-            @change="pushFlowSettings"
-          >
-            <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
-          </el-select>
-        </div>
-        <div class="form-group">
-          <label>Execution location:</label>
-          <el-select
-            v-model="flowSettings.execution_location"
-            size="small"
-            placeholder="Select the execution location"
-            style="width: 100%"
-            @change="pushFlowSettings"
-          >
-            <el-option
-              v-for="executionLocationOption in executionLocationOptions"
-              :key="executionLocationOption.key"
-              :label="executionLocationOption.label"
-              :value="executionLocationOption.key"
+        <div class="settings-section">
+          <h4 class="settings-section-title">Execution</h4>
+          <div class="form-group">
+            <label>Execution Mode:</label>
+            <el-select
+              v-model="flowSettings.execution_mode"
+              size="small"
+              placeholder="Select run mode"
+              style="width: 100%"
+              @change="pushFlowSettings"
+            >
+              <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
+            </el-select>
+          </div>
+          <div class="form-group">
+            <label>Execution location:</label>
+            <el-select
+              v-model="flowSettings.execution_location"
+              size="small"
+              placeholder="Select the execution location"
+              style="width: 100%"
+              @change="pushFlowSettings"
+            >
+              <el-option
+                v-for="executionLocationOption in executionLocationOptions"
+                :key="executionLocationOption.key"
+                :label="executionLocationOption.label"
+                :value="executionLocationOption.key"
+              />
+            </el-select>
+          </div>
+          <div class="form-group">
+            <el-checkbox
+              v-model="flowSettings.show_detailed_progress"
+              label="Show details during execution"
+              size="small"
+              @change="pushFlowSettings"
             />
-          </el-select>
+          </div>
+          <div class="form-group">
+            <label>Parallel workers:</label>
+            <el-input-number
+              v-model="flowSettings.max_parallel_workers"
+              :min="1"
+              :max="32"
+              size="small"
+              style="width: 100%"
+              @change="pushFlowSettings"
+            />
+            <span class="form-hint">
+              Max threads for running independent nodes in parallel. Only applies when execution
+              location is Remote. Local execution always runs sequentially.
+            </span>
+          </div>
         </div>
-        <div class="form-group">
-          <el-checkbox
-            v-model="flowSettings.show_detailed_progress"
-            label="Show details during execution"
-            size="small"
-            @change="pushFlowSettings"
-          />
-        </div>
-        <div class="form-group">
-          <el-checkbox
-            v-model="flowSettings.show_edge_labels"
-            label="Show edge labels"
-            size="small"
-            @change="pushFlowSettings"
-          />
-          <span class="form-hint">
-            Display input names on connections between nodes.
-          </span>
-        </div>
-        <div class="form-group">
-          <label>Parallel workers:</label>
-          <el-input-number
-            v-model="flowSettings.max_parallel_workers"
-            :min="1"
-            :max="32"
-            size="small"
-            style="width: 100%"
-            @change="pushFlowSettings"
-          />
-          <span class="form-hint">
-            Max threads for running independent nodes in parallel. Only applies when execution
-            location is Remote. Local execution always runs sequentially.
-          </span>
+        <div class="settings-section">
+          <h4 class="settings-section-title">Display</h4>
+          <div class="form-group">
+            <el-checkbox
+              v-model="flowSettings.show_edge_labels"
+              label="Show edge labels"
+              size="small"
+              @change="pushFlowSettings"
+            />
+            <span class="form-hint">
+              Display input names on connections between nodes.
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -533,6 +539,29 @@ onMounted(async () => {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+}
+
+.settings-section {
+  margin-bottom: var(--spacing-5);
+  padding: var(--spacing-4);
+  background-color: var(--color-background-muted, #f9f9fb);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg, 8px);
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section-title {
+  margin: 0 0 var(--spacing-4) 0;
+  padding-bottom: var(--spacing-2);
+  border-bottom: 2px solid var(--color-border-secondary, #ddd);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
 }
 
 .form-hint {

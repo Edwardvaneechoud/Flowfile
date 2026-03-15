@@ -22,7 +22,7 @@ Access at `http://localhost:8080`. The setup wizard will guide you through maste
 | `edwardvaneechoud/flowfile-core` | API server |
 | `edwardvaneechoud/flowfile-worker` | Data processing |
 
-Tags: `latest`, `0.5.3`, or specific version
+Tags: `latest`, `0.6.3`, or specific version
 
 ## docker-compose.yml
 
@@ -122,3 +122,35 @@ docker compose logs -f    # View logs
 | Core | `http://localhost:63578/health` |
 | Worker | `http://localhost:63579/health` |
 | Frontend | `http://localhost:8080` |
+
+---
+
+## File Manager
+
+*Docker mode only.*
+
+The File Manager provides a web-based interface for uploading and downloading data files when running Flowfile in Docker (where users cannot browse the host filesystem).
+
+<!-- PLACEHOLDER: Screenshot of the File Manager page -->
+![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
+
+*The File Manager showing uploaded files*
+
+### Supported Formats
+
+CSV, Parquet, Excel (`.xlsx`), JSON, TSV, TXT
+
+### File Size Limit
+
+Maximum **500 MB** per file.
+
+### Usage
+
+1. Click the **File Manager** icon in the left sidebar
+2. Click **Upload** to add a file
+3. Uploaded files appear in the file list and can be used in **Read Data** input nodes
+4. Click the delete icon to remove a file
+
+### Access
+
+The File Manager is only available when `FLOWFILE_MODE=docker` is set.

@@ -5,6 +5,7 @@ Create custom transformation nodes visually—no Python files required.
 The Node Designer lets you build reusable nodes by dragging UI components onto a canvas, configuring their properties, and writing transformation logic. Your custom nodes appear in the node palette alongside built-in nodes.
 
 ![Node Designer Interface](../../assets/images/guides/node-designer/node-designer-overview.png)
+
 *The Node Designer with a "Prefixer" node being created*
 
 ---
@@ -267,11 +268,13 @@ Custom nodes can run their process method inside a Docker-based kernel instead o
 1. In the Node Metadata section, check **Require Kernel Execution**
 
 ![Require Kernel checkbox](../../assets/images/guides/node-designer/require-kernel-checkbox.png)
+
 *Enabling kernel execution in the Node Designer metadata section*
 
 2. A new **Execution** section appears below the metadata. Select a kernel from the dropdown.
 
 ![Kernel execution section in Node Designer](../../assets/images/guides/node-designer/kernel-execution-section.png)
+
 *The kernel execution section showing the kernel dropdown and output name configuration*
 
 3. Configure **Output Names** — when a kernel is selected, you can define multiple named outputs (e.g. `main`, `predictions`, `metrics`). Each output name maps to a separate output handle on the node.
@@ -296,6 +299,7 @@ Your process method code stays the same. The `self.settings_schema` pattern work
 When you use a kernel-enabled custom node in a flow, the node settings panel shows a **Kernel** dropdown to select (or change) which kernel runs the node.
 
 ![Custom node kernel selector in flow](../../assets/images/guides/node-designer/custom-node-kernel-selector.png)
+
 *A kernel-enabled custom node in a flow, showing the kernel selector in the node settings panel*
 
 ### Example: ML Scoring Node
