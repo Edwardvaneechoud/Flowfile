@@ -68,11 +68,60 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 
 ## Running Your Flow
 
-### 1. Execution Options
-Choose your execution mode from the settings panel:
+### 1. Flow Settings
 
-- **Development**: Lets you view the data in every step of the process, at the cost of performance
-- **Performance**: Only executes steps needed for the output (e.g., writing data), allowing for query optimizations and better performance
+Open the settings modal by clicking the **gear icon** in the top toolbar. This modal controls how your flow executes and how connections are displayed on the canvas.
+
+![Flow Settings modal](../../assets/images/guides/building-flows/flow-settings-modal.png)
+
+*The Flow Settings modal showing execution mode, location, display options, and parallel workers*
+
+#### Execution Mode
+
+| Mode | Description |
+|------|-------------|
+| **Development** | Lets you view the data in every step of the process, at the cost of performance |
+| **Performance** | Only executes steps needed for the output (e.g., writing data), allowing for query optimizations and better performance |
+
+#### Execution Location
+
+| Location | Description |
+|----------|-------------|
+| **Local** | Runs the flow in the core process. Nodes execute sequentially. |
+| **Remote** | Offloads execution to the worker service. Enables parallel execution of independent nodes. |
+
+#### Show Edge Labels
+
+When enabled, each connection on the canvas displays its **connection name** as a label on the edge. The name is derived from the source node's **node reference** (or defaults to `df_{node_id}` if no reference is set).
+
+![Edge labels on the canvas](../../assets/images/guides/building-flows/edge-labels-canvas.png)
+
+*Edge labels displayed on connections, showing the name of each data stream*
+
+This is especially useful when working with **Python Script** (kernel) nodes, where edge labels tell you the exact name to pass to `flowfile.read_input()`. For example, if two nodes with references `total_sales` and `sales_per_city` are connected to a Python Script node, you read them like this:
+
+```python
+total_sales = flowfile.read_input("total_sales")
+sales_per_city = flowfile.read_input("sales_per_city")
+```
+
+Similarly, Python Script nodes can publish **multiple named outputs** using `flowfile.publish_output(df, "name")`, with output names configured visually in the node settings. See [Kernel Execution — Writing Output Data](kernels.md#writing-output-data) for details.
+
+#### Show Detailed Progress
+
+When enabled, the execution progress indicator shows more granular status updates for each node during a flow run.
+
+#### Parallel Workers
+
+Controls how many independent nodes can run concurrently during flow execution.
+
+| Setting | Details |
+|---------|---------|
+| **Range** | 1–32 |
+| **Default** | 4 |
+| **Applies to** | Remote execution only (Local always runs sequentially) |
+
+Increasing the number of parallel workers can speed up flows with many independent branches. Reduce it if the worker machine has limited CPU or memory.
 
 ### 2. Running the Flow
 1. Click the **Run** button in the top toolbar
