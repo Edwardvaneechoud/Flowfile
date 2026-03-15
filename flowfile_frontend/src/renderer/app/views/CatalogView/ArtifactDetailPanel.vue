@@ -1,5 +1,8 @@
 <template>
   <div class="artifact-detail">
+    <button class="back-btn" @click="$emit('close')">
+      <i class="fa-solid fa-arrow-left"></i> Back
+    </button>
     <!-- Header -->
     <div class="detail-header">
       <div class="header-main">
@@ -136,6 +139,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  (e: "close"): void;
   (e: "navigate-to-flow", registrationId: number): void;
 }>();
 
@@ -176,6 +180,26 @@ function formatSize(bytes: number | null): string {
 <style scoped>
 .artifact-detail {
   max-width: 900px;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-bottom: var(--spacing-3);
+}
+
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .detail-header {

@@ -1,4 +1,4 @@
-"""Tests for the Flow Catalog API endpoints.
+"""Tests for the Catalog API endpoints.
 
 Covers namespace CRUD, flow registration, favorites, follows,
 run history, stats, and the default namespace seeding.

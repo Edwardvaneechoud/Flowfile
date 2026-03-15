@@ -3,77 +3,162 @@
     <h2>Catalog Overview</h2>
 
     <div v-if="stats" class="stats-grid">
-      <div class="stat-card">
-        <i class="fa-solid fa-folder-tree stat-icon"></i>
-        <div class="stat-info">
-          <span class="stat-value">{{ stats.total_namespaces }}</span>
-          <span class="stat-label">Namespaces</span>
-        </div>
-      </div>
-      <div class="stat-card">
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'flows' }"
+        @click="toggleSection('flows')"
+      >
         <i class="fa-solid fa-diagram-project stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_flows }}</span>
           <span class="stat-label">Registered Flows</span>
         </div>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'runs' }"
+        @click="toggleSection('runs')"
+      >
         <i class="fa-solid fa-play stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_runs }}</span>
           <span class="stat-label">Total Runs</span>
         </div>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'tables' }"
+        @click="toggleSection('tables')"
+      >
         <i class="fa-solid fa-table stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_tables }}</span>
           <span class="stat-label">Tables</span>
         </div>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'favorites' }"
+        @click="toggleSection('favorites')"
+      >
         <i class="fa-solid fa-star stat-icon"></i>
         <div class="stat-info">
-          <span class="stat-value">{{ stats.total_favorites }}</span>
+          <span class="stat-value">{{ stats.total_favorites + stats.total_table_favorites }}</span>
           <span class="stat-label">Favorites</span>
         </div>
       </div>
     </div>
 
-    <!-- Recent Runs -->
-    <div v-if="stats && stats.recent_runs.length > 0" class="section">
-      <h3>Recent Runs</h3>
-      <div class="recent-list">
+    <!-- Expanded list for clicked stat card -->
+    <div v-if="activeSection === 'flows' && flows.length > 0" class="section">
+      <h3>All Flows</h3>
+      <div class="item-list">
         <div
-          v-for="run in stats.recent_runs"
+          v-for="flow in flows"
+          :key="flow.id"
+          class="item-row clickable"
+          @click="$emit('viewFlow', flow.id)"
+        >
+          <i class="fa-solid fa-diagram-project item-icon"></i>
+          <span class="item-name">{{ flow.name }}</span>
+          <span class="item-meta">{{ flow.run_count }} runs</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="activeSection === 'tables' && tables.length > 0" class="section">
+      <h3>All Tables</h3>
+      <div class="item-list">
+        <div
+          v-for="table in tables"
+          :key="table.id"
+          class="item-row clickable"
+          @click="$emit('viewTable', table.id)"
+        >
+          <i class="fa-solid fa-table item-icon"></i>
+          <span class="item-name">{{ table.name }}</span>
+          <span class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="activeSection === 'favorites' && (favorites.length > 0 || favoriteTables.length > 0)" class="section">
+      <h3>Favorites</h3>
+      <div class="item-list">
+        <div
+          v-for="flow in favorites"
+          :key="'fav-f-' + flow.id"
+          class="item-row clickable"
+          @click="$emit('viewFlow', flow.id)"
+        >
+          <i class="fa-solid fa-star item-icon fav"></i>
+          <span class="item-name">{{ flow.name }}</span>
+          <span class="item-meta">{{ flow.run_count }} runs</span>
+        </div>
+        <div
+          v-for="table in favoriteTables"
+          :key="'fav-t-' + table.id"
+          class="item-row clickable"
+          @click="$emit('viewTable', table.id)"
+        >
+          <i class="fa-solid fa-star item-icon fav"></i>
+          <i class="fa-solid fa-table item-icon"></i>
+          <span class="item-name">{{ table.name }}</span>
+          <span class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="activeSection === 'runs' && runs.length > 0" class="section">
+      <h3>Run History</h3>
+      <div class="item-list">
+        <div
+          v-for="run in runs"
           :key="run.id"
-          class="recent-item clickable"
+          class="item-row clickable"
           @click="$emit('viewRun', run.id)"
         >
           <span
             class="status-dot"
             :class="run.success ? 'success' : run.success === false ? 'failure' : 'pending'"
           ></span>
-          <span class="recent-name">{{ run.flow_name }}</span>
-          <span class="recent-time">{{ formatDate(run.started_at) }}</span>
-          <span class="recent-duration">{{ formatDuration(run.duration_seconds) }}</span>
+          <span class="item-name">{{ run.flow_name }}</span>
+          <span class="item-meta">{{ formatDate(run.started_at) }}</span>
+          <span class="item-duration">{{ formatDuration(run.duration_seconds) }}</span>
         </div>
       </div>
     </div>
 
-    <!-- Favorite Flows -->
-    <div v-if="stats && stats.favorite_flows.length > 0" class="section">
+    <!-- Favorite Flows (always visible) -->
+    <div v-if="favorites.length > 0 && activeSection !== 'favorites'" class="section">
       <h3>Favorite Flows</h3>
-      <div class="fav-list">
+      <div class="item-list">
         <div
-          v-for="flow in stats.favorite_flows"
+          v-for="flow in favorites"
           :key="flow.id"
-          class="fav-item clickable"
+          class="item-row clickable"
           @click="$emit('viewFlow', flow.id)"
         >
-          <i class="fa-solid fa-star fav-icon"></i>
-          <span class="fav-name">{{ flow.name }}</span>
-          <span class="fav-runs">{{ flow.run_count }} runs</span>
+          <i class="fa-solid fa-star item-icon fav"></i>
+          <span class="item-name">{{ flow.name }}</span>
+          <span class="item-meta">{{ flow.run_count }} runs</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Favorite Tables (always visible) -->
+    <div v-if="favoriteTables.length > 0 && activeSection !== 'favorites'" class="section">
+      <h3>Favorite Tables</h3>
+      <div class="item-list">
+        <div
+          v-for="table in favoriteTables"
+          :key="table.id"
+          class="item-row clickable"
+          @click="$emit('viewTable', table.id)"
+        >
+          <i class="fa-solid fa-star item-icon fav"></i>
+          <span class="item-name">{{ table.name }}</span>
+          <span class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
         </div>
       </div>
     </div>
@@ -81,7 +166,7 @@
     <!-- Empty state -->
     <div v-if="!stats || (stats.total_flows === 0 && stats.total_runs === 0)" class="welcome">
       <i class="fa-solid fa-folder-tree welcome-icon"></i>
-      <h3>Welcome to Flow Catalog</h3>
+      <h3>Welcome to Catalog</h3>
       <p>
         Organize your flows into catalogs and schemas, track run history, and favorite the flows you
         use most.
@@ -105,16 +190,39 @@
 </template>
 
 <script setup lang="ts">
-import type { CatalogStats } from "../../types";
+import { computed, ref } from "vue";
+import type { CatalogStats, CatalogTable, FlowRegistration, FlowRun } from "../../types";
 
-defineProps<{
+type Section = "flows" | "tables" | "favorites" | "runs";
+
+const props = defineProps<{
   stats: CatalogStats | null;
+  flows: FlowRegistration[];
+  tables: CatalogTable[];
+  favorites: FlowRegistration[];
+  runs: FlowRun[];
 }>();
+
+const favoriteTables = computed((): CatalogTable[] => {
+  return props.stats?.favorite_tables ?? [];
+});
 
 defineEmits<{
   viewRun: [runId: number];
   viewFlow: [flowId: number];
+  viewTable: [tableId: number];
 }>();
+
+const activeSection = ref<Section | null>(null);
+
+function toggleSection(section: Section) {
+  activeSection.value = activeSection.value === section ? null : section;
+}
+
+function formatNumber(n: number | null): string {
+  if (n === null) return "--";
+  return n.toLocaleString();
+}
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString(undefined, {
@@ -161,6 +269,16 @@ function formatDuration(seconds: number | null): string {
   background: var(--color-background-secondary);
   border-radius: var(--border-radius-md);
   border: 1px solid var(--color-border-light);
+  transition: all var(--transition-fast);
+}
+
+.stat-card.clickable:hover {
+  border-color: var(--color-primary);
+}
+
+.stat-card--active {
+  border-color: var(--color-primary);
+  background: var(--color-background-hover);
 }
 
 .stat-icon {
@@ -196,25 +314,6 @@ function formatDuration(seconds: number | null): string {
   margin: 0 0 var(--spacing-3) 0;
 }
 
-/* Recent Runs */
-.recent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.recent-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-}
-
-.recent-item:hover {
-  background: var(--color-background-hover);
-}
 .clickable {
   cursor: pointer;
 }
@@ -236,30 +335,14 @@ function formatDuration(seconds: number | null): string {
   background: #eab308;
 }
 
-.recent-name {
-  flex: 1;
-  color: var(--color-text-primary);
-}
-.recent-time {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-.recent-duration {
-  color: var(--color-text-secondary);
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-  min-width: 60px;
-  text-align: right;
-}
-
-/* Favorites */
-.fav-list {
+/* Item Lists */
+.item-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.fav-item {
+.item-row {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -268,20 +351,38 @@ function formatDuration(seconds: number | null): string {
   font-size: var(--font-size-sm);
 }
 
-.fav-item:hover {
+.item-row:hover {
   background: var(--color-background-hover);
 }
-.fav-icon {
-  color: #f59e0b;
-  font-size: 12px;
+
+.item-icon {
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
 }
-.fav-name {
+
+.item-icon.fav {
+  color: #f59e0b;
+}
+
+.item-name {
   flex: 1;
   color: var(--color-text-primary);
 }
-.fav-runs {
+
+.item-meta {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+}
+
+.item-duration {
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+  min-width: 60px;
+  text-align: right;
 }
 
 /* Welcome */

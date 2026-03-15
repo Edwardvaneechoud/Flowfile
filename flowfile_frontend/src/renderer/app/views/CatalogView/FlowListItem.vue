@@ -28,14 +28,6 @@
       >
         <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
       </button>
-      <button
-        class="action-btn follow-btn"
-        :class="{ active: flow.is_following }"
-        :title="flow.is_following ? 'Unfollow' : 'Follow'"
-        @click.stop="$emit('toggleFollow')"
-      >
-        <i :class="flow.is_following ? 'fa-solid fa-bell' : 'fa-regular fa-bell'"></i>
-      </button>
       <span
         v-if="flow.last_run_success !== null"
         class="run-dot"
@@ -56,7 +48,6 @@ defineProps<{
 defineEmits<{
   select: [];
   toggleFavorite: [];
-  toggleFollow: [];
 }>();
 </script>
 
@@ -138,9 +129,6 @@ defineEmits<{
 }
 .star-btn.active {
   color: #f59e0b;
-}
-.follow-btn.active {
-  color: var(--color-primary);
 }
 
 .run-dot {

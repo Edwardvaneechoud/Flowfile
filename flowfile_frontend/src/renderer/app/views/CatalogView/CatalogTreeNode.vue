@@ -53,7 +53,7 @@
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
-          @toggle-follow="$emit('toggleFollow', $event)"
+          @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
           @register-flow="$emit('registerFlow', $event)"
           @register-table="$emit('registerTable', $event)"
           @create-schema="$emit('createSchema', $event)"
@@ -156,6 +156,16 @@
             <span v-if="table.row_count !== null" class="table-rows">
               {{ formatRowCount(table.row_count) }} rows
             </span>
+            <div class="flow-actions" @click.stop>
+              <button
+                class="action-btn star-btn"
+                :class="{ active: table.is_favorite }"
+                :title="table.is_favorite ? 'Unfavorite' : 'Favorite'"
+                @click="$emit('toggleTableFavorite', table.id)"
+              >
+                <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -193,7 +203,7 @@ defineEmits<{
   selectArtifact: [id: number];
   selectTable: [id: number];
   toggleFavorite: [id: number];
-  toggleFollow: [id: number];
+  toggleTableFavorite: [id: number];
   registerFlow: [namespaceId: number];
   registerTable: [namespaceId: number];
   createSchema: [parentId: number];
@@ -644,6 +654,11 @@ const totalFlows = computed(() => {
 
 .tree-table:hover {
   background: var(--color-background-hover);
+}
+
+.tree-table:hover .flow-actions,
+.tree-table.selected .flow-actions {
+  opacity: 1;
 }
 
 .tree-table.selected {

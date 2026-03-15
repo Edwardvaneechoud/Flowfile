@@ -1,4 +1,4 @@
-"""Business-logic layer for the Flow Catalog system.
+"""Business-logic layer for the Catalog system.
 
 ``CatalogService`` encapsulates all domain rules (validation, authorisation,
 enrichment) and delegates persistence to a ``CatalogRepository``.  It never
@@ -27,6 +27,7 @@ from flowfile_core.catalog.exceptions import (
     NoSnapshotError,
     RunNotFoundError,
     TableExistsError,
+    TableFavoriteNotFoundError,
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
@@ -38,6 +39,7 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowRun,
     GlobalArtifact,
+    TableFavorite,
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
@@ -337,7 +339,9 @@ class CatalogService:
             namespace_artifact_map[cat.id] = [
                 self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
             ]
-            namespace_table_map[cat.id] = [self._table_to_out(t) for t in self.repo.list_tables_for_namespace(cat.id)]
+            namespace_table_map[cat.id] = self._bulk_enrich_tables(
+                self.repo.list_tables_for_namespace(cat.id), user_id
+            )
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
@@ -346,9 +350,9 @@ class CatalogService:
                 namespace_artifact_map[schema.id] = [
                     self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
                 ]
-                namespace_table_map[schema.id] = [
-                    self._table_to_out(t) for t in self.repo.list_tables_for_namespace(schema.id)
-                ]
+                namespace_table_map[schema.id] = self._bulk_enrich_tables(
+                    self.repo.list_tables_for_namespace(schema.id), user_id
+                )
 
         # Bulk enrich all flows at once
         enriched = self._bulk_enrich_flows(all_flows, user_id)
@@ -744,7 +748,7 @@ class CatalogService:
     # Catalog table operations
     # ------------------------------------------------------------------ #
 
-    def _table_to_out(self, table: CatalogTable) -> CatalogTableOut:
+    def _table_to_out(self, table: CatalogTable, user_id: int | None = None) -> CatalogTableOut:
         """Convert a CatalogTable ORM instance to its Pydantic output schema."""
         columns: list[ColumnSchema] = []
         if table.schema_json:
@@ -765,6 +769,10 @@ class CatalogService:
         readers = self.repo.list_readers_for_table(table.id)
         read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
+        is_fav = False
+        if user_id is not None:
+            is_fav = self.repo.get_table_favorite(user_id, table.id) is not None
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
@@ -772,6 +780,7 @@ class CatalogService:
             description=table.description,
             owner_id=table.owner_id,
             file_exists=Path(table.file_path).is_file() if table.file_path else False,
+            is_favorite=is_fav,
             schema_columns=columns,
             row_count=table.row_count,
             column_count=table.column_count,
@@ -783,6 +792,56 @@ class CatalogService:
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
+
+    def _bulk_enrich_tables(self, tables: list[CatalogTable], user_id: int) -> list[CatalogTableOut]:
+        """Enrich multiple tables with favorite status in bulk to avoid N+1 queries."""
+        if not tables:
+            return []
+
+        table_ids = [t.id for t in tables]
+        fav_ids = self.repo.bulk_get_favorite_table_ids(user_id, table_ids)
+
+        result: list[CatalogTableOut] = []
+        for table in tables:
+            columns: list[ColumnSchema] = []
+            if table.schema_json:
+                try:
+                    raw = json.loads(table.schema_json)
+                    columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+
+            source_registration_name: str | None = None
+            if table.source_registration_id:
+                reg = self.repo.get_flow(table.source_registration_id)
+                if reg is not None:
+                    source_registration_name = reg.name
+
+            readers = self.repo.list_readers_for_table(table.id)
+            read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
+
+            result.append(
+                CatalogTableOut(
+                    id=table.id,
+                    name=table.name,
+                    namespace_id=table.namespace_id,
+                    description=table.description,
+                    owner_id=table.owner_id,
+                    file_exists=Path(table.file_path).is_file() if table.file_path else False,
+                    is_favorite=table.id in fav_ids,
+                    schema_columns=columns,
+                    row_count=table.row_count,
+                    column_count=table.column_count,
+                    size_bytes=table.size_bytes,
+                    source_registration_id=table.source_registration_id,
+                    source_registration_name=source_registration_name,
+                    source_run_id=table.source_run_id,
+                    read_by_flows=read_by_flows,
+                    created_at=table.created_at,
+                    updated_at=table.updated_at,
+                )
+            )
+        return result
 
     def _materialize_table_with_worker(
         self,
@@ -968,7 +1027,7 @@ class CatalogService:
         table = self.repo.create_table(table)
         return self._table_to_out(table)
 
-    def get_table(self, table_id: int) -> CatalogTableOut:
+    def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
         """Get a catalog table by ID.
 
         Raises
@@ -979,11 +1038,13 @@ class CatalogService:
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
-        return self._table_to_out(table)
+        return self._table_to_out(table, user_id=user_id)
 
-    def list_tables(self, namespace_id: int | None = None) -> list[CatalogTableOut]:
+    def list_tables(self, namespace_id: int | None = None, user_id: int | None = None) -> list[CatalogTableOut]:
         """List tables, optionally filtered by namespace."""
         tables = self.repo.list_tables(namespace_id=namespace_id)
+        if user_id is not None:
+            return self._bulk_enrich_tables(tables, user_id)
         return [self._table_to_out(t) for t in tables]
 
     def update_table(
@@ -1071,6 +1132,50 @@ class CatalogService:
         )
 
     # ------------------------------------------------------------------ #
+    # Table Favorites
+    # ------------------------------------------------------------------ #
+
+    def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
+        """Add a table to user's favourites (idempotent).
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        existing = self.repo.get_table_favorite(user_id, table_id)
+        if existing is not None:
+            return existing
+        fav = TableFavorite(user_id=user_id, table_id=table_id)
+        return self.repo.add_table_favorite(fav)
+
+    def remove_table_favorite(self, user_id: int, table_id: int) -> None:
+        """Remove a table from user's favourites.
+
+        Raises
+        ------
+        TableFavoriteNotFoundError
+            If the favourite doesn't exist.
+        """
+        existing = self.repo.get_table_favorite(user_id, table_id)
+        if existing is None:
+            raise TableFavoriteNotFoundError(user_id=user_id, table_id=table_id)
+        self.repo.remove_table_favorite(user_id, table_id)
+
+    def list_table_favorites(self, user_id: int) -> list[CatalogTableOut]:
+        """List all tables the user has favourited, enriched."""
+        favs = self.repo.list_table_favorites(user_id)
+        tables: list[CatalogTable] = []
+        for fav in favs:
+            table = self.repo.get_table(fav.table_id)
+            if table is not None:
+                tables.append(table)
+        return self._bulk_enrich_tables(tables, user_id)
+
+    # ------------------------------------------------------------------ #
     # Dashboard / Stats
     # ------------------------------------------------------------------ #
 
@@ -1083,6 +1188,7 @@ class CatalogService:
         total_flows = self.repo.count_all_flows()
         total_runs = self.repo.count_runs()
         total_favs = self.repo.count_favorites(user_id)
+        total_table_favs = self.repo.count_table_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
         total_tables = self.repo.count_all_tables()
 
@@ -1098,13 +1204,18 @@ class CatalogService:
                 flows.append(flow)
         fav_flows = self._bulk_enrich_flows(flows, user_id)
 
+        # Bulk enrich favourite tables
+        fav_tables = self.list_table_favorites(user_id)
+
         return CatalogStats(
             total_namespaces=total_ns,
             total_flows=total_flows,
             total_runs=total_runs,
             total_favorites=total_favs,
+            total_table_favorites=total_table_favs,
             total_artifacts=total_artifacts,
             total_tables=total_tables,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
+            favorite_tables=fav_tables,
         )

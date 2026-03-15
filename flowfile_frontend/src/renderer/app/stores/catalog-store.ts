@@ -144,9 +144,47 @@ export const useCatalogStore = defineStore("catalog", {
           await CatalogApi.addFavorite(flowId);
         }
         flow.is_favorite = !flow.is_favorite;
-        await Promise.all([this.loadFavorites(), this.loadStats(), this.loadTree()]);
+        // Update the flag in-place on tree nodes so we don't reset expanded state
+        this.updateFavoriteInTree(flowId, flow.is_favorite);
+        await Promise.all([this.loadFavorites(), this.loadStats()]);
       } catch (e: any) {
         this.error = e?.message ?? "Failed to toggle favorite";
+      }
+    },
+
+    /** Update is_favorite on a flow within the tree without replacing the tree. */
+    updateFavoriteInTree(flowId: number, isFavorite: boolean) {
+      const walk = (nodes: NamespaceTree[]) => {
+        for (const node of nodes) {
+          for (const f of node.flows) {
+            if (f.id === flowId) f.is_favorite = isFavorite;
+          }
+          walk(node.children);
+        }
+      };
+      walk(this.tree);
+    },
+
+    async toggleTableFavorite(tableId: number) {
+      const table = this.findTableInTree(tableId);
+      if (!table) return;
+      try {
+        if (table.is_favorite) {
+          await CatalogApi.removeTableFavorite(tableId);
+        } else {
+          await CatalogApi.addTableFavorite(tableId);
+        }
+        table.is_favorite = !table.is_favorite;
+        // Update selected table if it matches
+        if (this.selectedTable && this.selectedTable.id === tableId) {
+          this.selectedTable.is_favorite = table.is_favorite;
+        }
+        // Update in allTables
+        const allTable = this.allTables.find((t) => t.id === tableId);
+        if (allTable) allTable.is_favorite = table.is_favorite;
+        await this.loadStats();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to toggle table favorite";
       }
     },
 
@@ -290,6 +328,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadAllTables(),
         this.loadStats(),
         this.loadFavorites(),
+        this.loadRuns(),
       ]);
     },
   },
