@@ -161,6 +161,18 @@ Inside a Python Script node connected to a kernel, you write standard Python cod
 
 ### Reading Input Data
 
+When multiple nodes are connected to a Python Script node, each input gets a **name** derived from the source node's **node reference**. These names are visible as **edge labels** on the canvas, so you can see at a glance which data flows into which input.
+
+![Named connections on canvas](../../assets/images/guides/kernels/named-connections-canvas.png)
+
+*Edge labels on the canvas showing the names of each connection into the Python Script node*
+
+The Python Script node settings panel displays an **Available Inputs** section that lists all connected inputs by name and source node type. Use these names with `flowfile.read_input("name")` to read a specific input.
+
+![Available Inputs panel](../../assets/images/guides/kernels/available-inputs-panel.png)
+
+*The Available Inputs panel showing input names and their source node types*
+
 ```python
 # Read the main input as a Polars LazyFrame
 df = flowfile.read_input()
@@ -174,15 +186,31 @@ all_inputs = flowfile.read_inputs()
 # Returns: {"main": [LazyFrame, ...], "orders": [LazyFrame, ...]}
 ```
 
+!!! tip "Setting input names"
+    Input names come from the **node reference** of each source node. You can set or change a node's reference in its settings panel. If no reference is set, the default name is `df_{node_id}`. Names must be lowercase and can only contain letters, digits, and underscores.
+
+!!! tip "Showing connection names on the canvas"
+    To display connection names on the canvas, enable **Show edge labels** in the [Flow Settings](building-flows.md#1-flow-settings).
+
 ### Writing Output Data
 
+A Python Script node can publish multiple named outputs, each flowing to a different downstream node. To set this up:
+
+1. In the node settings panel, add output names under **Output Names** (e.g. `total_sales`, `sales_per_city`)
+2. In your code, use `flowfile.publish_output(df, "name")` to publish data to each named output
+
+![Named output configuration](../../assets/images/guides/kernels/named-output-connections.png)
+
+*The Python Script node settings showing two named outputs (`total_sales` and `sales_per_city`) and the code that publishes to them*
+
 ```python
-# Process data and publish the result
+# Publish a single (default) output
 result = df.filter(pl.col("amount") > 100).select("id", "amount", "date")
 flowfile.publish_output(result)
 
-# Publish a named output
-flowfile.publish_output(summary, name="summary")
+# Publish multiple named outputs
+flowfile.publish_output(sales_df, "total_sales")
+flowfile.publish_output(unique_output, "sales_per_city")
 ```
 
 Both `pl.LazyFrame` and `pl.DataFrame` are accepted by `publish_output`.

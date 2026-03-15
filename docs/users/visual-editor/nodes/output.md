@@ -171,7 +171,6 @@ The **Catalog Writer** node saves data as a table in the [Catalog](../catalog.md
 5. Optionally add a description
 6. Run the flow to materialize and register the table
 
-<!-- PLACEHOLDER: Screenshot of the Catalog Writer node settings panel -->
 ![Catalog Writer settings](../../../assets/images/guides/nodes/catalog-writer-settings.png)
 
 *Catalog Writer configured to write a table to the default schema*
