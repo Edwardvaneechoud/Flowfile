@@ -45,6 +45,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_all_database_connections_interface,
     get_database_connection,
     store_database_connection,
+    update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
@@ -618,6 +619,24 @@ def create_db_connection(
         logger.error(e)
         raise HTTPException(422, str(e)) from e
     return {"message": "Database connection created successfully"}
+
+
+@router.put("/db_connection_lib", tags=["db_connections"])
+def update_db_connection(
+    input_connection: input_schema.FullDatabaseConnection,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Updates an existing database connection."""
+    logger.info(f"Updating database connection {input_connection.connection_name}")
+    try:
+        update_database_connection(db, input_connection, current_user.id)
+    except ValueError:
+        raise HTTPException(404, "Database connection not found") from None
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(422, str(e)) from e
+    return {"message": "Database connection updated successfully"}
 
 
 @router.delete("/db_connection_lib", tags=["db_connections"])

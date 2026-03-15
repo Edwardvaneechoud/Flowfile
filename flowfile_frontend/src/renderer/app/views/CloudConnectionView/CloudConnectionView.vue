@@ -114,6 +114,7 @@
       <CloudConnectionSettings
         :initial-connection="activeConnection"
         :is-submitting="isSubmitting"
+        :is-editing="isEditing"
         @submit="handleFormSubmit"
         @cancel="dialogVisible = false"
       />
@@ -150,6 +151,7 @@ import { ElDialog, ElButton, ElMessage } from "element-plus";
 import {
   fetchCloudStorageConnectionsInterfaces,
   createCloudStorageConnectionApi,
+  updateCloudStorageConnectionApi,
   deleteCloudStorageConnectionApi,
 } from "./api";
 import {
@@ -272,7 +274,11 @@ const showDeleteModal = (connectionName: string) => {
 const handleFormSubmit = async (connection: FullCloudStorageConnection) => {
   isSubmitting.value = true;
   try {
-    await createCloudStorageConnectionApi(connection);
+    if (isEditing.value) {
+      await updateCloudStorageConnectionApi(connection);
+    } else {
+      await createCloudStorageConnectionApi(connection);
+    }
     await fetchConnections();
     dialogVisible.value = false;
     ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);

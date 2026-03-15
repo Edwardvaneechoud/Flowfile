@@ -11,6 +11,7 @@
           class="form-input"
           placeholder="my_cloud_storage"
           required
+          :disabled="props.isEditing"
         />
       </div>
 
@@ -70,7 +71,11 @@
               v-model="connection.awsSecretAccessKey"
               :type="showAwsSecret ? 'text' : 'password'"
               class="form-input"
-              placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+              :placeholder="
+                props.isEditing
+                  ? 'Leave blank to keep existing'
+                  : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+              "
               :required="connection.authMethod === 'access_key'"
             />
             <button
@@ -135,7 +140,7 @@
               v-model="connection.azureAccountKey"
               :type="showAzureKey ? 'text' : 'password'"
               class="form-input"
-              placeholder="Account key"
+              :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Account key'"
               :required="connection.authMethod === 'access_key'"
             />
             <button
@@ -186,7 +191,9 @@
                 v-model="connection.azureClientSecret"
                 :type="showAzureSecret ? 'text' : 'password'"
                 class="form-input"
-                placeholder="Client secret"
+                :placeholder="
+                  props.isEditing ? 'Leave blank to keep existing' : 'Client secret'
+                "
                 :required="connection.authMethod === 'service_principal'"
               />
               <button
@@ -247,6 +254,7 @@ import type {
 const props = defineProps<{
   initialConnection?: FullCloudStorageConnection;
   isSubmitting?: boolean;
+  isEditing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -335,7 +343,10 @@ const isValid = computed(() => {
     if (!connection.value.awsRegion) return false;
 
     if (connection.value.authMethod === "access_key") {
-      return !!connection.value.awsAccessKeyId && !!connection.value.awsSecretAccessKey;
+      return (
+        !!connection.value.awsAccessKeyId &&
+        (props.isEditing || !!connection.value.awsSecretAccessKey)
+      );
     } else if (connection.value.authMethod === "iam_role") {
       return !!connection.value.awsRoleArn;
     }
@@ -346,12 +357,12 @@ const isValid = computed(() => {
     if (!connection.value.azureAccountName) return false;
 
     if (connection.value.authMethod === "access_key") {
-      return !!connection.value.azureAccountKey;
+      return props.isEditing || !!connection.value.azureAccountKey;
     } else if (connection.value.authMethod === "service_principal") {
       return (
         !!connection.value.azureTenantId &&
         !!connection.value.azureClientId &&
-        !!connection.value.azureClientSecret
+        (props.isEditing || !!connection.value.azureClientSecret)
       );
     }
   }

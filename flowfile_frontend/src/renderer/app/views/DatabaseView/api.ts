@@ -92,6 +92,25 @@ export const createDatabaseConnectionApi = async (
 };
 
 /**
+ * Updates an existing database connection via the API.
+ * @param connectionData - The database connection configuration to update.
+ * @returns A promise that resolves when the connection is updated.
+ */
+export const updateDatabaseConnectionApi = async (
+  connectionData: FullDatabaseConnection,
+): Promise<void> => {
+  try {
+    const pythonFormattedData = toPythonFormat(connectionData);
+    await axios.put(API_BASE_URL, pythonFormattedData);
+  } catch (error) {
+    console.error("API Error: Failed to update database connection:", error);
+    const errorMsg =
+      (error as any).response?.data?.detail || "Failed to update database connection";
+    throw new Error(errorMsg);
+  }
+};
+
+/**
  * Deletes a database connection via the API.
  * @param connectionName - The name of the connection to delete.
  * @returns A promise that resolves when the connection is deleted.

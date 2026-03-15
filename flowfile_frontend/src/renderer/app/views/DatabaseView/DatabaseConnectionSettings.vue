@@ -12,6 +12,7 @@
           class="form-input"
           placeholder="my_postgres_db"
           required
+          :disabled="props.isEditing"
         />
       </div>
 
@@ -76,8 +77,8 @@
             v-model="connection.password"
             :type="showPassword ? 'text' : 'password'"
             class="form-input"
-            placeholder="Password"
-            required
+            :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Password'"
+            :required="!props.isEditing"
           />
           <button
             type="button"
@@ -119,6 +120,7 @@ import type { FullDatabaseConnection } from "./databaseConnectionTypes";
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
   isSubmitting?: boolean;
+  isEditing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -161,7 +163,7 @@ const isValid = computed(() => {
   return (
     !!connection.value.connectionName &&
     !!connection.value.username &&
-    !!connection.value.password &&
+    (props.isEditing || !!connection.value.password) &&
     !!connection.value.host
   );
 });
