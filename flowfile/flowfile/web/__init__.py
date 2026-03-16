@@ -11,11 +11,27 @@ import time
 import webbrowser
 from pathlib import Path
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 static_dir = Path(__file__).parent / "static"
+
+
+class StripApiPrefixMiddleware(BaseHTTPMiddleware):
+    """Middleware that strips the /api prefix from incoming requests.
+
+    In unified mode (flowfile run ui), the frontend uses /api/ as its base URL
+    (intended for nginx reverse proxy in Docker). This middleware makes those
+    requests work by stripping the /api prefix so they match the backend routes.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.scope["path"]
+        if path.startswith("/api/") or path == "/api":
+            request.scope["path"] = path[4:] or "/"
+        return await call_next(request)
 
 
 def extend_app(app: FastAPI):
@@ -23,6 +39,9 @@ def extend_app(app: FastAPI):
     Extend the flowfile_core FastAPI app with routes to serve the Vue.js frontend
     and worker functionality.
     """
+    # Add middleware to strip /api prefix (for unified mode compatibility)
+    app.add_middleware(StripApiPrefixMiddleware)
+
     # Serve static files if the directory exists
     if static_dir.exists():
         # Mount the assets directory
