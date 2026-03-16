@@ -3,7 +3,7 @@ import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
 
 
@@ -753,6 +753,197 @@ def test_remove_comments_and_docstrings():
         except Exception as e:
             print(f"Test failed for:\n{input_code}")
             raise e
+
+
+class TestPolarsCodeParserSecurity:
+    """Security tests for the PolarsCodeParser sandbox."""
+
+    def setup_method(self):
+        self.parser = PolarsCodeParser()
+        self.test_df = FlowDataEngine([{"name": "alice"}, {"name": "bob"}])
+
+    # --- AST validation: blocked function calls ---
+
+    def test_blocks_open(self):
+        with pytest.raises(ValueError, match="'open' is not allowed"):
+            self.parser.get_executable("data = open('/etc/passwd').read()\noutput_df = input_df")
+
+    def test_blocks_exec(self):
+        with pytest.raises(ValueError, match="'exec' is not allowed"):
+            self.parser.get_executable("exec('x=1')\noutput_df = input_df")
+
+    def test_blocks_eval(self):
+        with pytest.raises(ValueError, match="'eval' is not allowed"):
+            self.parser.get_executable("x = eval('1+1')\noutput_df = input_df")
+
+    def test_blocks_compile(self):
+        with pytest.raises(ValueError, match="'compile' is not allowed"):
+            self.parser.get_executable("c = compile('1', '', 'eval')\noutput_df = input_df")
+
+    def test_blocks___import__(self):
+        with pytest.raises(ValueError, match="'__import__' is not allowed"):
+            self.parser.get_executable("os = __import__('os')\noutput_df = input_df")
+
+    def test_blocks_globals(self):
+        with pytest.raises(ValueError, match="'globals' is not allowed"):
+            self.parser.get_executable("x = globals()\noutput_df = input_df")
+
+    def test_blocks_locals(self):
+        with pytest.raises(ValueError, match="'locals' is not allowed"):
+            self.parser.get_executable("x = locals()\noutput_df = input_df")
+
+    def test_blocks_getattr(self):
+        with pytest.raises(ValueError, match="'getattr' is not allowed"):
+            self.parser.get_executable('x = getattr(str, "upper")\noutput_df = input_df')
+
+    def test_blocks_setattr(self):
+        with pytest.raises(ValueError, match="'setattr' is not allowed"):
+            self.parser.get_executable("setattr(input_df, 'x', 1)\noutput_df = input_df")
+
+    def test_blocks_delattr(self):
+        with pytest.raises(ValueError, match="'delattr' is not allowed"):
+            self.parser.get_executable("delattr(input_df, 'x')\noutput_df = input_df")
+
+    def test_blocks_vars(self):
+        with pytest.raises(ValueError, match="'vars' is not allowed"):
+            self.parser.get_executable("x = vars()\noutput_df = input_df")
+
+    def test_blocks_dir(self):
+        with pytest.raises(ValueError, match="'dir' is not allowed"):
+            self.parser.get_executable("x = dir(input_df)\noutput_df = input_df")
+
+    def test_blocks_breakpoint(self):
+        with pytest.raises(ValueError, match="'breakpoint' is not allowed"):
+            self.parser.get_executable("breakpoint()\noutput_df = input_df")
+
+    def test_blocks_input(self):
+        with pytest.raises(ValueError, match="'input' is not allowed"):
+            self.parser.get_executable("x = input('prompt')\noutput_df = input_df")
+
+    # --- AST validation: imports ---
+
+    def test_blocks_import_statement(self):
+        with pytest.raises(ValueError, match="Import statements are not allowed"):
+            self.parser.get_executable("import os\noutput_df = input_df")
+
+    def test_blocks_from_import(self):
+        with pytest.raises(ValueError, match="Import statements are not allowed"):
+            self.parser.get_executable("from os import path\noutput_df = input_df")
+
+    # --- AST validation: dunder attribute access ---
+
+    def test_blocks_dunder_attribute_access(self):
+        with pytest.raises(ValueError, match="Access to '__class__' is not allowed"):
+            self.parser.get_executable("x = input_df.__class__\noutput_df = input_df")
+
+    def test_blocks_dunder_dict_access(self):
+        with pytest.raises(ValueError, match="Access to '__dict__' is not allowed"):
+            self.parser.get_executable("x = input_df.__dict__\noutput_df = input_df")
+
+    # --- AST validation: dunder string constants (subscript bypass) ---
+
+    def test_blocks_dunder_string_in_subscript(self):
+        """Block d['__builtins__'] style access."""
+        with pytest.raises(ValueError, match="dunder patterns are not allowed"):
+            self.parser.get_executable("x = {}['__builtins__']\noutput_df = input_df")
+
+    def test_blocks_dunder_string_concatenation_at_runtime(self):
+        """String concat bypass ('_' + '_builtins_' + '_') is stopped at runtime
+        because __builtins__ is empty, so the key lookup fails."""
+        func = self.parser.get_executable(
+            "b = {}['_' + '_builtins_' + '_']\noutput_df = input_df"
+        )
+        with pytest.raises(KeyError):
+            func(pl.LazyFrame({"a": [1]}))
+
+    def test_blocks_dunder_string_in_variable(self):
+        with pytest.raises(ValueError, match="dunder patterns are not allowed"):
+            self.parser.get_executable('key = "__import__"\noutput_df = input_df')
+
+    # --- PoC attacks from security report ---
+
+    def test_poc_bypass1_file_read_via_open(self):
+        """PoC Bypass 1: Arbitrary file read via open()."""
+        with pytest.raises(ValueError, match="'open' is not allowed"):
+            self.parser.get_executable(
+                "data = open('/etc/passwd').read()\n"
+                "output_df = input_df.with_columns(pl.lit(data[:80]).alias('stolen'))"
+            )
+
+    def test_poc_bypass2_rce_via_string_concat(self):
+        """PoC Bypass 2: Full RCE via string concatenation to access __import__."""
+        code = (
+            "b = globals()['_' + '_builtins_' + '_']\n"
+            "imp = b['_' + '_import_' + '_']\n"
+            "os_mod = imp('os')\n"
+            "os_mod.system('id > /tmp/pwned.txt')\n"
+            "output_df = input_df"
+        )
+        with pytest.raises(ValueError):
+            self.parser.get_executable(code)
+
+    # --- Runtime enforcement: __builtins__ is empty ---
+
+    def test_builtins_not_available_at_runtime(self):
+        """Functions not in safe_globals should fail at runtime even if AST passes."""
+        func = self.parser.get_executable("x = type(input_df)\noutput_df = input_df")
+        with pytest.raises(NameError, match="type"):
+            func(pl.LazyFrame({"a": [1]}))
+
+    def test_builtin_map_not_available(self):
+        func = self.parser.get_executable("x = list(map(str, [1, 2]))\noutput_df = input_df")
+        with pytest.raises(NameError, match="map"):
+            func(pl.LazyFrame({"a": [1]}))
+
+    def test_builtin_hasattr_not_available(self):
+        func = self.parser.get_executable("x = hasattr(input_df, 'collect')\noutput_df = input_df")
+        with pytest.raises(NameError, match="hasattr"):
+            func(pl.LazyFrame({"a": [1]}))
+
+    # --- Safe globals: allowed operations still work ---
+
+    def test_allowed_builtins_work(self):
+        """Verify explicitly allowed builtins are functional."""
+        func = self.parser.get_executable(
+            "x = len([1, 2, 3])\n"
+            "y = list(range(3))\n"
+            "z = str(42)\n"
+            "output_df = input_df"
+        )
+        result = func(pl.LazyFrame({"a": [1]}))
+        assert result is not None
+
+    def test_polars_operations_work(self):
+        result = execute_polars_code(
+            self.test_df,
+            code='output_df = input_df.with_columns(pl.lit(1).alias("x"))',
+        )
+        assert "x" in result.columns
+        assert len(result) == 2
+
+    def test_polars_datatypes_work(self):
+        func = self.parser.get_executable(
+            "output_df = input_df.with_columns(pl.lit(1).cast(Float64).alias('f'))"
+        )
+        result = func(pl.LazyFrame({"a": [1]})).collect()
+        assert result["f"].dtype == pl.Float64
+
+    def test_datetime_module_available(self):
+        func = self.parser.get_executable(
+            "d = datetime.date(2024, 1, 1)\n"
+            "output_df = input_df.with_columns(pl.lit(d).alias('dt'))"
+        )
+        result = func(pl.LazyFrame({"a": [1]})).collect()
+        assert result["dt"][0] is not None
+
+    def test_dict_and_list_constructors_work(self):
+        func = self.parser.get_executable(
+            "d = dict(a=1)\n"
+            "items = list(d.keys())\n"
+            "output_df = input_df"
+        )
+        result = func(pl.LazyFrame({"a": [1]}))
+        assert result is not None
 
 
 if __name__ == "__main__":

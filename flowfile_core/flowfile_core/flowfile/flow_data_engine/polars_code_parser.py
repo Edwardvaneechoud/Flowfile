@@ -138,6 +138,7 @@ class PolarsCodeParser:
         import datetime
 
         self.safe_globals = {
+            "__builtins__": {},
             # Polars functionality
             "pl": pl,
             "col": pl.col,
@@ -198,6 +199,28 @@ class PolarsCodeParser:
         """
         Validate code for security concerns before execution.
         """
+        # Blocked function names that can be used to escape the sandbox
+        _blocked_functions = {
+            "exec",
+            "eval",
+            "compile",
+            "__import__",
+            "globals",
+            "locals",
+            "getattr",
+            "setattr",
+            "delattr",
+            "vars",
+            "dir",
+            "open",
+            "breakpoint",
+            "input",
+            "memoryview",
+            "super",
+            "classmethod",
+            "staticmethod",
+            "property",
+        }
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
@@ -205,16 +228,19 @@ class PolarsCodeParser:
                 if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
 
-                # Block exec/eval
+                # Block dangerous function calls
                 if isinstance(node, ast.Call):
                     if isinstance(node.func, ast.Name):
-                        if node.func.id in {"exec", "eval", "compile", "__import__"}:
+                        if node.func.id in _blocked_functions:
                             raise ValueError(f"Function '{node.func.id}' is not allowed")
 
-                # Block access to system attributes
                 if isinstance(node, ast.Attribute):
                     if node.attr.startswith("__"):
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
+
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if "__" in node.value:
+                        raise ValueError("Strings containing dunder patterns are not allowed")
 
         except SyntaxError as e:
             raise ValueError(f"Invalid Python syntax: {str(e)}") from e
