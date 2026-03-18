@@ -45,7 +45,6 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
         source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False,
         has_header=True,
     )
-    breakpoint()
     df.columns = ensure_unique(
         [str(val) for val in next(raw_data_openpyxl(file_path, sheet_name, start_row + 1, end_row))]
     )
