@@ -98,8 +98,7 @@ def test_read_excel_starting_line_10_no_type_interference():
         assert False, "Failed to read excel table"
 
 
-def test_read_excel_file_first_row_date_type():
-    breakpoint()
+def test_read_excel_file_second_row_date_type():
     received_table = ReceivedTable(
         path=str(SUPPORT_FILES / "excel_file_issue_356.xlsx"),
         name="excel_file",
@@ -107,3 +106,18 @@ def test_read_excel_file_first_row_date_type():
         table_settings=InputExcelTable(sheet_name="Sheet1", start_row=1),
     )
     flowfile_table = FlowDataEngine.create_from_path(received_table)
+    assert "2025-06-01 00:00:00" in flowfile_table.columns, f"Expected '2025-06-01 00:00:00' in columns but got {flowfile_table.columns}"
+
+
+def test_read_excel_file_second_row_date_type_no_headers():
+    received_table = ReceivedTable(
+        path=str(SUPPORT_FILES / "excel_file_issue_356.xlsx"),
+        name="excel_file",
+        file_type="excel",
+        table_settings=InputExcelTable(sheet_name="Sheet1", start_row=1, has_headers=False),
+    )
+    flowfile_table = FlowDataEngine.create_from_path(received_table)
+
+    assert all(column_name.startswith("column_") for column_name in flowfile_table.columns)
+
+
