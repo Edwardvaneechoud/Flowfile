@@ -152,7 +152,7 @@ def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.L
 def create_from_path_excel(received_table: input_schema.ReceivedTable):
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")
-
+    breakpoint()
     table_settings: input_schema.InputExcelTable = received_table.table_settings
     if table_settings.type_inference:
         engine = "openpyxl"
