@@ -50,6 +50,7 @@
         :column-defs="columnDefs"
         class="ag-theme-balham"
         :row-data="rowData"
+        :popup-parent="popupParent"
         :style="{ width: '100%', height: gridHeightComputed }"
         :overlay-no-rows-template="overlayNoRowsTemplate"
         @grid-ready="onGridReady"
@@ -231,6 +232,9 @@ const defaultColDef = {
   sortable: true,
   resizable: true,
 };
+
+// Render AG Grid popups on document.body to avoid clipping by overflow:hidden ancestors
+const popupParent = document.body;
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
@@ -628,6 +632,20 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 .ag-theme-balham {
   max-width: 100%;
   position: relative;
+  --ag-background-color: var(--color-background-primary);
+  --ag-odd-row-background-color: var(--color-background-primary);
+  --ag-row-background-color: var(--color-background-primary);
+  --ag-header-background-color: var(--color-background-secondary);
+  --ag-header-foreground-color: var(--color-text-primary);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-border-color: var(--color-border-primary);
+  --ag-secondary-foreground-color: var(--color-text-secondary);
+  --ag-row-hover-color: var(--color-background-hover);
+  --ag-selected-row-background-color: var(--color-background-selected);
+}
+
+/* AG Grid popups rendered on document.body via popupParent need theme variables */
+body > .ag-popup {
   --ag-background-color: var(--color-background-primary);
   --ag-odd-row-background-color: var(--color-background-primary);
   --ag-row-background-color: var(--color-background-primary);
