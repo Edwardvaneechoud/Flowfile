@@ -31,6 +31,7 @@
           :pagination="true"
           :paginationPageSize="100"
           :enableCellTextSelection="true"
+          :headerHeight="36"
           :style="{ width: '100%', height: gridHeight }"
           @grid-ready="onGridReady"
         />
@@ -87,6 +88,7 @@
               :pagination="true"
               :paginationPageSize="100"
               :enableCellTextSelection="true"
+              :headerHeight="36"
               style="width: 100%; height: 100%;"
               @grid-ready="onExpandedGridReady"
             />
@@ -135,8 +137,6 @@ const defaultColDef = {
   filter: true,
   sortable: true,
   resizable: true,
-  minWidth: 100,
-  flex: 1,
 }
 
 // Build schema map for data types

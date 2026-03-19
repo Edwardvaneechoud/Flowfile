@@ -380,7 +380,11 @@ html, body, #app {
   --ag-popup-background-color: var(--color-background-primary);
 }
 
-/* AG Grid header styling */
+/* AG Grid header styling - prevent header from collapsing on sort/click */
+.ag-theme-balham .ag-header {
+  min-height: 36px;
+}
+
 .ag-theme-balham .ag-header-cell {
   font-weight: var(--font-weight-semibold);
 }

@@ -183,9 +183,8 @@
               :pagination="true"
               :paginationPageSize="100"
               :enableCellTextSelection="true"
-              :suppressMenuHide="true"
               :suppressMovableColumns="false"
-              :animateRows="true"
+              :headerHeight="36"
               @grid-ready="onGridReady"
               style="width: 100%; height: 100%;"
             />
@@ -630,8 +629,6 @@ const columnDefs = computed<ColDef[]>(() => {
       sortable: true,
       filter: true,
       resizable: true,
-      minWidth: 80,
-      flex: 1,
       // Format numbers nicely
       valueFormatter: isNumeric ? (params: any) => {
         if (params.value === null || params.value === undefined) return 'null'
@@ -686,8 +683,6 @@ const defaultColDef: ColDef = {
   sortable: true,
   filter: true,
   resizable: true,
-  minWidth: 80,
-  flex: 1,
 }
 
 // AG Grid event handlers
