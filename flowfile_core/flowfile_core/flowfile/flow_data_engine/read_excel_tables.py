@@ -41,9 +41,14 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
         read_options["header_row"] = start_row
     if end_row > 0:
         read_options["n_rows"] = end_row - start_row
-    return pl.read_excel(
-        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
+    df = pl.read_excel(
+        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False,
+        has_header=True,
     )
+    df.columns = ensure_unique(
+        [str(val) for val in next(raw_data_openpyxl(file_path, sheet_name, start_row + 1, end_row))]
+    )
+    return df
 
 
 def df_from_openpyxl(

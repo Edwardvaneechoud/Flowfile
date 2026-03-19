@@ -152,7 +152,6 @@ def create_from_path_parquet(received_table: input_schema.ReceivedTable) -> pl.L
 def create_from_path_excel(received_table: input_schema.ReceivedTable):
     if not isinstance(received_table.table_settings, input_schema.InputExcelTable):
         raise ValueError("Received table settings are not of type InputExcelTable")
-
     table_settings: input_schema.InputExcelTable = received_table.table_settings
     if table_settings.type_inference:
         engine = "openpyxl"
@@ -178,12 +177,13 @@ def create_from_path_excel(received_table: input_schema.ReceivedTable):
             df = df.select(cols_to_select)
 
     elif engine == "xlsx2csv":
-        csv_options = {"has_header": table_settings.has_headers, "skip_rows": table_settings.start_row}
+        csv_options = {"skip_rows": table_settings.start_row}
         df = pl.read_excel(
             source=received_table.abs_file_path,
             read_options=csv_options,
             engine="xlsx2csv",
             sheet_name=table_settings.sheet_name,
+            has_header=table_settings.has_headers,
         )
         end_col_index = table_settings.end_column if table_settings.end_column > 0 else len(df.columns)
         cols_to_select = [df.columns[i] for i in range(table_settings.start_column, end_col_index)]

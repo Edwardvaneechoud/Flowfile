@@ -98,6 +98,20 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
         read_options["header_row"] = start_row
     if end_row > 0:
         read_options["n_rows"] = end_row - start_row
-    return pl.read_excel(
+    df = pl.read_excel(
+        source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
+    )
+    df.columns = ensure_unique(
+        [str(val) for val in next(raw_data_openpyxl(file_path, sheet_name, start_row + 1, end_row))]
+    )
+    return df
+
+
+def test_read_polars():
+    import polars as pl
+    file_path = "/Users/edwardvanechoud/personal_dev/Flowfile/flowfile_core/tests/support_files/data/excel_file_issue_356.xlsx"
+    sheet_name = "Sheet1"
+    read_options = {'header_row': 1}
+    pl.read_excel(
         source=file_path, engine="calamine", sheet_name=sheet_name, read_options=read_options, raise_if_empty=False
     )

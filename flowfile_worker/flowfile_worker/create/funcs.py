@@ -167,12 +167,13 @@ def create_from_path_excel(received_table: ReceivedTable):
             df = df.select(cols_to_select)
 
     elif engine == "xlsx2csv":
-        csv_options = {"has_header": input_table_settings.has_headers, "skip_rows": input_table_settings.start_row}
+        csv_options = {"skip_rows": input_table_settings.start_row}
         df = pl.read_excel(
             source=received_table.abs_file_path,
             read_options=csv_options,
             engine="xlsx2csv",
             sheet_name=input_table_settings.sheet_name,
+            has_header=input_table_settings.has_headers,
         )
         end_col_index = input_table_settings.end_column if input_table_settings.end_column > 0 else len(df.columns)
         cols_to_select = [df.columns[i] for i in range(input_table_settings.start_column, end_col_index)]
