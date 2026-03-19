@@ -100,13 +100,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { BaseNodeSettings, NodeResult, ColumnSchema } from '../../types'
 import { AgGridVue } from "@ag-grid-community/vue3"
 import { GridApi } from "@ag-grid-community/core"
 import { ModuleRegistry } from "@ag-grid-community/core"
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model"
+import '@ag-grid-community/styles/ag-grid.css'
+import '@ag-grid-community/styles/ag-theme-balham.css'
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([ClientSideRowModelModule])
@@ -139,21 +141,23 @@ const defaultColDef = {
   resizable: true,
 }
 
-// Build schema map for data types
-const schemaMap = computed(() => {
-  const map = new Map<string, ColumnSchema>()
-  if (result.value?.schema) {
-    result.value.schema.forEach(col => map.set(col.name, col))
+// AG Grid column definitions - use ref to prevent unnecessary re-renders
+const columnDefs = ref<Array<{ field: string; headerName: string; headerTooltip: string; resizable: boolean }>>([])
+
+// Update column definitions only when the result data changes
+watch(result, (newResult) => {
+  if (!newResult?.data?.columns) {
+    columnDefs.value = []
+    return
   }
-  return map
-})
 
-// Convert data to AG Grid format with data type tooltips
-const columnDefs = computed(() => {
-  if (!result.value?.data?.columns) return []
+  const schemaMap = new Map<string, ColumnSchema>()
+  if (newResult.schema) {
+    newResult.schema.forEach(col => schemaMap.set(col.name, col))
+  }
 
-  return result.value.data.columns.map((colName: string) => {
-    const schema = schemaMap.value.get(colName)
+  columnDefs.value = newResult.data.columns.map((colName: string) => {
+    const schema = schemaMap.get(colName)
     const dataType = schema?.data_type || 'Unknown'
 
     return {
@@ -163,7 +167,7 @@ const columnDefs = computed(() => {
       resizable: true,
     }
   })
-})
+}, { immediate: true })
 
 // Convert row data to AG Grid format (array of objects)
 const rowData = computed(() => {
@@ -181,10 +185,12 @@ const rowData = computed(() => {
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api
+  params.api.sizeColumnsToFit()
 }
 
 const onExpandedGridReady = (params: { api: GridApi }) => {
   expandedGridApi.value = params.api
+  params.api.sizeColumnsToFit()
 }
 
 // Toggle expanded view
@@ -336,6 +342,15 @@ onUnmounted(() => {
   border-radius: var(--border-radius-md);
   overflow: hidden;
   border: 1px solid var(--color-border-primary);
+}
+
+/* Ensure AG Grid header never collapses */
+.table-container :deep(.ag-header) {
+  min-height: 36px;
+}
+
+.table-container :deep(.ag-header-row) {
+  min-height: 36px;
 }
 
 .schema-preview label {

@@ -226,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, markRaw, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -242,6 +242,8 @@ import { AgGridVue } from '@ag-grid-community/vue3'
 import { ClientSideRowModelModule } from '@ag-grid-community/client-side-row-model'
 import { ModuleRegistry } from '@ag-grid-community/core'
 import type { ColDef, GridReadyEvent, GridApi } from '@ag-grid-community/core'
+import '@ag-grid-community/styles/ag-grid.css'
+import '@ag-grid-community/styles/ag-theme-balham.css'
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([ClientSideRowModelModule])
@@ -604,18 +606,38 @@ const isPreviewLoading = computed(() => {
   return flowStore.isPreviewLoading(selectedNodeId.value)
 })
 
-// AG Grid column definitions generated from schema
-const columnDefs = computed<ColDef[]>(() => {
-  const result = selectedNodeResult.value
-  if (!result?.data?.columns) return []
+// AG Grid column definitions - use ref (not computed) to prevent unnecessary re-renders
+// that cause AG Grid to destroy and recreate columns on every reactivity cycle
+const columnDefs = ref<ColDef[]>([])
 
-  // Use schema for data types if available, otherwise use columns array
+// Value formatter functions (stable references to avoid column recreation)
+function numericFormatter(params: any) {
+  if (params.value === null || params.value === undefined) return 'null'
+  if (typeof params.value === 'number' && !Number.isInteger(params.value)) {
+    return params.value.toFixed(2)
+  }
+  return String(params.value)
+}
+
+function defaultFormatter(params: any) {
+  if (params.value === null || params.value === undefined) return 'null'
+  if (typeof params.value === 'object') return JSON.stringify(params.value)
+  return String(params.value)
+}
+
+// Update column definitions only when the result data actually changes
+watch(() => selectedNodeResult.value, (result) => {
+  if (!result?.data?.columns) {
+    columnDefs.value = []
+    return
+  }
+
   const schemaMap = new Map<string, ColumnSchema>()
   if (result.schema) {
     result.schema.forEach(col => schemaMap.set(col.name, col))
   }
 
-  return result.data.columns.map((colName: string) => {
+  columnDefs.value = result.data.columns.map((colName: string) => {
     const schema = schemaMap.get(colName)
     const dataType = schema?.data_type || 'Unknown'
     const isNumeric = dataType.toLowerCase().includes('float') ||
@@ -626,27 +648,11 @@ const columnDefs = computed<ColDef[]>(() => {
       field: colName,
       headerName: colName,
       headerTooltip: `Type: ${dataType}`,
-      sortable: true,
-      filter: true,
       resizable: true,
-      // Format numbers nicely
-      valueFormatter: isNumeric ? (params: any) => {
-        if (params.value === null || params.value === undefined) return 'null'
-        if (typeof params.value === 'number') {
-          // Check if it's a float with decimals
-          if (!Number.isInteger(params.value)) {
-            return params.value.toFixed(2)
-          }
-        }
-        return String(params.value)
-      } : (params: any) => {
-        if (params.value === null || params.value === undefined) return 'null'
-        if (typeof params.value === 'object') return JSON.stringify(params.value)
-        return String(params.value)
-      }
+      valueFormatter: isNumeric ? numericFormatter : defaultFormatter
     }
   })
-})
+}, { immediate: true })
 
 // AG Grid row data - convert from array of arrays to array of objects
 // Use caching to prevent unnecessary re-renders that reset scroll position
@@ -688,6 +694,7 @@ const defaultColDef: ColDef = {
 // AG Grid event handlers
 function onGridReady(params: GridReadyEvent) {
   gridApi.value = params.api
+  params.api.sizeColumnsToFit()
 }
 
 // Auto-size columns to fit content
@@ -923,6 +930,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
   position: relative;
 }
 
@@ -958,7 +966,16 @@ onUnmounted(() => {
 .preview-grid-container {
   flex: 1;
   overflow: hidden;
-  min-height: 0;
+  min-height: 150px;
+}
+
+/* Use :deep() to reach AG Grid internal elements through scoped CSS */
+.preview-grid-container :deep(.ag-header) {
+  min-height: 36px;
+}
+
+.preview-grid-container :deep(.ag-header-row) {
+  min-height: 36px;
 }
 
 .preview-loading {
