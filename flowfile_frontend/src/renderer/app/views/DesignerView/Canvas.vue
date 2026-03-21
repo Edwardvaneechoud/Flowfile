@@ -36,6 +36,7 @@ import {
 } from "./backendInterface";
 import { FlowApi } from "../../api";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
+import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import DataPreview from "../../features/designer/dataPreview.vue";

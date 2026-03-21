@@ -119,7 +119,7 @@
   <el-dialog
     v-model="modalVisibleForSettings"
     title="Flow Settings"
-    width="30%"
+    width="40%"
     custom-class="high-z-index-dialog"
   >
     <div v-if="flowSettings">
@@ -193,6 +193,53 @@
             </span>
           </div>
         </div>
+        <div class="settings-section">
+          <h4 class="settings-section-title">Parameters</h4>
+          <span class="form-hint" style="display: block; margin-bottom: var(--spacing-3)">
+            Define flow-level parameters and reference them in node settings using
+            <code>${param_name}</code> syntax.
+          </span>
+          <div v-if="flowSettings.parameters && flowSettings.parameters.length > 0">
+            <div
+              v-for="(param, index) in flowSettings.parameters"
+              :key="index"
+              class="param-row"
+            >
+              <el-input
+                v-model="param.name"
+                placeholder="Name"
+                size="small"
+                class="param-name-input"
+                @change="pushFlowSettings"
+              />
+              <el-input
+                v-model="param.default_value"
+                placeholder="Default value"
+                size="small"
+                class="param-value-input"
+                @change="pushFlowSettings"
+              />
+              <el-input
+                v-model="param.description"
+                placeholder="Description (optional)"
+                size="small"
+                class="param-desc-input"
+                @change="pushFlowSettings"
+              />
+              <el-button
+                type="danger"
+                size="small"
+                :icon="'Delete'"
+                circle
+                @click="removeParameter(index)"
+              />
+            </div>
+          </div>
+          <div v-else class="param-empty">No parameters defined.</div>
+          <el-button size="small" style="margin-top: var(--spacing-3)" @click="addParameter">
+            + Add Parameter
+          </el-button>
+        </div>
       </div>
     </div>
   </el-dialog>
@@ -219,6 +266,7 @@ import {
   ExecutionLocation,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
+import type { FlowParameter } from "../../../types/flow.types";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
@@ -294,6 +342,7 @@ const loadFlowSettings = async () => {
 
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
   flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
+  flowSettings.value.parameters = flowSettings.value.parameters ?? [];
   editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
   editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
 
@@ -430,6 +479,21 @@ const handleQuickCreateAction = async () => {
     console.error("Failed to create quick flow:", error);
     // You might want to show an error message to the user here
   }
+};
+
+const addParameter = () => {
+  if (!flowSettings.value) return;
+  if (!flowSettings.value.parameters) {
+    flowSettings.value.parameters = [];
+  }
+  flowSettings.value.parameters.push({ name: "", default_value: "", description: "" } as FlowParameter);
+  pushFlowSettings();
+};
+
+const removeParameter = (index: number) => {
+  if (!flowSettings.value?.parameters) return;
+  flowSettings.value.parameters.splice(index, 1);
+  pushFlowSettings();
 };
 
 const openSettingsModal = () => {
@@ -608,5 +672,33 @@ onMounted(async () => {
 .dialog-footer {
   display: flex;
   gap: var(--spacing-2);
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
+}
+
+.param-name-input {
+  flex: 1;
+  min-width: 80px;
+}
+
+.param-value-input {
+  flex: 2;
+  min-width: 100px;
+}
+
+.param-desc-input {
+  flex: 3;
+  min-width: 120px;
+}
+
+.param-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted, #999);
+  font-style: italic;
 }
 </style>

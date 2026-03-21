@@ -33,6 +33,9 @@ export const useEditorStore = defineStore("editor", {
     isRunning: false,
     showFlowResult: false,
     tableVisible: false,
+
+    // Parameters panel state
+    showParametersPanel: false,
   }),
 
   getters: {
@@ -159,6 +162,15 @@ export const useEditorStore = defineStore("editor", {
 
     setIsRunning(running: boolean) {
       this.isRunning = running;
+    },
+
+    // ========== Parameters Panel ==========
+    toggleParametersPanel() {
+      this.showParametersPanel = !this.showParametersPanel;
+    },
+
+    setParametersPanelVisibility(visible: boolean) {
+      this.showParametersPanel = visible;
     },
   },
 });

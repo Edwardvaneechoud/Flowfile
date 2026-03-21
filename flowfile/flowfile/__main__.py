@@ -4,12 +4,13 @@ import sys
 from pathlib import Path
 
 
-def run_flow(flow_path: str) -> int:
+def run_flow(flow_path: str, param_overrides: list[str] | None = None) -> int:
     """
     Load and execute a flow from a YAML/JSON file.
 
     Args:
         flow_path: Path to the flow file (.yaml, .yml, or .json)
+        param_overrides: List of "key=value" strings overriding flow parameters.
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -38,6 +39,27 @@ def run_flow(flow_path: str) -> int:
     except Exception as e:
         print(f"Error loading flow: {e}", file=sys.stderr)
         return 1
+
+    # Apply --param overrides
+    if param_overrides:
+        override_dict: dict[str, str] = {}
+        for raw in param_overrides:
+            if "=" not in raw:
+                print(f"Error: Invalid --param format '{raw}'. Expected key=value", file=sys.stderr)
+                return 1
+            key, _, value = raw.partition("=")
+            override_dict[key.strip()] = value
+        # Update matching parameters; add new ones if they don't exist yet
+        existing = {p.name: p for p in flow.flow_settings.parameters}
+        from flowfile_core.schemas.schemas import FlowParameter
+
+        for key, value in override_dict.items():
+            if key in existing:
+                existing[key].default_value = value
+            else:
+                flow.flow_settings.parameters.append(FlowParameter(name=key, default_value=value))
+        if override_dict:
+            print(f"Parameter overrides: {override_dict}")
 
     # Force local execution for CLI - no worker service needed
     flow.execution_location = "local"
@@ -99,6 +121,13 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
+    parser.add_argument(
+        "--param",
+        action="append",
+        metavar="KEY=VALUE",
+        dest="params",
+        help="Override a flow parameter (can be used multiple times): --param input_dir=/data --param threshold=100",
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -124,7 +153,7 @@ def main():
                 print("Error: 'flow' component requires a file path", file=sys.stderr)
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
-            sys.exit(run_flow(args.file_path))
+            sys.exit(run_flow(args.file_path, param_overrides=args.params))
     else:
         # Default action - show info
         print(f"FlowFile v{flowfile.__version__}")
