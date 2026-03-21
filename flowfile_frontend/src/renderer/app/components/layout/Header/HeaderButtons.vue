@@ -22,14 +22,21 @@
     </button>
     <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
     <button
-      class="action-btn"
+      class="action-btn action-btn--icon-only"
       :class="{ active: nodeStore.showCodeGenerator }"
       data-tutorial="generate-code-btn"
-      title="Generate Python Code (Ctrl+G)"
+      data-tooltip="Generate code (Ctrl+G)"
       @click="toggleCodeGenerator"
     >
       <span class="material-icons btn-icon">code</span>
-      <span class="btn-text">Generate code</span>
+    </button>
+    <button
+      class="action-btn action-btn--icon-only"
+      :class="{ active: editorStore.showParametersPanel }"
+      data-tooltip="Flow Parameters"
+      @click="editorStore.toggleParametersPanel()"
+    >
+      <span class="material-icons btn-icon">tune</span>
     </button>
   </div>
 
@@ -188,9 +195,7 @@
               size="small"
               @change="pushFlowSettings"
             />
-            <span class="form-hint">
-              Display input names on connections between nodes.
-            </span>
+            <span class="form-hint"> Display input names on connections between nodes. </span>
           </div>
         </div>
         <div class="settings-section">
@@ -200,11 +205,7 @@
             <code>${param_name}</code> syntax.
           </span>
           <div v-if="flowSettings.parameters && flowSettings.parameters.length > 0">
-            <div
-              v-for="(param, index) in flowSettings.parameters"
-              :key="index"
-              class="param-row"
-            >
+            <div v-for="(param, index) in flowSettings.parameters" :key="index" class="param-row">
               <el-input
                 v-model="param.name"
                 placeholder="Name"
@@ -486,7 +487,11 @@ const addParameter = () => {
   if (!flowSettings.value.parameters) {
     flowSettings.value.parameters = [];
   }
-  flowSettings.value.parameters.push({ name: "", default_value: "", description: "" } as FlowParameter);
+  flowSettings.value.parameters.push({
+    name: "",
+    default_value: "",
+    description: "",
+  } as FlowParameter);
   pushFlowSettings();
 };
 
@@ -586,6 +591,34 @@ onMounted(async () => {
 
 .btn-text {
   white-space: nowrap;
+}
+
+.action-btn--icon-only {
+  padding: var(--spacing-2);
+  position: relative;
+}
+
+.action-btn--icon-only::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-background-inverse, #1a1a1a);
+  color: var(--color-text-inverse, #fff);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: var(--border-radius-md);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  z-index: 100;
+}
+
+.action-btn--icon-only:hover::after {
+  opacity: 1;
 }
 
 .settings-modal-content {

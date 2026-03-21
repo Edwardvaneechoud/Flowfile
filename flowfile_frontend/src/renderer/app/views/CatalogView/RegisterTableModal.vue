@@ -59,7 +59,11 @@
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" @click="$emit('close')">Cancel</button>
-        <button class="btn-primary" :disabled="!name.trim() || !path.trim() || submitting" @click="submit">
+        <button
+          class="btn-primary"
+          :disabled="!name.trim() || !path.trim() || submitting"
+          @click="submit"
+        >
           {{ submitting ? "Registering..." : "Register" }}
         </button>
       </div>

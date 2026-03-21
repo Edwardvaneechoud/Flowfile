@@ -66,7 +66,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import models as
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.parameter_resolver import resolve_node_settings
+from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place, restore_parameters
 from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.kernel import get_kernel_manager
@@ -2825,11 +2825,11 @@ class FlowGraph:
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
 
-        # Temporarily substitute parameters into node settings
-        original_setting_input = node.setting_input
+        # Temporarily substitute parameters into node settings (in-place so closures see the values)
+        restorations = []
         if params:
             try:
-                node.setting_input = resolve_node_settings(node.setting_input, params)
+                restorations = apply_parameters_in_place(node.setting_input, params)
             except ValueError as e:
                 node_result.error = str(e)
                 node_result.success = False
@@ -2847,9 +2847,9 @@ class FlowGraph:
                 node_logger=node_logger,
             )
         finally:
-            # Always restore original settings so ${...} refs are preserved in the saved flow
-            if params:
-                node.setting_input = original_setting_input
+            # Restore original ${...} refs so the saved flow is unchanged
+            if restorations:
+                restore_parameters(restorations)
         try:
             node_result.error = str(node.results.errors)
             if self.flow_settings.is_canceled:

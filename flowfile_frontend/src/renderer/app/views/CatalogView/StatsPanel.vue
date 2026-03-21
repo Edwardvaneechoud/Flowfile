@@ -82,7 +82,10 @@
       </div>
     </div>
 
-    <div v-if="activeSection === 'favorites' && (favorites.length > 0 || favoriteTables.length > 0)" class="section">
+    <div
+      v-if="activeSection === 'favorites' && (favorites.length > 0 || favoriteTables.length > 0)"
+      class="section"
+    >
       <h3>Favorites</h3>
       <div class="item-list">
         <div

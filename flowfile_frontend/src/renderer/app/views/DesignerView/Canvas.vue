@@ -239,11 +239,13 @@ async function onConnect(params: Connection & { label?: string }) {
     const nodeConnection: NodeConnection = {
       input_connection: {
         node_id: parseInt(params.target, 10),
-        connection_class: params.targetHandle as NodeConnection["input_connection"]["connection_class"],
+        connection_class:
+          params.targetHandle as NodeConnection["input_connection"]["connection_class"],
       },
       output_connection: {
         node_id: parseInt(params.source, 10),
-        connection_class: params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
+        connection_class:
+          params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
       },
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);
@@ -761,6 +763,20 @@ defineExpose({
       :prevent-overlap="false"
     >
       <CodeGenerator />
+    </draggable-item>
+    <draggable-item
+      v-if="editorStore.showParametersPanel"
+      id="flowParameters"
+      :show-right="true"
+      initial-position="right"
+      :initial-width="520"
+      title="Flow Parameters"
+      :on-minize="() => editorStore.setParametersPanelVisibility(false)"
+      :allow-full-screen="true"
+      :prevent-overlap="false"
+      group="rightPanels"
+    >
+      <FlowParametersPanel />
     </draggable-item>
     <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>
