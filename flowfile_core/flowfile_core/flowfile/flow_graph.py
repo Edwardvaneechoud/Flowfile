@@ -1934,6 +1934,17 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        # Give the node a callable that returns the current flow parameters so
+        # that lazy schema prediction (_predicted_data_getter) can substitute
+        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # the node always reads the LATEST parameters, whether they were set via
+        # the flow_settings.setter or mutated directly on flow_settings.parameters.
+        _graph = self
+
+        def _get_params() -> dict[str, str]:
+            return {p.name: p.default_value for p in (_graph.flow_settings.parameters or [])}
+
+        node._params_getter = _get_params
         return node
 
     def add_include_cols(self, include_columns: list[str]):
@@ -2827,6 +2838,14 @@ class FlowGraph:
 
         # Temporarily substitute parameters into node settings (in-place so closures see the values)
         restorations = []
+        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # while setting_input is mutated, which recomputes _hash from the resolved path.
+        # After restore_parameters the path returns to the original ${...} form but _hash
+        # still holds the resolved-path hash → needs_reset() returns True on the next
+        # setting_input write → clears example_data_generator / has_completed_last_run.
+        # Restoring _hash after restore_parameters keeps the hash consistent with the
+        # restored setting_input and prevents that spurious reset.
+        saved_hash = node._hash
         if params:
             try:
                 restorations = apply_parameters_in_place(node.setting_input, params)
@@ -2850,6 +2869,10 @@ class FlowGraph:
             # Restore original ${...} refs so the saved flow is unchanged
             if restorations:
                 restore_parameters(restorations)
+            # Restore the hash to match the restored setting_input so that
+            # subsequent get_node_data / setting_input writes don't trigger
+            # a spurious reset (and lose example_data_generator / has_completed_last_run).
+            node._hash = saved_hash
         try:
             node_result.error = str(node.results.errors)
             if self.flow_settings.is_canceled:
