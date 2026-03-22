@@ -21,23 +21,25 @@
       <span class="btn-text">Settings</span>
     </button>
     <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
-    <button
-      class="action-btn action-btn--icon-only"
-      :class="{ active: nodeStore.showCodeGenerator }"
-      data-tutorial="generate-code-btn"
-      data-tooltip="Generate code (Ctrl+G)"
-      @click="toggleCodeGenerator"
-    >
-      <span class="material-icons btn-icon">code</span>
-    </button>
-    <button
-      class="action-btn action-btn--icon-only"
-      :class="{ active: editorStore.showParametersPanel }"
-      data-tooltip="Flow Parameters"
-      @click="editorStore.toggleParametersPanel()"
-    >
-      <span class="material-icons btn-icon">tune</span>
-    </button>
+    <el-tooltip content="Generate code (Ctrl+G)" placement="bottom" :show-after="400">
+      <button
+        class="action-btn action-btn--icon-only"
+        :class="{ active: nodeStore.showCodeGenerator }"
+        data-tutorial="generate-code-btn"
+        @click="toggleCodeGenerator"
+      >
+        <span class="material-icons btn-icon">code</span>
+      </button>
+    </el-tooltip>
+    <el-tooltip content="Flow Parameters" placement="bottom" :show-after="400">
+      <button
+        class="action-btn action-btn--icon-only"
+        :class="{ active: editorStore.showParametersPanel }"
+        @click="editorStore.toggleParametersPanel()"
+      >
+        <span class="material-icons btn-icon">tune</span>
+      </button>
+    </el-tooltip>
   </div>
 
   <el-dialog
@@ -595,30 +597,6 @@ onMounted(async () => {
 
 .action-btn--icon-only {
   padding: var(--spacing-2);
-  position: relative;
-}
-
-.action-btn--icon-only::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--color-background-inverse, #1a1a1a);
-  color: var(--color-text-inverse, #fff);
-  font-size: var(--font-size-xs, 11px);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  padding: 4px 8px;
-  border-radius: var(--border-radius-md);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  z-index: 100;
-}
-
-.action-btn--icon-only:hover::after {
-  opacity: 1;
 }
 
 .settings-modal-content {
