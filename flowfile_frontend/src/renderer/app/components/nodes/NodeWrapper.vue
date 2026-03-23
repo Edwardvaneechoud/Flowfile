@@ -79,7 +79,10 @@
         :style="getHandleStyle(index, data.outputs.length)"
       >
         <Handle :id="output.id" type="source" :position="output.position" />
-        <span v-if="output.label && data.outputs.length > 1" class="handle-label handle-label--output">
+        <span
+          v-if="output.label && data.outputs.length > 1"
+          class="handle-label handle-label--output"
+        >
           {{ output.label }}
         </span>
       </div>
@@ -203,7 +206,7 @@ const CHAR_LIMIT = 100;
 interface NodeData {
   id: number;
   label: string;
-  component?: ReturnType<typeof import("vue")["defineComponent"]>;
+  component?: ReturnType<(typeof import("vue"))["defineComponent"]>;
   nodeReference?: string;
   inputs: NodeHandle[];
   outputs: NodeHandle[];

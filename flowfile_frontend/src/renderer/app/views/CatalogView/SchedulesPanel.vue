@@ -13,18 +13,12 @@
     </div>
 
     <div v-else class="schedule-list">
-      <div
-        v-for="schedule in schedules"
-        :key="schedule.id"
-        class="schedule-item"
-      >
+      <div v-for="schedule in schedules" :key="schedule.id" class="schedule-item">
         <div class="schedule-info">
           <div class="schedule-type">
             <i
               :class="
-                schedule.schedule_type === 'interval'
-                  ? 'fa-solid fa-clock'
-                  : 'fa-solid fa-table'
+                schedule.schedule_type === 'interval' ? 'fa-solid fa-clock' : 'fa-solid fa-table'
               "
             />
             <span>{{ formatScheduleType(schedule) }}</span>
@@ -35,9 +29,7 @@
             </span>
             <span v-else class="last-triggered">Never triggered</span>
           </div>
-          <div class="schedule-flow">
-            Flow #{{ schedule.registration_id }}
-          </div>
+          <div class="schedule-flow">Flow #{{ schedule.registration_id }}</div>
         </div>
         <div class="schedule-actions">
           <el-switch
@@ -45,12 +37,7 @@
             size="small"
             @change="(val: boolean) => $emit('toggleSchedule', schedule.id, val)"
           />
-          <el-button
-            size="small"
-            type="danger"
-            text
-            @click="$emit('deleteSchedule', schedule.id)"
-          >
+          <el-button size="small" type="danger" text @click="$emit('deleteSchedule', schedule.id)">
             <i class="fa-solid fa-trash" />
           </el-button>
         </div>

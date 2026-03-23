@@ -223,7 +223,17 @@
 
     <!-- Schedules Section -->
     <div class="section">
-      <h3><i class="fa-solid fa-calendar-days section-icon"></i> Schedules</h3>
+      <div class="section-header">
+        <h3><i class="fa-solid fa-calendar-days section-icon"></i> Schedules</h3>
+        <el-button
+          v-if="flow.file_exists"
+          size="small"
+          type="primary"
+          @click="$emit('addSchedule', flow.id)"
+        >
+          <i class="fa-solid fa-plus" /> Add
+        </el-button>
+      </div>
       <div v-if="catalogStore.flowSchedules.length === 0" class="empty-state">
         <i class="fa-solid fa-calendar-xmark empty-state-icon"></i>
         <span>No schedules configured</span>
@@ -238,9 +248,7 @@
             <div class="schedule-card-type">
               <i
                 :class="
-                  schedule.schedule_type === 'interval'
-                    ? 'fa-solid fa-clock'
-                    : 'fa-solid fa-table'
+                  schedule.schedule_type === 'interval' ? 'fa-solid fa-clock' : 'fa-solid fa-table'
                 "
               />
               {{
@@ -263,12 +271,7 @@
               size="small"
               @change="(val: boolean) => handleToggleSchedule(schedule.id, val)"
             />
-            <el-button
-              size="small"
-              type="danger"
-              text
-              @click="handleDeleteSchedule(schedule.id)"
-            >
+            <el-button size="small" type="danger" text @click="handleDeleteSchedule(schedule.id)">
               <i class="fa-solid fa-trash" />
             </el-button>
           </div>
@@ -300,6 +303,7 @@ const emit = defineEmits<{
   selectTable: [tableId: number];
   deleteFlow: [flowId: number];
   renameFlow: [flowId: number, newName: string];
+  addSchedule: [flowId: number];
 }>();
 
 const isEditing = ref(false);
@@ -878,6 +882,17 @@ async function handleDeleteSchedule(id: number) {
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
   border-radius: var(--border-radius-sm);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-2);
+}
+
+.section-header h3 {
+  margin: 0;
 }
 
 /* ========== Schedule Cards ========== */

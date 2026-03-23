@@ -343,9 +343,7 @@ class CatalogService:
             namespace_artifact_map[cat.id] = [
                 self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
             ]
-            namespace_table_map[cat.id] = self._bulk_enrich_tables(
-                self.repo.list_tables_for_namespace(cat.id), user_id
-            )
+            namespace_table_map[cat.id] = self._bulk_enrich_tables(self.repo.list_tables_for_namespace(cat.id), user_id)
 
             for schema in self.repo.list_child_namespaces(cat.id):
                 schema_flows = self.repo.list_flows(namespace_id=schema.id)
@@ -1219,6 +1217,10 @@ class CatalogService:
             table = self.repo.get_table(trigger_table_id)
             if table is None:
                 raise TableNotFoundError(table_id=trigger_table_id)
+            read_tables = self.repo.list_read_tables_for_flow(registration_id)
+            read_table_ids = {t.id for t in read_tables}
+            if trigger_table_id not in read_table_ids:
+                raise ValueError("Trigger table must be a table that the flow reads from")
 
         schedule = FlowSchedule(
             registration_id=registration_id,

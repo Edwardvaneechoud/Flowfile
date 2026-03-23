@@ -188,9 +188,7 @@
               size="small"
               @change="pushFlowSettings"
             />
-            <span class="form-hint">
-              Display input names on connections between nodes.
-            </span>
+            <span class="form-hint"> Display input names on connections between nodes. </span>
           </div>
         </div>
       </div>

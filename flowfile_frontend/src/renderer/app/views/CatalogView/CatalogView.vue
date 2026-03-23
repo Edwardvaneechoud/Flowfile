@@ -129,10 +129,7 @@
       <!-- Detail Panel -->
       <div class="catalog-detail">
         <!-- Active Runs Banner -->
-        <ActiveRunsBanner
-          :active-runs="catalogStore.activeRuns"
-          @cancel="handleCancelRun"
-        />
+        <ActiveRunsBanner :active-runs="catalogStore.activeRuns" @cancel="handleCancelRun" />
 
         <!-- Run detail view -->
         <RunDetailPanel
@@ -178,6 +175,7 @@
           @select-table="selectTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
+          @add-schedule="handleAddFlowSchedule"
         />
         <!-- Stats overview -->
         <StatsPanel
@@ -221,8 +219,11 @@
     <CreateScheduleModal
       :visible="showCreateSchedule"
       :flows="catalogStore.allFlows"
-      :tables="catalogStore.allTables"
-      @close="showCreateSchedule = false"
+      :preselected-flow-id="preselectedFlowId"
+      @close="
+        showCreateSchedule = false;
+        preselectedFlowId = null;
+      "
       @create="handleCreateSchedule"
     />
 
@@ -353,6 +354,7 @@ const registerFlowNamespaceId = ref<number | null>(null);
 const showRegisterTable = ref(false);
 const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
+const preselectedFlowId = ref<number | null>(null);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
@@ -511,11 +513,21 @@ function navigateToFlow(registrationId: number) {
   catalogStore.setActiveTab("catalog");
 }
 
+function handleAddFlowSchedule(flowId: number) {
+  preselectedFlowId.value = flowId;
+  showCreateSchedule.value = true;
+}
+
 async function handleCreateSchedule(body: FlowScheduleCreate) {
   try {
     await CatalogApi.createSchedule(body);
     showCreateSchedule.value = false;
-    await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
+    preselectedFlowId.value = null;
+    const loads: Promise<void>[] = [catalogStore.loadSchedules(), catalogStore.loadStats()];
+    if (catalogStore.selectedFlowId) {
+      loads.push(catalogStore.loadFlowSchedules(catalogStore.selectedFlowId));
+    }
+    await Promise.all(loads);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to create schedule");
   }

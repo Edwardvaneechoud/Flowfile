@@ -334,3 +334,20 @@ class CatalogTableReadLink(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)
+
+
+class SchedulerLock(Base):
+    """Advisory lock row to ensure only one scheduler instance is active.
+
+    The table always contains at most one row (id=1). The active scheduler
+    updates ``heartbeat_at`` every poll cycle. A new scheduler can only
+    acquire the lock if no heartbeat has been seen for ``STALE_THRESHOLD``
+    seconds, or if the row doesn't exist yet.
+    """
+
+    __tablename__ = "scheduler_lock"
+
+    id = Column(Integer, primary_key=True, default=1)
+    holder_id = Column(String, nullable=False)
+    started_at = Column(DateTime, default=func.now(), nullable=False)
+    heartbeat_at = Column(DateTime, default=func.now(), nullable=False)

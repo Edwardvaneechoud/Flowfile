@@ -1,10 +1,10 @@
 """Flow scheduling engine.
 
-Provides ``FlowScheduler`` which runs as an asyncio background task
-inside the core application's lifespan, polling for due interval and
-table-trigger schedules.
+The embedded scheduler re-exports ``FlowScheduler`` from the lightweight
+``flowfile_scheduler`` package so both embedded and standalone modes use
+the same engine code.
 """
 
-from .engine import FlowScheduler
+from flowfile_scheduler.flowfile_scheduler.engine import FlowScheduler
 
 __all__ = ["FlowScheduler"]

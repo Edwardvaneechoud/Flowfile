@@ -660,3 +660,24 @@ def cancel_run(
         service.cancel_run(run_id)
     except RunNotFoundError:
         raise HTTPException(404, "Run not found") from None
+
+
+# ---------------------------------------------------------------------------
+# Scheduler management
+# ---------------------------------------------------------------------------
+
+
+@router.get("/scheduler/status")
+def scheduler_status(db=Depends(get_db)):
+    """Return the current scheduler lock status."""
+    from flowfile_core.database.models import SchedulerLock
+
+    lock = db.get(SchedulerLock, 1)
+    if lock is None:
+        return {"active": False}
+    return {
+        "active": True,
+        "holder_id": lock.holder_id,
+        "started_at": lock.started_at,
+        "heartbeat_at": lock.heartbeat_at,
+    }
