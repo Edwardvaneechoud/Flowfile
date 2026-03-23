@@ -114,10 +114,26 @@
             <p class="muted">Run a flow to see its history here.</p>
           </div>
         </div>
+
+        <!-- Schedules List -->
+        <div v-else-if="catalogStore.activeTab === 'schedules'" class="list-container">
+          <SchedulesPanel
+            :schedules="catalogStore.schedules"
+            @create-schedule="showCreateSchedule = true"
+            @toggle-schedule="handleToggleSchedule"
+            @delete-schedule="handleDeleteSchedule"
+          />
+        </div>
       </div>
 
       <!-- Detail Panel -->
       <div class="catalog-detail">
+        <!-- Active Runs Banner -->
+        <ActiveRunsBanner
+          :active-runs="catalogStore.activeRuns"
+          @cancel="handleCancelRun"
+        />
+
         <!-- Run detail view -->
         <RunDetailPanel
           v-if="catalogStore.selectedRunDetail"
@@ -202,6 +218,14 @@
       @close="showRegisterTable = false"
     />
 
+    <CreateScheduleModal
+      :visible="showCreateSchedule"
+      :flows="catalogStore.allFlows"
+      :tables="catalogStore.allTables"
+      @close="showCreateSchedule = false"
+      @create="handleCreateSchedule"
+    />
+
     <!-- Info Modal -->
     <el-dialog
       v-model="showInfoModal"
@@ -247,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -264,7 +288,10 @@ import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
 import RegisterFlowModal from "./RegisterFlowModal.vue";
 import RegisterTableModal from "./RegisterTableModal.vue";
-import type { CatalogTab, GlobalArtifact, NamespaceTree } from "../../types";
+import SchedulesPanel from "./SchedulesPanel.vue";
+import CreateScheduleModal from "./CreateScheduleModal.vue";
+import ActiveRunsBanner from "./ActiveRunsBanner.vue";
+import type { CatalogTab, FlowScheduleCreate, GlobalArtifact, NamespaceTree } from "../../types";
 
 const router = useRouter();
 
@@ -290,6 +317,12 @@ const tabs = computed(() => [
     icon: "fa-solid fa-clock-rotate-left",
     badge: null,
   },
+  {
+    key: "schedules" as CatalogTab,
+    label: "Schedules",
+    icon: "fa-solid fa-calendar-days",
+    badge: catalogStore.stats?.total_schedules ?? null,
+  },
 ]);
 
 const sidebarTitle = computed(() => {
@@ -300,6 +333,8 @@ const sidebarTitle = computed(() => {
       return "Favorites";
     case "runs":
       return "Run History";
+    case "schedules":
+      return "Schedules";
     default:
       return "";
   }
@@ -317,6 +352,7 @@ const showRegisterFlow = ref(false);
 const registerFlowNamespaceId = ref<number | null>(null);
 const showRegisterTable = ref(false);
 const registerTableNamespaceId = ref<number | null>(null);
+const showCreateSchedule = ref(false);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
@@ -475,12 +511,60 @@ function navigateToFlow(registrationId: number) {
   catalogStore.setActiveTab("catalog");
 }
 
+async function handleCreateSchedule(body: FlowScheduleCreate) {
+  try {
+    await CatalogApi.createSchedule(body);
+    showCreateSchedule.value = false;
+    await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to create schedule");
+  }
+}
+
+async function handleToggleSchedule(id: number, enabled: boolean) {
+  try {
+    await CatalogApi.updateSchedule(id, { enabled });
+    await catalogStore.loadSchedules();
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to update schedule");
+  }
+}
+
+async function handleDeleteSchedule(id: number) {
+  if (!confirm("Are you sure you want to delete this schedule?")) return;
+  try {
+    await CatalogApi.deleteSchedule(id);
+    await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to delete schedule");
+  }
+}
+
+async function handleCancelRun(runId: number) {
+  if (!confirm("Are you sure you want to cancel this run?")) return;
+  await catalogStore.cancelRun(runId);
+}
+
+let activeRunsTimer: ReturnType<typeof setInterval> | null = null;
+
 onMounted(async () => {
   await catalogStore.initialize();
   try {
     defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
   } catch {
     // Not critical — leave null
+  }
+
+  // Auto-refresh active runs every 10s
+  activeRunsTimer = setInterval(() => {
+    catalogStore.loadActiveRuns();
+  }, 10_000);
+});
+
+onUnmounted(() => {
+  if (activeRunsTimer !== null) {
+    clearInterval(activeRunsTimer);
+    activeRunsTimer = null;
   }
 });
 </script>

@@ -4,12 +4,13 @@ import sys
 from pathlib import Path
 
 
-def run_flow(flow_path: str) -> int:
+def run_flow(flow_path: str, run_id: int | None = None) -> int:
     """
     Load and execute a flow from a YAML/JSON file.
 
     Args:
         flow_path: Path to the flow file (.yaml, .yml, or .json)
+        run_id: Optional pre-created run ID to report results back to
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -24,11 +25,13 @@ def run_flow(flow_path: str) -> int:
     path = Path(flow_path)
     if not path.exists():
         print(f"Error: File not found: {flow_path}", file=sys.stderr)
+        _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
     if path.suffix.lower() not in (".yaml", ".yml", ".json"):
         print(f"Error: Unsupported file format: {path.suffix}", file=sys.stderr)
         print("Supported formats: .yaml, .yml, .json", file=sys.stderr)
+        _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
     print(f"Loading flow from: {flow_path}")
@@ -37,6 +40,7 @@ def run_flow(flow_path: str) -> int:
         flow = open_flow(path)
     except Exception as e:
         print(f"Error loading flow: {e}", file=sys.stderr)
+        _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
     # Force local execution for CLI - no worker service needed
@@ -59,11 +63,20 @@ def run_flow(flow_path: str) -> int:
         result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)
+        _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
 
     if result is None:
         print("Error: Flow execution returned no result", file=sys.stderr)
+        _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
+
+    # Report results back to the pre-created run record
+    _complete_run_if_needed(
+        run_id,
+        success=result.success,
+        nodes_completed=result.nodes_completed,
+    )
 
     # Display results
     print("-" * 40)
@@ -84,6 +97,29 @@ def run_flow(flow_path: str) -> int:
     return 0
 
 
+def _complete_run_if_needed(
+    run_id: int | None,
+    success: bool,
+    nodes_completed: int,
+) -> None:
+    """Report results back to a pre-created run record if run_id is provided."""
+    if run_id is None:
+        return
+    try:
+        from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+        from flowfile_core.database.connection import get_db_context
+
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            service.complete_run(
+                run_id=run_id,
+                success=success,
+                nodes_completed=nodes_completed,
+            )
+    except Exception as e:
+        print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)
+
+
 def main():
     """
     Display information about FlowFile when run directly as a module.
@@ -99,6 +135,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
+    parser.add_argument("--run-id", type=int, default=None, help="Pre-created run ID for scheduled runs")
 
     # Parse arguments
     args = parser.parse_args()
@@ -124,7 +161,7 @@ def main():
                 print("Error: 'flow' component requires a file path", file=sys.stderr)
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
-            sys.exit(run_flow(args.file_path))
+            sys.exit(run_flow(args.file_path, run_id=args.run_id))
     else:
         # Default action - show info
         print(f"FlowFile v{flowfile.__version__}")

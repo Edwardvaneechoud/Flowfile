@@ -1,6 +1,7 @@
 // Catalog API Service - Handles all catalog-related HTTP requests
 import axios from "../services/axios.config";
 import type {
+  ActiveFlowRun,
   CatalogNamespace,
   CatalogStats,
   CatalogTable,
@@ -12,6 +13,9 @@ import type {
   FlowRegistrationUpdate,
   FlowRun,
   FlowRunDetail,
+  FlowSchedule,
+  FlowScheduleCreate,
+  FlowScheduleUpdate,
   GlobalArtifact,
   NamespaceCreate,
   NamespaceTree,
@@ -195,6 +199,41 @@ export class CatalogApi {
     const url = `/catalog/tables/${tableId}/preview`;
     const response = await axios.get<CatalogTablePreview>(url, { params: { limit } });
     return response.data;
+  }
+
+  // ====== Schedules ======
+
+  static async getSchedules(registrationId?: number | null): Promise<FlowSchedule[]> {
+    const params: Record<string, any> = {};
+    if (registrationId !== undefined && registrationId !== null)
+      params.registration_id = registrationId;
+    const response = await axios.get<FlowSchedule[]>("/catalog/schedules", { params });
+    return response.data;
+  }
+
+  static async createSchedule(body: FlowScheduleCreate): Promise<FlowSchedule> {
+    const response = await axios.post<FlowSchedule>("/catalog/schedules", body);
+    return response.data;
+  }
+
+  static async updateSchedule(id: number, body: FlowScheduleUpdate): Promise<FlowSchedule> {
+    const response = await axios.put<FlowSchedule>(`/catalog/schedules/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteSchedule(id: number): Promise<void> {
+    await axios.delete(`/catalog/schedules/${id}`);
+  }
+
+  // ====== Active Runs ======
+
+  static async getActiveRuns(): Promise<ActiveFlowRun[]> {
+    const response = await axios.get<ActiveFlowRun[]>("/catalog/active-runs");
+    return response.data;
+  }
+
+  static async cancelRun(runId: number): Promise<void> {
+    await axios.post(`/catalog/runs/${runId}/cancel`);
   }
 
   // ====== Stats ======

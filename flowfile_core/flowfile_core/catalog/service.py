@@ -26,6 +26,7 @@ from flowfile_core.catalog.exceptions import (
     NestingLimitError,
     NoSnapshotError,
     RunNotFoundError,
+    ScheduleNotFoundError,
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
@@ -38,10 +39,12 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    FlowSchedule,
     GlobalArtifact,
     TableFavorite,
 )
 from flowfile_core.schemas.catalog_schema import (
+    ActiveFlowRun,
     CatalogStats,
     CatalogTableOut,
     CatalogTablePreview,
@@ -50,6 +53,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
+    FlowScheduleOut,
     FlowSummary,
     GlobalArtifactOut,
     NamespaceTree,
@@ -1176,6 +1180,157 @@ class CatalogService:
         return self._bulk_enrich_tables(tables, user_id)
 
     # ------------------------------------------------------------------ #
+    # Schedule operations
+    # ------------------------------------------------------------------ #
+
+    def create_schedule(
+        self,
+        registration_id: int,
+        owner_id: int,
+        schedule_type: str,
+        interval_seconds: int | None = None,
+        trigger_table_id: int | None = None,
+        enabled: bool = True,
+    ) -> FlowScheduleOut:
+        """Create a new schedule for a registered flow.
+
+        Raises
+        ------
+        FlowNotFoundError
+            If the flow doesn't exist.
+        ValueError
+            If validation fails (bad type, interval too short, missing trigger table).
+        TableNotFoundError
+            If the trigger table doesn't exist.
+        """
+        flow = self.repo.get_flow(registration_id)
+        if flow is None:
+            raise FlowNotFoundError(registration_id=registration_id)
+
+        if schedule_type not in ("interval", "table_trigger"):
+            raise ValueError(f"Invalid schedule_type: {schedule_type}")
+
+        if schedule_type == "interval":
+            if interval_seconds is None or interval_seconds < 60:
+                raise ValueError("interval_seconds must be >= 60")
+        elif schedule_type == "table_trigger":
+            if trigger_table_id is None:
+                raise ValueError("trigger_table_id is required for table_trigger schedules")
+            table = self.repo.get_table(trigger_table_id)
+            if table is None:
+                raise TableNotFoundError(table_id=trigger_table_id)
+
+        schedule = FlowSchedule(
+            registration_id=registration_id,
+            owner_id=owner_id,
+            enabled=enabled,
+            schedule_type=schedule_type,
+            interval_seconds=interval_seconds,
+            trigger_table_id=trigger_table_id,
+        )
+        schedule = self.repo.create_schedule(schedule)
+        return FlowScheduleOut.model_validate(schedule)
+
+    def update_schedule(
+        self,
+        schedule_id: int,
+        enabled: bool | None = None,
+        interval_seconds: int | None = None,
+    ) -> FlowScheduleOut:
+        """Update a schedule.
+
+        Raises
+        ------
+        ScheduleNotFoundError
+            If the schedule doesn't exist.
+        """
+        schedule = self.repo.get_schedule(schedule_id)
+        if schedule is None:
+            raise ScheduleNotFoundError(schedule_id=schedule_id)
+        if enabled is not None:
+            schedule.enabled = enabled
+        if interval_seconds is not None:
+            if interval_seconds < 60:
+                raise ValueError("interval_seconds must be >= 60")
+            schedule.interval_seconds = interval_seconds
+        schedule = self.repo.update_schedule(schedule)
+        return FlowScheduleOut.model_validate(schedule)
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        """Delete a schedule.
+
+        Raises
+        ------
+        ScheduleNotFoundError
+            If the schedule doesn't exist.
+        """
+        schedule = self.repo.get_schedule(schedule_id)
+        if schedule is None:
+            raise ScheduleNotFoundError(schedule_id=schedule_id)
+        self.repo.delete_schedule(schedule_id)
+
+    def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
+        """Get a schedule by ID.
+
+        Raises
+        ------
+        ScheduleNotFoundError
+            If the schedule doesn't exist.
+        """
+        schedule = self.repo.get_schedule(schedule_id)
+        if schedule is None:
+            raise ScheduleNotFoundError(schedule_id=schedule_id)
+        return FlowScheduleOut.model_validate(schedule)
+
+    def list_schedules(
+        self,
+        registration_id: int | None = None,
+    ) -> list[FlowScheduleOut]:
+        """List schedules, optionally filtered by flow."""
+        schedules = self.repo.list_schedules(registration_id=registration_id)
+        return [FlowScheduleOut.model_validate(s) for s in schedules]
+
+    # ------------------------------------------------------------------ #
+    # Active runs + cancel
+    # ------------------------------------------------------------------ #
+
+    def list_active_runs(self) -> list[ActiveFlowRun]:
+        """List all currently running flows (ended_at IS NULL)."""
+        runs = self.repo.list_active_runs()
+        return [
+            ActiveFlowRun(
+                id=r.id,
+                registration_id=r.registration_id,
+                flow_name=r.flow_name,
+                flow_path=r.flow_path,
+                user_id=r.user_id,
+                started_at=r.started_at,
+                nodes_completed=r.nodes_completed,
+                number_of_nodes=r.number_of_nodes,
+                run_type=r.run_type,
+            )
+            for r in runs
+        ]
+
+    def cancel_run(self, run_id: int) -> None:
+        """Cancel a run by marking it as ended with success=False.
+
+        Raises
+        ------
+        RunNotFoundError
+            If the run doesn't exist.
+        """
+        run = self.repo.get_run(run_id)
+        if run is None:
+            raise RunNotFoundError(run_id=run_id)
+        now = datetime.now(timezone.utc)
+        run.ended_at = now
+        run.success = False
+        if run.started_at:
+            run.duration_seconds = (now - run.started_at).total_seconds()
+        self.repo.update_run(run)
+
+    # ------------------------------------------------------------------ #
     # Dashboard / Stats
     # ------------------------------------------------------------------ #
 
@@ -1191,6 +1346,7 @@ class CatalogService:
         total_table_favs = self.repo.count_table_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
         total_tables = self.repo.count_all_tables()
+        total_schedules = self.repo.count_schedules()
 
         recent_runs = self.repo.list_runs(limit=10, offset=0)
         recent_out = [self._run_to_out(r) for r in recent_runs]
@@ -1207,6 +1363,9 @@ class CatalogService:
         # Bulk enrich favourite tables
         fav_tables = self.list_table_favorites(user_id)
 
+        # Active runs
+        active_runs = self.list_active_runs()
+
         return CatalogStats(
             total_namespaces=total_ns,
             total_flows=total_flows,
@@ -1215,7 +1374,9 @@ class CatalogService:
             total_table_favorites=total_table_favs,
             total_artifacts=total_artifacts,
             total_tables=total_tables,
+            total_schedules=total_schedules,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
             favorite_tables=fav_tables,
+            active_runs=active_runs,
         )

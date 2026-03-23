@@ -19,6 +19,7 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    FlowSchedule,
     GlobalArtifact,
     TableFavorite,
 )
@@ -192,6 +193,34 @@ class CatalogRepository(Protocol):
     def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
 
     def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
+
+    # -- Schedule operations -------------------------------------------------
+
+    def get_schedule(self, schedule_id: int) -> FlowSchedule | None: ...
+
+    def list_schedules(
+        self,
+        registration_id: int | None = None,
+        enabled_only: bool = False,
+    ) -> list[FlowSchedule]: ...
+
+    def create_schedule(self, schedule: FlowSchedule) -> FlowSchedule: ...
+
+    def update_schedule(self, schedule: FlowSchedule) -> FlowSchedule: ...
+
+    def delete_schedule(self, schedule_id: int) -> None: ...
+
+    def count_schedules(self) -> int: ...
+
+    # -- Active run operations -----------------------------------------------
+
+    def list_active_runs(self) -> list[FlowRun]: ...
+
+    def has_active_run(self, registration_id: int) -> bool: ...
+
+    def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
+
+    def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -690,3 +719,76 @@ class SQLAlchemyCatalogRepository:
             if table:
                 result.setdefault(link.registration_id, []).append(table)
         return result
+
+    # -- Schedule operations -------------------------------------------------
+
+    def get_schedule(self, schedule_id: int) -> FlowSchedule | None:
+        return self._db.get(FlowSchedule, schedule_id)
+
+    def list_schedules(
+        self,
+        registration_id: int | None = None,
+        enabled_only: bool = False,
+    ) -> list[FlowSchedule]:
+        q = self._db.query(FlowSchedule)
+        if registration_id is not None:
+            q = q.filter_by(registration_id=registration_id)
+        if enabled_only:
+            q = q.filter(FlowSchedule.enabled.is_(True))
+        return q.order_by(FlowSchedule.created_at.desc()).all()
+
+    def create_schedule(self, schedule: FlowSchedule) -> FlowSchedule:
+        self._db.add(schedule)
+        self._db.commit()
+        self._db.refresh(schedule)
+        return schedule
+
+    def update_schedule(self, schedule: FlowSchedule) -> FlowSchedule:
+        self._db.commit()
+        self._db.refresh(schedule)
+        return schedule
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        schedule = self._db.get(FlowSchedule, schedule_id)
+        if schedule is not None:
+            self._db.delete(schedule)
+            self._db.commit()
+
+    def count_schedules(self) -> int:
+        return self._db.query(FlowSchedule).count()
+
+    # -- Active run operations -----------------------------------------------
+
+    def list_active_runs(self) -> list[FlowRun]:
+        """Return runs that have not yet ended (ended_at IS NULL)."""
+        return (
+            self._db.query(FlowRun)
+            .filter(FlowRun.ended_at.is_(None))
+            .order_by(FlowRun.started_at.desc())
+            .all()
+        )
+
+    def has_active_run(self, registration_id: int) -> bool:
+        """Check if a flow already has an active (unfinished) run."""
+        return (
+            self._db.query(FlowRun)
+            .filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None))
+            .first()
+            is not None
+        )
+
+    def list_due_interval_schedules(self) -> list[FlowSchedule]:
+        """Return enabled interval schedules (filtering done in Python)."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "interval")
+            .all()
+        )
+
+    def list_table_trigger_schedules(self) -> list[FlowSchedule]:
+        """Return enabled table-trigger schedules."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_trigger")
+            .all()
+        )

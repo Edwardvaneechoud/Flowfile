@@ -183,6 +183,53 @@ export interface CatalogTablePreview {
 }
 
 // ============================================================================
+// Schedule
+// ============================================================================
+
+export interface FlowSchedule {
+  id: number;
+  registration_id: number;
+  owner_id: number;
+  enabled: boolean;
+  schedule_type: string; // "interval" | "table_trigger"
+  interval_seconds: number | null;
+  trigger_table_id: number | null;
+  last_triggered_at: string | null;
+  last_trigger_table_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowScheduleCreate {
+  registration_id: number;
+  schedule_type: string;
+  interval_seconds?: number | null;
+  trigger_table_id?: number | null;
+  enabled?: boolean;
+}
+
+export interface FlowScheduleUpdate {
+  enabled?: boolean;
+  interval_seconds?: number | null;
+}
+
+// ============================================================================
+// Active Flow Run
+// ============================================================================
+
+export interface ActiveFlowRun {
+  id: number;
+  registration_id: number | null;
+  flow_name: string;
+  flow_path: string | null;
+  user_id: number;
+  started_at: string;
+  nodes_completed: number;
+  number_of_nodes: number;
+  run_type: string;
+}
+
+// ============================================================================
 // Catalog Stats
 // ============================================================================
 
@@ -194,13 +241,15 @@ export interface CatalogStats {
   total_table_favorites: number;
   total_artifacts: number;
   total_tables: number;
+  total_schedules: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];
   favorite_tables: CatalogTable[];
+  active_runs: ActiveFlowRun[];
 }
 
 // ============================================================================
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs";
+export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules";

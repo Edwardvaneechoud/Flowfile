@@ -242,6 +242,58 @@ class TableFavoriteOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ==================== Schedule Schemas ====================
+
+
+class FlowScheduleCreate(BaseModel):
+    registration_id: int
+    schedule_type: str  # "interval" | "table_trigger"
+    interval_seconds: int | None = None
+    trigger_table_id: int | None = None
+    enabled: bool = True
+
+
+class FlowScheduleUpdate(BaseModel):
+    enabled: bool | None = None
+    interval_seconds: int | None = None
+
+
+class FlowScheduleOut(BaseModel):
+    id: int
+    registration_id: int
+    owner_id: int
+    enabled: bool
+    schedule_type: str
+    interval_seconds: int | None = None
+    trigger_table_id: int | None = None
+    last_triggered_at: datetime | None = None
+    last_trigger_table_updated_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ==================== Active Run Schemas ====================
+
+
+class ActiveFlowRun(BaseModel):
+    id: int
+    registration_id: int | None = None
+    flow_name: str
+    flow_path: str | None = None
+    user_id: int
+    started_at: datetime
+    nodes_completed: int = 0
+    number_of_nodes: int = 0
+    run_type: str = "full_run"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ==================== Catalog Overview ====================
+
+
 class CatalogStats(BaseModel):
     total_namespaces: int = 0
     total_flows: int = 0
@@ -250,12 +302,15 @@ class CatalogStats(BaseModel):
     total_table_favorites: int = 0
     total_artifacts: int = 0
     total_tables: int = 0
+    total_schedules: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
     favorite_tables: list[CatalogTableOut] = Field(default_factory=list)
+    active_runs: list[ActiveFlowRun] = Field(default_factory=list)
 
 
 # Rebuild forward-referenced models
 CatalogTableOut.model_rebuild()
 FlowRegistrationOut.model_rebuild()
 NamespaceTree.model_rebuild()
+CatalogStats.model_rebuild()

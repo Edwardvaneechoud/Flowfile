@@ -220,12 +220,71 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Schedules Section -->
+    <div class="section">
+      <h3><i class="fa-solid fa-calendar-days section-icon"></i> Schedules</h3>
+      <div v-if="catalogStore.flowSchedules.length === 0" class="empty-state">
+        <i class="fa-solid fa-calendar-xmark empty-state-icon"></i>
+        <span>No schedules configured</span>
+      </div>
+      <div v-else class="schedule-cards">
+        <div
+          v-for="schedule in catalogStore.flowSchedules"
+          :key="schedule.id"
+          class="schedule-card"
+        >
+          <div class="schedule-card-info">
+            <div class="schedule-card-type">
+              <i
+                :class="
+                  schedule.schedule_type === 'interval'
+                    ? 'fa-solid fa-clock'
+                    : 'fa-solid fa-table'
+                "
+              />
+              {{
+                schedule.schedule_type === "interval"
+                  ? formatScheduleInterval(schedule.interval_seconds)
+                  : `Table trigger #${schedule.trigger_table_id}`
+              }}
+            </div>
+            <div class="schedule-card-meta">
+              {{
+                schedule.last_triggered_at
+                  ? `Last: ${formatDate(schedule.last_triggered_at)}`
+                  : "Never triggered"
+              }}
+            </div>
+          </div>
+          <div class="schedule-card-actions">
+            <el-switch
+              :model-value="schedule.enabled"
+              size="small"
+              @change="(val: boolean) => handleToggleSchedule(schedule.id, val)"
+            />
+            <el-button
+              size="small"
+              type="danger"
+              text
+              @click="handleDeleteSchedule(schedule.id)"
+            >
+              <i class="fa-solid fa-trash" />
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
-import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
+import { useCatalogStore } from "../../stores/catalog-store";
+import { CatalogApi } from "../../api/catalog.api";
+import type { FlowRegistration, FlowRun, FlowSchedule, GlobalArtifact } from "../../types";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   flow: FlowRegistration;
@@ -318,6 +377,33 @@ function formatSize(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatScheduleInterval(seconds: number | null): string {
+  if (seconds === null) return "--";
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `Every ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
+}
+
+async function handleToggleSchedule(id: number, enabled: boolean) {
+  try {
+    await CatalogApi.updateSchedule(id, { enabled });
+    await catalogStore.loadFlowSchedules(props.flow.id);
+  } catch {
+    // silent
+  }
+}
+
+async function handleDeleteSchedule(id: number) {
+  try {
+    await CatalogApi.deleteSchedule(id);
+    await catalogStore.loadFlowSchedules(props.flow.id);
+  } catch {
+    // silent
+  }
 }
 </script>
 
@@ -792,5 +878,47 @@ function formatSize(bytes: number | null): string {
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
   border-radius: var(--border-radius-sm);
+}
+
+/* ========== Schedule Cards ========== */
+.schedule-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.schedule-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-3);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+.schedule-card-info {
+  flex: 1;
+}
+
+.schedule-card-type {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.schedule-card-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.schedule-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-shrink: 0;
 }
 </style>

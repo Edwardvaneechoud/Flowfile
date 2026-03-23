@@ -38,6 +38,9 @@ should_exit = False
 server_instance = None
 
 
+_scheduler = None
+
+
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handles the graceful startup and shutdown of the FastAPI application.
@@ -45,11 +48,27 @@ async def shutdown_handler(app: FastAPI):
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
     """
+    global _scheduler
     print("Starting core application...")
+
+    # Start scheduler if enabled
+    if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "true").lower() in ("true", "1", "yes"):
+        from flowfile_core.scheduler import FlowScheduler
+
+        _scheduler = FlowScheduler()
+        await _scheduler.start()
+        print("Flow scheduler started")
+
     try:
         yield
     finally:
         print("Shutting down core application...")
+
+        # Stop scheduler
+        if _scheduler is not None:
+            await _scheduler.stop()
+            print("Flow scheduler stopped")
+
         print("Cleaning up core service resources...")
         _shutdown_kernels()
         clear_all_flow_logs()

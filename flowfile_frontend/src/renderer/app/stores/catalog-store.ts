@@ -2,6 +2,7 @@
 import { defineStore } from "pinia";
 import { CatalogApi } from "../api/catalog.api";
 import type {
+  ActiveFlowRun,
   CatalogStats,
   CatalogTab,
   CatalogTable,
@@ -9,6 +10,7 @@ import type {
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
+  FlowSchedule,
   GlobalArtifact,
   NamespaceTree,
 } from "../types";
@@ -32,6 +34,9 @@ interface CatalogState {
   tablePreview: CatalogTablePreview | null;
   loadingTablePreview: boolean;
   allTables: CatalogTable[];
+  schedules: FlowSchedule[];
+  flowSchedules: FlowSchedule[];
+  activeRuns: ActiveFlowRun[];
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -57,6 +62,9 @@ export const useCatalogStore = defineStore("catalog", {
     tablePreview: null,
     loadingTablePreview: false,
     allTables: [],
+    schedules: [],
+    flowSchedules: [],
+    activeRuns: [],
     activeTab: "catalog",
     loading: false,
     error: null,
@@ -302,6 +310,43 @@ export const useCatalogStore = defineStore("catalog", {
       return null;
     },
 
+    // -- Schedule actions --
+
+    async loadSchedules() {
+      try {
+        this.schedules = await CatalogApi.getSchedules();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedules";
+      }
+    },
+
+    async loadFlowSchedules(registrationId: number) {
+      try {
+        this.flowSchedules = await CatalogApi.getSchedules(registrationId);
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load flow schedules";
+      }
+    },
+
+    // -- Active runs actions --
+
+    async loadActiveRuns() {
+      try {
+        this.activeRuns = await CatalogApi.getActiveRuns();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load active runs";
+      }
+    },
+
+    async cancelRun(runId: number) {
+      try {
+        await CatalogApi.cancelRun(runId);
+        await this.loadActiveRuns();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to cancel run";
+      }
+    },
+
     selectFlow(flowId: number | null) {
       this.selectedFlowId = flowId;
       this.selectedRunId = null;
@@ -310,6 +355,7 @@ export const useCatalogStore = defineStore("catalog", {
       if (flowId !== null) {
         this.loadRuns(flowId);
         this.loadFlowArtifacts(flowId);
+        this.loadFlowSchedules(flowId);
       }
     },
 
@@ -318,6 +364,7 @@ export const useCatalogStore = defineStore("catalog", {
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();
+      else if (tab === "schedules") this.loadSchedules();
       else if (tab === "catalog") this.loadTree();
     },
 
@@ -329,6 +376,8 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadStats(),
         this.loadFavorites(),
         this.loadRuns(),
+        this.loadSchedules(),
+        this.loadActiveRuns(),
       ]);
     },
   },

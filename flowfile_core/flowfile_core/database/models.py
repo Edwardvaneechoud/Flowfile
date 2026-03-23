@@ -192,6 +192,24 @@ class FlowFollow(Base):
     __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
 
 
+class FlowSchedule(Base):
+    """Defines a schedule for automatic flow execution."""
+
+    __tablename__ = "flow_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger"
+    interval_seconds = Column(Integer, nullable=True)
+    trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    last_trigger_table_updated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class TableFavorite(Base):
     """Allows a user to bookmark/favorite a catalog table."""
 
