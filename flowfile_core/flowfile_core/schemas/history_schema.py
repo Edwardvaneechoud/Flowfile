@@ -87,7 +87,8 @@ class CompressedSnapshot:
 
         settings = snapshot_dict.get("flowfile_settings", {})
         # Convert to a stable string so lists/dicts inside settings (e.g. parameters) are hashable
-        settings_tuple = str(sorted(((k, str(v)) for k, v in settings.items()))) if isinstance(settings, dict) else str(settings)
+        settings_tuple = str(sorted(((k, str(v)) for k, v in settings.items()))) \
+            if isinstance(settings, dict) else str(settings)
 
         return hash(
             (

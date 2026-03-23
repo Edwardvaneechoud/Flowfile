@@ -10,9 +10,9 @@ from pydantic import BaseModel
 
 _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
-# Type alias: list of (object, field_name_or_key, original_value) triples used
-# to restore mutated fields after node execution.
-_Restorations = list[tuple[Any, str, Any]]
+# Type alias: list of (object, field_name_or_key_or_index, original_value) triples
+# used to restore mutated fields after node execution.
+_Restorations = list[tuple[Any, str | int, Any]]
 
 
 def resolve_parameters(text: str, params: dict[str, str]) -> str:
@@ -49,7 +49,7 @@ def apply_parameters_in_place(obj: Any, params: dict[str, str]) -> _Restorations
     _apply_recursive(obj, params, restorations)
 
     # Validate: no unresolved refs should remain
-    unresolved = _find_unresolved_in_model(obj)
+    unresolved = find_unresolved_in_model(obj)
     if unresolved:
         # Roll back before raising so the node is left in a clean state
         restore_parameters(restorations)
@@ -66,7 +66,7 @@ def restore_parameters(restorations: _Restorations) -> None:
     for obj, field, original in restorations:
         if isinstance(obj, BaseModel):
             object.__setattr__(obj, field, original)
-        elif isinstance(obj, dict):
+        elif isinstance(obj, (dict | list)):
             obj[field] = original
 
 
@@ -83,9 +83,14 @@ def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restoratio
             elif isinstance(value, BaseModel):
                 _apply_recursive(value, params, restorations)
             elif isinstance(value, list):
-                for item in value:
+                for i, item in enumerate(value):
                     if isinstance(item, BaseModel):
                         _apply_recursive(item, params, restorations)
+                    elif isinstance(item, str) and "${" in item:
+                        resolved = resolve_parameters(item, params)
+                        if resolved != item:
+                            restorations.append((value, i, item))
+                            value[i] = resolved
     elif isinstance(obj, dict):
         for key, value in obj.items():
             if isinstance(value, str) and "${" in value:
@@ -93,25 +98,25 @@ def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restoratio
                 if resolved != value:
                     restorations.append((obj, key, value))
                     obj[key] = resolved
-            elif isinstance(value, (BaseModel, dict)):
+            elif isinstance(value, (BaseModel | dict)):
                 _apply_recursive(value, params, restorations)
 
 
-def _find_unresolved_in_model(obj: Any) -> set[str]:
+def find_unresolved_in_model(obj: Any) -> set[str]:
     """Return parameter names that still appear as ${...} in *obj* after substitution."""
     found: set[str] = set()
     if isinstance(obj, BaseModel):
         for field_name in obj.model_fields:
-            found |= _find_unresolved_in_model(getattr(obj, field_name, None))
+            found |= find_unresolved_in_model(getattr(obj, field_name, None))
     elif isinstance(obj, str):
         for m in _PARAM_PATTERN.finditer(obj):
             found.add(m.group(1))
     elif isinstance(obj, dict):
         for v in obj.values():
-            found |= _find_unresolved_in_model(v)
+            found |= find_unresolved_in_model(v)
     elif isinstance(obj, list):
         for item in obj:
-            found |= _find_unresolved_in_model(item)
+            found |= find_unresolved_in_model(item)
     return found
 
 
