@@ -33,6 +33,7 @@ const emitRemove = (item: string) => {
 .items-container {
   display: flex;
   gap: 10px; /* Space between items */
+  color: var(--color-text-primary);
 }
 
 .item-box {
