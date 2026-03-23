@@ -66,7 +66,11 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import models as
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place, restore_parameters
+from flowfile_core.flowfile.parameter_resolver import (
+    _find_unresolved_in_model,
+    apply_parameters_in_place,
+    restore_parameters,
+)
 from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.kernel import get_kernel_manager
@@ -392,6 +396,13 @@ class FlowGraph:
             self._flow_settings.execution_mode != flow_settings.execution_mode
         ):
             self.reset()
+        else:
+            old_params = {p.name: p.default_value for p in self._flow_settings.parameters}
+            new_params = {p.name: p.default_value for p in flow_settings.parameters}
+            if old_params != new_params:
+                for node in self.nodes:
+                    if node.setting_input is not None and _find_unresolved_in_model(node.setting_input):
+                        node.reset(deep=True)
         self._flow_settings = flow_settings
 
     # ==================== History Management Methods ====================

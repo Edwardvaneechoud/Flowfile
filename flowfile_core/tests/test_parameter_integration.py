@@ -527,3 +527,83 @@ def test_read_node_run_with_parameterized_path():
         assert result.to_dict()["name"] == ["Alice", "Bob"]
     finally:
         os.unlink(csv_path)
+
+
+# ---------------------------------------------------------------------------
+# Issue 4: parameter change invalidates predicted schema
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_change_invalidates_predicted_schema():
+    """When a flow parameter value changes via the flow_settings setter,
+    nodes that reference ${...} must have their predicted schema invalidated
+    so the next get_predicted_schema() returns the schema for the new file."""
+    # Create two CSV files with different columns
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("city,population\n")
+        f.write("Amsterdam,900000\n")
+        csv_a = f.name
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("product,price\n")
+        f.write("Widget,9.99\n")
+        csv_b = f.name
+
+    try:
+        graph = make_graph(304)
+        graph.flow_settings = schemas.FlowSettings(
+            flow_id=graph.flow_id,
+            name="param_test",
+            path=".",
+            execution_mode="Development",
+            execution_location="local",
+            parameters=[FlowParameter(name="file_name", default_value=csv_a)],
+        )
+
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="read")
+        graph.add_node_promise(promise)
+        graph.add_read(
+            input_schema.NodeRead(
+                flow_id=graph.flow_id,
+                node_id=1,
+                received_file=input_schema.ReceivedTable(
+                    name="${file_name}",
+                    path="${file_name}",
+                    file_type="csv",
+                    table_settings=input_schema.InputCsvTable(),
+                ),
+            )
+        )
+
+        # Predict schema — should match file A
+        node = graph.get_node(1)
+        schema_a = node.get_predicted_schema(force=True)
+        assert schema_a is not None
+        cols_a = [c.name for c in schema_a]
+        assert "city" in cols_a, f"Expected 'city' in schema from file A, got: {cols_a}"
+        assert "population" in cols_a, f"Expected 'population' in schema from file A, got: {cols_a}"
+
+        # Change the parameter to point to file B via the setter
+        graph.flow_settings = schemas.FlowSettings(
+            flow_id=graph.flow_id,
+            name="param_test",
+            path=".",
+            execution_mode="Development",
+            execution_location="local",
+            parameters=[FlowParameter(name="file_name", default_value=csv_b)],
+        )
+
+        # Predict schema again — should now match file B
+        schema_b = node.get_predicted_schema(force=True)
+        assert schema_b is not None
+        cols_b = [c.name for c in schema_b]
+        assert "product" in cols_b, f"Expected 'product' in schema from file B, got: {cols_b}"
+        assert "price" in cols_b, f"Expected 'price' in schema from file B, got: {cols_b}"
+
+        # Original ${file_name} reference must still be in setting_input
+        assert node.setting_input.received_file.path == "${file_name}", (
+            "Parameter reference must be preserved after invalidation"
+        )
+    finally:
+        os.unlink(csv_a)
+        os.unlink(csv_b)
