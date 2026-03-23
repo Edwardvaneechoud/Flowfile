@@ -5,6 +5,6 @@ The embedded scheduler re-exports ``FlowScheduler`` from the lightweight
 the same engine code.
 """
 
-from flowfile_scheduler.flowfile_scheduler.engine import FlowScheduler
+from flowfile_scheduler.engine import FlowScheduler
 
 __all__ = ["FlowScheduler"]

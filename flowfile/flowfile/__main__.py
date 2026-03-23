@@ -186,3 +186,7 @@ def main():
         print("  df = ff.read_csv('data.csv')")
         print("  result = df.filter(ff.col('value') > 10)")
         print("  ff.open_graph_in_editor(result)")
+
+
+if __name__ == "__main__":
+    main()

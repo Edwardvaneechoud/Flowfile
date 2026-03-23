@@ -41,6 +41,15 @@ server_instance = None
 _scheduler = None
 
 
+def get_scheduler():
+    return _scheduler
+
+
+def set_scheduler(scheduler):
+    global _scheduler
+    _scheduler = scheduler
+
+
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handles the graceful startup and shutdown of the FastAPI application.
@@ -51,8 +60,8 @@ async def shutdown_handler(app: FastAPI):
     global _scheduler
     print("Starting core application...")
 
-    # Start scheduler if enabled
-    if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "true").lower() in ("true", "1", "yes"):
+    # Only auto-start scheduler if explicitly opted in via env var
+    if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
         from flowfile_core.scheduler import FlowScheduler
 
         _scheduler = FlowScheduler()

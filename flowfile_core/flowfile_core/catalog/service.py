@@ -630,7 +630,8 @@ class CatalogService:
         run.success = success
         run.nodes_completed = nodes_completed
         if run.started_at:
-            run.duration_seconds = (now - run.started_at).total_seconds()
+            started = run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None else run.started_at
+            run.duration_seconds = (now - started).total_seconds()
         if node_results_json is not None:
             run.node_results_json = node_results_json
         return self.repo.update_run(run)
@@ -1329,7 +1330,8 @@ class CatalogService:
         run.ended_at = now
         run.success = False
         if run.started_at:
-            run.duration_seconds = (now - run.started_at).total_seconds()
+            started = run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None else run.started_at
+            run.duration_seconds = (now - started).total_seconds()
         self.repo.update_run(run)
 
     # ------------------------------------------------------------------ #

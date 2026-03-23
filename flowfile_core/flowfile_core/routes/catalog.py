@@ -681,3 +681,33 @@ def scheduler_status(db=Depends(get_db)):
         "started_at": lock.started_at,
         "heartbeat_at": lock.heartbeat_at,
     }
+
+
+@router.post("/scheduler/start", status_code=200)
+async def scheduler_start():
+    """Start the embedded scheduler. No-op if already running."""
+    from flowfile_core.main import get_scheduler, set_scheduler
+    from flowfile_core.scheduler import FlowScheduler
+
+    scheduler = get_scheduler()
+    if scheduler is not None:
+        return {"message": "Scheduler already running"}
+
+    scheduler = FlowScheduler()
+    await scheduler.start()
+    set_scheduler(scheduler)
+    return {"message": "Scheduler started"}
+
+
+@router.post("/scheduler/stop", status_code=200)
+async def scheduler_stop():
+    """Stop the embedded scheduler. No-op if not running."""
+    from flowfile_core.main import get_scheduler, set_scheduler
+
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return {"message": "Scheduler not running"}
+
+    await scheduler.stop()
+    set_scheduler(None)
+    return {"message": "Scheduler stopped"}
