@@ -48,7 +48,7 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None) -> int:
                 print(f"Error: Invalid --param format '{raw}'. Expected key=value", file=sys.stderr)
                 return 1
             key, _, value = raw.partition("=")
-            override_dict[key.strip()] = value
+            override_dict[key.strip()] = value.strip()
         # Update matching parameters; add new ones if they don't exist yet
         existing = {p.name: p for p in flow.flow_settings.parameters}
         from flowfile_core.schemas.schemas import FlowParameter

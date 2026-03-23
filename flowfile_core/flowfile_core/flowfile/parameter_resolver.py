@@ -82,6 +82,8 @@ def _apply_recursive(obj: Any, params: dict[str, str], restorations: _Restoratio
                         object.__setattr__(obj, field_name, resolved)
             elif isinstance(value, BaseModel):
                 _apply_recursive(value, params, restorations)
+            elif isinstance(value, dict):
+                _apply_recursive(value, params, restorations)
             elif isinstance(value, list):
                 for i, item in enumerate(value):
                     if isinstance(item, BaseModel):
