@@ -65,7 +65,7 @@ import { ref, computed, watch, onMounted } from "vue";
 import { Delete } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../stores/column-store";
-import { getFlowSettings, updateFlowSettings } from "../../nodes/nodeLogic";
+import { FlowApi } from "@/api";
 import type { FlowSettings } from "../../../types/flow.types";
 import type { FlowParameter } from "../../../types/flow.types";
 
@@ -79,7 +79,7 @@ const hasParameters = computed(() => parameters.value.length > 0);
 
 async function load() {
   if (!nodeStore.flow_id || nodeStore.flow_id <= 0) return;
-  flowSettings.value = await getFlowSettings(nodeStore.flow_id);
+  flowSettings.value = await FlowApi.getFlowSettings(nodeStore.flow_id);
   if (flowSettings.value) {
     flowSettings.value.parameters = flowSettings.value.parameters ?? [];
   }
@@ -89,7 +89,7 @@ async function save() {
   if (!flowSettings.value) return;
   saveError.value = null;
   try {
-    await updateFlowSettings(flowSettings.value);
+    await FlowApi.updateFlowSettings(flowSettings.value);
   } catch (e: any) {
     saveError.value = e?.message ?? "Failed to save parameters";
     ElMessage.error("Failed to save parameters");
@@ -102,7 +102,6 @@ function addParameter() {
     ...(flowSettings.value.parameters ?? []),
     { name: "", default_value: "", description: "" },
   ];
-  save();
 }
 
 function removeParameter(index: number) {

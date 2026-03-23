@@ -12,7 +12,12 @@
             placeholder="Path or ${param_name}/file.csv"
             clearable
             class="file-path-input"
-            @change="(val: string) => { handleManualPathChange(val); saveSettings(); }"
+            @change="
+              (val: string) => {
+                handleManualPathChange(val);
+                saveSettings();
+              }
+            "
           >
             <template #prefix>
               <i class="fas fa-table" style="font-size: 14px" />
