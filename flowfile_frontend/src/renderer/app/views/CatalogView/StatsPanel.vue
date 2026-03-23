@@ -47,6 +47,17 @@
           <span class="stat-label">Favorites</span>
         </div>
       </div>
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'schedules' }"
+        @click="toggleSection('schedules')"
+      >
+        <i class="fa-solid fa-calendar-days stat-icon"></i>
+        <div class="stat-info">
+          <span class="stat-value">{{ stats.total_schedules }}</span>
+          <span class="stat-label">Schedules</span>
+        </div>
+      </div>
     </div>
 
     <!-- Expanded list for clicked stat card -->
@@ -132,6 +143,26 @@
       </div>
     </div>
 
+    <div v-if="activeSection === 'schedules' && catalogStore.schedules.length > 0" class="section">
+      <h3>Schedules</h3>
+      <div class="item-list">
+        <div v-for="schedule in enrichedSchedules" :key="schedule.id" class="item-row">
+          <span v-if="schedule.isRunning" class="status-dot running-dot" title="Running">
+            <i class="fa-solid fa-spinner fa-spin" />
+          </span>
+          <span v-else class="status-dot" :class="schedule.enabled ? 'success' : 'pending'"></span>
+          <i
+            :class="
+              schedule.schedule_type === 'interval' ? 'fa-solid fa-clock' : 'fa-solid fa-table'
+            "
+            class="item-icon"
+          />
+          <span class="item-name">{{ schedule.flowName }}</span>
+          <span class="item-meta">{{ formatScheduleType(schedule) }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Favorite Flows (always visible) -->
     <div v-if="favorites.length > 0 && activeSection !== 'favorites'" class="section">
       <h3>Favorite Flows</h3>
@@ -194,9 +225,12 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { CatalogStats, CatalogTable, FlowRegistration, FlowRun } from "../../types";
 
-type Section = "flows" | "tables" | "favorites" | "runs";
+type Section = "flows" | "tables" | "favorites" | "runs" | "schedules";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   stats: CatalogStats | null;
@@ -220,6 +254,38 @@ const activeSection = ref<Section | null>(null);
 
 function toggleSection(section: Section) {
   activeSection.value = activeSection.value === section ? null : section;
+}
+
+const activeRegistrationIds = computed(() => {
+  return new Set(catalogStore.activeRuns.map((r) => r.registration_id).filter((id) => id !== null));
+});
+
+const enrichedSchedules = computed(() => {
+  return catalogStore.schedules.map((s) => ({
+    ...s,
+    flowName:
+      catalogStore.allFlows.find((f) => f.id === s.registration_id)?.name ??
+      `Flow #${s.registration_id}`,
+    isRunning: activeRegistrationIds.value.has(s.registration_id),
+  }));
+});
+
+function formatScheduleType(schedule: {
+  schedule_type: string;
+  interval_seconds: number | null;
+  trigger_table_id: number | null;
+}): string {
+  if (schedule.schedule_type === "interval" && schedule.interval_seconds) {
+    const mins = Math.floor(schedule.interval_seconds / 60);
+    if (mins < 60) return `Every ${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
+  }
+  if (schedule.schedule_type === "table_trigger") {
+    return `Table trigger #${schedule.trigger_table_id}`;
+  }
+  return schedule.schedule_type;
 }
 
 function formatNumber(n: number | null): string {
@@ -336,6 +402,14 @@ function formatDuration(seconds: number | null): string {
 }
 .status-dot.pending {
   background: #eab308;
+}
+.running-dot {
+  background: none !important;
+  color: #3b82f6;
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Item Lists */

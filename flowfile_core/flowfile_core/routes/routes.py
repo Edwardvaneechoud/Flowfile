@@ -48,6 +48,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
@@ -1120,7 +1121,13 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
 
 @router.get("/save_flow", tags=["editor"])
 def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
-    """Saves the current state of a flow to a `.yaml`."""
+    """Saves the current state of a flow to a `.yaml`.
+
+    When saving to a new path ("Save As"), the flow is treated as a new flow:
+    a new flowfile_id is generated, the old handler entry is replaced, and a
+    fresh catalog registration is created.  The new flow_id is returned so the
+    frontend can switch to it.
+    """
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
@@ -1128,15 +1135,38 @@ def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_curr
     is_new_path = (
         flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
     )
-    if is_new_path:
-        flow.flow_settings.source_registration_id = None
-    _resolve_source_registration_id(flow)
-    flow.save_flow(flow_path=flow_path)
+
     if is_new_path:
         user_id = current_user.id if current_user else None
-        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
+        old_flow_id = flow.flow_id
+        new_flow_id = create_unique_id()
+
+        # 1. Clear old catalog link and assign new flow identity
         flow.flow_settings.source_registration_id = None
+        flow.flow_id = new_flow_id  # updates flow + child nodes + settings
+
+        # 2. Save to the new path (updates flow.flow_settings.path)
+        flow.save_flow(flow_path=flow_path)
+
+        # 3. Re-key in handler: remove old entry, register under new id
+        flow_file_handler._flows.pop(old_flow_id, None)
+        flow_file_handler._flows[new_flow_id] = flow
+        if user_id is not None:
+            flow_file_handler._unregister_user_session(user_id, old_flow_id)
+            flow_file_handler._register_user_session(user_id, new_flow_id)
+
+        # 4. Create catalog registration for the new path and resolve
+        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
         _resolve_source_registration_id(flow)
+
+        # 5. Re-save to persist the correct source_registration_id in YAML
+        flow.save_flow(flow_path=flow_path)
+
+        return new_flow_id
+
+    _resolve_source_registration_id(flow)
+    flow.save_flow(flow_path=flow_path)
+    return flow_id
 
 
 @router.get("/flow_data", tags=["manager"])

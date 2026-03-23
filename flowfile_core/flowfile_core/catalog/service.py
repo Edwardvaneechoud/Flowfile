@@ -11,12 +11,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
+    FlowAlreadyRunningError,
     FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
@@ -169,7 +172,16 @@ class CatalogService:
         return result
 
     @staticmethod
-    def _run_to_out(run: FlowRun) -> FlowRunOut:
+    def _resolve_log_path(run_id: int, run_type: str) -> str | None:
+        """Return the log file path if it exists for scheduled runs."""
+        if run_type != "scheduled":
+            return None
+        log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
+        if log_file.exists():
+            return str(log_file)
+        return None
+
+    def _run_to_out(self, run: FlowRun) -> FlowRunOut:
         return FlowRunOut(
             id=run.id,
             registration_id=run.registration_id,
@@ -184,6 +196,7 @@ class CatalogService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             has_snapshot=run.flow_snapshot is not None,
+            log_path=self._resolve_log_path(run.id, run.run_type),
         )
 
     @staticmethod
@@ -568,6 +581,7 @@ class CatalogService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             has_snapshot=run.flow_snapshot is not None,
+            log_path=self._resolve_log_path(run.id, run.run_type),
             flow_snapshot=run.flow_snapshot,
             node_results_json=run.node_results_json,
         )
@@ -613,6 +627,7 @@ class CatalogService:
         run_id: int,
         success: bool,
         nodes_completed: int,
+        number_of_nodes: int | None = None,
         node_results_json: str | None = None,
     ) -> FlowRun:
         """Mark a run as completed.
@@ -629,9 +644,10 @@ class CatalogService:
         run.ended_at = now
         run.success = success
         run.nodes_completed = nodes_completed
+        if number_of_nodes is not None and number_of_nodes > 0:
+            run.number_of_nodes = number_of_nodes
         if run.started_at:
-            started = run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None else run.started_at
-            run.duration_seconds = (now - started).total_seconds()
+            run.duration_seconds = (now.replace(tzinfo=None) - run.started_at.replace(tzinfo=None)).total_seconds()
         if node_results_json is not None:
             run.node_results_json = node_results_json
         return self.repo.update_run(run)
@@ -1182,6 +1198,41 @@ class CatalogService:
     # Schedule operations
     # ------------------------------------------------------------------ #
 
+    def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
+        """Convert a FlowSchedule ORM instance to its Pydantic output schema, populating trigger table info."""
+        # Resolve single table trigger name
+        trigger_table_name: str | None = None
+        if schedule.trigger_table_id is not None:
+            table = self.repo.get_table(schedule.trigger_table_id)
+            if table is not None:
+                trigger_table_name = table.name
+
+        # Resolve table set trigger IDs and names
+        trigger_table_ids: list[int] = []
+        trigger_table_names: list[str] = []
+        if schedule.schedule_type == "table_set_trigger":
+            trigger_table_ids = self.repo.get_trigger_table_ids(schedule.id)
+            for tid in trigger_table_ids:
+                table = self.repo.get_table(tid)
+                trigger_table_names.append(table.name if table else f"#{tid}")
+
+        return FlowScheduleOut(
+            id=schedule.id,
+            registration_id=schedule.registration_id,
+            owner_id=schedule.owner_id,
+            enabled=schedule.enabled,
+            schedule_type=schedule.schedule_type,
+            interval_seconds=schedule.interval_seconds,
+            trigger_table_id=schedule.trigger_table_id,
+            trigger_table_name=trigger_table_name,
+            trigger_table_ids=trigger_table_ids,
+            trigger_table_names=trigger_table_names,
+            last_triggered_at=schedule.last_triggered_at,
+            last_trigger_table_updated_at=schedule.last_trigger_table_updated_at,
+            created_at=schedule.created_at,
+            updated_at=schedule.updated_at,
+        )
+
     def create_schedule(
         self,
         registration_id: int,
@@ -1189,6 +1240,7 @@ class CatalogService:
         schedule_type: str,
         interval_seconds: int | None = None,
         trigger_table_id: int | None = None,
+        trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
     ) -> FlowScheduleOut:
         """Create a new schedule for a registered flow.
@@ -1206,7 +1258,7 @@ class CatalogService:
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
 
-        if schedule_type not in ("interval", "table_trigger"):
+        if schedule_type not in ("interval", "table_trigger", "table_set_trigger"):
             raise ValueError(f"Invalid schedule_type: {schedule_type}")
 
         if schedule_type == "interval":
@@ -1218,10 +1270,13 @@ class CatalogService:
             table = self.repo.get_table(trigger_table_id)
             if table is None:
                 raise TableNotFoundError(table_id=trigger_table_id)
-            read_tables = self.repo.list_read_tables_for_flow(registration_id)
-            read_table_ids = {t.id for t in read_tables}
-            if trigger_table_id not in read_table_ids:
-                raise ValueError("Trigger table must be a table that the flow reads from")
+        elif schedule_type == "table_set_trigger":
+            if not trigger_table_ids or len(trigger_table_ids) < 2:
+                raise ValueError("table_set_trigger requires at least 2 trigger_table_ids")
+            for tid in trigger_table_ids:
+                table = self.repo.get_table(tid)
+                if table is None:
+                    raise TableNotFoundError(table_id=tid)
 
         schedule = FlowSchedule(
             registration_id=registration_id,
@@ -1232,7 +1287,11 @@ class CatalogService:
             trigger_table_id=trigger_table_id,
         )
         schedule = self.repo.create_schedule(schedule)
-        return FlowScheduleOut.model_validate(schedule)
+
+        if schedule_type == "table_set_trigger" and trigger_table_ids:
+            self.repo.set_trigger_table_ids(schedule.id, trigger_table_ids)
+
+        return self._schedule_to_out(schedule)
 
     def update_schedule(
         self,
@@ -1257,10 +1316,10 @@ class CatalogService:
                 raise ValueError("interval_seconds must be >= 60")
             schedule.interval_seconds = interval_seconds
         schedule = self.repo.update_schedule(schedule)
-        return FlowScheduleOut.model_validate(schedule)
+        return self._schedule_to_out(schedule)
 
     def delete_schedule(self, schedule_id: int) -> None:
-        """Delete a schedule.
+        """Delete a schedule and its associated trigger table links.
 
         Raises
         ------
@@ -1270,7 +1329,7 @@ class CatalogService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
-        self.repo.delete_schedule(schedule_id)
+        self.repo.delete_schedule(schedule_id)  # Also cleans up ScheduleTriggerTable rows
 
     def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
         """Get a schedule by ID.
@@ -1283,7 +1342,7 @@ class CatalogService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
-        return FlowScheduleOut.model_validate(schedule)
+        return self._schedule_to_out(schedule)
 
     def list_schedules(
         self,
@@ -1291,7 +1350,75 @@ class CatalogService:
     ) -> list[FlowScheduleOut]:
         """List schedules, optionally filtered by flow."""
         schedules = self.repo.list_schedules(registration_id=registration_id)
-        return [FlowScheduleOut.model_validate(s) for s in schedules]
+        return [self._schedule_to_out(s) for s in schedules]
+
+    # ------------------------------------------------------------------ #
+    # Trigger schedule now
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _spawn_flow_subprocess(flow_path: str, run_id: int) -> None:
+        """Fire-and-forget a ``flowfile run flow`` subprocess."""
+        cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
+        logger.info("Spawning: %s", " ".join(cmd))
+        try:
+            log_dir = Path.home() / ".flowfile" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"scheduled_run_{run_id}.log"
+            fh = open(log_file, "w")  # noqa: SIM115
+            subprocess.Popen(
+                cmd,
+                stdout=fh,
+                stderr=fh,
+                start_new_session=True,
+            )
+            logger.info("Subprocess log: %s", log_file)
+        except Exception:
+            logger.exception("Failed to spawn flow subprocess: %s", flow_path)
+
+    def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
+        """Manually trigger a scheduled flow immediately.
+
+        Raises
+        ------
+        ScheduleNotFoundError
+            If the schedule doesn't exist.
+        FlowNotFoundError
+            If the associated flow doesn't exist.
+        FlowAlreadyRunningError
+            If the flow already has an active (unfinished) run.
+        """
+        schedule = self.repo.get_schedule(schedule_id)
+        if schedule is None:
+            raise ScheduleNotFoundError(schedule_id=schedule_id)
+
+        flow = self.repo.get_flow(schedule.registration_id)
+        if flow is None:
+            raise FlowNotFoundError(registration_id=schedule.registration_id)
+
+        # Check for active runs
+        active = self.repo.list_active_runs()
+        for r in active:
+            if r.registration_id == schedule.registration_id:
+                raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
+
+        # Create a run record before spawning
+        now = datetime.now(timezone.utc)
+        run = FlowRun(
+            registration_id=flow.id,
+            flow_name=flow.name,
+            flow_path=flow.flow_path,
+            user_id=user_id,
+            started_at=now,
+            number_of_nodes=0,
+            run_type="scheduled",
+        )
+        run = self.repo.create_run(run)
+
+        # Spawn the subprocess
+        self._spawn_flow_subprocess(flow.flow_path, run.id)
+
+        return self._run_to_out(run)
 
     # ------------------------------------------------------------------ #
     # Active runs + cancel
@@ -1330,8 +1457,7 @@ class CatalogService:
         run.ended_at = now
         run.success = False
         if run.started_at:
-            started = run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None else run.started_at
-            run.duration_seconds = (now - started).total_seconds()
+            run.duration_seconds = (now.replace(tzinfo=None) - run.started_at.replace(tzinfo=None)).total_seconds()
         self.repo.update_run(run)
 
     # ------------------------------------------------------------------ #

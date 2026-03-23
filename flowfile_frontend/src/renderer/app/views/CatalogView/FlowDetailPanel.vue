@@ -248,13 +248,19 @@
             <div class="schedule-card-type">
               <i
                 :class="
-                  schedule.schedule_type === 'interval' ? 'fa-solid fa-clock' : 'fa-solid fa-table'
+                  schedule.schedule_type === 'interval'
+                    ? 'fa-solid fa-clock'
+                    : schedule.schedule_type === 'table_set_trigger'
+                      ? 'fa-solid fa-layer-group'
+                      : 'fa-solid fa-table'
                 "
               />
               {{
                 schedule.schedule_type === "interval"
                   ? formatScheduleInterval(schedule.interval_seconds)
-                  : `Table trigger #${schedule.trigger_table_id}`
+                  : schedule.schedule_type === "table_set_trigger"
+                    ? `Listens to: ${schedule.trigger_table_names?.join(", ") || schedule.trigger_table_ids?.length + " tables"}`
+                    : `On refresh: ${schedule.trigger_table_name || "#" + schedule.trigger_table_id}`
               }}
             </div>
             <div class="schedule-card-meta">
@@ -266,6 +272,17 @@
             </div>
           </div>
           <div class="schedule-card-actions">
+            <el-tooltip content="Run Now" placement="top" :show-after="400">
+              <el-button
+                size="small"
+                type="success"
+                text
+                :disabled="isFlowRunning"
+                @click="handleRunNow(schedule.id)"
+              >
+                <i class="fa-solid fa-play" />
+              </el-button>
+            </el-tooltip>
             <el-switch
               :model-value="schedule.enabled"
               size="small"
@@ -332,6 +349,10 @@ function cancelRename() {
   isEditing.value = false;
 }
 
+const isFlowRunning = computed(() => {
+  return catalogStore.activeRuns.some((r) => r.registration_id === props.flow.id);
+});
+
 const statusClass = computed(() => {
   if (props.flow.last_run_success === null) return "";
   return props.flow.last_run_success ? "text-success" : "text-danger";
@@ -390,6 +411,18 @@ function formatScheduleInterval(seconds: number | null): string {
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
   return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
+}
+
+async function handleRunNow(scheduleId: number) {
+  try {
+    await CatalogApi.triggerScheduleNow(scheduleId);
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadRuns(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to trigger run");
+  }
 }
 
 async function handleToggleSchedule(id: number, enabled: boolean) {

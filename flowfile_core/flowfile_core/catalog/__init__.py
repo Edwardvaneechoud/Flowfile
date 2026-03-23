@@ -11,6 +11,7 @@ Public interface:
 from .exceptions import (
     CatalogError,
     FavoriteNotFoundError,
+    FlowAlreadyRunningError,
     FlowExistsError,
     FlowHasArtifactsError,
     FlowNotFoundError,
@@ -50,6 +51,7 @@ __all__ = [
     "NoSnapshotError",
     "ScheduleNotFoundError",
     "ScheduleConflictError",
+    "FlowAlreadyRunningError",
     "TableNotFoundError",
     "TableExistsError",
     "TableFavoriteNotFoundError",

@@ -21,6 +21,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
     CatalogService,
     FavoriteNotFoundError,
+    FlowAlreadyRunningError,
     FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
@@ -286,6 +287,34 @@ def get_run_detail(
         return service.get_run_detail(run_id)
     except RunNotFoundError:
         raise HTTPException(404, "Run not found") from None
+
+
+# ---------------------------------------------------------------------------
+# Run Logs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/runs/{run_id}/log")
+def get_run_log(
+    run_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the log content for a scheduled run."""
+    from pathlib import Path
+
+    try:
+        run = service.get_run_detail(run_id)
+    except RunNotFoundError:
+        raise HTTPException(404, "Run not found") from None
+
+    if run.run_type != "scheduled":
+        raise HTTPException(404, "Logs are only available for scheduled runs")
+
+    log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
+    if not log_file.exists():
+        raise HTTPException(404, "Log file not found")
+
+    return {"log": log_file.read_text(errors="replace")}
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +616,7 @@ def create_schedule(
             schedule_type=body.schedule_type,
             interval_seconds=body.interval_seconds,
             trigger_table_id=body.trigger_table_id,
+            trigger_table_ids=body.trigger_table_ids,
             enabled=body.enabled,
         )
     except FlowNotFoundError:
@@ -635,6 +665,23 @@ def delete_schedule(
         service.delete_schedule(schedule_id)
     except ScheduleNotFoundError:
         raise HTTPException(404, "Schedule not found") from None
+
+
+@router.post("/schedules/{schedule_id}/run-now", response_model=FlowRunOut)
+def trigger_schedule_now(
+    schedule_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Manually trigger a scheduled flow immediately."""
+    try:
+        return service.trigger_schedule_now(schedule_id=schedule_id, user_id=current_user.id)
+    except ScheduleNotFoundError:
+        raise HTTPException(404, "Schedule not found") from None
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found") from None
+    except FlowAlreadyRunningError:
+        raise HTTPException(409, "Flow already has an active run") from None
 
 
 # ---------------------------------------------------------------------------

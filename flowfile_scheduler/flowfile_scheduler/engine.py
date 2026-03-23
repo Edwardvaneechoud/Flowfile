@@ -24,6 +24,7 @@ from flowfile_scheduler.models import (
     FlowRun,
     FlowSchedule,
     SchedulerLock,
+    ScheduleTriggerTable,
 )
 
 logger = logging.getLogger("flowfile.scheduler")
@@ -138,6 +139,7 @@ class FlowScheduler:
                 return
             launched = self._process_interval_schedules(db)
             launched += self._process_table_trigger_schedules(db)
+            launched += self._process_table_set_trigger_schedules(db)
             if launched:
                 logger.info("Tick complete — launched %d flow(s)", launched)
             else:
@@ -263,6 +265,65 @@ class FlowScheduler:
                 )
                 now = _utcnow()
                 sched.last_trigger_table_updated_at = table_updated
+                if self._maybe_launch(db, sched, now):
+                    launched += 1
+        return launched
+
+    # ------------------------------------------------------------------
+    # Table-set-trigger schedules
+    # ------------------------------------------------------------------
+
+    def _process_table_set_trigger_schedules(self, db: Session) -> int:
+        schedules: list[FlowSchedule] = (
+            db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_set_trigger")
+            .all()
+        )
+        logger.info("Evaluating %d table-set-trigger schedule(s)", len(schedules))
+
+        launched = 0
+        for sched in schedules:
+            # Load linked table IDs from the join table
+            trigger_links: list[ScheduleTriggerTable] = (
+                db.query(ScheduleTriggerTable)
+                .filter(ScheduleTriggerTable.schedule_id == sched.id)
+                .all()
+            )
+            table_ids = [link.table_id for link in trigger_links]
+            if len(table_ids) < 2:
+                logger.warning("Schedule %s has fewer than 2 trigger tables, skipping", sched.id)
+                continue
+
+            last_triggered = (
+                sched.last_triggered_at.replace(tzinfo=timezone.utc)
+                if sched.last_triggered_at
+                else None
+            )
+
+            # Check if ALL tables have been updated since last trigger
+            all_updated = True
+            for tid in table_ids:
+                table: CatalogTable | None = db.get(CatalogTable, tid)
+                if table is None:
+                    logger.warning("Schedule %s references missing table %s", sched.id, tid)
+                    all_updated = False
+                    break
+
+                table_updated = table.updated_at.replace(tzinfo=timezone.utc) if table.updated_at else None
+                if table_updated is None:
+                    all_updated = False
+                    break
+                if last_triggered is not None and table_updated <= last_triggered:
+                    all_updated = False
+                    break
+
+            if all_updated:
+                logger.info(
+                    "All %d trigger tables updated for schedule %s — triggering",
+                    len(table_ids),
+                    sched.id,
+                )
+                now = _utcnow()
                 if self._maybe_launch(db, sched, now):
                     launched += 1
         return launched

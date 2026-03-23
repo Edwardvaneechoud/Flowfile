@@ -20,6 +20,7 @@ import type {
   NamespaceCreate,
   NamespaceTree,
   NamespaceUpdate,
+  SchedulerStatus,
 } from "../types";
 
 export class CatalogApi {
@@ -111,11 +112,7 @@ export class CatalogApi {
 
   // ====== Runs ======
 
-  static async getRuns(
-    registrationId?: number | null,
-    limit = 50,
-    offset = 0,
-  ): Promise<FlowRun[]> {
+  static async getRuns(registrationId?: number | null, limit = 50, offset = 0): Promise<FlowRun[]> {
     const params: Record<string, any> = { limit, offset };
     if (registrationId !== undefined && registrationId !== null)
       params.registration_id = registrationId;
@@ -136,6 +133,11 @@ export class CatalogApi {
   }
 
   // ====== Open Snapshot ======
+
+  static async getRunLog(runId: number): Promise<string> {
+    const response = await axios.get<{ log: string }>(`/catalog/runs/${runId}/log`);
+    return response.data.log;
+  }
 
   static async openRunSnapshot(runId: number): Promise<number> {
     const response = await axios.post<{ flow_id: number }>(`/catalog/runs/${runId}/open`);
@@ -225,6 +227,11 @@ export class CatalogApi {
     await axios.delete(`/catalog/schedules/${id}`);
   }
 
+  static async triggerScheduleNow(scheduleId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/schedules/${scheduleId}/run-now`);
+    return response.data;
+  }
+
   // ====== Active Runs ======
 
   static async getActiveRuns(): Promise<ActiveFlowRun[]> {
@@ -234,6 +241,21 @@ export class CatalogApi {
 
   static async cancelRun(runId: number): Promise<void> {
     await axios.post(`/catalog/runs/${runId}/cancel`);
+  }
+
+  // ====== Scheduler ======
+
+  static async getSchedulerStatus(): Promise<SchedulerStatus> {
+    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+    return response.data;
+  }
+
+  static async startScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/start");
+  }
+
+  static async stopScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/stop");
   }
 
   // ====== Stats ======

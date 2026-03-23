@@ -14,6 +14,11 @@
         <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
       </button>
       <div class="tab-spacer"></div>
+      <el-tooltip content="Refresh" placement="bottom" :show-after="400">
+        <button class="catalog-tab info-btn" :disabled="refreshing" @click="refreshAll">
+          <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin': refreshing }"></i>
+        </button>
+      </el-tooltip>
       <el-tooltip content="About the Catalog" placement="bottom" :show-after="400">
         <button class="catalog-tab info-btn" @click="showInfoModal = true">
           <i class="fa-solid fa-circle-info"></i>
@@ -122,15 +127,14 @@
             @create-schedule="showCreateSchedule = true"
             @toggle-schedule="handleToggleSchedule"
             @delete-schedule="handleDeleteSchedule"
+            @run-now="handleRunNow"
+            @view-flow="navigateToFlow"
           />
         </div>
       </div>
 
       <!-- Detail Panel -->
       <div class="catalog-detail">
-        <!-- Active Runs Banner -->
-        <ActiveRunsBanner :active-runs="catalogStore.activeRuns" @cancel="handleCancelRun" />
-
         <!-- Run detail view -->
         <RunDetailPanel
           v-if="catalogStore.selectedRunDetail"
@@ -177,6 +181,15 @@
           @rename-flow="handleRenameFlow"
           @add-schedule="handleAddFlowSchedule"
         />
+        <!-- Schedule overview (when on schedules tab with nothing selected) -->
+        <ScheduleOverviewPanel
+          v-else-if="catalogStore.activeTab === 'schedules'"
+          @create-schedule="showCreateSchedule = true"
+          @toggle-schedule="handleToggleSchedule"
+          @delete-schedule="handleDeleteSchedule"
+          @run-now="handleRunNow"
+          @view-flow="navigateToFlow"
+        />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -219,6 +232,7 @@
     <CreateScheduleModal
       :visible="showCreateSchedule"
       :flows="catalogStore.allFlows"
+      :tables="catalogStore.allTables"
       :preselected-flow-id="preselectedFlowId"
       @close="
         showCreateSchedule = false;
@@ -290,8 +304,8 @@ import CreateNamespaceModal from "./CreateNamespaceModal.vue";
 import RegisterFlowModal from "./RegisterFlowModal.vue";
 import RegisterTableModal from "./RegisterTableModal.vue";
 import SchedulesPanel from "./SchedulesPanel.vue";
+import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
-import ActiveRunsBanner from "./ActiveRunsBanner.vue";
 import type { CatalogTab, FlowScheduleCreate, GlobalArtifact, NamespaceTree } from "../../types";
 
 const router = useRouter();
@@ -358,6 +372,39 @@ const preselectedFlowId = ref<number | null>(null);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
+
+// Polling
+let pollInterval: ReturnType<typeof setInterval> | null = null;
+const refreshing = ref(false);
+
+async function pollActiveRuns() {
+  const hadActiveRuns = catalogStore.activeRuns.length > 0;
+  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadSchedulerStatus()]);
+  const hasActiveRuns = catalogStore.activeRuns.length > 0;
+
+  // When runs finish, refresh related data
+  if (hadActiveRuns && !hasActiveRuns) {
+    await Promise.all([catalogStore.loadRuns(), catalogStore.loadSchedules(), catalogStore.loadStats()]);
+  }
+}
+
+async function refreshAll() {
+  refreshing.value = true;
+  try {
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadRuns(),
+      catalogStore.loadSchedules(),
+      catalogStore.loadStats(),
+      catalogStore.loadTree(),
+      catalogStore.loadAllFlows(),
+      catalogStore.loadAllTables(),
+      catalogStore.loadSchedulerStatus(),
+    ]);
+  } finally {
+    refreshing.value = false;
+  }
+}
 
 function selectFlow(flowId: number) {
   catalogStore.clearArtifactSelection();
@@ -533,6 +580,19 @@ async function handleCreateSchedule(body: FlowScheduleCreate) {
   }
 }
 
+async function handleRunNow(scheduleId: number) {
+  try {
+    await CatalogApi.triggerScheduleNow(scheduleId);
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadRuns(),
+      catalogStore.loadSchedules(),
+    ]);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail ?? "Failed to trigger run");
+  }
+}
+
 async function handleToggleSchedule(id: number, enabled: boolean) {
   try {
     await CatalogApi.updateSchedule(id, { enabled });
@@ -552,13 +612,6 @@ async function handleDeleteSchedule(id: number) {
   }
 }
 
-async function handleCancelRun(runId: number) {
-  if (!confirm("Are you sure you want to cancel this run?")) return;
-  await catalogStore.cancelRun(runId);
-}
-
-let activeRunsTimer: ReturnType<typeof setInterval> | null = null;
-
 onMounted(async () => {
   await catalogStore.initialize();
   try {
@@ -566,17 +619,14 @@ onMounted(async () => {
   } catch {
     // Not critical — leave null
   }
-
-  // Auto-refresh active runs every 10s
-  activeRunsTimer = setInterval(() => {
-    catalogStore.loadActiveRuns();
-  }, 10_000);
+  // Poll active runs every 20 seconds
+  pollInterval = setInterval(pollActiveRuns, 20_000);
 });
 
 onUnmounted(() => {
-  if (activeRunsTimer !== null) {
-    clearInterval(activeRunsTimer);
-    activeRunsTimer = null;
+  if (pollInterval !== null) {
+    clearInterval(pollInterval);
+    pollInterval = null;
   }
 });
 </script>

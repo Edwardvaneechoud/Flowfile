@@ -21,6 +21,7 @@
         <el-radio-group v-model="form.schedule_type">
           <el-radio value="interval">Interval</el-radio>
           <el-radio value="table_trigger">Table Trigger</el-radio>
+          <el-radio value="table_set_trigger">Table Set Trigger</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -35,21 +36,52 @@
         <el-select
           v-model="form.trigger_table_id"
           :placeholder="
-            eligibleTables.length === 0 ? 'No catalog tables read by this flow' : 'Select a table'
+            tables.length === 0 ? 'No catalog tables available' : 'Select a table'
           "
-          :disabled="eligibleTables.length === 0"
+          :disabled="tables.length === 0"
           filterable
           style="width: 100%"
         >
           <el-option
-            v-for="table in eligibleTables"
+            v-for="table in tables"
             :key="table.id"
             :label="table.name"
             :value="table.id"
           />
         </el-select>
-        <div v-if="form.registration_id && eligibleTables.length === 0" class="hint-text">
-          This flow does not read any catalog tables.
+        <div v-if="tables.length === 0" class="hint-text">
+          No catalog tables registered yet.
+        </div>
+        <div v-else class="hint-text">
+          The flow will run when this table is refreshed.
+        </div>
+      </el-form-item>
+
+      <el-form-item v-if="form.schedule_type === 'table_set_trigger'" label="Trigger Tables">
+        <el-select
+          v-model="form.trigger_table_ids"
+          :placeholder="
+            tables.length === 0
+              ? 'No catalog tables available'
+              : 'Select tables (at least 2)'
+          "
+          :disabled="tables.length === 0"
+          filterable
+          multiple
+          style="width: 100%"
+        >
+          <el-option
+            v-for="table in tables"
+            :key="table.id"
+            :label="table.name"
+            :value="table.id"
+          />
+        </el-select>
+        <div v-if="tables.length === 0" class="hint-text">
+          No catalog tables registered yet.
+        </div>
+        <div v-else class="hint-text">
+          The flow will run when all selected tables have been refreshed.
         </div>
       </el-form-item>
     </el-form>
@@ -63,11 +95,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
-import type { FlowRegistration, FlowScheduleCreate } from "../../types";
+import type { CatalogTable, FlowRegistration, FlowScheduleCreate } from "../../types";
 
 const props = defineProps<{
   visible: boolean;
   flows: FlowRegistration[];
+  tables: CatalogTable[];
   preselectedFlowId?: number | null;
 }>();
 
@@ -82,24 +115,21 @@ const form = ref<{
   registration_id: number | null;
   schedule_type: string;
   trigger_table_id: number | null;
+  trigger_table_ids: number[];
 }>({
   registration_id: props.preselectedFlowId ?? null,
   schedule_type: "interval",
   trigger_table_id: null,
+  trigger_table_ids: [],
 });
 
 const availableFlows = computed(() => props.flows.filter((f) => f.file_exists));
-
-const selectedFlow = computed(
-  () => props.flows.find((f) => f.id === form.value.registration_id) ?? null,
-);
-
-const eligibleTables = computed(() => selectedFlow.value?.tables_read ?? []);
 
 watch(
   () => form.value.registration_id,
   () => {
     form.value.trigger_table_id = null;
+    form.value.trigger_table_ids = [];
   },
 );
 
@@ -110,6 +140,7 @@ watch(
       form.value.registration_id = props.preselectedFlowId ?? null;
       form.value.schedule_type = "interval";
       form.value.trigger_table_id = null;
+      form.value.trigger_table_ids = [];
       intervalMinutes.value = 60;
     }
   },
@@ -119,6 +150,8 @@ const isValid = computed(() => {
   if (!form.value.registration_id) return false;
   if (form.value.schedule_type === "interval" && intervalMinutes.value < 1) return false;
   if (form.value.schedule_type === "table_trigger" && !form.value.trigger_table_id) return false;
+  if (form.value.schedule_type === "table_set_trigger" && form.value.trigger_table_ids.length < 2)
+    return false;
   return true;
 });
 
@@ -132,8 +165,10 @@ function handleCreate() {
 
   if (form.value.schedule_type === "interval") {
     body.interval_seconds = intervalMinutes.value * 60;
-  } else {
+  } else if (form.value.schedule_type === "table_trigger") {
     body.trigger_table_id = form.value.trigger_table_id;
+  } else if (form.value.schedule_type === "table_set_trigger") {
+    body.trigger_table_ids = form.value.trigger_table_ids;
   }
 
   emit("create", body);

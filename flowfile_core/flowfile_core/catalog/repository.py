@@ -21,6 +21,7 @@ from flowfile_core.database.models import (
     FlowRun,
     FlowSchedule,
     GlobalArtifact,
+    ScheduleTriggerTable,
     TableFavorite,
 )
 
@@ -221,6 +222,12 @@ class CatalogRepository(Protocol):
     def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
 
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
+
+    def get_trigger_table_ids(self, schedule_id: int) -> list[int]: ...
+
+    def set_trigger_table_ids(self, schedule_id: int, table_ids: list[int]) -> None: ...
+
+    def delete_trigger_table_ids(self, schedule_id: int) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -749,6 +756,7 @@ class SQLAlchemyCatalogRepository:
         return schedule
 
     def delete_schedule(self, schedule_id: int) -> None:
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         schedule = self._db.get(FlowSchedule, schedule_id)
         if schedule is not None:
             self._db.delete(schedule)
@@ -792,3 +800,24 @@ class SQLAlchemyCatalogRepository:
             .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_trigger")
             .all()
         )
+
+    def get_trigger_table_ids(self, schedule_id: int) -> list[int]:
+        """Return table IDs linked to a table_set_trigger schedule."""
+        rows = (
+            self._db.query(ScheduleTriggerTable.table_id)
+            .filter(ScheduleTriggerTable.schedule_id == schedule_id)
+            .all()
+        )
+        return [r[0] for r in rows]
+
+    def set_trigger_table_ids(self, schedule_id: int, table_ids: list[int]) -> None:
+        """Replace all trigger table links for a schedule."""
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        for tid in table_ids:
+            self._db.add(ScheduleTriggerTable(schedule_id=schedule_id, table_id=tid))
+        self._db.commit()
+
+    def delete_trigger_table_ids(self, schedule_id: int) -> None:
+        """Remove all trigger table links for a schedule."""
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        self._db.commit()

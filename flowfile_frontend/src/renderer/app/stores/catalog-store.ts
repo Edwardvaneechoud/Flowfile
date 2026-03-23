@@ -13,6 +13,7 @@ import type {
   FlowSchedule,
   GlobalArtifact,
   NamespaceTree,
+  SchedulerStatus,
 } from "../types";
 
 interface CatalogState {
@@ -37,6 +38,7 @@ interface CatalogState {
   schedules: FlowSchedule[];
   flowSchedules: FlowSchedule[];
   activeRuns: ActiveFlowRun[];
+  schedulerStatus: SchedulerStatus | null;
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -65,6 +67,7 @@ export const useCatalogStore = defineStore("catalog", {
     schedules: [],
     flowSchedules: [],
     activeRuns: [],
+    schedulerStatus: null,
     activeTab: "catalog",
     loading: false,
     error: null,
@@ -328,6 +331,34 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    // -- Scheduler actions --
+
+    async loadSchedulerStatus() {
+      try {
+        this.schedulerStatus = await CatalogApi.getSchedulerStatus();
+      } catch {
+        // Non-critical — leave current state
+      }
+    },
+
+    async startScheduler() {
+      try {
+        await CatalogApi.startScheduler();
+        await this.loadSchedulerStatus();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to start scheduler";
+      }
+    },
+
+    async stopScheduler() {
+      try {
+        await CatalogApi.stopScheduler();
+        await this.loadSchedulerStatus();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to stop scheduler";
+      }
+    },
+
     // -- Active runs actions --
 
     async loadActiveRuns() {
@@ -378,6 +409,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadRuns(),
         this.loadSchedules(),
         this.loadActiveRuns(),
+        this.loadSchedulerStatus(),
       ]);
     },
   },

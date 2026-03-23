@@ -76,6 +76,7 @@ def run_flow(flow_path: str, run_id: int | None = None) -> int:
         run_id,
         success=result.success,
         nodes_completed=result.nodes_completed,
+        number_of_nodes=result.number_of_nodes,
     )
 
     # Display results
@@ -101,6 +102,7 @@ def _complete_run_if_needed(
     run_id: int | None,
     success: bool,
     nodes_completed: int,
+    number_of_nodes: int = 0,
 ) -> None:
     """Report results back to a pre-created run record if run_id is provided."""
     if run_id is None:
@@ -115,6 +117,7 @@ def _complete_run_if_needed(
                 run_id=run_id,
                 success=success,
                 nodes_completed=nodes_completed,
+                number_of_nodes=number_of_nodes,
             )
     except Exception as e:
         print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)

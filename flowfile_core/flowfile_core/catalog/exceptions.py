@@ -181,6 +181,14 @@ class ScheduleNotFoundError(CatalogError):
         super().__init__(f"Schedule with id={schedule_id} not found")
 
 
+class FlowAlreadyRunningError(CatalogError):
+    """Raised when trying to trigger a flow that already has an active run."""
+
+    def __init__(self, registration_id: int):
+        self.registration_id = registration_id
+        super().__init__(f"Flow {registration_id} already has an active run")
+
+
 class ScheduleConflictError(CatalogError):
     """Raised when a schedule conflicts with an existing one."""
 

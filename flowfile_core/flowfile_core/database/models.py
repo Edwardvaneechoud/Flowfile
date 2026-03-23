@@ -201,13 +201,26 @@ class FlowSchedule(Base):
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
-    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger"
+    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger" | "table_set_trigger"
     interval_seconds = Column(Integer, nullable=True)
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
     last_triggered_at = Column(DateTime, nullable=True)
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ScheduleTriggerTable(Base):
+    """Join table linking a table_set_trigger schedule to multiple catalog tables."""
+
+    __tablename__ = "schedule_trigger_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=False)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("schedule_id", "table_id", name="uq_schedule_trigger_table"),)
 
 
 class TableFavorite(Base):

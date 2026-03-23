@@ -109,6 +109,7 @@ class FlowRunOut(BaseModel):
     duration_seconds: float | None = None
     run_type: str = "full_run"
     has_snapshot: bool = False
+    log_path: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -247,9 +248,10 @@ class TableFavoriteOut(BaseModel):
 
 class FlowScheduleCreate(BaseModel):
     registration_id: int
-    schedule_type: str  # "interval" | "table_trigger"
+    schedule_type: str  # "interval" | "table_trigger" | "table_set_trigger"
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
+    trigger_table_ids: list[int] | None = None
     enabled: bool = True
 
 
@@ -266,6 +268,9 @@ class FlowScheduleOut(BaseModel):
     schedule_type: str
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
+    trigger_table_name: str | None = None
+    trigger_table_ids: list[int] = Field(default_factory=list)
+    trigger_table_names: list[str] = Field(default_factory=list)
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime

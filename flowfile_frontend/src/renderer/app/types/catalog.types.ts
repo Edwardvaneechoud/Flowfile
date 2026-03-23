@@ -89,6 +89,7 @@ export interface FlowRun {
   duration_seconds: number | null;
   run_type: string;
   has_snapshot: boolean;
+  log_path: string | null;
 }
 
 export interface FlowRunDetail extends FlowRun {
@@ -191,9 +192,12 @@ export interface FlowSchedule {
   registration_id: number;
   owner_id: number;
   enabled: boolean;
-  schedule_type: string; // "interval" | "table_trigger"
+  schedule_type: string; // "interval" | "table_trigger" | "table_set_trigger"
   interval_seconds: number | null;
   trigger_table_id: number | null;
+  trigger_table_name: string | null;
+  trigger_table_ids: number[];
+  trigger_table_names: string[];
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;
@@ -205,6 +209,7 @@ export interface FlowScheduleCreate {
   schedule_type: string;
   interval_seconds?: number | null;
   trigger_table_id?: number | null;
+  trigger_table_ids?: number[] | null;
   enabled?: boolean;
 }
 
@@ -246,6 +251,17 @@ export interface CatalogStats {
   favorite_flows: FlowRegistration[];
   favorite_tables: CatalogTable[];
   active_runs: ActiveFlowRun[];
+}
+
+// ============================================================================
+// Scheduler Status
+// ============================================================================
+
+export interface SchedulerStatus {
+  active: boolean;
+  holder_id?: string;
+  started_at?: string;
+  heartbeat_at?: string;
 }
 
 // ============================================================================

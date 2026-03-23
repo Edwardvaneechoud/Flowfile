@@ -63,6 +63,15 @@ class CatalogTable(Base):
     updated_at = Column(DateTime, nullable=True)
 
 
+class ScheduleTriggerTable(Base):
+    __tablename__ = "schedule_trigger_tables"
+
+    id = Column(Integer, primary_key=True)
+    schedule_id = Column(Integer, nullable=False)
+    table_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
 class SchedulerLock(Base):
     __tablename__ = "scheduler_lock"
 

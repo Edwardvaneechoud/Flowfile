@@ -73,6 +73,27 @@
       </table>
     </div>
 
+    <!-- Run Log (scheduled runs) -->
+    <div v-if="run.log_path" class="section">
+      <div class="snapshot-header">
+        <h3>
+          <i class="fa-solid fa-file-lines"></i>
+          Run Log
+        </h3>
+        <button v-if="!logContent && !loadingLog" class="open-snapshot-btn" @click="loadLog">
+          <i class="fa-solid fa-eye"></i>
+          View log
+        </button>
+        <span v-if="run.log_path" class="log-path">{{ run.log_path }}</span>
+      </div>
+      <div v-if="loadingLog" class="log-viewer">
+        <pre class="snapshot-code">Loading...</pre>
+      </div>
+      <div v-else-if="logContent !== null" class="log-viewer">
+        <pre class="snapshot-code">{{ logContent }}</pre>
+      </div>
+    </div>
+
     <!-- Flow Version Snapshot -->
     <div v-if="run.flow_snapshot" class="section">
       <div class="snapshot-header">
@@ -93,7 +114,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
+import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRunDetail } from "../../types";
 
 const props = defineProps<{
@@ -105,6 +127,32 @@ defineEmits<{
   openSnapshot: [runId: number];
   viewFlow: [registrationId: number];
 }>();
+
+const logContent = ref<string | null>(null);
+const loadingLog = ref(false);
+
+async function loadLog() {
+  loadingLog.value = true;
+  try {
+    logContent.value = await CatalogApi.getRunLog(props.run.id);
+  } catch {
+    logContent.value = "Failed to load log file.";
+  } finally {
+    loadingLog.value = false;
+  }
+}
+
+// Auto-load log when viewing a scheduled run
+watch(
+  () => props.run.id,
+  () => {
+    logContent.value = null;
+    if (props.run.log_path) {
+      loadLog();
+    }
+  },
+  { immediate: true },
+);
 
 interface NodeResultData {
   node_id: number;
@@ -354,6 +402,21 @@ function formatDuration(seconds: number | null): string {
 
 .open-snapshot-btn:hover {
   opacity: 0.9;
+}
+
+/* Log Viewer */
+.log-viewer {
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  max-height: 500px;
+  overflow: auto;
+}
+
+.log-path {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: monospace;
 }
 
 /* Snapshot Viewer */
