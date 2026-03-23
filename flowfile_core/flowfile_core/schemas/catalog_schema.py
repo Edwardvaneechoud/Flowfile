@@ -253,11 +253,13 @@ class FlowScheduleCreate(BaseModel):
     trigger_table_id: int | None = None
     trigger_table_ids: list[int] | None = None
     enabled: bool = True
+    description: str | None = None
 
 
 class FlowScheduleUpdate(BaseModel):
     enabled: bool | None = None
     interval_seconds: int | None = None
+    description: str | None = None
 
 
 class FlowScheduleOut(BaseModel):
@@ -265,6 +267,7 @@ class FlowScheduleOut(BaseModel):
     registration_id: int
     owner_id: int
     enabled: bool
+    description: str | None = None
     schedule_type: str
     interval_seconds: int | None = None
     trigger_table_id: int | None = None

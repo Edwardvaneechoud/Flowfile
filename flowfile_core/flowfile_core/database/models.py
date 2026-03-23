@@ -201,6 +201,7 @@ class FlowSchedule(Base):
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
+    description = Column(String, nullable=True)
     schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger" | "table_set_trigger"
     interval_seconds = Column(Integer, nullable=True)
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)

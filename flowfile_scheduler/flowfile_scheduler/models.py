@@ -18,6 +18,7 @@ class FlowSchedule(Base):
     registration_id = Column(Integer, nullable=False)
     owner_id = Column(Integer, nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
+    description = Column(String, nullable=True)
     schedule_type = Column(String, nullable=False)
     interval_seconds = Column(Integer, nullable=True)
     trigger_table_id = Column(Integer, nullable=True)

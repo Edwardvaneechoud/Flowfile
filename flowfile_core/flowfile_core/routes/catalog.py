@@ -618,6 +618,7 @@ def create_schedule(
             trigger_table_id=body.trigger_table_id,
             trigger_table_ids=body.trigger_table_ids,
             enabled=body.enabled,
+            description=body.description,
         )
     except FlowNotFoundError:
         raise HTTPException(404, "Flow not found") from None
@@ -649,6 +650,7 @@ def update_schedule(
             schedule_id=schedule_id,
             enabled=body.enabled,
             interval_seconds=body.interval_seconds,
+            description=body.description,
         )
     except ScheduleNotFoundError:
         raise HTTPException(404, "Schedule not found") from None

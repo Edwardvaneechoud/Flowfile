@@ -1221,6 +1221,7 @@ class CatalogService:
             registration_id=schedule.registration_id,
             owner_id=schedule.owner_id,
             enabled=schedule.enabled,
+            description=schedule.description,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
             trigger_table_id=schedule.trigger_table_id,
@@ -1242,6 +1243,7 @@ class CatalogService:
         trigger_table_id: int | None = None,
         trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
+        description: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule for a registered flow.
 
@@ -1282,6 +1284,7 @@ class CatalogService:
             registration_id=registration_id,
             owner_id=owner_id,
             enabled=enabled,
+            description=description,
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
             trigger_table_id=trigger_table_id,
@@ -1298,6 +1301,7 @@ class CatalogService:
         schedule_id: int,
         enabled: bool | None = None,
         interval_seconds: int | None = None,
+        description: str | None = None,
     ) -> FlowScheduleOut:
         """Update a schedule.
 
@@ -1315,6 +1319,8 @@ class CatalogService:
             if interval_seconds < 60:
                 raise ValueError("interval_seconds must be >= 60")
             schedule.interval_seconds = interval_seconds
+        if description is not None:
+            schedule.description = description
         schedule = self.repo.update_schedule(schedule)
         return self._schedule_to_out(schedule)
 
