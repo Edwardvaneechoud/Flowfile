@@ -117,6 +117,7 @@
 import { computed, ref, watch } from "vue";
 import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRunDetail } from "../../types";
+import { formatDate, formatDuration } from "./catalog-formatters";
 
 const props = defineProps<{
   run: FlowRunDetail;
@@ -190,17 +191,6 @@ const formattedSnapshot = computed(() => {
     return props.run.flow_snapshot;
   }
 });
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString();
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
 </script>
 
 <style scoped>

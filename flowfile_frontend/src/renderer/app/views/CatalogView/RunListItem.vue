@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { FlowRun } from "../../types";
+import { formatDate, formatDuration } from "./catalog-formatters";
 
 const props = defineProps<{
   run: FlowRun;
@@ -31,22 +32,6 @@ const statusClass = computed(() => {
   if (props.run.success === null) return "pending";
   return props.run.success ? "success" : "failure";
 });
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
 </script>
 
 <style scoped>

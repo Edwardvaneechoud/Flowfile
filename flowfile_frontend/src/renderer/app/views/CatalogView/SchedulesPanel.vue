@@ -21,10 +21,7 @@
               class="fa-solid fa-spinner fa-spin running-indicator"
               title="Running"
             />
-            <i
-              v-else
-              :class="scheduleIcon(schedule)"
-            />
+            <i v-else :class="scheduleIcon(schedule)" />
             <span>{{ formatScheduleType(schedule) }}</span>
             <span v-if="isRunning(schedule)" class="running-label">Running</span>
           </div>
@@ -34,7 +31,9 @@
             </span>
             <span v-else class="last-triggered">Never triggered</span>
           </div>
-          <div class="schedule-flow flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{ flowName(schedule) }}</div>
+          <div class="schedule-flow flow-link" @click="$emit('viewFlow', schedule.registration_id)">
+            {{ flowName(schedule) }}
+          </div>
         </div>
         <div class="schedule-actions">
           <el-tooltip content="Run Now" placement="top" :show-after="400">
@@ -66,6 +65,7 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
+import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
 defineProps<{
   schedules: FlowSchedule[];
@@ -94,36 +94,6 @@ function flowName(schedule: FlowSchedule): string {
     catalogStore.allFlows.find((f) => f.id === schedule.registration_id)?.name ??
     `Flow #${schedule.registration_id}`
   );
-}
-
-function scheduleIcon(schedule: FlowSchedule): string {
-  if (schedule.schedule_type === "interval") return "fa-solid fa-clock";
-  if (schedule.schedule_type === "table_set_trigger") return "fa-solid fa-layer-group";
-  return "fa-solid fa-table";
-}
-
-function formatScheduleType(schedule: FlowSchedule): string {
-  if (schedule.schedule_type === "interval" && schedule.interval_seconds) {
-    const mins = Math.floor(schedule.interval_seconds / 60);
-    if (mins < 60) return `Every ${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    const remMins = mins % 60;
-    return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
-  }
-  if (schedule.schedule_type === "table_trigger") {
-    const name = schedule.trigger_table_name ?? `#${schedule.trigger_table_id}`;
-    return `On refresh: ${name}`;
-  }
-  if (schedule.schedule_type === "table_set_trigger") {
-    const names = schedule.trigger_table_names ?? [];
-    if (names.length > 0) return `Listens to: ${names.join(", ")}`;
-    return `Listens to ${schedule.trigger_table_ids?.length ?? 0} tables`;
-  }
-  return schedule.schedule_type;
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString();
 }
 </script>
 
@@ -219,15 +189,15 @@ function formatDate(dateStr: string): string {
 }
 
 .running-indicator {
-  color: #3b82f6;
+  color: var(--el-color-primary);
 }
 
 .running-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs, 11px);
   font-weight: 500;
-  color: #3b82f6;
+  color: var(--el-color-primary);
   background: rgba(59, 130, 246, 0.1);
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--border-radius-full, 8px);
 }
 </style>

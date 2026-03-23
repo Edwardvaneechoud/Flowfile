@@ -35,51 +35,67 @@
       <el-form-item v-if="form.schedule_type === 'table_trigger'" label="Trigger Table">
         <el-select
           v-model="form.trigger_table_id"
-          :placeholder="
-            tables.length === 0 ? 'No catalog tables available' : 'Select a table'
-          "
+          :placeholder="tables.length === 0 ? 'No catalog tables available' : 'Select a table'"
           :disabled="tables.length === 0"
           filterable
           style="width: 100%"
         >
-          <el-option
-            v-for="table in tables"
-            :key="table.id"
-            :label="table.name"
-            :value="table.id"
-          />
+          <el-option-group v-if="readTables.length > 0" label="Read by this flow">
+            <el-option
+              v-for="table in readTables"
+              :key="table.id"
+              :label="table.name"
+              :value="table.id"
+            />
+          </el-option-group>
+          <el-option-group
+            v-if="otherTables.length > 0"
+            :label="readTables.length > 0 ? 'Other tables' : 'All tables'"
+          >
+            <el-option
+              v-for="table in otherTables"
+              :key="table.id"
+              :label="table.name"
+              :value="table.id"
+            />
+          </el-option-group>
         </el-select>
-        <div v-if="tables.length === 0" class="hint-text">
-          No catalog tables registered yet.
-        </div>
-        <div v-else class="hint-text">
-          The flow will run when this table is refreshed.
-        </div>
+        <div v-if="tables.length === 0" class="hint-text">No catalog tables registered yet.</div>
+        <div v-else class="hint-text">The flow will run when this table is refreshed.</div>
       </el-form-item>
 
       <el-form-item v-if="form.schedule_type === 'table_set_trigger'" label="Trigger Tables">
         <el-select
           v-model="form.trigger_table_ids"
           :placeholder="
-            tables.length === 0
-              ? 'No catalog tables available'
-              : 'Select tables (at least 2)'
+            tables.length === 0 ? 'No catalog tables available' : 'Select tables (at least 2)'
           "
           :disabled="tables.length === 0"
           filterable
           multiple
           style="width: 100%"
         >
-          <el-option
-            v-for="table in tables"
-            :key="table.id"
-            :label="table.name"
-            :value="table.id"
-          />
+          <el-option-group v-if="readTables.length > 0" label="Read by this flow">
+            <el-option
+              v-for="table in readTables"
+              :key="table.id"
+              :label="table.name"
+              :value="table.id"
+            />
+          </el-option-group>
+          <el-option-group
+            v-if="otherTables.length > 0"
+            :label="readTables.length > 0 ? 'Other tables' : 'All tables'"
+          >
+            <el-option
+              v-for="table in otherTables"
+              :key="table.id"
+              :label="table.name"
+              :value="table.id"
+            />
+          </el-option-group>
         </el-select>
-        <div v-if="tables.length === 0" class="hint-text">
-          No catalog tables registered yet.
-        </div>
+        <div v-if="tables.length === 0" class="hint-text">No catalog tables registered yet.</div>
         <div v-else class="hint-text">
           The flow will run when all selected tables have been refreshed.
         </div>
@@ -124,6 +140,18 @@ const form = ref<{
 });
 
 const availableFlows = computed(() => props.flows.filter((f) => f.file_exists));
+
+const selectedFlow = computed(
+  () => props.flows.find((f) => f.id === form.value.registration_id) ?? null,
+);
+
+const readTableIds = computed(() => {
+  return new Set(selectedFlow.value?.tables_read?.map((t) => t.id) ?? []);
+});
+
+const readTables = computed(() => props.tables.filter((t) => readTableIds.value.has(t.id)));
+
+const otherTables = computed(() => props.tables.filter((t) => !readTableIds.value.has(t.id)));
 
 watch(
   () => form.value.registration_id,

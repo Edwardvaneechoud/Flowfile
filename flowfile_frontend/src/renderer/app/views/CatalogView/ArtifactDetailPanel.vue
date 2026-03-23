@@ -132,6 +132,7 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { GlobalArtifact } from "../../types";
+import { formatDate } from "./catalog-formatters";
 
 const props = defineProps<{
   artifact: GlobalArtifact;
@@ -151,15 +152,6 @@ const sourceFlowName = computed((): string | null => {
   const flow = catalogStore.allFlows.find((f) => f.id === regId);
   return flow?.name ?? null;
 });
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 function formatType(artifact: GlobalArtifact): string {
   if (artifact.python_type) {

@@ -246,22 +246,8 @@
         >
           <div class="schedule-card-info">
             <div class="schedule-card-type">
-              <i
-                :class="
-                  schedule.schedule_type === 'interval'
-                    ? 'fa-solid fa-clock'
-                    : schedule.schedule_type === 'table_set_trigger'
-                      ? 'fa-solid fa-layer-group'
-                      : 'fa-solid fa-table'
-                "
-              />
-              {{
-                schedule.schedule_type === "interval"
-                  ? formatScheduleInterval(schedule.interval_seconds)
-                  : schedule.schedule_type === "table_set_trigger"
-                    ? `Listens to: ${schedule.trigger_table_names?.join(", ") || schedule.trigger_table_ids?.length + " tables"}`
-                    : `On refresh: ${schedule.trigger_table_name || "#" + schedule.trigger_table_id}`
-              }}
+              <i :class="scheduleIcon(schedule)" />
+              {{ formatScheduleType(schedule) }}
             </div>
             <div class="schedule-card-meta">
               {{
@@ -302,7 +288,8 @@
 import { computed, nextTick, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
-import type { FlowRegistration, FlowRun, FlowSchedule, GlobalArtifact } from "../../types";
+import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
+import { formatDate, formatDuration, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
 
@@ -373,22 +360,6 @@ function runStatusText(run: FlowRun): string {
   return run.success ? "Success" : "Failed";
 }
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
-
 function formatType(artifact: GlobalArtifact): string {
   if (artifact.python_type) {
     const parts = artifact.python_type.split(".");
@@ -404,22 +375,10 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatScheduleInterval(seconds: number | null): string {
-  if (seconds === null) return "--";
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `Every ${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
-}
-
 async function handleRunNow(scheduleId: number) {
   try {
     await CatalogApi.triggerScheduleNow(scheduleId);
-    await Promise.all([
-      catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(),
-    ]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
   } catch (e: any) {
     alert(e?.response?.data?.detail ?? "Failed to trigger run");
   }

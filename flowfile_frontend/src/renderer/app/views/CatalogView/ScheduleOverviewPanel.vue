@@ -2,6 +2,40 @@
   <div class="schedule-overview">
     <h2>Schedules Overview</h2>
 
+    <!-- Scheduler status bar -->
+    <div
+      class="scheduler-status-bar"
+      :class="catalogStore.schedulerStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
+    >
+      <div class="scheduler-status-info">
+        <span
+          class="scheduler-dot"
+          :class="catalogStore.schedulerStatus?.active ? 'dot-green' : 'dot-orange'"
+        ></span>
+        <span class="scheduler-status-text">
+          {{ catalogStore.schedulerStatus?.active ? "Scheduler running" : "Scheduler not running" }}
+        </span>
+        <span
+          v-if="catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.heartbeat_at"
+          class="scheduler-heartbeat"
+        >
+          Last heartbeat: {{ formatDate(catalogStore.schedulerStatus.heartbeat_at) }}
+        </span>
+      </div>
+      <el-button
+        v-if="catalogStore.schedulerStatus?.active"
+        size="small"
+        type="warning"
+        text
+        @click="catalogStore.stopScheduler()"
+      >
+        <i class="fa-solid fa-stop" /> Stop
+      </el-button>
+      <el-button v-else size="small" type="success" text @click="catalogStore.startScheduler()">
+        <i class="fa-solid fa-play" /> Start
+      </el-button>
+    </div>
+
     <!-- Summary cards -->
     <div class="summary-cards">
       <div class="summary-card">
@@ -64,7 +98,9 @@
           </span>
         </div>
         <div class="col-flow">
-          <span class="flow-name flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{ schedule.flowName }}</span>
+          <span class="flow-name flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{
+            schedule.flowName
+          }}</span>
         </div>
         <div class="col-type">
           <i :class="scheduleIcon(schedule)" class="type-icon" />
@@ -103,6 +139,7 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
+import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
 
@@ -136,41 +173,6 @@ const enrichedSchedules = computed((): EnrichedSchedule[] => {
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
 const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRunning).length);
-
-function scheduleIcon(schedule: FlowSchedule): string {
-  if (schedule.schedule_type === "interval") return "fa-solid fa-clock";
-  if (schedule.schedule_type === "table_set_trigger") return "fa-solid fa-layer-group";
-  return "fa-solid fa-table";
-}
-
-function formatScheduleType(schedule: FlowSchedule): string {
-  if (schedule.schedule_type === "interval" && schedule.interval_seconds) {
-    const mins = Math.floor(schedule.interval_seconds / 60);
-    if (mins < 60) return `Every ${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    const remMins = mins % 60;
-    return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
-  }
-  if (schedule.schedule_type === "table_trigger") {
-    const name = schedule.trigger_table_name ?? `#${schedule.trigger_table_id}`;
-    return `On refresh: ${name}`;
-  }
-  if (schedule.schedule_type === "table_set_trigger") {
-    const names = schedule.trigger_table_names ?? [];
-    if (names.length > 0) return `Listens to: ${names.join(", ")}`;
-    return `Listens to ${schedule.trigger_table_ids?.length ?? 0} tables`;
-  }
-  return schedule.schedule_type;
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 </script>
 
 <style scoped>
@@ -183,6 +185,59 @@ function formatDate(dateStr: string): string {
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+/* Scheduler status bar */
+.scheduler-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+  margin-bottom: var(--spacing-4);
+  font-size: var(--font-size-sm);
+}
+
+.scheduler-status-bar.scheduler-active {
+  background: rgba(34, 197, 94, 0.05);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.scheduler-status-bar.scheduler-inactive {
+  background: rgba(249, 115, 22, 0.05);
+  border-color: rgba(249, 115, 22, 0.2);
+}
+
+.scheduler-status-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.scheduler-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--border-radius-full);
+  flex-shrink: 0;
+}
+
+.scheduler-dot.dot-green {
+  background: #22c55e;
+}
+
+.scheduler-dot.dot-orange {
+  background: #f97316;
+}
+
+.scheduler-status-text {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.scheduler-heartbeat {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* Summary cards */

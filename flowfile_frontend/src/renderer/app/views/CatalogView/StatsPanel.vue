@@ -55,7 +55,16 @@
         <i class="fa-solid fa-calendar-days stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_schedules }}</span>
-          <span class="stat-label">Schedules</span>
+          <span class="stat-label">
+            Schedules
+            <span
+              class="scheduler-indicator"
+              :class="catalogStore.schedulerStatus?.active ? 'indicator-green' : 'indicator-orange'"
+              :title="
+                catalogStore.schedulerStatus?.active ? 'Scheduler running' : 'Scheduler not running'
+              "
+            ></span>
+          </span>
         </div>
       </div>
     </div>
@@ -227,6 +236,7 @@
 import { computed, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { CatalogStats, CatalogTable, FlowRegistration, FlowRun } from "../../types";
+import { formatDate, formatDuration, formatScheduleType } from "./catalog-formatters";
 
 type Section = "flows" | "tables" | "favorites" | "runs" | "schedules";
 
@@ -270,43 +280,9 @@ const enrichedSchedules = computed(() => {
   }));
 });
 
-function formatScheduleType(schedule: {
-  schedule_type: string;
-  interval_seconds: number | null;
-  trigger_table_id: number | null;
-}): string {
-  if (schedule.schedule_type === "interval" && schedule.interval_seconds) {
-    const mins = Math.floor(schedule.interval_seconds / 60);
-    if (mins < 60) return `Every ${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    const remMins = mins % 60;
-    return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
-  }
-  if (schedule.schedule_type === "table_trigger") {
-    return `Table trigger #${schedule.trigger_table_id}`;
-  }
-  return schedule.schedule_type;
-}
-
 function formatNumber(n: number | null): string {
   if (n === null) return "--";
   return n.toLocaleString();
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 </script>
 
@@ -368,8 +344,27 @@ function formatDuration(seconds: number | null): string {
 }
 
 .stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.scheduler-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--border-radius-full);
+  flex-shrink: 0;
+}
+
+.scheduler-indicator.indicator-green {
+  background: #22c55e;
+}
+
+.scheduler-indicator.indicator-orange {
+  background: #f97316;
 }
 
 /* Sections */

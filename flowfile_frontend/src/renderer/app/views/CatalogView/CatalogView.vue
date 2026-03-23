@@ -384,7 +384,11 @@ async function pollActiveRuns() {
 
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
-    await Promise.all([catalogStore.loadRuns(), catalogStore.loadSchedules(), catalogStore.loadStats()]);
+    await Promise.all([
+      catalogStore.loadRuns(),
+      catalogStore.loadSchedules(),
+      catalogStore.loadStats(),
+    ]);
   }
 }
 
