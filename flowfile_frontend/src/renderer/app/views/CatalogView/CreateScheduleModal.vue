@@ -140,7 +140,7 @@ const intervalMinutes = ref(60);
 
 const form = ref<{
   registration_id: number | null;
-  schedule_type: string;
+  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
   trigger_table_id: number | null;
   trigger_table_ids: number[];
   description: string;

@@ -22,8 +22,8 @@
           Last heartbeat: {{ formatDate(catalogStore.schedulerStatus.heartbeat_at) }}
         </span>
       </div>
-      <template v-if="isStandalone">
-        <!-- No start/stop controls for standalone scheduler -->
+      <template v-if="isStandalone || isDockerMode">
+        <!-- No start/stop controls for standalone scheduler or Docker mode -->
       </template>
       <template v-else>
         <el-button
@@ -41,8 +41,8 @@
       </template>
     </div>
 
-    <!-- Lifecycle warning -->
-    <div class="scheduler-warning">
+    <!-- Lifecycle warning (hidden in Docker mode where the scheduler is always running) -->
+    <div v-if="!isDockerMode" class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
       <span v-if="isStandalone">
         The scheduler is running as a standalone service. Manage it from the process where it was
@@ -202,10 +202,12 @@ import { computed, nextTick, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
+import { authService } from "../../services/auth.service";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
+const isDockerMode = computed(() => !authService.isInElectronMode());
 
 defineEmits<{
   createSchedule: [];
