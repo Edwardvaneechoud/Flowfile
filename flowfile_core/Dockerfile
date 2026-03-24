@@ -55,6 +55,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY shared /app/shared
 COPY tools /app/tools
 COPY flowfile_core/flowfile_core /app/flowfile_core
+COPY flowfile_scheduler/flowfile_scheduler /app/flowfile_scheduler
+COPY flowfile/flowfile /app/flowfile
 
 RUN mkdir -p /app/user_data /app/internal_storage /app/flowfile_core/saved_flows
 
