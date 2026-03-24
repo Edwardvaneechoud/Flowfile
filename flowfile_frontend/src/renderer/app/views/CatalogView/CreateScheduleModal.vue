@@ -17,6 +17,17 @@
         </el-select>
       </el-form-item>
 
+      <el-form-item label="Description (optional)">
+        <el-input
+          v-model="form.description"
+          type="textarea"
+          :rows="2"
+          :maxlength="200"
+          show-word-limit
+          placeholder="e.g. Nightly sales data refresh"
+        />
+      </el-form-item>
+
       <el-form-item label="Schedule Type">
         <el-radio-group v-model="form.schedule_type">
           <el-radio value="interval">Interval</el-radio>
@@ -132,11 +143,13 @@ const form = ref<{
   schedule_type: string;
   trigger_table_id: number | null;
   trigger_table_ids: number[];
+  description: string;
 }>({
   registration_id: props.preselectedFlowId ?? null,
   schedule_type: "interval",
   trigger_table_id: null,
   trigger_table_ids: [],
+  description: "",
 });
 
 const availableFlows = computed(() => props.flows.filter((f) => f.file_exists));
@@ -169,6 +182,7 @@ watch(
       form.value.schedule_type = "interval";
       form.value.trigger_table_id = null;
       form.value.trigger_table_ids = [];
+      form.value.description = "";
       intervalMinutes.value = 60;
     }
   },
@@ -189,6 +203,7 @@ function handleCreate() {
   const body: FlowScheduleCreate = {
     registration_id: form.value.registration_id,
     schedule_type: form.value.schedule_type,
+    description: form.value.description.trim() || null,
   };
 
   if (form.value.schedule_type === "interval") {

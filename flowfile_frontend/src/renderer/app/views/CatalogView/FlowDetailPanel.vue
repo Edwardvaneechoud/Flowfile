@@ -249,6 +249,9 @@
               <i :class="scheduleIcon(schedule)" />
               {{ formatScheduleType(schedule) }}
             </div>
+            <div v-if="schedule.description" class="schedule-card-description">
+              {{ schedule.description }}
+            </div>
             <div class="schedule-card-meta">
               {{
                 schedule.last_triggered_at
@@ -914,6 +917,12 @@ async function handleDeleteSchedule(id: number) {
   display: flex;
   align-items: center;
   gap: var(--spacing-1);
+}
+
+.schedule-card-description {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
 }
 
 .schedule-card-meta {

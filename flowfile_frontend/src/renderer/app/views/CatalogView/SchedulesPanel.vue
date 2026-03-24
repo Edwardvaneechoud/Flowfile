@@ -25,6 +25,9 @@
             <span>{{ formatScheduleType(schedule) }}</span>
             <span v-if="isRunning(schedule)" class="running-label">Running</span>
           </div>
+          <div v-if="schedule.description" class="schedule-description">
+            {{ schedule.description }}
+          </div>
           <div class="schedule-meta">
             <span v-if="schedule.last_triggered_at" class="last-triggered">
               Last: {{ formatDate(schedule.last_triggered_at) }}
@@ -158,6 +161,12 @@ function flowName(schedule: FlowSchedule): string {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.schedule-description {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
 }
 
 .schedule-meta {

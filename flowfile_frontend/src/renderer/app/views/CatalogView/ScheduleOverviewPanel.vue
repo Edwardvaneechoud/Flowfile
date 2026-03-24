@@ -36,6 +36,30 @@
       </el-button>
     </div>
 
+    <!-- Lifecycle warning -->
+    <div class="scheduler-warning">
+      <i class="fa-solid fa-circle-info"></i>
+      <span>
+        The scheduler runs inside the Flowfile process. Schedules will only be active while
+        Flowfile is running.
+        <el-popover
+          placement="bottom"
+          :width="340"
+          trigger="hover"
+          :show-after="200"
+        >
+          <template #reference>
+            <span class="standalone-link">Run as a standalone service?</span>
+          </template>
+          <div class="standalone-popover">
+            <p>You can run the scheduler as an independent background service so it stays active even when the UI is closed:</p>
+            <code class="standalone-cmd">pip install flowfile</code>
+            <code class="standalone-cmd">flowfile run flowfile_scheduler</code>
+          </div>
+        </el-popover>
+      </span>
+    </div>
+
     <!-- Summary cards -->
     <div class="summary-cards">
       <div class="summary-card">
@@ -100,6 +124,9 @@
         <div class="col-flow">
           <span class="flow-name flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{
             schedule.flowName
+          }}</span>
+          <span v-if="schedule.description" class="schedule-description">{{
+            schedule.description
           }}</span>
         </div>
         <div class="col-type">
@@ -238,6 +265,37 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
 .scheduler-heartbeat {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+}
+
+.scheduler-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+  line-height: 1.4;
+}
+
+.scheduler-warning i {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.standalone-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.standalone-link:hover {
+  text-decoration-style: solid;
 }
 
 /* Summary cards */
@@ -389,6 +447,16 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
 /* Columns */
 .col-flow {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.schedule-description {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow-name {
@@ -429,5 +497,26 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
+}
+</style>
+
+<style>
+.standalone-popover p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.5;
+}
+
+.standalone-cmd {
+  display: block;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--el-text-color-primary);
+  user-select: all;
 }
 </style>
