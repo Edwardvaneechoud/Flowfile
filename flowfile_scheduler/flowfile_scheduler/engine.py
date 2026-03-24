@@ -11,7 +11,6 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,37 +23,13 @@ from flowfile_scheduler.models import (
     SchedulerLock,
     ScheduleTriggerTable,
 )
+from shared.storage_config import get_database_url
 
 logger = logging.getLogger("flowfile.scheduler")
 
-# How often the main loop runs (seconds)
 DEFAULT_POLL_INTERVAL = 30
 
-# A lock heartbeat older than this is considered stale (seconds)
 STALE_THRESHOLD = 90
-
-
-def _get_database_url() -> str:
-    """Resolve the database URL using the same logic as flowfile_core.
-
-    Reads ``FLOWFILE_DB_PATH`` or falls back to
-    ``~/.flowfile/database/flowfile.db``.
-    """
-    import os
-
-    custom = os.environ.get("FLOWFILE_DB_PATH")
-    if custom:
-        return f"sqlite:///{custom}"
-
-    storage_dir = os.environ.get("FLOWFILE_STORAGE_DIR")
-    if storage_dir:
-        db_path = Path(storage_dir) / "database" / "flowfile.db"
-    elif os.environ.get("FLOWFILE_MODE") == "docker":
-        db_path = Path("/app/internal_storage/database/flowfile.db")
-    else:
-        db_path = Path.home() / ".flowfile" / "database" / "flowfile.db"
-
-    return f"sqlite:///{db_path}"
 
 
 def _utcnow() -> datetime:
@@ -70,7 +45,7 @@ class FlowScheduler:
         self._task: asyncio.Task | None = None
         self._stopping = False
 
-        url = _get_database_url()
+        url = get_database_url()
         connect_args = {"check_same_thread": False} if "sqlite" in url else {}
         self._engine = create_engine(url, connect_args=connect_args)
         self._session_factory = sessionmaker(bind=self._engine)
@@ -364,11 +339,17 @@ class FlowScheduler:
             reg.flow_path,
         )
 
-        self._spawn_flow(reg.flow_path, run.id)
+        pid = self._spawn_flow(reg.flow_path, run.id)
+        if pid is not None:
+            run.pid = pid
+            db.commit()
         return True
 
-    def _spawn_flow(self, flow_path: str, run_id: int) -> None:
-        """Fire-and-forget a ``flowfile run flow`` subprocess."""
+    def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:
+        """Fire-and-forget a ``flowfile run flow`` subprocess.
+
+        Returns the child PID on success, or ``None`` on failure.
+        """
         from shared.subprocess_utils import spawn_flow_subprocess
 
-        spawn_flow_subprocess(flow_path, run_id)
+        return spawn_flow_subprocess(flow_path, run_id)

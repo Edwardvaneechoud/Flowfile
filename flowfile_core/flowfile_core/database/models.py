@@ -160,6 +160,7 @@ class FlowRun(Base):
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
     run_type = Column(String, nullable=False, default="full_run")
+    pid = Column(Integer, nullable=True)
     # YAML snapshot of the flow definition at run time
     flow_snapshot = Column(Text, nullable=True)
     # JSON-serialised node step results

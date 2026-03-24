@@ -1122,7 +1122,10 @@ class CatalogService:
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 
-            self._spawn_flow_subprocess(flow.flow_path, run.id)
+            pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
+            if pid is not None:
+                run.pid = pid
+                self.repo.update_run(run)
             launched += 1
 
         return launched
@@ -1474,11 +1477,14 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _spawn_flow_subprocess(flow_path: str, run_id: int) -> None:
-        """Fire-and-forget a ``flowfile run flow`` subprocess."""
+    def _spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
+        """Fire-and-forget a ``flowfile run flow`` subprocess.
+
+        Returns the child PID on success, or ``None`` on failure.
+        """
         from shared.subprocess_utils import spawn_flow_subprocess
 
-        spawn_flow_subprocess(flow_path, run_id)
+        return spawn_flow_subprocess(flow_path, run_id)
 
     def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
         """Trigger a registered flow immediately without a schedule.
@@ -1509,7 +1515,10 @@ class CatalogService:
         )
         run = self.repo.create_run(run)
 
-        self._spawn_flow_subprocess(flow.flow_path, run.id)
+        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
+        if pid is not None:
+            run.pid = pid
+            self.repo.update_run(run)
 
         return self._run_to_out(run)
 
@@ -1550,8 +1559,10 @@ class CatalogService:
         )
         run = self.repo.create_run(run)
 
-        # Spawn the subprocess
-        self._spawn_flow_subprocess(flow.flow_path, run.id)
+        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
+        if pid is not None:
+            run.pid = pid
+            self.repo.update_run(run)
 
         return self._run_to_out(run)
 
@@ -1578,20 +1589,35 @@ class CatalogService:
         ]
 
     def cancel_run(self, run_id: int) -> None:
-        """Mark a run as cancelled (ended with success=False).
+        """Cancel a running flow by terminating its subprocess and marking
+        the database record as failed.
 
-        Note: this only updates the database record — it does NOT terminate
-        the subprocess.  The flow process will continue running in the
-        background until it finishes naturally.
+        If ``pid`` is stored on the run, sends ``SIGTERM`` to the process.
+        ``ProcessLookupError`` is silently ignored (the process already
+        exited).  If no PID is available the record is still marked as
+        cancelled.
 
         Raises
         ------
         RunNotFoundError
             If the run doesn't exist.
         """
+        import os
+        import signal
+
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
+
+        if run.pid is not None:
+            try:
+                os.kill(run.pid, signal.SIGTERM)
+                logger.info("Sent SIGTERM to pid %s for run %s", run.pid, run_id)
+            except ProcessLookupError:
+                logger.info("Process %s for run %s already exited", run.pid, run_id)
+            except OSError:
+                logger.warning("Failed to kill pid %s for run %s", run.pid, run_id, exc_info=True)
+
         now = datetime.now(timezone.utc)
         run.ended_at = now
         run.success = False

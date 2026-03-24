@@ -1122,21 +1122,29 @@ class FlowGraph:
 
         def analysis_preparation(flowfile_table: FlowDataEngine):
             if flowfile_table.number_of_records <= 0:
-                number_of_records = flowfile_table.get_number_of_records(calculate_in_worker_process=True)
+                calculate_in_worker = self.execution_location != "local"
+                number_of_records = flowfile_table.get_number_of_records(
+                    calculate_in_worker_process=calculate_in_worker
+                )
             else:
                 number_of_records = flowfile_table.number_of_records
             if number_of_records > sample_size:
                 flowfile_table = flowfile_table.get_sample(sample_size, random=True)
-            external_sampler = ExternalDfFetcher(
-                lf=flowfile_table.data_frame,
-                file_ref="__gf_walker" + node.hash,
-                wait_on_completion=True,
-                node_id=node.node_id,
-                flow_id=self.flow_id,
-            )
-            node.results.analysis_data_generator = get_read_top_n(
-                external_sampler.status.file_ref, n=min(sample_size, number_of_records)
-            )
+            if self.execution_location == "local":
+                collected = flowfile_table.data_frame.collect()
+                pa_table = collected.to_arrow()
+                node.results.analysis_data_generator = lambda: pa_table
+            else:
+                external_sampler = ExternalDfFetcher(
+                    lf=flowfile_table.data_frame,
+                    file_ref="__gf_walker" + node.hash,
+                    wait_on_completion=True,
+                    node_id=node.node_id,
+                    flow_id=self.flow_id,
+                )
+                node.results.analysis_data_generator = get_read_top_n(
+                    external_sampler.status.file_ref, n=min(sample_size, number_of_records)
+                )
             return flowfile_table
 
         def schema_callback():
@@ -2448,7 +2456,9 @@ class FlowGraph:
 
         def _func():
             input_file.received_file.set_absolute_filepath()
-            if input_file.received_file.file_type == "parquet":
+            if self.execution_location == "local":
+                input_data = FlowDataEngine.create_from_path(input_file.received_file)
+            elif input_file.received_file.file_type == "parquet":
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif (
                 input_file.received_file.file_type == "csv"

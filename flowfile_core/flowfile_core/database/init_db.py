@@ -60,6 +60,17 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
+        # Migrate flow_runs: add pid column
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(flow_runs)"))
+            run_columns = [row[1] for row in result.fetchall()]
+
+            if "pid" not in run_columns:
+                logger.info("Adding pid column to flow_runs")
+                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN pid INTEGER"))
+                conn.commit()
+
         # Migrate flow_schedules: add description column
         result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_schedules'"))
         if result.fetchone():
@@ -70,6 +81,7 @@ def run_migrations():
                 logger.info("Adding description column to flow_schedules")
                 conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN description TEXT"))
                 conn.commit()
+
 
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
