@@ -20,6 +20,7 @@ import type {
   NamespaceCreate,
   NamespaceTree,
   NamespaceUpdate,
+  PaginatedFlowRuns,
   SchedulerStatus,
 } from "../types";
 
@@ -80,6 +81,11 @@ export class CatalogApi {
     await axios.delete(`/catalog/flows/${id}`);
   }
 
+  static async runFlow(flowId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
+    return response.data;
+  }
+
   // ====== Favorites ======
 
   static async getFavorites(): Promise<FlowRegistration[]> {
@@ -112,11 +118,15 @@ export class CatalogApi {
 
   // ====== Runs ======
 
-  static async getRuns(registrationId?: number | null, limit = 50, offset = 0): Promise<FlowRun[]> {
+  static async getRuns(
+    registrationId?: number | null,
+    limit = 50,
+    offset = 0,
+  ): Promise<PaginatedFlowRuns> {
     const params: Record<string, any> = { limit, offset };
     if (registrationId !== undefined && registrationId !== null)
       params.registration_id = registrationId;
-    const response = await axios.get<FlowRun[]>("/catalog/runs", { params });
+    const response = await axios.get<PaginatedFlowRuns>("/catalog/runs", { params });
     return response.data;
   }
 

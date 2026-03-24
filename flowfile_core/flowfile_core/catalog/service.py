@@ -60,6 +60,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowSummary,
     GlobalArtifactOut,
     NamespaceTree,
+    PaginatedFlowRuns,
 )
 
 logger = logging.getLogger(__name__)
@@ -552,10 +553,17 @@ class CatalogService:
         registration_id: int | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[FlowRunOut]:
-        """List run summaries (without snapshots)."""
+    ) -> PaginatedFlowRuns:
+        """List run summaries (without snapshots) with total count for pagination."""
         runs = self.repo.list_runs(registration_id=registration_id, limit=limit, offset=offset)
-        return [self._run_to_out(r) for r in runs]
+        counts = self.repo.count_runs_by_status(registration_id=registration_id)
+        return PaginatedFlowRuns(
+            items=[self._run_to_out(r) for r in runs],
+            total=counts["total"],
+            total_success=counts["success"],
+            total_failed=counts["failed"],
+            total_running=counts["running"],
+        )
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
         """Get a single run including the YAML snapshot.
@@ -1021,6 +1029,106 @@ class CatalogService:
             source_run_id=source_run_id,
         )
 
+    def overwrite_table_data(
+        self,
+        table_id: int,
+        parquet_path: str,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
+        description: str | None = None,
+    ) -> CatalogTableOut:
+        """Replace the data of an existing catalog table **in-place**.
+
+        This preserves the table's primary-key ID so that all foreign-key
+        references (schedules, read links, favourites, flow definitions)
+        remain valid.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        import polars as pl
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        dest_path = Path(parquet_path)
+        lf = pl.scan_parquet(dest_path)
+        schema = lf.collect_schema()
+        schema_list = [{"name": col_name, "dtype": str(col_dtype)} for col_name, col_dtype in schema.items()]
+        row_count = lf.select(pl.len()).collect().item()
+        size_bytes = dest_path.stat().st_size
+
+        # Remove old parquet file if it differs from the new one
+        old_path = Path(table.file_path)
+        if old_path != dest_path and old_path.exists():
+            try:
+                old_path.unlink()
+            except OSError:
+                logger.warning("Failed to delete old parquet file %s", old_path, exc_info=True)
+
+        # Update fields in-place
+        table.file_path = str(dest_path)
+        table.schema_json = json.dumps(schema_list)
+        table.row_count = row_count
+        table.column_count = len(schema)
+        table.size_bytes = size_bytes
+        if source_registration_id is not None:
+            table.source_registration_id = source_registration_id
+        if source_run_id is not None:
+            table.source_run_id = source_run_id
+        if description is not None:
+            table.description = description
+
+        table = self.repo.update_table(table)
+
+        try:
+            self._fire_table_trigger_schedules(table.id, table.updated_at)
+        except Exception:
+            logger.exception("Failed to fire push triggers for table %s", table.id)
+
+        return self._table_to_out(table)
+
+    def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
+        """Fire enabled table_trigger schedules watching *table_id*.
+
+        Returns the number of flows launched.
+        """
+        schedules = self.repo.list_table_trigger_schedules_for_table(table_id)
+        launched = 0
+        for schedule in schedules:
+            flow = self.repo.get_flow(schedule.registration_id)
+            if flow is None:
+                logger.warning("Schedule %s references missing flow %s", schedule.id, schedule.registration_id)
+                continue
+
+            if self.repo.has_active_run(schedule.registration_id):
+                logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
+                continue
+
+            now = datetime.now(timezone.utc)
+            run = FlowRun(
+                registration_id=flow.id,
+                flow_name=flow.name,
+                flow_path=flow.flow_path,
+                user_id=schedule.owner_id,
+                started_at=now,
+                number_of_nodes=0,
+                run_type="scheduled",
+            )
+            run = self.repo.create_run(run)
+
+            schedule.last_triggered_at = now
+            schedule.last_trigger_table_updated_at = table_updated_at
+            self.repo.update_schedule(schedule)
+
+            self._spawn_flow_subprocess(flow.flow_path, run.id)
+            launched += 1
+
+        return launched
+
     def _create_table_record_from_metadata(
         self,
         name: str,
@@ -1388,6 +1496,39 @@ class CatalogService:
         except Exception:
             logger.exception("Failed to spawn flow subprocess: %s", flow_path)
 
+    def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
+        """Trigger a registered flow immediately without a schedule.
+
+        Raises
+        ------
+        FlowNotFoundError
+            If the flow doesn't exist.
+        FlowAlreadyRunningError
+            If the flow already has an active (unfinished) run.
+        """
+        flow = self.repo.get_flow(registration_id)
+        if flow is None:
+            raise FlowNotFoundError(registration_id=registration_id)
+
+        if self.repo.has_active_run(registration_id):
+            raise FlowAlreadyRunningError(registration_id=registration_id)
+
+        now = datetime.now(timezone.utc)
+        run = FlowRun(
+            registration_id=flow.id,
+            flow_name=flow.name,
+            flow_path=flow.flow_path,
+            user_id=user_id,
+            started_at=now,
+            number_of_nodes=0,
+            run_type="scheduled",
+        )
+        run = self.repo.create_run(run)
+
+        self._spawn_flow_subprocess(flow.flow_path, run.id)
+
+        return self._run_to_out(run)
+
     def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
         """Manually trigger a scheduled flow immediately.
 
@@ -1494,8 +1635,8 @@ class CatalogService:
         total_tables = self.repo.count_all_tables()
         total_schedules = self.repo.count_schedules()
 
-        recent_runs = self.repo.list_runs(limit=10, offset=0)
-        recent_out = [self._run_to_out(r) for r in recent_runs]
+        recent_runs_raw = self.repo.list_runs(limit=10, offset=0)
+        recent_out = [self._run_to_out(r) for r in recent_runs_raw]
 
         # Bulk enrich favourite flows
         favs = self.repo.list_favorites(user_id)

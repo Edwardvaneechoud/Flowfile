@@ -6,6 +6,13 @@
       <span class="run-time">{{ formatDate(run.started_at) }}</span>
     </div>
     <div class="run-right">
+      <el-tooltip
+        :content="run.run_type === 'scheduled' ? 'Scheduled' : 'Manual'"
+        placement="top"
+        :show-after="400"
+      >
+        <i :class="runTypeIcon(run.run_type)" class="run-type-icon"></i>
+      </el-tooltip>
       <span class="run-duration">{{ formatDuration(run.duration_seconds) }}</span>
       <i
         v-if="run.has_snapshot"
@@ -19,7 +26,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { FlowRun } from "../../types";
-import { formatDate, formatDuration } from "./catalog-formatters";
+import { formatDate, formatDuration, runTypeIcon } from "./catalog-formatters";
 
 const props = defineProps<{
   run: FlowRun;
@@ -100,6 +107,11 @@ const statusClass = computed(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   font-family: monospace;
+}
+
+.run-type-icon {
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .snapshot-icon {

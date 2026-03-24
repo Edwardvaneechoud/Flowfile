@@ -39,14 +39,23 @@
           </div>
         </div>
         <div class="schedule-actions">
-          <el-tooltip content="Run Now" placement="top" :show-after="400">
+          <el-tooltip
+            v-if="isRunning(schedule)"
+            content="Cancel run"
+            placement="top"
+            :show-after="400"
+          >
             <el-button
               size="small"
-              type="success"
+              type="warning"
               text
-              :disabled="isRunning(schedule)"
-              @click="$emit('runNow', schedule.id)"
+              @click="$emit('cancelScheduleRun', schedule)"
             >
+              <i class="fa-solid fa-stop" />
+            </el-button>
+          </el-tooltip>
+          <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
+            <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
               <i class="fa-solid fa-play" />
             </el-button>
           </el-tooltip>
@@ -78,15 +87,14 @@ defineEmits<{
   toggleSchedule: [id: number, enabled: boolean];
   deleteSchedule: [id: number];
   runNow: [id: number];
+  cancelScheduleRun: [schedule: FlowSchedule];
   viewFlow: [registrationId: number];
 }>();
 
 const catalogStore = useCatalogStore();
 
 function isRunning(schedule: FlowSchedule): boolean {
-  return catalogStore.activeRuns.some(
-    (r) => r.registration_id === schedule.registration_id,
-  );
+  return catalogStore.activeRuns.some((r) => r.registration_id === schedule.registration_id);
 }
 
 function flowName(schedule: FlowSchedule): string {

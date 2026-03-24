@@ -113,7 +113,7 @@
         <span class="col-actions">Actions</span>
       </div>
       <div
-        v-for="schedule in enrichedSchedules"
+        v-for="schedule in paginatedSchedules"
         :key="schedule.id"
         class="table-row"
         :class="{ 'row-disabled': !schedule.enabled }"
@@ -172,14 +172,23 @@
           {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
         </div>
         <div class="col-actions">
-          <el-tooltip content="Run Now" placement="top" :show-after="400">
+          <el-tooltip
+            v-if="schedule.isRunning"
+            content="Cancel run"
+            placement="top"
+            :show-after="400"
+          >
             <el-button
               size="small"
-              type="success"
+              type="warning"
               text
-              :disabled="schedule.isRunning"
-              @click="$emit('runNow', schedule.id)"
+              @click="$emit('cancelScheduleRun', schedule)"
             >
+              <i class="fa-solid fa-stop" />
+            </el-button>
+          </el-tooltip>
+          <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
+            <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
               <i class="fa-solid fa-play" />
             </el-button>
           </el-tooltip>
@@ -193,6 +202,27 @@
           </el-button>
         </div>
       </div>
+    </div>
+
+    <!-- Pagination -->
+    <div v-if="totalPages > 1" class="pagination-bar">
+      <button class="page-btn" :disabled="currentPage <= 1" @click="currentPage = 1">
+        <i class="fa-solid fa-angles-left" />
+      </button>
+      <button class="page-btn" :disabled="currentPage <= 1" @click="currentPage--">
+        <i class="fa-solid fa-angle-left" />
+      </button>
+      <span class="page-info"> Page {{ currentPage }} of {{ totalPages }} </span>
+      <button class="page-btn" :disabled="currentPage >= totalPages" @click="currentPage++">
+        <i class="fa-solid fa-angle-right" />
+      </button>
+      <button
+        class="page-btn"
+        :disabled="currentPage >= totalPages"
+        @click="currentPage = totalPages"
+      >
+        <i class="fa-solid fa-angles-right" />
+      </button>
     </div>
   </div>
 </template>
@@ -214,6 +244,7 @@ defineEmits<{
   toggleSchedule: [id: number, enabled: boolean];
   deleteSchedule: [id: number];
   runNow: [id: number];
+  cancelScheduleRun: [schedule: FlowSchedule];
   viewFlow: [registrationId: number];
 }>();
 
@@ -221,7 +252,19 @@ const isStandalone = computed(
   () => catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.is_embedded === false,
 );
 
+const pageSize = 25;
+const currentPage = ref(1);
+
 const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
+
+const totalPages = computed(() =>
+  Math.max(1, Math.ceil(enrichedSchedules.value.length / pageSize)),
+);
+
+const paginatedSchedules = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  return enrichedSchedules.value.slice(start, start + pageSize);
+});
 
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
@@ -614,6 +657,45 @@ async function saveDescription(scheduleId: number) {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
+}
+
+/* Pagination */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4) 0;
+}
+
+.page-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.page-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-info {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  padding: 0 var(--spacing-2);
 }
 </style>
 

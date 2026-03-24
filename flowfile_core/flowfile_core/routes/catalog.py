@@ -64,6 +64,7 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    PaginatedFlowRuns,
     SchedulerStatusOut,
     TableFavoriteOut,
 )
@@ -270,7 +271,7 @@ def list_flow_artifacts(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/runs", response_model=list[FlowRunOut])
+@router.get("/runs", response_model=PaginatedFlowRuns)
 def list_runs(
     registration_id: int | None = None,
     limit: int = Query(50, ge=1, le=500),
@@ -670,6 +671,21 @@ def delete_schedule(
         service.delete_schedule(schedule_id)
     except ScheduleNotFoundError:
         raise HTTPException(404, "Schedule not found") from None
+
+
+@router.post("/flows/{flow_id}/run", response_model=FlowRunOut)
+def run_flow_now(
+    flow_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Trigger a registered flow immediately without needing a schedule."""
+    try:
+        return service.run_flow_now(registration_id=flow_id, user_id=current_user.id)
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found") from None
+    except FlowAlreadyRunningError:
+        raise HTTPException(409, "Flow already has an active run") from None
 
 
 @router.post("/schedules/{schedule_id}/run-now", response_model=FlowRunOut)

@@ -107,7 +107,11 @@ class CatalogRepository(Protocol):
 
     def update_run(self, run: FlowRun) -> FlowRun: ...
 
-    def count_runs(self) -> int: ...
+    def count_runs(self, registration_id: int | None = None) -> int: ...
+
+    def count_runs_by_status(
+        self, registration_id: int | None = None
+    ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
 
@@ -222,6 +226,8 @@ class CatalogRepository(Protocol):
     def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
 
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
+
+    def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]: ...
 
     def get_trigger_table_ids(self, schedule_id: int) -> list[int]: ...
 
@@ -421,8 +427,25 @@ class SQLAlchemyCatalogRepository:
         self._db.refresh(run)
         return run
 
-    def count_runs(self) -> int:
-        return self._db.query(FlowRun).count()
+    def count_runs(self, registration_id: int | None = None) -> int:
+        q = self._db.query(FlowRun)
+        if registration_id is not None:
+            q = q.filter_by(registration_id=registration_id)
+        return q.count()
+
+    def count_runs_by_status(self, registration_id: int | None = None) -> dict[str, int]:
+        from sqlalchemy import case, func
+
+        q = self._db.query(
+            func.count().label("total"),
+            func.count(case((FlowRun.success.is_(True), 1))).label("success"),
+            func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
+            func.count(case((FlowRun.success.is_(None), 1))).label("running"),
+        )
+        if registration_id is not None:
+            q = q.filter(FlowRun.registration_id == registration_id)
+        row = q.one()
+        return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
 
     # -- Favorites -----------------------------------------------------------
 
@@ -798,6 +821,18 @@ class SQLAlchemyCatalogRepository:
         return (
             self._db.query(FlowSchedule)
             .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_trigger")
+            .all()
+        )
+
+    def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]:
+        """Return enabled table-trigger schedules watching a specific table."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(
+                FlowSchedule.enabled.is_(True),
+                FlowSchedule.schedule_type == "table_trigger",
+                FlowSchedule.trigger_table_id == table_id,
+            )
             .all()
         )
 

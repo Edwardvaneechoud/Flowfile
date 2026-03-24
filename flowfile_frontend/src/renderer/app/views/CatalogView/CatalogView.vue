@@ -28,11 +28,11 @@
 
     <!-- Main Content -->
     <div class="catalog-content">
-      <!-- Sidebar: Tree / List -->
+      <!-- Sidebar: Always shows catalog tree -->
       <div class="catalog-sidebar">
         <div class="sidebar-header">
-          <h3>{{ sidebarTitle }}</h3>
-          <div v-if="catalogStore.activeTab === 'catalog'" class="sidebar-header-actions">
+          <h3>Catalogs</h3>
+          <div class="sidebar-header-actions">
             <el-tooltip content="Register table" placement="bottom" :show-after="400">
               <button class="btn-icon" @click="openRegisterTableGlobal">
                 <i class="fa-solid fa-table"></i>
@@ -52,7 +52,7 @@
         </div>
 
         <!-- Catalog Tree -->
-        <div v-if="catalogStore.activeTab === 'catalog'" class="tree-container">
+        <div class="tree-container">
           <div class="sidebar-filters">
             <input v-model="searchQuery" class="search-input" placeholder="Search..." />
             <label class="unavailable-toggle">
@@ -87,49 +87,6 @@
               @create-schema="openCreateSchema($event)"
             />
           </div>
-        </div>
-
-        <!-- Favorites List -->
-        <div v-else-if="catalogStore.activeTab === 'favorites'" class="list-container">
-          <div v-if="catalogStore.favorites.length === 0" class="empty-state">
-            <p>No favorites yet.</p>
-            <p class="muted">Star flows from the Catalog tab to see them here.</p>
-          </div>
-          <FlowListItem
-            v-for="flow in catalogStore.favorites"
-            :key="flow.id"
-            :flow="flow"
-            :selected="catalogStore.selectedFlowId === flow.id"
-            @select="catalogStore.selectFlow(flow.id)"
-            @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
-          />
-        </div>
-
-        <!-- All Runs List -->
-        <div v-else-if="catalogStore.activeTab === 'runs'" class="list-container">
-          <RunListItem
-            v-for="run in catalogStore.runs"
-            :key="run.id"
-            :run="run"
-            :selected="catalogStore.selectedRunId === run.id"
-            @select="catalogStore.loadRunDetail(run.id)"
-          />
-          <div v-if="catalogStore.runs.length === 0" class="empty-state">
-            <p>No runs recorded yet.</p>
-            <p class="muted">Run a flow to see its history here.</p>
-          </div>
-        </div>
-
-        <!-- Schedules List -->
-        <div v-else-if="catalogStore.activeTab === 'schedules'" class="list-container">
-          <SchedulesPanel
-            :schedules="catalogStore.schedules"
-            @create-schedule="showCreateSchedule = true"
-            @toggle-schedule="handleToggleSchedule"
-            @delete-schedule="handleDeleteSchedule"
-            @run-now="handleRunNow"
-            @view-flow="navigateToFlow"
-          />
         </div>
       </div>
 
@@ -180,16 +137,44 @@
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
           @add-schedule="handleAddFlowSchedule"
+          @run-flow="handleRunFlow"
+          @cancel-flow-run="handleCancelFlowRun"
         />
-        <!-- Schedule overview (when on schedules tab with nothing selected) -->
+        <!-- Run history overview -->
+        <RunOverviewPanel
+          v-else-if="catalogStore.activeTab === 'runs'"
+          @view-run="catalogStore.loadRunDetail($event)"
+          @view-flow="navigateToFlow($event)"
+        />
+        <!-- Schedule overview -->
         <ScheduleOverviewPanel
           v-else-if="catalogStore.activeTab === 'schedules'"
           @create-schedule="showCreateSchedule = true"
           @toggle-schedule="handleToggleSchedule"
           @delete-schedule="handleDeleteSchedule"
           @run-now="handleRunNow"
+          @cancel-schedule-run="handleCancelScheduleRun"
           @view-flow="navigateToFlow"
         />
+        <!-- Favorites list -->
+        <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
+          <h2>Favorites</h2>
+          <div v-if="catalogStore.favorites.length === 0" class="empty-state">
+            <i class="fa-solid fa-star empty-icon"></i>
+            <h3>No favorites yet</h3>
+            <p>Star flows from the catalog tree to see them here.</p>
+          </div>
+          <div v-else class="favorites-list">
+            <FlowListItem
+              v-for="flow in catalogStore.favorites"
+              :key="flow.id"
+              :flow="flow"
+              :selected="catalogStore.selectedFlowId === flow.id"
+              @select="catalogStore.selectFlow(flow.id)"
+              @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
+            />
+          </div>
+        </div>
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -201,6 +186,11 @@
           @view-run="catalogStore.loadRunDetail($event)"
           @view-flow="navigateToFlow($event)"
           @view-table="selectTable($event)"
+          @create-schedule="showCreateSchedule = true"
+          @toggle-schedule="handleToggleSchedule"
+          @delete-schedule="handleDeleteSchedule"
+          @run-now="handleRunNow"
+          @cancel-schedule-run="handleCancelScheduleRun"
         />
       </div>
     </div>
@@ -298,16 +288,21 @@ import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
-import RunListItem from "./RunListItem.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
 import RegisterFlowModal from "./RegisterFlowModal.vue";
 import RegisterTableModal from "./RegisterTableModal.vue";
-import SchedulesPanel from "./SchedulesPanel.vue";
+import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
-import type { CatalogTab, FlowScheduleCreate, GlobalArtifact, NamespaceTree } from "../../types";
+import type {
+  CatalogTab,
+  FlowSchedule,
+  FlowScheduleCreate,
+  GlobalArtifact,
+  NamespaceTree,
+} from "../../types";
 
 const router = useRouter();
 
@@ -340,21 +335,6 @@ const tabs = computed(() => [
     badge: catalogStore.stats?.total_schedules ?? null,
   },
 ]);
-
-const sidebarTitle = computed(() => {
-  switch (catalogStore.activeTab) {
-    case "catalog":
-      return "Catalogs";
-    case "favorites":
-      return "Favorites";
-    case "runs":
-      return "Run History";
-    case "schedules":
-      return "Schedules";
-    default:
-      return "";
-  }
-});
 
 // Search and filter state
 const searchQuery = ref("");
@@ -398,7 +378,7 @@ async function refreshAll() {
   try {
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(),
+      catalogStore.loadRuns(catalogStore.selectedFlowId),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
       catalogStore.loadTree(),
@@ -609,11 +589,15 @@ async function handleToggleSchedule(id: number, enabled: boolean) {
 
 async function handleDeleteSchedule(id: number) {
   try {
-    await ElMessageBox.confirm("Are you sure you want to delete this schedule?", "Delete Schedule", {
-      confirmButtonText: "Delete",
-      cancelButtonText: "Cancel",
-      type: "warning",
-    });
+    await ElMessageBox.confirm(
+      "Are you sure you want to delete this schedule?",
+      "Delete Schedule",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
   } catch {
     return; // User cancelled
   }
@@ -622,6 +606,52 @@ async function handleDeleteSchedule(id: number) {
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
+  }
+}
+
+async function handleCancelScheduleRun(schedule: FlowSchedule) {
+  try {
+    const activeRuns = catalogStore.activeRuns.filter(
+      (r) => r.registration_id === schedule.registration_id,
+    );
+    for (const run of activeRuns) {
+      await catalogStore.cancelRun(run.id);
+    }
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadSchedules(),
+      catalogStore.loadRuns(),
+      catalogStore.loadStats(),
+    ]);
+    ElMessage.success("Run cancelled");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
+  }
+}
+
+async function handleRunFlow(flowId: number) {
+  try {
+    await CatalogApi.runFlow(flowId);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
+  }
+}
+
+async function handleCancelFlowRun(flowId: number) {
+  try {
+    const activeRuns = catalogStore.activeRuns.filter((r) => r.registration_id === flowId);
+    for (const run of activeRuns) {
+      await catalogStore.cancelRun(run.id);
+    }
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadRuns(),
+      catalogStore.loadStats(),
+    ]);
+    ElMessage.success("Run cancelled");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
   }
 }
 
@@ -856,6 +886,42 @@ onUnmounted(() => {
 .btn-sm {
   padding: var(--spacing-1) var(--spacing-3);
   font-size: var(--font-size-xs);
+}
+
+/* ========== Favorites Panel ========== */
+.favorites-panel {
+  max-width: 600px;
+}
+
+.favorites-panel h2 {
+  margin: 0 0 var(--spacing-5) 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.favorites-panel .empty-icon {
+  font-size: 48px;
+  color: var(--color-primary);
+  opacity: 0.5;
+  margin-bottom: var(--spacing-4);
+}
+
+.favorites-panel .empty-state h3 {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+}
+
+.favorites-panel .empty-state p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.favorites-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
 }
 
 /* ========== Info Modal ========== */

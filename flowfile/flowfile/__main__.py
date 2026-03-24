@@ -129,8 +129,6 @@ def main():
     """
     import argparse
 
-    import flowfile
-
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument("command", nargs="?", choices=["run"], help="Command to execute")
     parser.add_argument("component", nargs="?", choices=["ui", "core", "worker", "flow"], help="Component to run")
@@ -146,7 +144,9 @@ def main():
     if args.command == "run" and args.component:
         if args.component == "ui":
             try:
-                flowfile.start_web_ui(open_browser=not args.no_browser)
+                from flowfile.web import start_server as start_web_ui
+
+                start_web_ui(open_browser=not args.no_browser)
             except KeyboardInterrupt:
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
@@ -167,7 +167,14 @@ def main():
             sys.exit(run_flow(args.file_path, run_id=args.run_id))
     else:
         # Default action - show info
-        print(f"FlowFile v{flowfile.__version__}")
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            __version__ = version("Flowfile")
+        except PackageNotFoundError:
+            __version__ = "unknown"
+
+        print(f"FlowFile v{__version__}")
         print("A framework combining visual ETL with a Polars-like API")
         print("\nUsage:")
         print("  # Start the FlowFile web UI with integrated services")

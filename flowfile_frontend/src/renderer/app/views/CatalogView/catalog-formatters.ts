@@ -5,7 +5,11 @@ import type { FlowSchedule } from "../../types";
  * Used across catalog panels for run timestamps, schedule triggers, artifact dates.
  */
 export function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
+  // Backend sends UTC timestamps; ensure JS parses them as UTC
+  const normalized = dateStr.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(dateStr)
+    ? dateStr
+    : dateStr + "Z";
+  return new Date(normalized).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -44,4 +48,12 @@ export function scheduleIcon(schedule: FlowSchedule): string {
   if (schedule.schedule_type === "interval") return "fa-solid fa-clock";
   if (schedule.schedule_type === "table_set_trigger") return "fa-solid fa-layer-group";
   return "fa-solid fa-table";
+}
+
+export function formatRunType(runType: "full_run" | "scheduled"): string {
+  return runType === "scheduled" ? "Schedule" : "Manual";
+}
+
+export function runTypeIcon(runType: "full_run" | "scheduled"): string {
+  return runType === "scheduled" ? "fa-solid fa-calendar-days" : "fa-solid fa-play";
 }

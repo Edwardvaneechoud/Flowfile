@@ -2053,15 +2053,21 @@ class FlowGraph:
                     if existing is not None:
                         if settings.write_mode != "overwrite":
                             raise TableExistsError(name=settings.table_name, namespace_id=settings.namespace_id)
-                        svc.delete_table(existing.id)
-                    svc.register_table_from_parquet(
-                        name=settings.table_name,
-                        parquet_path=str(dest_path),
-                        owner_id=node_catalog_writer.user_id or 1,
-                        namespace_id=settings.namespace_id,
-                        description=settings.description,
-                        source_registration_id=self._flow_settings.source_registration_id,
-                    )
+                        svc.overwrite_table_data(
+                            table_id=existing.id,
+                            parquet_path=str(dest_path),
+                            source_registration_id=self._flow_settings.source_registration_id,
+                            description=settings.description,
+                        )
+                    else:
+                        svc.register_table_from_parquet(
+                            name=settings.table_name,
+                            parquet_path=str(dest_path),
+                            owner_id=node_catalog_writer.user_id or 1,
+                            namespace_id=settings.namespace_id,
+                            description=settings.description,
+                            source_registration_id=self._flow_settings.source_registration_id,
+                        )
             except Exception:
                 logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
                 if dest_path.exists():

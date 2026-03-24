@@ -22,6 +22,12 @@ interface CatalogState {
   favorites: FlowRegistration[];
   following: FlowRegistration[];
   runs: FlowRun[];
+  runsTotal: number;
+  runsTotalSuccess: number;
+  runsTotalFailed: number;
+  runsTotalRunning: number;
+  runsPage: number;
+  runsPageSize: number;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
@@ -51,6 +57,12 @@ export const useCatalogStore = defineStore("catalog", {
     favorites: [],
     following: [],
     runs: [],
+    runsTotal: 0,
+    runsTotalSuccess: 0,
+    runsTotalFailed: 0,
+    runsTotalRunning: 0,
+    runsPage: 1,
+    runsPageSize: 25,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
@@ -81,6 +93,9 @@ export const useCatalogStore = defineStore("catalog", {
       if (state.selectedFlowId === null) return state.runs;
       return state.runs.filter((r) => r.registration_id === state.selectedFlowId);
     },
+
+    runsTotalPages: (state): number =>
+      Math.max(1, Math.ceil(state.runsTotal / state.runsPageSize)),
 
     enrichedSchedules(state) {
       const activeIds = new Set(
@@ -135,10 +150,21 @@ export const useCatalogStore = defineStore("catalog", {
 
     async loadRuns(registrationId?: number | null) {
       try {
-        this.runs = await CatalogApi.getRuns(registrationId);
+        const offset = (this.runsPage - 1) * this.runsPageSize;
+        const result = await CatalogApi.getRuns(registrationId, this.runsPageSize, offset);
+        this.runs = result.items;
+        this.runsTotal = result.total;
+        this.runsTotalSuccess = result.total_success;
+        this.runsTotalFailed = result.total_failed;
+        this.runsTotalRunning = result.total_running;
       } catch (e: any) {
         this.error = e?.message ?? "Failed to load runs";
       }
+    },
+
+    setRunsPage(page: number) {
+      this.runsPage = page;
+      this.loadRuns();
     },
 
     async loadRunDetail(runId: number) {

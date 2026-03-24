@@ -115,6 +115,16 @@ class FlowRunOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaginatedFlowRuns(BaseModel):
+    """Paginated list of flow runs with total count for pagination controls."""
+
+    items: list[FlowRunOut] = Field(default_factory=list)
+    total: int = 0
+    total_success: int = 0
+    total_failed: int = 0
+    total_running: int = 0
+
+
 class FlowRunDetail(FlowRunOut):
     """Extended run detail that includes the YAML flow snapshot and node results."""
 
@@ -334,3 +344,4 @@ CatalogTableOut.model_rebuild()
 FlowRegistrationOut.model_rebuild()
 NamespaceTree.model_rebuild()
 CatalogStats.model_rebuild()
+PaginatedFlowRuns.model_rebuild()

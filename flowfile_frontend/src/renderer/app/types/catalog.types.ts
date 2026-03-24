@@ -92,6 +92,14 @@ export interface FlowRun {
   has_log: boolean;
 }
 
+export interface PaginatedFlowRuns {
+  items: FlowRun[];
+  total: number;
+  total_success: number;
+  total_failed: number;
+  total_running: number;
+}
+
 export interface FlowRunDetail extends FlowRun {
   flow_snapshot: string | null;
   node_results_json: string | null;
