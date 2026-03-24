@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -371,20 +369,6 @@ class FlowScheduler:
 
     def _spawn_flow(self, flow_path: str, run_id: int) -> None:
         """Fire-and-forget a ``flowfile run flow`` subprocess."""
-        cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
-        logger.info("Spawning: %s", " ".join(cmd))
-        try:
-            log_dir = Path.home() / ".flowfile" / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"scheduled_run_{run_id}.log"
-            fh = open(log_file, "w")  # noqa: SIM115
-            subprocess.Popen(
-                cmd,
-                stdout=fh,
-                stderr=fh,
-                start_new_session=True,
-            )
-            fh.close()  # Parent releases its copy; child still has the fd
-            logger.info("Subprocess log: %s", log_file)
-        except Exception:
-            logger.exception("Failed to spawn flow subprocess: %s", flow_path)
+        from shared.subprocess_utils import spawn_flow_subprocess
+
+        spawn_flow_subprocess(flow_path, run_id)
