@@ -214,9 +214,7 @@ class FlowScheduler:
                 elapsed = (now - last).total_seconds()
                 remaining = sched.interval_seconds - elapsed
                 if remaining > 0:
-                    logger.info(
-                        "Schedule %s not due yet (%.0fs remaining)", sched.id, remaining
-                    )
+                    logger.info("Schedule %s not due yet (%.0fs remaining)", sched.id, remaining)
                     continue
 
             if self._maybe_launch(db, sched, now):
@@ -242,9 +240,7 @@ class FlowScheduler:
 
             table: CatalogTable | None = db.get(CatalogTable, sched.trigger_table_id)
             if table is None:
-                logger.warning(
-                    "Schedule %s references missing table %s", sched.id, sched.trigger_table_id
-                )
+                logger.warning("Schedule %s references missing table %s", sched.id, sched.trigger_table_id)
                 continue
 
             table_updated = table.updated_at.replace(tzinfo=timezone.utc) if table.updated_at else None
@@ -285,20 +281,14 @@ class FlowScheduler:
         for sched in schedules:
             # Load linked table IDs from the join table
             trigger_links: list[ScheduleTriggerTable] = (
-                db.query(ScheduleTriggerTable)
-                .filter(ScheduleTriggerTable.schedule_id == sched.id)
-                .all()
+                db.query(ScheduleTriggerTable).filter(ScheduleTriggerTable.schedule_id == sched.id).all()
             )
             table_ids = [link.table_id for link in trigger_links]
             if len(table_ids) < 2:
                 logger.warning("Schedule %s has fewer than 2 trigger tables, skipping", sched.id)
                 continue
 
-            last_triggered = (
-                sched.last_triggered_at.replace(tzinfo=timezone.utc)
-                if sched.last_triggered_at
-                else None
-            )
+            last_triggered = sched.last_triggered_at.replace(tzinfo=timezone.utc) if sched.last_triggered_at else None
 
             # Check if ALL tables have been updated since last trigger
             all_updated = True
@@ -334,9 +324,7 @@ class FlowScheduler:
 
     def _has_active_run(self, db: Session, registration_id: int) -> bool:
         return (
-            db.query(FlowRun)
-            .filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None))
-            .first()
+            db.query(FlowRun).filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None)).first()
             is not None
         )
 
