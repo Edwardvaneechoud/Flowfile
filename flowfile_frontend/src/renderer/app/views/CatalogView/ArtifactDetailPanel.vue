@@ -233,16 +233,16 @@ function formatSize(bytes: number | null): string {
 }
 
 .status-badge.active {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 .status-badge.deleted {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 .status-badge.pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .description {

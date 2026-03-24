@@ -95,8 +95,13 @@
     <!-- Run History Table -->
     <div class="section">
       <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
-      <div v-if="runs.length === 0" class="empty-runs">No runs recorded yet.</div>
-      <table v-else class="runs-table">
+      <div v-if="runs.length === 0" class="empty-state">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <p class="empty-state__title">No runs recorded yet</p>
+        <p class="empty-state__subtitle">Open this flow in the Designer and run it to see execution history here.</p>
+      </div>
+      <div v-else class="table-wrapper">
+      <table class="styled-table runs-table">
         <thead>
           <tr>
             <th>Status</th>
@@ -125,6 +130,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- Data Lineage -->
@@ -189,7 +195,8 @@
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
       </div>
-      <table v-else class="runs-table">
+      <div v-else class="table-wrapper">
+      <table class="styled-table runs-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -219,6 +226,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>
@@ -438,15 +446,15 @@ function formatSize(bytes: number | null): string {
   gap: var(--spacing-2);
   padding: var(--spacing-1) var(--spacing-3);
   background: transparent;
-  color: #ef4444;
-  border: 1px solid #ef4444;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
   border-radius: var(--border-radius-md);
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 .btn-danger-outline:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--color-danger-light);
 }
 
 .action-btn-primary {
@@ -506,10 +514,10 @@ function formatSize(bytes: number | null): string {
 }
 
 .text-success {
-  color: #22c55e;
+  color: var(--color-success);
 }
 .text-danger {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 /* ========== Sections ========== */
@@ -525,27 +533,11 @@ function formatSize(bytes: number | null): string {
   margin: 0 0 var(--spacing-3) 0;
 }
 
-.runs-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
-}
-
+/* runs-table extends .styled-table */
 .runs-table th {
-  text-align: left;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-primary);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.runs-table td {
-  padding: var(--spacing-2) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
 }
 
 .run-row {
@@ -566,16 +558,16 @@ function formatSize(bytes: number | null): string {
 }
 
 .status-badge.success {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 .status-badge.failure {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 .status-badge.pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .snapshot-link {
@@ -767,7 +759,7 @@ function formatSize(bytes: number | null): string {
 }
 
 .missing-banner > i {
-  color: #f59e0b;
+  color: var(--color-warning);
   font-size: var(--font-size-lg);
   margin-top: 2px;
   flex-shrink: 0;

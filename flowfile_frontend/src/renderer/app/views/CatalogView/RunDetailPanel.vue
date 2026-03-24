@@ -46,7 +46,8 @@
     <!-- Node Results -->
     <div v-if="nodeResults.length > 0" class="section">
       <h3>Node Results</h3>
-      <table class="results-table">
+      <div class="table-wrapper">
+      <table class="styled-table results-table">
         <thead>
           <tr>
             <th>Node</th>
@@ -71,6 +72,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- Flow Version Snapshot -->
@@ -224,13 +226,13 @@ function formatDuration(seconds: number | null): string {
 }
 
 .text-success {
-  color: #22c55e;
+  color: var(--color-success);
 }
 .text-danger {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 .text-pending {
-  color: #eab308;
+  color: var(--color-warning);
 }
 
 .flow-link {
@@ -266,28 +268,11 @@ function formatDuration(seconds: number | null): string {
   color: var(--color-text-primary);
 }
 
-/* Results Table */
-.results-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
-}
-
+/* Results Table - extends .styled-table */
 .results-table th {
-  text-align: left;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-primary);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.results-table td {
-  padding: var(--spacing-2) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
 }
 
 .mono {
@@ -313,16 +298,16 @@ function formatDuration(seconds: number | null): string {
 }
 
 .status-badge.success {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 .status-badge.failure {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 .status-badge.pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 /* Snapshot Header */

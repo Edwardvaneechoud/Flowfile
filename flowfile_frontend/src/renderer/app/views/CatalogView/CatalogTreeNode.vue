@@ -558,7 +558,7 @@ const totalFlows = computed(() => {
 }
 
 .star-btn.active {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .run-indicator {
@@ -569,10 +569,10 @@ const totalFlows = computed(() => {
 }
 
 .run-indicator.success {
-  background: #22c55e;
+  background: var(--color-success);
 }
 .run-indicator.failure {
-  background: #ef4444;
+  background: var(--color-danger);
 }
 
 .tree-flow.file-missing,
@@ -581,12 +581,12 @@ const totalFlows = computed(() => {
 }
 .tree-flow.file-missing .flow-icon,
 .tree-table.file-missing .table-icon {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .missing-icon {
   font-size: 11px;
-  color: #f59e0b;
+  color: var(--color-warning);
   flex-shrink: 0;
 }
 
@@ -666,7 +666,7 @@ const totalFlows = computed(() => {
 }
 
 .tree-table .table-icon {
-  color: #10b981;
+  color: var(--color-success);
   font-size: var(--font-size-sm);
   flex-shrink: 0;
 }

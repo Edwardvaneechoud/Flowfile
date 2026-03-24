@@ -1,0 +1,53 @@
+/* styles/components/_status-badges.css - Unified Status Badge Styles */
+
+.status-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+}
+
+.status-badge--success,
+.status-badge.success,
+.status-badge.active {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.status-badge--danger,
+.status-badge.failure,
+.status-badge.deleted {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.status-badge--warning,
+.status-badge.pending {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.status-badge--info {
+  background: var(--color-info-light);
+  color: var(--color-info);
+}
+
+/* Text color utilities for status */
+.text-success {
+  color: var(--color-success);
+}
+
+.text-danger {
+  color: var(--color-danger);
+}
+
+.text-warning,
+.text-pending {
+  color: var(--color-warning);
+}
+
+.text-info {
+  color: var(--color-info);
+}
