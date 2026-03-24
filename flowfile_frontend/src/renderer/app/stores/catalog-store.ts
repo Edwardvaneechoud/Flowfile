@@ -81,6 +81,19 @@ export const useCatalogStore = defineStore("catalog", {
       if (state.selectedFlowId === null) return state.runs;
       return state.runs.filter((r) => r.registration_id === state.selectedFlowId);
     },
+
+    enrichedSchedules(state) {
+      const activeIds = new Set(
+        state.activeRuns.map((r) => r.registration_id).filter((id) => id !== null),
+      );
+      return state.schedules.map((s) => ({
+        ...s,
+        flowName:
+          state.allFlows.find((f) => f.id === s.registration_id)?.name ??
+          `Flow #${s.registration_id}`,
+        isRunning: activeIds.has(s.registration_id),
+      }));
+    },
   },
 
   actions: {

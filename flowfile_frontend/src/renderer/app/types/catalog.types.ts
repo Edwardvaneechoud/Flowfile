@@ -87,9 +87,9 @@ export interface FlowRun {
   nodes_completed: number;
   number_of_nodes: number;
   duration_seconds: number | null;
-  run_type: string;
+  run_type: "full_run" | "scheduled";
   has_snapshot: boolean;
-  log_path: string | null;
+  has_log: boolean;
 }
 
 export interface FlowRunDetail extends FlowRun {
@@ -193,7 +193,7 @@ export interface FlowSchedule {
   owner_id: number;
   enabled: boolean;
   description: string | null;
-  schedule_type: string; // "interval" | "table_trigger" | "table_set_trigger"
+  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
   interval_seconds: number | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
@@ -207,7 +207,7 @@ export interface FlowSchedule {
 
 export interface FlowScheduleCreate {
   registration_id: number;
-  schedule_type: string;
+  schedule_type: "interval" | "table_trigger" | "table_set_trigger";
   interval_seconds?: number | null;
   trigger_table_id?: number | null;
   trigger_table_ids?: number[] | null;
@@ -234,7 +234,7 @@ export interface ActiveFlowRun {
   started_at: string;
   nodes_completed: number;
   number_of_nodes: number;
-  run_type: string;
+  run_type: "full_run" | "scheduled";
 }
 
 // ============================================================================
@@ -265,6 +265,7 @@ export interface SchedulerStatus {
   holder_id?: string;
   started_at?: string;
   heartbeat_at?: string;
+  is_embedded?: boolean;
 }
 
 // ============================================================================

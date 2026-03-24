@@ -109,7 +109,8 @@ def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, e
 
 def test_read_polars():
     import polars as pl
-    file_path = "/Users/edwardvanechoud/personal_dev/Flowfile/flowfile_core/tests/support_files/data/excel_file_issue_356.xlsx"
+    file_path = ("/Users/edwardvanechoud/personal_dev/Flowfile/flowfile_core/"
+                 "tests/support_files/data/excel_file_issue_356.xlsx")
     sheet_name = "Sheet1"
     read_options = {'header_row': 1}
     pl.read_excel(

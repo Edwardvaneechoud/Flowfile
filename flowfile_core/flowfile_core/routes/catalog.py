@@ -38,8 +38,10 @@ from flowfile_core.catalog import (
     TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
+from flowfile_core.database.models import SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
@@ -62,6 +64,7 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    SchedulerStatusOut,
     TableFavoriteOut,
 )
 from shared.storage_config import storage
@@ -693,6 +696,7 @@ def trigger_schedule_now(
 
 @router.get("/active-runs", response_model=list[ActiveFlowRun])
 def list_active_runs(
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List all currently running flows."""
@@ -716,28 +720,31 @@ def cancel_run(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/scheduler/status")
-def scheduler_status(db=Depends(get_db)):
+@router.get("/scheduler/status", response_model=SchedulerStatusOut)
+def scheduler_status(
+    db=Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
     """Return the current scheduler lock status."""
-    from flowfile_core.database.models import SchedulerLock
-
     lock = db.get(SchedulerLock, 1)
     if lock is None:
-        return {"active": False}
-    return {
-        "active": True,
-        "holder_id": lock.holder_id,
-        "started_at": lock.started_at,
-        "heartbeat_at": lock.heartbeat_at,
-    }
+        return SchedulerStatusOut(active=False)
+
+    embedded = get_scheduler()
+    is_embedded = embedded is not None and getattr(embedded, "_holder_id", None) == lock.holder_id
+
+    return SchedulerStatusOut(
+        active=True,
+        holder_id=lock.holder_id,
+        started_at=lock.started_at,
+        heartbeat_at=lock.heartbeat_at,
+        is_embedded=is_embedded,
+    )
 
 
 @router.post("/scheduler/start", status_code=200)
-async def scheduler_start():
+async def scheduler_start(current_user=Depends(get_current_active_user)):
     """Start the embedded scheduler. No-op if already running."""
-    from flowfile_core.main import get_scheduler, set_scheduler
-    from flowfile_core.scheduler import FlowScheduler
-
     scheduler = get_scheduler()
     if scheduler is not None:
         return {"message": "Scheduler already running"}
@@ -749,10 +756,8 @@ async def scheduler_start():
 
 
 @router.post("/scheduler/stop", status_code=200)
-async def scheduler_stop():
+async def scheduler_stop(current_user=Depends(get_current_active_user)):
     """Stop the embedded scheduler. No-op if not running."""
-    from flowfile_core.main import get_scheduler, set_scheduler
-
     scheduler = get_scheduler()
     if scheduler is None:
         return {"message": "Scheduler not running"}

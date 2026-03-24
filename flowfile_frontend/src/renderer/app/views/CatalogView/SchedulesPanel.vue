@@ -65,7 +65,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
@@ -84,12 +83,10 @@ defineEmits<{
 
 const catalogStore = useCatalogStore();
 
-const activeRegistrationIds = computed(() => {
-  return new Set(catalogStore.activeRuns.map((r) => r.registration_id).filter((id) => id !== null));
-});
-
 function isRunning(schedule: FlowSchedule): boolean {
-  return activeRegistrationIds.value.has(schedule.registration_id);
+  return catalogStore.activeRuns.some(
+    (r) => r.registration_id === schedule.registration_id,
+  );
 }
 
 function flowName(schedule: FlowSchedule): string {

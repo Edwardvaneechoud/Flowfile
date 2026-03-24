@@ -74,7 +74,7 @@
     </div>
 
     <!-- Run Log (scheduled runs) -->
-    <div v-if="run.log_path" class="section">
+    <div v-if="run.has_log" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-file-lines"></i>
@@ -84,7 +84,6 @@
           <i class="fa-solid fa-eye"></i>
           View log
         </button>
-        <span v-if="run.log_path" class="log-path">{{ run.log_path }}</span>
       </div>
       <div v-if="loadingLog" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
@@ -148,7 +147,7 @@ watch(
   () => props.run.id,
   () => {
     logContent.value = null;
-    if (props.run.log_path) {
+    if (props.run.has_log) {
       loadLog();
     }
   },

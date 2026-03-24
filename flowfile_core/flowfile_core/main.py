@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import signal
@@ -26,6 +28,7 @@ from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
+from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from shared.storage_config import storage
 
 storage.cleanup_directories()
@@ -38,18 +41,6 @@ should_exit = False
 server_instance = None
 
 
-_scheduler = None
-
-
-def get_scheduler():
-    return _scheduler
-
-
-def set_scheduler(scheduler):
-    global _scheduler
-    _scheduler = scheduler
-
-
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handles the graceful startup and shutdown of the FastAPI application.
@@ -57,15 +48,13 @@ async def shutdown_handler(app: FastAPI):
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
     """
-    global _scheduler
     print("Starting core application...")
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
-        from flowfile_core.scheduler import FlowScheduler
-
-        _scheduler = FlowScheduler()
-        await _scheduler.start()
+        scheduler = FlowScheduler()
+        await scheduler.start()
+        set_scheduler(scheduler)
         print("Flow scheduler started")
 
     try:
@@ -74,8 +63,10 @@ async def shutdown_handler(app: FastAPI):
         print("Shutting down core application...")
 
         # Stop scheduler
-        if _scheduler is not None:
-            await _scheduler.stop()
+        scheduler = get_scheduler()
+        if scheduler is not None:
+            await scheduler.stop()
+            set_scheduler(None)
             print("Flow scheduler stopped")
 
         print("Cleaning up core service resources...")

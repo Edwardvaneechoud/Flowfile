@@ -249,8 +249,35 @@
               <i :class="scheduleIcon(schedule)" />
               {{ formatScheduleType(schedule) }}
             </div>
-            <div v-if="schedule.description" class="schedule-card-description">
-              {{ schedule.description }}
+            <div class="schedule-card-description">
+              <template v-if="editingScheduleId === schedule.id">
+                <input
+                  ref="descriptionInput"
+                  v-model="editDescription"
+                  class="edit-description-input"
+                  placeholder="Add a description..."
+                  maxlength="200"
+                  @keydown.enter="saveDescription(schedule.id)"
+                  @keydown.escape="cancelEditDescription"
+                  @blur="saveDescription(schedule.id)"
+                />
+              </template>
+              <template v-else>
+                <span
+                  class="description-text"
+                  :class="{ placeholder: !schedule.description }"
+                  @click="startEditDescription(schedule)"
+                >
+                  {{ schedule.description || "Add description..." }}
+                </span>
+                <button
+                  class="btn-icon-inline"
+                  title="Edit description"
+                  @click="startEditDescription(schedule)"
+                >
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+              </template>
             </div>
             <div class="schedule-card-meta">
               {{
@@ -289,9 +316,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
-import type { FlowRegistration, FlowRun, GlobalArtifact } from "../../types";
+import type { FlowRegistration, FlowRun, FlowSchedule, GlobalArtifact } from "../../types";
 import { formatDate, formatDuration, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
@@ -316,6 +344,9 @@ const emit = defineEmits<{
 const isEditing = ref(false);
 const editName = ref("");
 const editInput = ref<HTMLInputElement | null>(null);
+const editingScheduleId = ref<number | null>(null);
+const editDescription = ref("");
+const descriptionInput = ref<HTMLInputElement | null>(null);
 
 function startRename() {
   editName.value = props.flow.name;
@@ -378,12 +409,40 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function startEditDescription(schedule: FlowSchedule) {
+  editingScheduleId.value = schedule.id;
+  editDescription.value = schedule.description ?? "";
+  nextTick(() => {
+    descriptionInput.value?.focus();
+  });
+}
+
+function cancelEditDescription() {
+  editingScheduleId.value = null;
+}
+
+async function saveDescription(scheduleId: number) {
+  if (editingScheduleId.value !== scheduleId) return;
+  const trimmed = editDescription.value.trim();
+  const schedule = catalogStore.flowSchedules.find((s) => s.id === scheduleId);
+  const oldDescription = schedule?.description ?? "";
+  editingScheduleId.value = null;
+  if (trimmed !== oldDescription) {
+    try {
+      await CatalogApi.updateSchedule(scheduleId, { description: trimmed || null });
+      await catalogStore.loadFlowSchedules(props.flow.id);
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
+    }
+  }
+}
+
 async function handleRunNow(scheduleId: number) {
   try {
     await CatalogApi.triggerScheduleNow(scheduleId);
     await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to trigger run");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
 }
 
@@ -391,17 +450,30 @@ async function handleToggleSchedule(id: number, enabled: boolean) {
   try {
     await CatalogApi.updateSchedule(id, { enabled });
     await catalogStore.loadFlowSchedules(props.flow.id);
-  } catch {
-    // silent
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to update schedule");
   }
 }
 
 async function handleDeleteSchedule(id: number) {
   try {
+    await ElMessageBox.confirm(
+      "Are you sure you want to delete this schedule?",
+      "Delete Schedule",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
     await CatalogApi.deleteSchedule(id);
     await catalogStore.loadFlowSchedules(props.flow.id);
-  } catch {
-    // silent
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
   }
 }
 </script>
@@ -920,9 +992,46 @@ async function handleDeleteSchedule(id: number) {
 }
 
 .schedule-card-description {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: 2px;
+}
+
+.schedule-card-description .btn-icon-inline {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.schedule-card:hover .schedule-card-description .btn-icon-inline {
+  opacity: 1;
+}
+
+.description-text {
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.description-text:hover {
+  color: var(--color-text-secondary);
+}
+
+.description-text.placeholder {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.edit-description-input {
+  width: 100%;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  outline: none;
 }
 
 .schedule-card-meta {

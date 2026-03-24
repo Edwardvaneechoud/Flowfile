@@ -75,7 +75,7 @@ class FlowScheduler:
         url = _get_database_url()
         connect_args = {"check_same_thread": False} if "sqlite" in url else {}
         self._engine = create_engine(url, connect_args=connect_args)
-        self._Session = sessionmaker(bind=self._engine)
+        self._session_factory = sessionmaker(bind=self._engine)
 
         # Ensure scheduler-specific tables exist (safe no-op if they already do)
         from flowfile_scheduler.models import Base
@@ -133,7 +133,7 @@ class FlowScheduler:
 
     def _tick(self) -> None:
         """Single scheduler tick — acquire lock, check schedules, launch."""
-        with self._Session() as db:
+        with self._session_factory() as db:
             if not self._acquire_lock(db):
                 logger.info("Tick skipped — lock held by another instance")
                 return
@@ -183,7 +183,7 @@ class FlowScheduler:
 
     def _release_lock(self) -> None:
         try:
-            with self._Session() as db:
+            with self._session_factory() as db:
                 lock: SchedulerLock | None = db.get(SchedulerLock, 1)
                 if lock is not None and lock.holder_id == self._holder_id:
                     db.delete(lock)
@@ -389,13 +389,14 @@ class FlowScheduler:
             log_dir = Path.home() / ".flowfile" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"scheduled_run_{run_id}.log"
-            fh = open(log_file, "w")
+            fh = open(log_file, "w")  # noqa: SIM115
             subprocess.Popen(
                 cmd,
                 stdout=fh,
                 stderr=fh,
                 start_new_session=True,
             )
+            fh.close()  # Parent releases its copy; child still has the fd
             logger.info("Subprocess log: %s", log_file)
         except Exception:
             logger.exception("Failed to spawn flow subprocess: %s", flow_path)

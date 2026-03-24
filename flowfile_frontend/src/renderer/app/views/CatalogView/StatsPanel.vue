@@ -266,19 +266,7 @@ function toggleSection(section: Section) {
   activeSection.value = activeSection.value === section ? null : section;
 }
 
-const activeRegistrationIds = computed(() => {
-  return new Set(catalogStore.activeRuns.map((r) => r.registration_id).filter((id) => id !== null));
-});
-
-const enrichedSchedules = computed(() => {
-  return catalogStore.schedules.map((s) => ({
-    ...s,
-    flowName:
-      catalogStore.allFlows.find((f) => f.id === s.registration_id)?.name ??
-      `Flow #${s.registration_id}`,
-    isRunning: activeRegistrationIds.value.has(s.registration_id),
-  }));
-});
+const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
 
 function formatNumber(n: number | null): string {
   if (n === null) return "--";

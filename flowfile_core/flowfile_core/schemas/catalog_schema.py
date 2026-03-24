@@ -5,6 +5,7 @@ run history, favorites and follows.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -107,9 +108,9 @@ class FlowRunOut(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
-    run_type: str = "full_run"
+    run_type: Literal["full_run", "scheduled"] = "full_run"
     has_snapshot: bool = False
-    log_path: str | None = None
+    has_log: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -248,7 +249,7 @@ class TableFavoriteOut(BaseModel):
 
 class FlowScheduleCreate(BaseModel):
     registration_id: int
-    schedule_type: str  # "interval" | "table_trigger" | "table_set_trigger"
+    schedule_type: Literal["interval", "table_trigger", "table_set_trigger"]
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
     trigger_table_ids: list[int] | None = None
@@ -268,7 +269,7 @@ class FlowScheduleOut(BaseModel):
     owner_id: int
     enabled: bool
     description: str | None = None
-    schedule_type: str
+    schedule_type: Literal["interval", "table_trigger", "table_set_trigger"]
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
     trigger_table_name: str | None = None
@@ -294,7 +295,7 @@ class ActiveFlowRun(BaseModel):
     started_at: datetime
     nodes_completed: int = 0
     number_of_nodes: int = 0
-    run_type: str = "full_run"
+    run_type: Literal["full_run", "scheduled"] = "full_run"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -315,6 +316,17 @@ class CatalogStats(BaseModel):
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)
     favorite_tables: list[CatalogTableOut] = Field(default_factory=list)
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
+
+
+# ==================== Scheduler Status ====================
+
+
+class SchedulerStatusOut(BaseModel):
+    active: bool
+    holder_id: str | None = None
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    is_embedded: bool | None = None
 
 
 # Rebuild forward-referenced models

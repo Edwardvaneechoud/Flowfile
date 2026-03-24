@@ -287,6 +287,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -580,7 +581,7 @@ async function handleCreateSchedule(body: FlowScheduleCreate) {
     }
     await Promise.all(loads);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to create schedule");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to create schedule");
   }
 }
 
@@ -593,7 +594,7 @@ async function handleRunNow(scheduleId: number) {
       catalogStore.loadSchedules(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to trigger run");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
 }
 
@@ -602,17 +603,25 @@ async function handleToggleSchedule(id: number, enabled: boolean) {
     await CatalogApi.updateSchedule(id, { enabled });
     await catalogStore.loadSchedules();
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to update schedule");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to update schedule");
   }
 }
 
 async function handleDeleteSchedule(id: number) {
-  if (!confirm("Are you sure you want to delete this schedule?")) return;
+  try {
+    await ElMessageBox.confirm("Are you sure you want to delete this schedule?", "Delete Schedule", {
+      confirmButtonText: "Delete",
+      cancelButtonText: "Cancel",
+      type: "warning",
+    });
+  } catch {
+    return; // User cancelled
+  }
   try {
     await CatalogApi.deleteSchedule(id);
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to delete schedule");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
   }
 }
 

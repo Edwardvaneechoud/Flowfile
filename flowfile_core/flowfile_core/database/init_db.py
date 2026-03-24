@@ -60,6 +60,17 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
+        # Migrate flow_schedules: add description column
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_schedules'"))
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(flow_schedules)"))
+            schedule_columns = [row[1] for row in result.fetchall()]
+
+            if "description" not in schedule_columns:
+                logger.info("Adding description column to flow_schedules")
+                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN description TEXT"))
+                conn.commit()
+
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
 # Then create any new tables (this will include is_admin for new databases)

@@ -433,7 +433,6 @@ def test_run_invalid_flow():
 
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
-    breakpoint()
     imported_flow = flow_file_handler.get_flow(flow_id)
     assert imported_flow.__name__ != "sample_save"
     assert imported_flow.flow_settings.name != "sample_save"

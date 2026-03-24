@@ -22,37 +22,44 @@
           Last heartbeat: {{ formatDate(catalogStore.schedulerStatus.heartbeat_at) }}
         </span>
       </div>
-      <el-button
-        v-if="catalogStore.schedulerStatus?.active"
-        size="small"
-        type="warning"
-        text
-        @click="catalogStore.stopScheduler()"
-      >
-        <i class="fa-solid fa-stop" /> Stop
-      </el-button>
-      <el-button v-else size="small" type="success" text @click="catalogStore.startScheduler()">
-        <i class="fa-solid fa-play" /> Start
-      </el-button>
+      <template v-if="isStandalone">
+        <!-- No start/stop controls for standalone scheduler -->
+      </template>
+      <template v-else>
+        <el-button
+          v-if="catalogStore.schedulerStatus?.active"
+          size="small"
+          type="warning"
+          text
+          @click="catalogStore.stopScheduler()"
+        >
+          <i class="fa-solid fa-stop" /> Stop
+        </el-button>
+        <el-button v-else size="small" type="success" text @click="catalogStore.startScheduler()">
+          <i class="fa-solid fa-play" /> Start
+        </el-button>
+      </template>
     </div>
 
     <!-- Lifecycle warning -->
     <div class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
-      <span>
-        The scheduler runs inside the Flowfile process. Schedules will only be active while
-        Flowfile is running.
-        <el-popover
-          placement="bottom"
-          :width="340"
-          trigger="hover"
-          :show-after="200"
-        >
+      <span v-if="isStandalone">
+        The scheduler is running as a standalone service. Manage it from the process where it was
+        started.
+      </span>
+      <span v-else>
+        The scheduler runs inside the Flowfile process. Schedules will only be active while Flowfile
+        is running.
+        <el-popover placement="bottom" :width="340" trigger="hover" :show-after="200">
           <template #reference>
             <span class="standalone-link">Run as a standalone service?</span>
           </template>
           <div class="standalone-popover">
-            <p>You can run the scheduler as an independent background service so it stays active even when the UI is closed:</p>
+            <p>
+              You can run the scheduler as an independent background service so it stays active even
+              when the UI is closed:
+            </p>
             <code class="standalone-cmd">pip install flowfile</code>
             <code class="standalone-cmd">flowfile run flowfile_scheduler</code>
           </div>
@@ -100,6 +107,7 @@
       <div class="table-header">
         <span class="col-status">Status</span>
         <span class="col-flow">Flow</span>
+        <span class="col-description">Description</span>
         <span class="col-type">Type</span>
         <span class="col-last">Last Triggered</span>
         <span class="col-actions">Actions</span>
@@ -125,9 +133,36 @@
           <span class="flow-name flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{
             schedule.flowName
           }}</span>
-          <span v-if="schedule.description" class="schedule-description">{{
-            schedule.description
-          }}</span>
+        </div>
+        <div class="col-description">
+          <template v-if="editingScheduleId === schedule.id">
+            <input
+              ref="descriptionInput"
+              v-model="editDescription"
+              class="edit-description-input"
+              placeholder="Add description..."
+              maxlength="200"
+              @keydown.enter="saveDescription(schedule.id)"
+              @keydown.escape="cancelEditDescription"
+              @blur="saveDescription(schedule.id)"
+            />
+          </template>
+          <template v-else>
+            <span
+              class="description-text"
+              :class="{ placeholder: !schedule.description }"
+              @click="startEditDescription(schedule)"
+            >
+              {{ schedule.description || "Add description..." }}
+            </span>
+            <button
+              class="btn-icon-inline"
+              title="Edit description"
+              @click="startEditDescription(schedule)"
+            >
+              <i class="fa-solid fa-pen"></i>
+            </button>
+          </template>
         </div>
         <div class="col-type">
           <i :class="scheduleIcon(schedule)" class="type-icon" />
@@ -163,8 +198,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
+import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { CatalogApi } from "../../api/catalog.api";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
@@ -178,28 +215,47 @@ defineEmits<{
   viewFlow: [registrationId: number];
 }>();
 
-interface EnrichedSchedule extends FlowSchedule {
-  flowName: string;
-  isRunning: boolean;
-}
+const isStandalone = computed(
+  () => catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.is_embedded === false,
+);
 
-const activeRegistrationIds = computed(() => {
-  return new Set(catalogStore.activeRuns.map((r) => r.registration_id).filter((id) => id !== null));
-});
-
-const enrichedSchedules = computed((): EnrichedSchedule[] => {
-  return catalogStore.schedules.map((s) => ({
-    ...s,
-    flowName:
-      catalogStore.allFlows.find((f) => f.id === s.registration_id)?.name ??
-      `Flow #${s.registration_id}`,
-    isRunning: activeRegistrationIds.value.has(s.registration_id),
-  }));
-});
+const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
 
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
 const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRunning).length);
+
+const editingScheduleId = ref<number | null>(null);
+const editDescription = ref("");
+const descriptionInput = ref<HTMLInputElement | null>(null);
+
+function startEditDescription(schedule: FlowSchedule) {
+  editingScheduleId.value = schedule.id;
+  editDescription.value = schedule.description ?? "";
+  nextTick(() => {
+    descriptionInput.value?.focus();
+  });
+}
+
+function cancelEditDescription() {
+  editingScheduleId.value = null;
+}
+
+async function saveDescription(scheduleId: number) {
+  if (editingScheduleId.value !== scheduleId) return;
+  const trimmed = editDescription.value.trim();
+  const schedule = catalogStore.schedules.find((s) => s.id === scheduleId);
+  const oldDescription = schedule?.description ?? "";
+  editingScheduleId.value = null;
+  if (trimmed !== oldDescription) {
+    try {
+      await CatalogApi.updateSchedule(scheduleId, { description: trimmed || null });
+      await catalogStore.loadSchedules();
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
+    }
+  }
+}
 </script>
 
 <style scoped>
@@ -383,7 +439,7 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
 
 .table-header {
   display: grid;
-  grid-template-columns: 120px 1fr 160px 160px 130px;
+  grid-template-columns: 120px 1fr 1fr 160px 160px 130px;
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   background: var(--color-background-secondary);
@@ -397,7 +453,7 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
 
 .table-row {
   display: grid;
-  grid-template-columns: 120px 1fr 160px 160px 130px;
+  grid-template-columns: 120px 1fr 1fr 160px 160px 130px;
   gap: var(--spacing-2);
   padding: var(--spacing-3);
   border-bottom: 1px solid var(--color-border-light);
@@ -451,12 +507,71 @@ const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRu
   flex-direction: column;
 }
 
-.schedule-description {
+/* Description column */
+.col-description {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.col-description .btn-icon-inline {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.table-row:hover .col-description .btn-icon-inline {
+  opacity: 1;
+}
+
+.btn-icon-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+}
+
+.btn-icon-inline:hover {
+  background: var(--color-background-hover);
+  color: var(--color-primary);
+}
+
+.description-text {
+  cursor: pointer;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--transition-fast);
+}
+
+.description-text:hover {
+  color: var(--color-text-secondary);
+}
+
+.description-text.placeholder {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.edit-description-input {
+  width: 100%;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  outline: none;
 }
 
 .flow-name {

@@ -69,6 +69,28 @@ services:
     networks:
       - flowfile-network
 
+  flowfile-scheduler:
+    build:
+      context: .
+      dockerfile: flowfile_scheduler/Dockerfile
+    environment:
+      - FLOWFILE_MODE=docker
+      - FLOWFILE_STORAGE_DIR=/app/internal_storage
+      - FLOWFILE_USER_DATA_DIR=/app/user_data
+      - WORKER_HOST=flowfile-worker
+      - CORE_HOST=flowfile-core
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./flowfile_data:/app/user_data
+      - flowfile-internal-storage:/app/internal_storage
+      - ./saved_flows:/app/flowfile_core/saved_flows
+    networks:
+      - flowfile-network
+    depends_on:
+      - flowfile-core
+    restart: unless-stopped
+
   # Build-only service: produces the flowfile-kernel image used by kernel
   # containers.  Not started by `docker compose up` — build with:
   #   docker compose build flowfile-kernel

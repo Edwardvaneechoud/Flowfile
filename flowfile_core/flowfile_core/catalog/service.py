@@ -181,7 +181,8 @@ class CatalogService:
             return str(log_file)
         return None
 
-    def _run_to_out(self, run: FlowRun) -> FlowRunOut:
+    @staticmethod
+    def _run_to_out(run: FlowRun) -> FlowRunOut:
         return FlowRunOut(
             id=run.id,
             registration_id=run.registration_id,
@@ -196,7 +197,7 @@ class CatalogService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             has_snapshot=run.flow_snapshot is not None,
-            log_path=self._resolve_log_path(run.id, run.run_type),
+            has_log=CatalogService._resolve_log_path(run.id, run.run_type) is not None,
         )
 
     @staticmethod
@@ -581,7 +582,7 @@ class CatalogService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             has_snapshot=run.flow_snapshot is not None,
-            log_path=self._resolve_log_path(run.id, run.run_type),
+            has_log=self._resolve_log_path(run.id, run.run_type) is not None,
             flow_snapshot=run.flow_snapshot,
             node_results_json=run.node_results_json,
         )
@@ -647,7 +648,11 @@ class CatalogService:
         if number_of_nodes is not None and number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes
         if run.started_at:
-            run.duration_seconds = (now.replace(tzinfo=None) - run.started_at.replace(tzinfo=None)).total_seconds()
+            # Normalize both sides to naive UTC for duration calculation.
+            # SQLite stores naive datetimes, so started_at may lack tzinfo.
+            started_utc = run.started_at.replace(tzinfo=None)
+            now_utc = now.replace(tzinfo=None)
+            run.duration_seconds = (now_utc - started_utc).total_seconds()
         if node_results_json is not None:
             run.node_results_json = node_results_json
         return self.repo.update_run(run)
@@ -1378,6 +1383,7 @@ class CatalogService:
                 stderr=fh,
                 start_new_session=True,
             )
+            fh.close()  # Parent releases its copy; child still has the fd
             logger.info("Subprocess log: %s", log_file)
         except Exception:
             logger.exception("Failed to spawn flow subprocess: %s", flow_path)
@@ -1403,10 +1409,8 @@ class CatalogService:
             raise FlowNotFoundError(registration_id=schedule.registration_id)
 
         # Check for active runs
-        active = self.repo.list_active_runs()
-        for r in active:
-            if r.registration_id == schedule.registration_id:
-                raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
+        if self.repo.has_active_run(schedule.registration_id):
+            raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
 
         # Create a run record before spawning
         now = datetime.now(timezone.utc)
@@ -1449,7 +1453,11 @@ class CatalogService:
         ]
 
     def cancel_run(self, run_id: int) -> None:
-        """Cancel a run by marking it as ended with success=False.
+        """Mark a run as cancelled (ended with success=False).
+
+        Note: this only updates the database record — it does NOT terminate
+        the subprocess.  The flow process will continue running in the
+        background until it finishes naturally.
 
         Raises
         ------
@@ -1463,7 +1471,9 @@ class CatalogService:
         run.ended_at = now
         run.success = False
         if run.started_at:
-            run.duration_seconds = (now.replace(tzinfo=None) - run.started_at.replace(tzinfo=None)).total_seconds()
+            started_utc = run.started_at.replace(tzinfo=None)
+            now_utc = now.replace(tzinfo=None)
+            run.duration_seconds = (now_utc - started_utc).total_seconds()
         self.repo.update_run(run)
 
     # ------------------------------------------------------------------ #

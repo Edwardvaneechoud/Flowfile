@@ -48,9 +48,9 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
-from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
+from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
@@ -346,15 +346,9 @@ def _run_and_track(flow, user_id: int | None):
                     node_results_json=node_results,
                 )
 
-            duration = None
-            if run_info.start_time and run_info.end_time:
-                duration = (run_info.end_time - run_info.start_time).total_seconds()
             logger.info(
                 f"Flow '{flow_name}' run completed: success={run_info.success}, "
-                f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}, "
-                f"duration={duration:.2f}s"
-                if duration
-                else "duration=N/A"
+                f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}"
             )
         else:
             # Fallback: create the full record if phase 1 failed
@@ -378,6 +372,7 @@ def _run_and_track(flow, user_id: int | None):
                     duration_seconds=duration,
                     run_type=run_info.run_type,
                     node_results_json=node_results,
+                    flow_snapshot=snapshot_yaml,
                 )
                 db.add(db_run)
                 db.commit()
@@ -1149,11 +1144,7 @@ def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_curr
         flow.save_flow(flow_path=flow_path)
 
         # 3. Re-key in handler: remove old entry, register under new id
-        flow_file_handler._flows.pop(old_flow_id, None)
-        flow_file_handler._flows[new_flow_id] = flow
-        if user_id is not None:
-            flow_file_handler._unregister_user_session(user_id, old_flow_id)
-            flow_file_handler._register_user_session(user_id, new_flow_id)
+        flow_file_handler.rekey_flow(old_flow_id, new_flow_id, user_id)
 
         # 4. Create catalog registration for the new path and resolve
         _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
