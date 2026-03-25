@@ -120,6 +120,19 @@
       />
     </div>
 
+    <!-- Schedules Section -->
+    <div class="section">
+      <div class="section-header">
+        <h3><i class="fa-solid fa-calendar-days section-icon"></i> Schedules</h3>
+        <el-button
+          v-if="flow.file_exists"
+          size="small"
+          type="primary"
+          @click="$emit('addSchedule', flow.id)"
+        >
+          <i class="fa-solid fa-plus" /> Add
+        </el-button>
+      </div>
 
       <!-- Schedule summary cards -->
       <div class="summary-cards summary-cards-3">
@@ -349,20 +362,6 @@
         </tbody>
       </table>
     </div>
-
-    <!-- Schedules Section -->
-    <div class="section">
-      <div class="section-header">
-        <h3><i class="fa-solid fa-calendar-days section-icon"></i> Schedules</h3>
-        <el-button
-          v-if="flow.file_exists"
-          size="small"
-          type="primary"
-          @click="$emit('addSchedule', flow.id)"
-        >
-          <i class="fa-solid fa-plus" /> Add
-        </el-button>
-      </div>
 
   </div>
 </template>
