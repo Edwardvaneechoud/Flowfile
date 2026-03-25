@@ -877,6 +877,7 @@ async function handleDeleteSchedule(id: number) {
   grid-template-columns: repeat(4, 1fr);
   gap: var(--spacing-3);
   margin-bottom: var(--spacing-4);
+  max-width: 800px;
 }
 
 .summary-cards-3 {
@@ -936,6 +937,7 @@ async function handleDeleteSchedule(id: number) {
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   overflow: hidden;
+  max-width: 800px;
 }
 
 .table-header {
@@ -969,7 +971,7 @@ async function handleDeleteSchedule(id: number) {
 
 .schedules-grid .table-header,
 .schedules-grid .table-row {
-  grid-template-columns: 100px 1fr 150px 130px 120px;
+  grid-template-columns: 100px minmax(120px, 1fr) 150px 130px 120px;
 }
 
 .table-row:last-child {

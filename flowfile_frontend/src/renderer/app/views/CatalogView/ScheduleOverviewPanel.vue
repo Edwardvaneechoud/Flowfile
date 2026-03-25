@@ -1,6 +1,11 @@
 <template>
   <div class="schedule-overview">
-    <h2>Schedules Overview</h2>
+    <div class="schedule-header">
+      <h2>Schedules Overview</h2>
+      <el-button type="primary" size="small" @click="$emit('createSchedule')">
+        <i class="fa-solid fa-plus" /> Create Schedule
+      </el-button>
+    </div>
 
     <!-- Scheduler status bar -->
     <div
@@ -308,8 +313,15 @@ async function saveDescription(scheduleId: number) {
   max-width: 900px;
 }
 
+.schedule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-5);
+}
+
 .schedule-overview h2 {
-  margin: 0 0 var(--spacing-5) 0;
+  margin: 0;
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
