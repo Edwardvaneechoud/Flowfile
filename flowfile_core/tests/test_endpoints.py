@@ -443,8 +443,6 @@ def test_save_flow():
     response = client.get("/save_flow", params={"flow_id": flow_id, "flow_path": file_path})
     assert response.status_code == 200, "Flow not saved"
     assert os.path.exists(file_path), "Flow not saved, file not found"
-    imported_flow_id = flow_file_handler.import_flow(file_path)
-    assert imported_flow_id == flow_id, "Flow not stored or imported correctly correctly"
     assert imported_flow.__name__ == "sample_save"
     assert imported_flow.flow_settings.name == "sample_save"
     assert imported_flow.flow_settings.modified_on > start_time

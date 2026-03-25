@@ -110,6 +110,19 @@ class FlowfileHandler:
                 flow = self._flows.pop(flow_id)
                 del flow
 
+    def rekey_flow(self, old_flow_id: int, new_flow_id: int, user_id: int | None = None) -> None:
+        """Replace the handler key for a flow (e.g. after Save-As).
+
+        Moves the flow from ``old_flow_id`` to ``new_flow_id`` in the
+        internal registry and updates user session mappings.
+        """
+        flow = self._flows.pop(old_flow_id, None)
+        if flow is not None:
+            self._flows[new_flow_id] = flow
+        if user_id is not None:
+            self._unregister_user_session(user_id, old_flow_id)
+            self._register_user_session(user_id, new_flow_id)
+
     def save_flow(self, flow_id: int, flow_path: str, user_id: int | None = None):
         flow = self.get_flow(flow_id, user_id)
         if flow:

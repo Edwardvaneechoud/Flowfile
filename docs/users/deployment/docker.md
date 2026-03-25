@@ -48,6 +48,7 @@ services:
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
+      - FLOWFILE_SCHEDULER_ENABLED=true
       - WORKER_HOST=flowfile-worker
     volumes:
       - ./flowfile_data:/app/user_data
@@ -86,6 +87,7 @@ volumes:
 | `FLOWFILE_ADMIN_PASSWORD` | Admin password | `changeme` |
 | `JWT_SECRET_KEY` | Token signing secret | Required |
 | `FLOWFILE_MASTER_KEY` | Encryption key for secrets | Via setup wizard |
+| `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `false` |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 

@@ -105,9 +105,7 @@
 import { ref, computed } from "vue";
 import type { KernelConfig } from "../../types";
 
-const emit = defineEmits<{
-  create: [config: KernelConfig];
-}>();
+const emit = defineEmits(["create"]);
 
 const isExpanded = ref(false);
 const isSubmitting = ref(false);

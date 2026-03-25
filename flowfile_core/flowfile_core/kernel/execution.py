@@ -8,7 +8,9 @@ import logging
 import os
 import re
 
-from flowfile_core.configs.settings import SERVER_PORT
+import polars as pl
+
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, SERVER_PORT
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ExternalDfFetcher
 from flowfile_core.kernel.manager import KernelManager
@@ -23,6 +25,25 @@ def _assert_safe_name(name: str) -> None:
     """Raise if *name* is not a safe filesystem identifier."""
     if not _SAFE_NAME_RE.match(name):
         raise ValueError(f"Unsafe input/output name rejected: {name!r}")
+
+
+def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) -> None:
+    """Collect a LazyFrame and write it to a parquet file locally.
+
+    This mirrors the worker's write_parquet function for use when
+    OFFLOAD_TO_WORKER is False (e.g. CLI execution via ``flowfile run flow``).
+    """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if isinstance(lf, pl.DataFrame):
+        df = lf
+    else:
+        try:
+            df = lf.collect(engine="streaming")
+        except Exception:
+            df = lf.collect()
+    df.write_parquet(output_path)
+    with open(output_path, "rb") as f:
+        os.fsync(f.fileno())
 
 
 def write_inputs_to_parquet(
@@ -45,21 +66,26 @@ def write_inputs_to_parquet(
 
     Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
+    use_local = not OFFLOAD_TO_WORKER
+
     if input_names is None:
         # Original behaviour: all inputs under "main"
         main_paths: list[str] = []
         for idx, ft in enumerate(flowfile_tables):
             local_path = os.path.join(input_dir, f"main_{idx}.parquet")
-            fetcher = ExternalDfFetcher(
-                flow_id=flow_id,
-                node_id=node_id,
-                lf=ft.data_frame,
-                wait_on_completion=True,
-                operation_type="write_parquet",
-                kwargs={"output_path": local_path},
-            )
-            if fetcher.has_error:
-                raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
+            if use_local:
+                _write_parquet_locally(ft.data_frame, local_path)
+            else:
+                fetcher = ExternalDfFetcher(
+                    flow_id=flow_id,
+                    node_id=node_id,
+                    lf=ft.data_frame,
+                    wait_on_completion=True,
+                    operation_type="write_parquet",
+                    kwargs={"output_path": local_path},
+                )
+                if fetcher.has_error:
+                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
             main_paths.append(manager.to_kernel_path(local_path))
         return {"main": main_paths}
 
@@ -69,16 +95,21 @@ def write_inputs_to_parquet(
     for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):
         _assert_safe_name(name)
         local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
-        fetcher = ExternalDfFetcher(
-            flow_id=flow_id,
-            node_id=node_id,
-            lf=ft.data_frame,
-            wait_on_completion=True,
-            operation_type="write_parquet",
-            kwargs={"output_path": local_path},
-        )
-        if fetcher.has_error:
-            raise RuntimeError(f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}")
+        if use_local:
+            _write_parquet_locally(ft.data_frame, local_path)
+        else:
+            fetcher = ExternalDfFetcher(
+                flow_id=flow_id,
+                node_id=node_id,
+                lf=ft.data_frame,
+                wait_on_completion=True,
+                operation_type="write_parquet",
+                kwargs={"output_path": local_path},
+            )
+            if fetcher.has_error:
+                raise RuntimeError(
+                    f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}"
+                )
         kernel_path = manager.to_kernel_path(local_path)
         result.setdefault(name, []).append(kernel_path)
         all_paths.append(kernel_path)
