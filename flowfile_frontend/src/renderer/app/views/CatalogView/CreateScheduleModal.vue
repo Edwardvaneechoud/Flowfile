@@ -135,10 +135,7 @@ const props = defineProps<{
   preselectedFlowId?: number | null;
 }>();
 
-const emit = defineEmits<{
-  close: [];
-  create: [schedule: FlowScheduleCreate];
-}>();
+const emit = defineEmits(["close", "create"]);
 
 const intervalMinutes = ref(60);
 

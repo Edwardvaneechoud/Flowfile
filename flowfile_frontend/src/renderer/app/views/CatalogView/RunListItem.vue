@@ -46,7 +46,7 @@ const props = defineProps<{
   selected: boolean;
 }>();
 
-defineEmits<{ select: [] }>();
+defineEmits(["select"]);
 
 const statusClass = computed(() => {
   if (props.run.success === null) return "pending";

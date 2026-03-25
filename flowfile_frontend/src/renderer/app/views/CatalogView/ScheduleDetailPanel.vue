@@ -174,16 +174,16 @@ const props = defineProps<{
   schedule: FlowSchedule;
 }>();
 
-defineEmits<{
-  close: [];
-  viewRun: [runId: number];
-  viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
-  toggleSchedule: [id: number, enabled: boolean];
-  deleteSchedule: [scheduleId: number];
-  runNow: [scheduleId: number];
-  cancelScheduleRun: [schedule: FlowSchedule];
-}>();
+defineEmits([
+  "close",
+  "viewRun",
+  "viewFlow",
+  "viewScheduleRuns",
+  "toggleSchedule",
+  "deleteSchedule",
+  "runNow",
+  "cancelScheduleRun",
+]);
 
 const isEditingName = ref(false);
 const editName = ref("");

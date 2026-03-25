@@ -388,21 +388,21 @@ const props = defineProps<{
   artifacts: GlobalArtifact[];
 }>();
 
-const emit = defineEmits<{
-  close: [];
-  viewRun: [runId: number];
-  viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
-  toggleFavorite: [flowId: number];
-  openFlow: [flowPath: string];
-  selectTable: [tableId: number];
-  deleteFlow: [flowId: number];
-  renameFlow: [flowId: number, newName: string];
-  addSchedule: [flowId: number];
-  runFlow: [flowId: number];
-  cancelFlowRun: [flowId: number];
-  selectSchedule: [scheduleId: number];
-}>();
+const emit = defineEmits([
+  "close",
+  "viewRun",
+  "viewFlow",
+  "viewScheduleRuns",
+  "toggleFavorite",
+  "openFlow",
+  "selectTable",
+  "deleteFlow",
+  "renameFlow",
+  "addSchedule",
+  "runFlow",
+  "cancelFlowRun",
+  "selectSchedule",
+]);
 
 const isEditing = ref(false);
 const editName = ref("");

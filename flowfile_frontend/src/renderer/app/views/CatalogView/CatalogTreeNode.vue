@@ -198,16 +198,16 @@ const props = withDefaults(
   },
 );
 
-defineEmits<{
-  selectFlow: [id: number];
-  selectArtifact: [id: number];
-  selectTable: [id: number];
-  toggleFavorite: [id: number];
-  toggleTableFavorite: [id: number];
-  registerFlow: [namespaceId: number];
-  registerTable: [namespaceId: number];
-  createSchema: [parentId: number];
-}>();
+defineEmits([
+  "selectFlow",
+  "selectArtifact",
+  "selectTable",
+  "toggleFavorite",
+  "toggleTableFavorite",
+  "registerFlow",
+  "registerTable",
+  "createSchema",
+]);
 
 function formatRowCount(n: number | null): string {
   if (n === null) return "0";

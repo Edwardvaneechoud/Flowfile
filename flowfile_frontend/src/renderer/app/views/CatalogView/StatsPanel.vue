@@ -267,13 +267,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
-import type {
-  CatalogStats,
-  CatalogTable,
-  FlowRegistration,
-  FlowRun,
-  FlowSchedule,
-} from "../../types";
+import type { CatalogStats, CatalogTable, FlowRegistration, FlowRun } from "../../types";
 import { formatNumber } from "./catalog-formatters";
 import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
@@ -294,16 +288,16 @@ const favoriteTables = computed((): CatalogTable[] => {
   return props.stats?.favorite_tables ?? [];
 });
 
-defineEmits<{
-  viewRun: [runId: number];
-  viewFlow: [flowId: number];
-  viewTable: [tableId: number];
-  createSchedule: [];
-  toggleSchedule: [id: number, enabled: boolean];
-  deleteSchedule: [id: number];
-  runNow: [scheduleId: number];
-  cancelScheduleRun: [schedule: FlowSchedule];
-}>();
+defineEmits([
+  "viewRun",
+  "viewFlow",
+  "viewTable",
+  "createSchedule",
+  "toggleSchedule",
+  "deleteSchedule",
+  "runNow",
+  "cancelScheduleRun",
+]);
 
 const activeSection = ref<Section | null>(null);
 

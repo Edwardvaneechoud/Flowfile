@@ -165,12 +165,7 @@ defineProps<{
   loadingPreview: boolean;
 }>();
 
-const emit = defineEmits<{
-  close: [];
-  deleteTable: [id: number];
-  toggleTableFavorite: [id: number];
-  navigateToFlow: [registrationId: number];
-}>();
+const emit = defineEmits(["close", "deleteTable", "toggleTableFavorite", "navigateToFlow"]);
 
 function handleReadByClick(flowId: number) {
   emit("navigateToFlow", flowId);

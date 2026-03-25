@@ -188,11 +188,7 @@ const props = defineProps<{
 
 const expanded = ref(false);
 
-defineEmits<{
-  viewRun: [runId: number];
-  viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
-}>();
+defineEmits(["viewRun", "viewFlow", "viewScheduleRuns"]);
 
 const catalogStore = useCatalogStore();
 

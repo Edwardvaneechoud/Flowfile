@@ -266,15 +266,15 @@ import {
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInElectronMode());
 
-defineEmits<{
-  createSchedule: [];
-  toggleSchedule: [id: number, enabled: boolean];
-  deleteSchedule: [id: number];
-  runNow: [id: number];
-  cancelScheduleRun: [schedule: FlowSchedule];
-  viewFlow: [registrationId: number];
-  selectSchedule: [scheduleId: number];
-}>();
+defineEmits([
+  "createSchedule",
+  "toggleSchedule",
+  "deleteSchedule",
+  "runNow",
+  "cancelScheduleRun",
+  "viewFlow",
+  "selectSchedule",
+]);
 
 const isStandalone = computed(
   () => catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.is_embedded === false,

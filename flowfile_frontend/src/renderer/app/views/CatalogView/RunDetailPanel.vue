@@ -146,12 +146,7 @@ const props = defineProps<{
   run: FlowRunDetail;
 }>();
 
-defineEmits<{
-  close: [];
-  openSnapshot: [runId: number];
-  viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
-}>();
+defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns"]);
 
 const logContent = ref<string | null>(null);
 const loadingLog = ref(false);

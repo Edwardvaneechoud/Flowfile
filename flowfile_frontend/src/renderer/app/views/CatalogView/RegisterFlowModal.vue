@@ -75,9 +75,7 @@ const props = defineProps<{
   defaultNamespaceId: number | null;
 }>();
 
-const emit = defineEmits<{
-  close: [];
-}>();
+const emit = defineEmits(["close"]);
 
 const catalogStore = useCatalogStore();
 const name = ref("");

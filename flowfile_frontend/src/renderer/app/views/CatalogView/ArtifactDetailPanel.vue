@@ -139,10 +139,7 @@ const props = defineProps<{
   versions: GlobalArtifact[];
 }>();
 
-const emit = defineEmits<{
-  close: [];
-  "navigate-to-flow": [registrationId: number];
-}>();
+const emit = defineEmits(["close", "navigate-to-flow"]);
 
 const catalogStore = useCatalogStore();
 

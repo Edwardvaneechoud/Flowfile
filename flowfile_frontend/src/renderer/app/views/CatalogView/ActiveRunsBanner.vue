@@ -25,9 +25,7 @@ defineProps<{
   activeRuns: ActiveFlowRun[];
 }>();
 
-defineEmits<{
-  cancel: [runId: number];
-}>();
+defineEmits(["cancel"]);
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString();

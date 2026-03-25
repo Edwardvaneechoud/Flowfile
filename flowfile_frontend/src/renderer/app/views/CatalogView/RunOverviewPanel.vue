@@ -12,11 +12,7 @@
 <script setup lang="ts">
 import RunHistoryTable from "./RunHistoryTable.vue";
 
-defineEmits<{
-  viewRun: [runId: number];
-  viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
-}>();
+defineEmits(["viewRun", "viewFlow", "viewScheduleRuns"]);
 </script>
 
 <style scoped>

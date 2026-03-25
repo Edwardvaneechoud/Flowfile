@@ -82,14 +82,14 @@ defineProps<{
   schedules: FlowSchedule[];
 }>();
 
-defineEmits<{
-  createSchedule: [];
-  toggleSchedule: [id: number, enabled: boolean];
-  deleteSchedule: [id: number];
-  runNow: [id: number];
-  cancelScheduleRun: [schedule: FlowSchedule];
-  viewFlow: [registrationId: number];
-}>();
+defineEmits([
+  "createSchedule",
+  "toggleSchedule",
+  "deleteSchedule",
+  "runNow",
+  "cancelScheduleRun",
+  "viewFlow",
+]);
 
 const catalogStore = useCatalogStore();
 
