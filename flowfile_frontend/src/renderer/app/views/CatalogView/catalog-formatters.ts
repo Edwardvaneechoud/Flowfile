@@ -1,4 +1,4 @@
-import type { FlowSchedule } from "../../types";
+import type { FlowSchedule, GlobalArtifact } from "../../types";
 
 /**
  * Compact date format: "Mar 23, 10:30 AM"
@@ -15,6 +15,27 @@ export function formatDate(dateStr: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+export function formatSize(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return "--";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+export function formatType(artifact: GlobalArtifact): string {
+  if (artifact.python_type) {
+    const parts = artifact.python_type.split(".");
+    return parts[parts.length - 1];
+  }
+  return artifact.serialization_format ?? "unknown";
+}
+
+export function formatNumber(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "--";
+  return n.toLocaleString();
 }
 
 export function formatDuration(seconds: number | null): string {
@@ -48,6 +69,20 @@ export function scheduleIcon(schedule: FlowSchedule): string {
   if (schedule.schedule_type === "interval") return "fa-solid fa-clock";
   if (schedule.schedule_type === "table_set_trigger") return "fa-solid fa-layer-group";
   return "fa-solid fa-table";
+}
+
+/**
+ * Return a display name for a schedule: description if available,
+ * otherwise the schedule type formatting, falling back to "Schedule #ID".
+ */
+export function getScheduleDisplayName(
+  schedule: FlowSchedule | undefined,
+  scheduleId: number,
+): string {
+  if (!schedule) return `Schedule #${scheduleId}`;
+  if (schedule.name) return schedule.name;
+  if (schedule.description) return schedule.description;
+  return formatScheduleType(schedule);
 }
 
 export function formatRunType(runType: "full_run" | "scheduled" | "manual"): string {

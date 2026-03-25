@@ -28,6 +28,7 @@ interface CatalogState {
   runsTotalRunning: number;
   runsPage: number;
   runsPageSize: number;
+  runsTriggerFilter: string | null;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
@@ -43,6 +44,14 @@ interface CatalogState {
   allTables: CatalogTable[];
   schedules: FlowSchedule[];
   flowSchedules: FlowSchedule[];
+  selectedScheduleId: number | null;
+  selectedSchedule: FlowSchedule | null;
+  scheduleRuns: FlowRun[];
+  scheduleRunsTotal: number;
+  scheduleRunsTotalSuccess: number;
+  scheduleRunsTotalFailed: number;
+  scheduleRunsTotalRunning: number;
+  scheduleRunsPage: number;
   activeRuns: ActiveFlowRun[];
   schedulerStatus: SchedulerStatus | null;
   activeTab: CatalogTab;
@@ -63,6 +72,7 @@ export const useCatalogStore = defineStore("catalog", {
     runsTotalRunning: 0,
     runsPage: 1,
     runsPageSize: 25,
+    runsTriggerFilter: null,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
@@ -78,6 +88,14 @@ export const useCatalogStore = defineStore("catalog", {
     allTables: [],
     schedules: [],
     flowSchedules: [],
+    selectedScheduleId: null,
+    selectedSchedule: null,
+    scheduleRuns: [],
+    scheduleRunsTotal: 0,
+    scheduleRunsTotalSuccess: 0,
+    scheduleRunsTotalFailed: 0,
+    scheduleRunsTotalRunning: 0,
+    scheduleRunsPage: 1,
     activeRuns: [],
     schedulerStatus: null,
     activeTab: "runs",
@@ -94,8 +112,15 @@ export const useCatalogStore = defineStore("catalog", {
       return state.runs.filter((r) => r.registration_id === state.selectedFlowId);
     },
 
-    runsTotalPages: (state): number =>
-      Math.max(1, Math.ceil(state.runsTotal / state.runsPageSize)),
+    runsTotalPages: (state): number => Math.max(1, Math.ceil(state.runsTotal / state.runsPageSize)),
+
+    getScheduleById:
+      (state) =>
+      (scheduleId: number): FlowSchedule | undefined =>
+        state.schedules.find((s) => s.id === scheduleId),
+
+    scheduleRunsTotalPages: (state): number =>
+      Math.max(1, Math.ceil(state.scheduleRunsTotal / state.runsPageSize)),
 
     enrichedSchedules(state) {
       const activeIds = new Set(
@@ -151,7 +176,22 @@ export const useCatalogStore = defineStore("catalog", {
     async loadRuns(registrationId?: number | null) {
       try {
         const offset = (this.runsPage - 1) * this.runsPageSize;
-        const result = await CatalogApi.getRuns(registrationId, this.runsPageSize, offset);
+        let scheduleId: number | undefined;
+        let runType: string | undefined;
+        if (this.runsTriggerFilter) {
+          if (this.runsTriggerFilter.startsWith("schedule:")) {
+            scheduleId = Number(this.runsTriggerFilter.split(":")[1]);
+          } else {
+            runType = this.runsTriggerFilter;
+          }
+        }
+        const result = await CatalogApi.getRuns(
+          registrationId,
+          this.runsPageSize,
+          offset,
+          scheduleId,
+          runType,
+        );
         this.runs = result.items;
         this.runsTotal = result.total;
         this.runsTotalSuccess = result.total_success;
@@ -162,9 +202,15 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
-    setRunsPage(page: number) {
+    setRunsPage(page: number, registrationId?: number | null) {
       this.runsPage = page;
-      this.loadRuns();
+      this.loadRuns(registrationId);
+    },
+
+    setTriggerFilter(filter: string | null) {
+      this.runsTriggerFilter = filter;
+      this.runsPage = 1;
+      this.loadRuns(this.selectedFlowId);
     },
 
     async loadRunDetail(runId: number) {
@@ -370,6 +416,58 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    // -- Schedule detail actions --
+
+    async selectSchedule(scheduleId: number) {
+      this.selectedScheduleId = scheduleId;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.clearTableSelection();
+      this.clearArtifactSelection();
+      this.scheduleRunsPage = 1;
+      await Promise.all([this.loadScheduleDetail(scheduleId), this.loadScheduleRuns(scheduleId)]);
+    },
+
+    async loadScheduleDetail(scheduleId: number) {
+      try {
+        this.selectedSchedule = await CatalogApi.getSchedule(scheduleId);
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedule detail";
+        this.selectedSchedule = null;
+      }
+    },
+
+    async loadScheduleRuns(scheduleId: number) {
+      try {
+        const offset = (this.scheduleRunsPage - 1) * this.runsPageSize;
+        const result = await CatalogApi.getRuns(null, this.runsPageSize, offset, scheduleId);
+        this.scheduleRuns = result.items;
+        this.scheduleRunsTotal = result.total;
+        this.scheduleRunsTotalSuccess = result.total_success;
+        this.scheduleRunsTotalFailed = result.total_failed;
+        this.scheduleRunsTotalRunning = result.total_running;
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedule runs";
+      }
+    },
+
+    setScheduleRunsPage(page: number, scheduleId: number) {
+      this.scheduleRunsPage = page;
+      this.loadScheduleRuns(scheduleId);
+    },
+
+    clearScheduleSelection() {
+      this.selectedScheduleId = null;
+      this.selectedSchedule = null;
+      this.scheduleRuns = [];
+      this.scheduleRunsTotal = 0;
+      this.scheduleRunsTotalSuccess = 0;
+      this.scheduleRunsTotalFailed = 0;
+      this.scheduleRunsTotalRunning = 0;
+      this.scheduleRunsPage = 1;
+    },
+
     // -- Scheduler actions --
 
     async loadSchedulerStatus() {
@@ -422,7 +520,9 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedRunId = null;
       this.selectedRunDetail = null;
       this.clearTableSelection();
+      this.clearScheduleSelection();
       if (flowId !== null) {
+        this.runsPage = 1;
         this.loadRuns(flowId);
         this.loadFlowArtifacts(flowId);
         this.loadFlowSchedules(flowId);
@@ -437,6 +537,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedArtifactId = null;
       this.selectedArtifact = null;
       this.clearTableSelection();
+      this.clearScheduleSelection();
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();

@@ -6,7 +6,15 @@
       <span class="run-time">{{ formatDate(run.started_at) }}</span>
     </div>
     <div class="run-right">
-      <el-tooltip :content="formatRunType(run.run_type)" placement="top" :show-after="400">
+      <el-tooltip
+        :content="
+          run.run_type === 'scheduled' && run.schedule_id
+            ? `${formatRunType(run.run_type)}: ${getScheduleDisplayName(catalogStore.getScheduleById(run.schedule_id), run.schedule_id)}`
+            : formatRunType(run.run_type)
+        "
+        placement="top"
+        :show-after="400"
+      >
         <i :class="runTypeIcon(run.run_type)" class="run-type-icon"></i>
       </el-tooltip>
       <span class="run-duration">{{ formatDuration(run.duration_seconds) }}</span>
@@ -21,8 +29,17 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
-import { formatDate, formatDuration, formatRunType, runTypeIcon } from "./catalog-formatters";
+import {
+  formatDate,
+  formatDuration,
+  formatRunType,
+  getScheduleDisplayName,
+  runTypeIcon,
+} from "./catalog-formatters";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   run: FlowRun;
@@ -102,7 +119,7 @@ const statusClass = computed(() => {
 .run-duration {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  font-family: monospace;
+  font-family: var(--font-family-mono);
 }
 
 .run-type-icon {

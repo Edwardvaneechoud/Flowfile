@@ -201,6 +201,7 @@ export interface FlowSchedule {
   registration_id: number;
   owner_id: number;
   enabled: boolean;
+  name: string | null;
   description: string | null;
   schedule_type: "interval" | "table_trigger" | "table_set_trigger";
   interval_seconds: number | null;
@@ -221,12 +222,14 @@ export interface FlowScheduleCreate {
   trigger_table_id?: number | null;
   trigger_table_ids?: number[] | null;
   enabled?: boolean;
+  name?: string | null;
   description?: string | null;
 }
 
 export interface FlowScheduleUpdate {
   enabled?: boolean;
   interval_seconds?: number | null;
+  name?: string | null;
   description?: string | null;
 }
 

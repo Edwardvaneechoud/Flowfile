@@ -550,12 +550,18 @@ class CatalogService:
     def list_runs(
         self,
         registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
-        runs = self.repo.list_runs(registration_id=registration_id, limit=limit, offset=offset)
-        counts = self.repo.count_runs_by_status(registration_id=registration_id)
+        runs = self.repo.list_runs(
+            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, limit=limit, offset=offset
+        )
+        counts = self.repo.count_runs_by_status(
+            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type
+        )
         return PaginatedFlowRuns(
             items=[self._run_to_out(r) for r in runs],
             total=counts["total"],
@@ -1370,6 +1376,7 @@ class CatalogService:
             registration_id=schedule.registration_id,
             owner_id=schedule.owner_id,
             enabled=schedule.enabled,
+            name=schedule.name,
             description=schedule.description,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
@@ -1392,6 +1399,7 @@ class CatalogService:
         trigger_table_id: int | None = None,
         trigger_table_ids: list[int] | None = None,
         enabled: bool = True,
+        name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule for a registered flow.
@@ -1433,6 +1441,7 @@ class CatalogService:
             registration_id=registration_id,
             owner_id=owner_id,
             enabled=enabled,
+            name=name,
             description=description,
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
@@ -1450,6 +1459,7 @@ class CatalogService:
         schedule_id: int,
         enabled: bool | None = None,
         interval_seconds: int | None = None,
+        name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
         """Update a schedule.
@@ -1468,6 +1478,8 @@ class CatalogService:
             if interval_seconds < 60:
                 raise ValueError("interval_seconds must be >= 60")
             schedule.interval_seconds = interval_seconds
+        if name is not None:
+            schedule.name = name
         if description is not None:
             schedule.description = description
         schedule = self.repo.update_schedule(schedule)

@@ -638,7 +638,7 @@ const totalFlows = computed(() => {
   border-radius: var(--border-radius-sm);
   line-height: 18px;
   flex-shrink: 0;
-  font-family: monospace;
+  font-family: var(--font-family-mono);
 }
 
 /* ========== Catalog Table Items ========== */
@@ -688,6 +688,6 @@ const totalFlows = computed(() => {
   border-radius: var(--border-radius-sm);
   line-height: 18px;
   flex-shrink: 0;
-  font-family: monospace;
+  font-family: var(--font-family-mono);
 }
 </style>

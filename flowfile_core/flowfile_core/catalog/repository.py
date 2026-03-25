@@ -99,6 +99,8 @@ class CatalogRepository(Protocol):
     def list_runs(
         self,
         registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]: ...
@@ -107,10 +109,18 @@ class CatalogRepository(Protocol):
 
     def update_run(self, run: FlowRun) -> FlowRun: ...
 
-    def count_runs(self, registration_id: int | None = None) -> int: ...
+    def count_runs(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> int: ...
 
     def count_runs_by_status(
-        self, registration_id: int | None = None
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
     ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
@@ -408,12 +418,18 @@ class SQLAlchemyCatalogRepository:
     def list_runs(
         self,
         registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]:
         q = self._db.query(FlowRun)
         if registration_id is not None:
             q = q.filter_by(registration_id=registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
     def create_run(self, run: FlowRun) -> FlowRun:
@@ -427,13 +443,27 @@ class SQLAlchemyCatalogRepository:
         self._db.refresh(run)
         return run
 
-    def count_runs(self, registration_id: int | None = None) -> int:
+    def count_runs(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> int:
         q = self._db.query(FlowRun)
         if registration_id is not None:
             q = q.filter_by(registration_id=registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
         return q.count()
 
-    def count_runs_by_status(self, registration_id: int | None = None) -> dict[str, int]:
+    def count_runs_by_status(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> dict[str, int]:
         from sqlalchemy import case, func
 
         q = self._db.query(
@@ -444,6 +474,10 @@ class SQLAlchemyCatalogRepository:
         )
         if registration_id is not None:
             q = q.filter(FlowRun.registration_id == registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
         row = q.one()
         return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
 

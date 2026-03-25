@@ -274,11 +274,15 @@ def list_flow_artifacts(
 @router.get("/runs", response_model=PaginatedFlowRuns)
 def list_runs(
     registration_id: int | None = None,
+    schedule_id: int | None = None,
+    run_type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_runs(registration_id=registration_id, limit=limit, offset=offset)
+    return service.list_runs(
+        registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, limit=limit, offset=offset
+    )
 
 
 @router.get("/runs/{run_id}", response_model=FlowRunDetail)
@@ -622,6 +626,7 @@ def create_schedule(
             trigger_table_id=body.trigger_table_id,
             trigger_table_ids=body.trigger_table_ids,
             enabled=body.enabled,
+            name=body.name,
             description=body.description,
         )
     except FlowNotFoundError:
@@ -654,6 +659,7 @@ def update_schedule(
             schedule_id=schedule_id,
             enabled=body.enabled,
             interval_seconds=body.interval_seconds,
+            name=body.name,
             description=body.description,
         )
     except ScheduleNotFoundError:

@@ -122,10 +122,14 @@ export class CatalogApi {
     registrationId?: number | null,
     limit = 50,
     offset = 0,
+    scheduleId?: number | null,
+    runType?: string | null,
   ): Promise<PaginatedFlowRuns> {
     const params: Record<string, any> = { limit, offset };
     if (registrationId !== undefined && registrationId !== null)
       params.registration_id = registrationId;
+    if (scheduleId !== undefined && scheduleId !== null) params.schedule_id = scheduleId;
+    if (runType) params.run_type = runType;
     const response = await axios.get<PaginatedFlowRuns>("/catalog/runs", { params });
     return response.data;
   }
@@ -214,6 +218,11 @@ export class CatalogApi {
   }
 
   // ====== Schedules ======
+
+  static async getSchedule(scheduleId: number): Promise<FlowSchedule> {
+    const response = await axios.get<FlowSchedule>(`/catalog/schedules/${scheduleId}`);
+    return response.data;
+  }
 
   static async getSchedules(registrationId?: number | null): Promise<FlowSchedule[]> {
     const params: Record<string, any> = {};

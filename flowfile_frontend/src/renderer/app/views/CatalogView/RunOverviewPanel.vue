@@ -34,6 +34,30 @@
       </div>
     </div>
 
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <el-select
+        :model-value="catalogStore.runsTriggerFilter"
+        placeholder="All triggers"
+        clearable
+        size="small"
+        style="width: 240px"
+        @update:model-value="catalogStore.setTriggerFilter($event)"
+      >
+        <el-option label="Scheduled runs" value="scheduled" />
+        <el-option label="Manual runs" value="manual" />
+        <el-option label="Full runs" value="full_run" />
+        <el-option-group v-if="catalogStore.enrichedSchedules.length > 0" label="Specific Schedule">
+          <el-option
+            v-for="schedule in catalogStore.enrichedSchedules"
+            :key="schedule.id"
+            :label="`${schedule.flowName}: ${getScheduleDisplayName(schedule, schedule.id)}`"
+            :value="`schedule:${schedule.id}`"
+          />
+        </el-option-group>
+      </el-select>
+    </div>
+
     <!-- Empty state -->
     <div v-if="catalogStore.runs.length === 0" class="empty-state">
       <i class="fa-solid fa-clock-rotate-left empty-icon"></i>
@@ -47,6 +71,7 @@
         <span class="col-status">Status</span>
         <span class="col-flow">Flow</span>
         <span class="col-trigger">Triggered By</span>
+        <span class="col-schedule">Schedule</span>
         <span class="col-started">Started</span>
         <span class="col-duration">Duration</span>
         <span class="col-nodes">Nodes</span>
@@ -77,6 +102,19 @@
         <div class="col-trigger">
           <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
           {{ formatRunType(run.run_type) }}
+        </div>
+        <div class="col-schedule">
+          <template v-if="run.schedule_id">
+            <span class="schedule-link" @click.stop="$emit('viewScheduleRuns', run.schedule_id)">
+              {{
+                getScheduleDisplayName(
+                  catalogStore.getScheduleById(run.schedule_id),
+                  run.schedule_id,
+                )
+              }}
+            </span>
+          </template>
+          <span v-else class="no-schedule">--</span>
         </div>
         <div class="col-started">
           {{ formatDate(run.started_at) }}
@@ -135,13 +173,20 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
-import { formatDate, formatDuration, formatRunType, runTypeIcon } from "./catalog-formatters";
+import {
+  formatDate,
+  formatDuration,
+  formatRunType,
+  getScheduleDisplayName,
+  runTypeIcon,
+} from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
 
 defineEmits<{
   viewRun: [runId: number];
   viewFlow: [registrationId: number];
+  viewScheduleRuns: [scheduleId: number];
 }>();
 
 const successCount = computed(() => catalogStore.runsTotalSuccess);
@@ -172,61 +217,25 @@ function runStatusText(run: FlowRun): string {
   color: var(--color-text-primary);
 }
 
-/* Summary cards */
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-6);
-}
-
+/* Summary card padding override */
 .summary-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
   padding: var(--spacing-4);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
 }
 
 .summary-icon {
   font-size: var(--font-size-xl);
-  color: var(--color-primary);
-}
-
-.success-icon {
-  color: #22c55e;
-}
-
-.failure-icon {
-  color: #ef4444;
-}
-
-.running-icon {
-  color: #3b82f6;
-}
-
-.summary-info {
-  display: flex;
-  flex-direction: column;
 }
 
 .summary-value {
   font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  line-height: 1.2;
 }
 
-.summary-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+.summary-cards {
+  margin-bottom: var(--spacing-6);
 }
 
-/* Empty state */
+/* Empty state override */
 .empty-state {
-  text-align: center;
   padding: var(--spacing-8) var(--spacing-4);
   color: var(--color-text-secondary);
 }
@@ -238,179 +247,48 @@ function runStatusText(run: FlowRun): string {
   margin-bottom: var(--spacing-4);
 }
 
-.empty-state h3 {
-  margin: 0 0 var(--spacing-2);
-  font-size: var(--font-size-lg);
-  color: var(--color-text-primary);
-}
-
 .empty-state p {
-  margin: 0;
-  font-size: var(--font-size-sm);
   max-width: 400px;
   margin-left: auto;
   margin-right: auto;
 }
 
-/* Runs table */
-.runs-table {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  overflow: hidden;
-}
-
-.table-header {
-  display: grid;
-  grid-template-columns: 100px 1fr 120px 150px 100px 90px 80px;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.table-row {
-  display: grid;
-  grid-template-columns: 100px 1fr 120px 150px 100px 90px 80px;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-sm);
+/* Filter bar */
+.filter-bar {
+  display: flex;
   align-items: center;
-  cursor: pointer;
-  transition: background var(--transition-fast);
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-4);
 }
 
-.table-row:last-child {
-  border-bottom: none;
-}
-
-.table-row:hover {
-  background: var(--color-background-hover);
-}
-
-/* Status badges */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+/* Schedule column */
+.col-schedule {
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  padding: 2px 8px;
-  border-radius: var(--border-radius-full);
-}
-
-.status-badge.success {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.1);
-}
-
-.status-badge.failure {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.status-badge.running {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-}
-
-/* Columns */
-.col-flow {
+  color: var(--color-text-secondary);
   min-width: 0;
-}
-
-.flow-name {
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.flow-link {
+.schedule-link {
+  color: var(--color-primary);
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition: opacity var(--transition-fast);
 }
 
-.flow-link:hover {
-  color: var(--color-primary);
+.schedule-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
 }
 
-.col-trigger {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.trigger-icon {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.col-started,
-.col-duration {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.col-nodes {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-family: monospace;
-}
-
-.snapshot-link {
-  color: var(--color-primary);
-  font-size: var(--font-size-xs);
-}
-
-.no-snapshot {
+.no-schedule {
   color: var(--color-text-muted);
 }
 
-/* Pagination */
-.pagination-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-4) 0;
-}
-
-.page-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.page-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.page-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.page-info {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  padding: 0 var(--spacing-2);
+/* Grid column template */
+.table-header,
+.table-row {
+  grid-template-columns: 100px 1fr 110px 1fr 150px 90px 80px 70px;
 }
 </style>

@@ -39,7 +39,22 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Run Type</span>
-        <span class="meta-value">{{ run.run_type }}</span>
+        <span v-if="run.run_type === 'scheduled' && run.schedule_id" class="meta-value">
+          <span class="flow-link" @click="$emit('viewScheduleRuns', run.schedule_id)">
+            <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
+            {{ formatRunType(run.run_type) }}
+            <i class="fa-solid fa-arrow-right flow-link-icon"></i>
+          </span>
+          <div class="schedule-name-hint">
+            {{
+              getScheduleDisplayName(catalogStore.getScheduleById(run.schedule_id), run.schedule_id)
+            }}
+          </div>
+        </span>
+        <span v-else class="meta-value">
+          <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
+          {{ formatRunType(run.run_type) }}
+        </span>
       </div>
     </div>
 
@@ -80,7 +95,7 @@
           <i class="fa-solid fa-file-lines"></i>
           Run Log
         </h3>
-        <button v-if="!logContent && !loadingLog" class="open-snapshot-btn" @click="loadLog">
+        <button v-if="!logContent && !loadingLog" class="btn btn-primary btn-sm" @click="loadLog">
           <i class="fa-solid fa-eye"></i>
           View log
         </button>
@@ -100,7 +115,7 @@
           <i class="fa-solid fa-code-branch"></i>
           Flow Version at Run Time
         </h3>
-        <button class="open-snapshot-btn" @click="$emit('openSnapshot', run.id)">
+        <button class="btn btn-primary btn-sm" @click="$emit('openSnapshot', run.id)">
           <i class="fa-solid fa-up-right-from-square"></i>
           Open this version
         </button>
@@ -115,8 +130,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { CatalogApi } from "../../api/catalog.api";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRunDetail } from "../../types";
-import { formatDate, formatDuration } from "./catalog-formatters";
+import {
+  formatDate,
+  formatDuration,
+  formatRunType,
+  getScheduleDisplayName,
+  runTypeIcon,
+} from "./catalog-formatters";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   run: FlowRunDetail;
@@ -126,6 +150,7 @@ defineEmits<{
   close: [];
   openSnapshot: [runId: number];
   viewFlow: [registrationId: number];
+  viewScheduleRuns: [scheduleId: number];
 }>();
 
 const logContent = ref<string | null>(null);
@@ -211,64 +236,9 @@ const formattedSnapshot = computed(() => {
   font-weight: var(--font-weight-semibold);
 }
 
-.back-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-3);
-  border: 1px solid var(--color-border-primary);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.back-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-/* Meta Grid */
+/* Meta Grid (override for run detail) */
 .meta-grid {
-  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-5);
-}
-
-.meta-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
-}
-
-.meta-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.meta-value {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-}
-
-.text-success {
-  color: #22c55e;
-}
-.text-danger {
-  color: #ef4444;
-}
-.text-pending {
-  color: #eab308;
 }
 
 .flow-link {
@@ -289,19 +259,16 @@ const formattedSnapshot = computed(() => {
   opacity: 0.6;
 }
 
-/* Section */
-.section {
-  margin-bottom: var(--spacing-5);
+/* Schedule name hint */
+.schedule-name-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
 }
 
-.section h3 {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  margin: 0 0 var(--spacing-3) 0;
-  color: var(--color-text-primary);
+.trigger-icon {
+  font-size: var(--font-size-xs);
+  margin-right: 4px;
 }
 
 /* Results Table */
@@ -328,11 +295,6 @@ const formattedSnapshot = computed(() => {
   color: var(--color-text-primary);
 }
 
-.mono {
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-}
-
 .error-text {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
@@ -340,27 +302,6 @@ const formattedSnapshot = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.status-badge.success {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-}
-.status-badge.failure {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-}
-.status-badge.pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
 }
 
 /* Snapshot Header */
@@ -375,25 +316,6 @@ const formattedSnapshot = computed(() => {
   margin: 0;
 }
 
-.open-snapshot-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-}
-
-.open-snapshot-btn:hover {
-  opacity: 0.9;
-}
-
 /* Log Viewer */
 .log-viewer {
   background: var(--color-background-secondary);
@@ -406,7 +328,7 @@ const formattedSnapshot = computed(() => {
 .log-path {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-  font-family: monospace;
+  font-family: var(--font-family-mono);
 }
 
 /* Snapshot Viewer */
@@ -422,7 +344,7 @@ const formattedSnapshot = computed(() => {
   padding: var(--spacing-3);
   margin: 0;
   font-size: var(--font-size-xs);
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--color-text-primary);

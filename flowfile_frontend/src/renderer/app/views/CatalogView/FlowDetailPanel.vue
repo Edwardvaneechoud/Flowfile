@@ -29,7 +29,7 @@
       <div class="header-actions">
         <button
           v-if="flow.file_exists && !isFlowRunning"
-          class="action-btn-run"
+          class="btn btn-success btn-sm"
           @click="$emit('runFlow', flow.id)"
         >
           <i class="fa-solid fa-play"></i>
@@ -37,7 +37,7 @@
         </button>
         <button
           v-else-if="isFlowRunning"
-          class="action-btn-cancel"
+          class="btn btn-danger btn-sm"
           @click="$emit('cancelFlowRun', flow.id)"
         >
           <i class="fa-solid fa-stop"></i>
@@ -45,7 +45,7 @@
         </button>
         <button
           v-if="flow.file_exists"
-          class="action-btn-primary"
+          class="btn btn-primary btn-sm"
           @click="$emit('openFlow', flow.flow_path)"
         >
           <i class="fa-solid fa-up-right-from-square"></i>
@@ -60,7 +60,7 @@
           {{ flow.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
-          class="btn-danger-outline"
+          class="btn btn-danger btn-sm"
           title="Delete flow"
           @click="$emit('deleteFlow', flow.id)"
         >
@@ -117,34 +117,34 @@
         <div class="summary-card">
           <i class="fa-solid fa-clock-rotate-left summary-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ runs.length }}</span>
+            <span class="summary-value">{{ catalogStore.runsTotal }}</span>
             <span class="summary-label">Total</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-circle-check summary-icon success-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ successCount }}</span>
+            <span class="summary-value">{{ catalogStore.runsTotalSuccess }}</span>
             <span class="summary-label">Successful</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-circle-xmark summary-icon failure-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ failedCount }}</span>
+            <span class="summary-value">{{ catalogStore.runsTotalFailed }}</span>
             <span class="summary-label">Failed</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-spinner summary-icon running-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ runningCount }}</span>
+            <span class="summary-value">{{ catalogStore.runsTotalRunning }}</span>
             <span class="summary-label">Running</span>
           </div>
         </div>
       </div>
 
-      <div v-if="runs.length === 0" class="empty-runs">No runs recorded yet.</div>
+      <div v-if="catalogStore.runsTotal === 0" class="empty-runs">No runs recorded yet.</div>
       <div v-else class="overview-table runs-grid">
         <div class="table-header">
           <span class="col-status">Status</span>
@@ -154,7 +154,12 @@
           <span class="col-nodes">Nodes</span>
           <span class="col-version">Version</span>
         </div>
-        <div v-for="run in runs" :key="run.id" class="table-row" @click="$emit('viewRun', run.id)">
+        <div
+          v-for="run in visibleRuns"
+          :key="run.id"
+          class="table-row"
+          @click="$emit('viewRun', run.id)"
+        >
           <div class="col-status">
             <span class="status-badge" :class="runStatusClass(run)">
               <i v-if="run.success === null" class="fa-solid fa-spinner fa-spin" />
@@ -177,6 +182,54 @@
             <span v-else class="no-snapshot">--</span>
           </div>
         </div>
+      </div>
+
+      <!-- Expand / Collapse toggle -->
+      <button
+        v-if="catalogStore.runsTotal > collapsedRunCount"
+        class="runs-toggle-btn"
+        @click="runsExpanded = !runsExpanded"
+      >
+        <i :class="runsExpanded ? 'fa-solid fa-chevron-up' : 'fa-solid fa-chevron-down'" />
+        {{ runsExpanded ? "Show less" : `Show all ${catalogStore.runsTotal} runs` }}
+      </button>
+
+      <!-- Pagination (only when expanded) -->
+      <div
+        v-if="runsExpanded && catalogStore.runsTotal > catalogStore.runsPageSize"
+        class="pagination-bar"
+      >
+        <button
+          class="page-btn"
+          :disabled="catalogStore.runsPage <= 1"
+          @click="catalogStore.setRunsPage(1, flow.id)"
+        >
+          <i class="fa-solid fa-angles-left" />
+        </button>
+        <button
+          class="page-btn"
+          :disabled="catalogStore.runsPage <= 1"
+          @click="catalogStore.setRunsPage(catalogStore.runsPage - 1, flow.id)"
+        >
+          <i class="fa-solid fa-angle-left" />
+        </button>
+        <span class="page-info">
+          Page {{ catalogStore.runsPage }} of {{ catalogStore.runsTotalPages }}
+        </span>
+        <button
+          class="page-btn"
+          :disabled="catalogStore.runsPage >= catalogStore.runsTotalPages"
+          @click="catalogStore.setRunsPage(catalogStore.runsPage + 1, flow.id)"
+        >
+          <i class="fa-solid fa-angle-right" />
+        </button>
+        <button
+          class="page-btn"
+          :disabled="catalogStore.runsPage >= catalogStore.runsTotalPages"
+          @click="catalogStore.setRunsPage(catalogStore.runsTotalPages, flow.id)"
+        >
+          <i class="fa-solid fa-angles-right" />
+        </button>
       </div>
     </div>
 
@@ -330,6 +383,7 @@
           :key="schedule.id"
           class="table-row"
           :class="{ 'row-disabled': !schedule.enabled }"
+          @click="$emit('selectSchedule', schedule.id)"
         >
           <div class="col-status">
             <span v-if="isScheduleRunning(schedule)" class="status-badge running">
@@ -342,7 +396,7 @@
               <i class="fa-solid fa-circle-pause" /> Disabled
             </span>
           </div>
-          <div class="col-description">
+          <div class="col-description" @click.stop>
             <template v-if="editingScheduleId === schedule.id">
               <input
                 ref="descriptionInput"
@@ -379,7 +433,7 @@
           <div class="col-last">
             {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
           </div>
-          <div class="col-actions">
+          <div class="col-actions" @click.stop>
             <el-tooltip
               v-if="isScheduleRunning(schedule)"
               content="Cancel run"
@@ -432,6 +486,8 @@ import {
   formatDuration,
   formatRunType,
   formatScheduleType,
+  formatSize,
+  formatType,
   runTypeIcon,
   scheduleIcon,
 } from "./catalog-formatters";
@@ -455,6 +511,7 @@ const emit = defineEmits<{
   addSchedule: [flowId: number];
   runFlow: [flowId: number];
   cancelFlowRun: [flowId: number];
+  selectSchedule: [scheduleId: number];
 }>();
 
 const isEditing = ref(false);
@@ -463,6 +520,13 @@ const editInput = ref<HTMLInputElement | null>(null);
 const editingScheduleId = ref<number | null>(null);
 const editDescription = ref("");
 const descriptionInput = ref<HTMLInputElement | null>(null);
+const runsExpanded = ref(false);
+const collapsedRunCount = 5;
+
+const visibleRuns = computed(() => {
+  if (runsExpanded.value) return props.runs;
+  return props.runs.slice(0, collapsedRunCount);
+});
 
 function startRename() {
   editName.value = props.flow.name;
@@ -489,11 +553,6 @@ function cancelRename() {
 const isFlowRunning = computed(() => {
   return catalogStore.activeRuns.some((r) => r.registration_id === props.flow.id);
 });
-
-// Run summary counts
-const successCount = computed(() => props.runs.filter((r) => r.success === true).length);
-const failedCount = computed(() => props.runs.filter((r) => r.success === false).length);
-const runningCount = computed(() => props.runs.filter((r) => r.success === null).length);
 
 // Schedule summary counts
 const scheduleEnabledCount = computed(
@@ -538,21 +597,6 @@ function runStatusClass(run: FlowRun): string {
 function runStatusText(run: FlowRun): string {
   if (run.success === null) return "Running";
   return run.success ? "Success" : "Failed";
-}
-
-function formatType(artifact: GlobalArtifact): string {
-  if (artifact.python_type) {
-    const parts = artifact.python_type.split(".");
-    return parts[parts.length - 1];
-  }
-  return artifact.serialization_format ?? "unknown";
-}
-
-function formatSize(bytes: number | null): string {
-  if (bytes === null) return "--";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function startEditDescription(schedule: FlowSchedule) {
@@ -630,26 +674,6 @@ async function handleDeleteSchedule(id: number) {
   margin: 0 auto;
 }
 
-.back-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-2);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  margin-bottom: var(--spacing-3);
-}
-
-.back-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
 .detail-header {
   display: flex;
   justify-content: space-between;
@@ -704,26 +728,6 @@ async function handleDeleteSchedule(id: number) {
   gap: var(--spacing-2);
 }
 
-.btn-icon-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--border-radius-md);
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.btn-icon-inline:hover {
-  background: var(--color-background-hover);
-  color: var(--color-primary);
-}
-
 .edit-name-input {
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
@@ -736,233 +740,7 @@ async function handleDeleteSchedule(id: number) {
   width: 100%;
 }
 
-.btn-danger-outline {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-1) var(--spacing-3);
-  background: transparent;
-  color: #ef4444;
-  border: 1px solid #ef4444;
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.btn-danger-outline:hover {
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.action-btn-run {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-3);
-  background: #22c55e;
-  color: #fff;
-  border: none;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-}
-
-.action-btn-run:hover {
-  opacity: 0.9;
-}
-
-.action-btn-run:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.action-btn-cancel {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-3);
-  background: transparent;
-  color: #ef4444;
-  border: 1px solid #ef4444;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.action-btn-cancel:hover {
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.action-btn-primary {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-3);
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-}
-
-.action-btn-primary:hover {
-  opacity: 0.9;
-}
-
-/* ========== Meta Grid ========== */
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-5);
-}
-
-.meta-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
-}
-
-.meta-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.meta-value {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-}
-
-.meta-value.mono {
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-  word-break: break-all;
-}
-
-.text-success {
-  color: #22c55e;
-}
-.text-danger {
-  color: #ef4444;
-}
-
-/* ========== Sections ========== */
-.section {
-  margin-bottom: var(--spacing-5);
-}
-
-.section h3 {
-  display: flex;
-  align-items: center;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  margin: 0 0 var(--spacing-3) 0;
-}
-
-/* ========== Summary Cards ========== */
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-4);
-}
-
-.summary-cards-3 {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.summary-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
-}
-
-.summary-icon {
-  font-size: var(--font-size-lg);
-  color: var(--color-primary);
-}
-
-.success-icon {
-  color: #22c55e;
-}
-
-.failure-icon {
-  color: #ef4444;
-}
-
-.running-icon {
-  color: #3b82f6;
-}
-
-.enabled-icon {
-  color: #22c55e;
-}
-
-.summary-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.summary-value {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  line-height: 1.2;
-}
-
-.summary-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-/* ========== Overview Table ========== */
-.overview-table {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  overflow: hidden;
-}
-
-.table-header {
-  display: grid;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.table-row {
-  display: grid;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-sm);
-  align-items: center;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
+/* ========== Grid column templates ========== */
 .runs-grid .table-header,
 .runs-grid .table-row {
   grid-template-columns: 100px 120px 150px 100px 90px 80px;
@@ -973,118 +751,34 @@ async function handleDeleteSchedule(id: number) {
   grid-template-columns: 100px minmax(120px, 1fr) 150px 130px 120px;
 }
 
-.table-row:last-child {
-  border-bottom: none;
-}
-
-.table-row:hover {
-  background: var(--color-background-hover);
-}
-
-.table-row.row-disabled {
-  opacity: 0.6;
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.status-badge.success {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
-}
-
-.status-badge.failure {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-}
-
-.status-badge.pending {
-  background: rgba(234, 179, 8, 0.1);
-  color: #eab308;
-}
-
-.status-badge.running {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-}
-
-.status-badge.enabled {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
-}
-
-.status-badge.paused {
-  background: rgba(156, 163, 175, 0.15);
-  color: var(--color-text-muted);
-}
-
-.col-trigger {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.trigger-icon {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.type-icon {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.col-started,
-.col-duration,
-.col-last {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.col-nodes {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-family: monospace;
-}
-
-.col-type {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.col-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-}
-
-.snapshot-link {
-  color: var(--color-primary);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-}
-
-.no-snapshot {
-  color: var(--color-text-muted);
-}
-
 .empty-runs {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
   padding: var(--spacing-4);
   text-align: center;
+}
+
+.runs-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-1);
+  width: 100%;
+  padding: var(--spacing-2) 0;
+  margin-top: var(--spacing-2);
+  background: none;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.runs-toggle-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-background-hover);
 }
 
 /* ========== Artifacts Table ========== */
@@ -1111,7 +805,6 @@ async function handleDeleteSchedule(id: number) {
   color: var(--color-text-primary);
 }
 
-/* ========== Artifact Rows ========== */
 .artifact-row td {
   vertical-align: top;
 }
@@ -1135,17 +828,10 @@ async function handleDeleteSchedule(id: number) {
   padding: 1px 6px;
   border-radius: var(--border-radius-sm);
   font-size: var(--font-size-xs);
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);
   color: var(--color-text-secondary);
-}
-
-/* ========== Section Icons ========== */
-.section-icon {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  margin-right: var(--spacing-1);
 }
 
 /* ========== Data Lineage ========== */
@@ -1177,13 +863,6 @@ async function handleDeleteSchedule(id: number) {
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.read-label {
-  color: var(--color-text-secondary);
-}
-
-.produced-label {
   color: var(--color-text-secondary);
 }
 
@@ -1223,13 +902,6 @@ async function handleDeleteSchedule(id: number) {
 .lineage-item-icon {
   font-size: var(--font-size-xs);
   flex-shrink: 0;
-}
-
-.read-item .lineage-item-icon {
-  color: var(--color-text-muted);
-}
-
-.produced-item .lineage-item-icon {
   color: var(--color-text-muted);
 }
 
@@ -1251,23 +923,11 @@ async function handleDeleteSchedule(id: number) {
   color: var(--color-primary);
 }
 
-/* ========== Empty State ========== */
+/* ========== Empty State (dashed variant) ========== */
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-5) var(--spacing-4);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
   background: var(--color-background-secondary);
   border: 1px dashed var(--color-border-light);
   border-radius: var(--border-radius-md);
-}
-
-.empty-state-icon {
-  font-size: var(--font-size-xl);
-  opacity: 0.4;
 }
 
 /* ========== Missing File Banner ========== */
@@ -1277,14 +937,14 @@ async function handleDeleteSchedule(id: number) {
   gap: var(--spacing-3);
   padding: var(--spacing-3) var(--spacing-4);
   margin-bottom: var(--spacing-4);
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   border-radius: var(--border-radius-md);
   color: var(--color-text-primary);
 }
 
 .missing-banner > i {
-  color: #f59e0b;
+  color: var(--color-warning);
   font-size: var(--font-size-lg);
   margin-top: 2px;
   flex-shrink: 0;
@@ -1304,68 +964,10 @@ async function handleDeleteSchedule(id: number) {
 }
 
 .missing-banner code {
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
   border-radius: var(--border-radius-sm);
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-2);
-}
-
-.section-header h3 {
-  margin: 0;
-}
-
-/* ========== Schedule Table Extras ========== */
-.col-description {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  min-width: 0;
-}
-
-.col-description .btn-icon-inline {
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-
-.table-row:hover .col-description .btn-icon-inline {
-  opacity: 1;
-}
-
-.description-text {
-  cursor: pointer;
-  transition: color var(--transition-fast);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.description-text:hover {
-  color: var(--color-text-primary);
-}
-
-.description-text.placeholder {
-  font-style: italic;
-  opacity: 0.6;
-}
-
-.edit-description-input {
-  width: 100%;
-  padding: var(--spacing-1) var(--spacing-2);
-  border: 1px solid var(--color-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  outline: none;
 }
 </style>

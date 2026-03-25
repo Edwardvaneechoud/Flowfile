@@ -122,6 +122,7 @@
         :key="schedule.id"
         class="table-row"
         :class="{ 'row-disabled': !schedule.enabled }"
+        @click="$emit('selectSchedule', schedule.id)"
       >
         <div class="col-status">
           <span v-if="schedule.isRunning" class="status-badge running">
@@ -135,11 +136,13 @@
           </span>
         </div>
         <div class="col-flow">
-          <span class="flow-name flow-link" @click="$emit('viewFlow', schedule.registration_id)">{{
-            schedule.flowName
-          }}</span>
+          <span
+            class="flow-name flow-link"
+            @click.stop="$emit('viewFlow', schedule.registration_id)"
+            >{{ schedule.flowName }}</span
+          >
         </div>
-        <div class="col-description">
+        <div class="col-description" @click.stop>
           <template v-if="editingScheduleId === schedule.id">
             <input
               ref="descriptionInput"
@@ -176,7 +179,17 @@
         <div class="col-last">
           {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
         </div>
-        <div class="col-actions">
+        <div class="col-actions" @click.stop>
+          <el-tooltip content="View runs" placement="top" :show-after="400">
+            <el-button
+              size="small"
+              type="primary"
+              text
+              @click="$emit('viewScheduleRuns', schedule.id)"
+            >
+              <i class="fa-solid fa-clock-rotate-left" />
+            </el-button>
+          </el-tooltip>
           <el-tooltip
             v-if="schedule.isRunning"
             content="Cancel run"
@@ -251,6 +264,8 @@ defineEmits<{
   runNow: [id: number];
   cancelScheduleRun: [schedule: FlowSchedule];
   viewFlow: [registrationId: number];
+  viewScheduleRuns: [scheduleId: number];
+  selectSchedule: [scheduleId: number];
 }>();
 
 const isStandalone = computed(
@@ -341,13 +356,13 @@ async function saveDescription(scheduleId: number) {
 }
 
 .scheduler-status-bar.scheduler-active {
-  background: rgba(34, 197, 94, 0.05);
-  border-color: rgba(34, 197, 94, 0.2);
+  background: color-mix(in srgb, var(--color-success) 5%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 20%, transparent);
 }
 
 .scheduler-status-bar.scheduler-inactive {
-  background: rgba(249, 115, 22, 0.05);
-  border-color: rgba(249, 115, 22, 0.2);
+  background: color-mix(in srgb, var(--color-warning) 5%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 20%, transparent);
 }
 
 .scheduler-status-info {
@@ -364,11 +379,11 @@ async function saveDescription(scheduleId: number) {
 }
 
 .scheduler-dot.dot-green {
-  background: #22c55e;
+  background: var(--color-success);
 }
 
 .scheduler-dot.dot-orange {
-  background: #f97316;
+  background: var(--color-warning);
 }
 
 .scheduler-status-text {
@@ -412,57 +427,26 @@ async function saveDescription(scheduleId: number) {
   text-decoration-style: solid;
 }
 
-/* Summary cards */
+/* Summary card overrides */
 .summary-cards {
-  display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-3);
   margin-bottom: var(--spacing-6);
 }
 
 .summary-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-3);
   padding: var(--spacing-4);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
 }
 
 .summary-icon {
   font-size: var(--font-size-xl);
-  color: var(--color-primary);
-}
-
-.enabled-icon {
-  color: #22c55e;
-}
-
-.running-icon {
-  color: #3b82f6;
-}
-
-.summary-info {
-  display: flex;
-  flex-direction: column;
 }
 
 .summary-value {
   font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  line-height: 1.2;
-}
-
-.summary-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
 }
 
 /* Empty state */
 .empty-state {
-  text-align: center;
   padding: var(--spacing-8) var(--spacing-4);
   color: var(--color-text-secondary);
 }
@@ -474,241 +458,31 @@ async function saveDescription(scheduleId: number) {
   margin-bottom: var(--spacing-4);
 }
 
-.empty-state h3 {
-  margin: 0 0 var(--spacing-2);
-  font-size: var(--font-size-lg);
-  color: var(--color-text-primary);
-}
-
 .empty-state p {
   margin: 0 0 var(--spacing-5);
-  font-size: var(--font-size-sm);
   max-width: 400px;
   margin-left: auto;
   margin-right: auto;
 }
 
-/* Schedules table */
-.schedules-table {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  overflow: hidden;
-}
-
-.table-header {
-  display: grid;
-  grid-template-columns: 120px 1fr 1fr 160px 160px 130px;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
+/* Grid column template */
+.table-header,
 .table-row {
-  display: grid;
-  grid-template-columns: 120px 1fr 1fr 160px 160px 130px;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: var(--font-size-sm);
-  align-items: center;
-  transition: background var(--transition-fast);
+  grid-template-columns: 120px 1fr 1fr 160px 160px 160px;
 }
 
-.table-row:last-child {
-  border-bottom: none;
-}
-
-.table-row:hover {
-  background: var(--color-background-hover);
-}
-
-.table-row.row-disabled {
-  opacity: 0.6;
-}
-
-/* Status badges */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  padding: 2px 8px;
-  border-radius: var(--border-radius-full);
-}
-
-.status-badge.running {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-}
-
-.status-badge.enabled {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.1);
-}
-
-.status-badge.paused {
-  color: var(--color-text-muted);
-  background: var(--color-background-secondary);
-}
-
-/* Columns */
+/* Column overrides */
 .col-flow {
-  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* Description column */
-.col-description {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  min-width: 0;
-}
-
-.col-description .btn-icon-inline {
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.table-row:hover .col-description .btn-icon-inline {
-  opacity: 1;
-}
-
-.btn-icon-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--border-radius-md);
-  transition: all var(--transition-fast);
-}
-
-.btn-icon-inline:hover {
-  background: var(--color-background-hover);
-  color: var(--color-primary);
-}
-
-.description-text {
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color var(--transition-fast);
-}
-
-.description-text:hover {
-  color: var(--color-text-secondary);
-}
-
-.description-text.placeholder {
-  font-style: italic;
-  opacity: 0.6;
-}
-
-.edit-description-input {
-  width: 100%;
-  padding: var(--spacing-1) var(--spacing-2);
-  border: 1px solid var(--color-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  outline: none;
-}
-
-.flow-name {
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.flow-link {
-  cursor: pointer;
-  transition: color var(--transition-fast);
-}
-
-.flow-link:hover {
-  color: var(--color-primary);
-}
-
-.col-type {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
+.col-actions {
+  gap: var(--spacing-2);
 }
 
 .type-icon {
   color: var(--color-primary);
-  font-size: var(--font-size-xs);
-}
-
-.col-last {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.col-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-/* Pagination */
-.pagination-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-4) 0;
-}
-
-.page-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.page-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.page-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.page-info {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  padding: 0 var(--spacing-2);
 }
 </style>
 
@@ -726,7 +500,7 @@ async function saveDescription(scheduleId: number) {
   margin-bottom: 4px;
   background: var(--el-fill-color-light);
   border-radius: 4px;
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: 12px;
   color: var(--el-text-color-primary);
   user-select: all;

@@ -87,6 +87,11 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN description TEXT"))
                 conn.commit()
 
+            if "name" not in schedule_columns:
+                logger.info("Adding name column to flow_schedules")
+                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN name TEXT"))
+                conn.commit()
+
 
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()

@@ -274,6 +274,7 @@ import type {
   FlowRun,
   FlowSchedule,
 } from "../../types";
+import { formatNumber } from "./catalog-formatters";
 import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 
@@ -308,11 +309,6 @@ const activeSection = ref<Section | null>(null);
 
 function toggleSection(section: Section) {
   activeSection.value = activeSection.value === section ? null : section;
-}
-
-function formatNumber(n: number | null): string {
-  if (n === null) return "--";
-  return n.toLocaleString();
 }
 </script>
 
@@ -391,11 +387,11 @@ function formatNumber(n: number | null): string {
 }
 
 .scheduler-indicator.indicator-green {
-  background: #22c55e;
+  background: var(--color-success);
 }
 
 .scheduler-indicator.indicator-orange {
-  background: #f97316;
+  background: var(--color-warning);
 }
 
 /* Sections */
@@ -442,7 +438,7 @@ function formatNumber(n: number | null): string {
 }
 
 .item-icon.fav {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .item-name {
@@ -471,35 +467,6 @@ function formatNumber(n: number | null): string {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: var(--spacing-3);
-}
-
-.info-card {
-  padding: var(--spacing-4);
-  background: var(--color-background-secondary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-}
-
-.info-card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-2);
-  color: var(--color-primary);
-}
-
-.info-card-header h4 {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.info-card p {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.5;
 }
 
 /* Welcome */
@@ -554,7 +521,7 @@ function formatNumber(n: number | null): string {
   height: 24px;
   border-radius: var(--border-radius-full);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
   flex-shrink: 0;

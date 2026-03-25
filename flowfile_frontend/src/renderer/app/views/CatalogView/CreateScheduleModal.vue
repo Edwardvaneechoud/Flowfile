@@ -17,6 +17,10 @@
         </el-select>
       </el-form-item>
 
+      <el-form-item label="Name (optional)">
+        <el-input v-model="form.name" :maxlength="100" placeholder="e.g. Nightly sales refresh" />
+      </el-form-item>
+
       <el-form-item label="Description (optional)">
         <el-input
           v-model="form.description"
@@ -143,12 +147,14 @@ const form = ref<{
   schedule_type: "interval" | "table_trigger" | "table_set_trigger";
   trigger_table_id: number | null;
   trigger_table_ids: number[];
+  name: string;
   description: string;
 }>({
   registration_id: props.preselectedFlowId ?? null,
   schedule_type: "interval",
   trigger_table_id: null,
   trigger_table_ids: [],
+  name: "",
   description: "",
 });
 
@@ -182,6 +188,7 @@ watch(
       form.value.schedule_type = "interval";
       form.value.trigger_table_id = null;
       form.value.trigger_table_ids = [];
+      form.value.name = "";
       form.value.description = "";
       intervalMinutes.value = 60;
     }
@@ -203,6 +210,7 @@ function handleCreate() {
   const body: FlowScheduleCreate = {
     registration_id: form.value.registration_id,
     schedule_type: form.value.schedule_type,
+    name: form.value.name.trim() || null,
     description: form.value.description.trim() || null,
   };
 

@@ -34,17 +34,17 @@
           <h3>Catalogs</h3>
           <div class="sidebar-header-actions">
             <el-tooltip content="Register table" placement="bottom" :show-after="400">
-              <button class="btn-icon" @click="openRegisterTableGlobal">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="openRegisterTableGlobal">
                 <i class="fa-solid fa-table"></i>
               </button>
             </el-tooltip>
             <el-tooltip content="Register flow" placement="bottom" :show-after="400">
-              <button class="btn-icon" @click="openRegisterFlowGlobal">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="openRegisterFlowGlobal">
                 <i class="fa-solid fa-file-circle-plus"></i>
               </button>
             </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
-              <button class="btn-icon" @click="showCreateNamespace = true">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateNamespace = true">
                 <i class="fa-solid fa-plus"></i>
               </button>
             </el-tooltip>
@@ -99,6 +99,20 @@
           @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
+          @view-schedule-runs="navigateToScheduleRuns"
+        />
+        <!-- Schedule detail view -->
+        <ScheduleDetailPanel
+          v-else-if="catalogStore.selectedSchedule"
+          :schedule="catalogStore.selectedSchedule"
+          :runs="catalogStore.scheduleRuns"
+          @close="handleCloseDetail"
+          @view-run="handleViewRun"
+          @view-flow="navigateToFlow"
+          @toggle-schedule="handleToggleScheduleFromDetail"
+          @delete-schedule="handleDeleteScheduleFromDetail"
+          @run-now="handleRunNowFromDetail"
+          @cancel-schedule-run="handleCancelScheduleRun"
         />
         <!-- Artifact detail view -->
         <ArtifactDetailPanel
@@ -136,12 +150,14 @@
           @add-schedule="handleAddFlowSchedule"
           @run-flow="handleRunFlow"
           @cancel-flow-run="handleCancelFlowRun"
+          @select-schedule="selectSchedule"
         />
         <!-- Run history overview -->
         <RunOverviewPanel
           v-else-if="catalogStore.activeTab === 'runs'"
           @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
+          @view-schedule-runs="navigateToScheduleRuns"
         />
         <!-- Schedule overview -->
         <ScheduleOverviewPanel
@@ -152,6 +168,8 @@
           @run-now="handleRunNow"
           @cancel-schedule-run="handleCancelScheduleRun"
           @view-flow="navigateToFlow"
+          @view-schedule-runs="navigateToScheduleRuns"
+          @select-schedule="selectSchedule"
         />
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
@@ -302,6 +320,7 @@ import RegisterFlowModal from "./RegisterFlowModal.vue";
 import RegisterTableModal from "./RegisterTableModal.vue";
 import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
+import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import type {
   CatalogTab,
@@ -373,11 +392,16 @@ async function pollActiveRuns() {
 
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
-    await Promise.all([
+    const loads: Promise<void>[] = [
       catalogStore.loadRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
-    ]);
+    ];
+    if (catalogStore.selectedScheduleId !== null) {
+      loads.push(catalogStore.loadScheduleRuns(catalogStore.selectedScheduleId));
+      loads.push(catalogStore.loadScheduleDetail(catalogStore.selectedScheduleId));
+    }
+    await Promise.all(loads);
   }
 }
 
@@ -428,7 +452,9 @@ function selectArtifact(artifactId: number) {
 
 function handleViewRun(runId: number) {
   const q: Record<string, string> = { tab: catalogStore.activeTab };
-  if (catalogStore.selectedFlowId !== null) {
+  if (catalogStore.selectedScheduleId !== null) {
+    q.scheduleId = String(catalogStore.selectedScheduleId);
+  } else if (catalogStore.selectedFlowId !== null) {
     q.flowId = String(catalogStore.selectedFlowId);
   }
   q.runId = String(runId);
@@ -495,10 +521,18 @@ function openRegisterFlowGlobal() {
 }
 
 async function handleDeleteTable(tableId: number) {
-  if (
-    !confirm("Are you sure you want to delete this table? The materialized data will be removed.")
-  ) {
-    return;
+  try {
+    await ElMessageBox.confirm(
+      "Are you sure you want to delete this table? The materialized data will be removed.",
+      "Delete Table",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+  } catch {
+    return; // User cancelled
   }
   try {
     await CatalogApi.deleteTable(tableId);
@@ -509,17 +543,23 @@ async function handleDeleteTable(tableId: number) {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to delete table");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete table");
   }
 }
 
 async function handleDeleteFlow(flowId: number) {
-  if (
-    !confirm(
+  try {
+    await ElMessageBox.confirm(
       "Are you sure you want to delete this flow registration? Run history will also be removed.",
-    )
-  ) {
-    return;
+      "Delete Flow",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+  } catch {
+    return; // User cancelled
   }
   try {
     await CatalogApi.deleteFlow(flowId);
@@ -532,7 +572,7 @@ async function handleDeleteFlow(flowId: number) {
       catalogStore.loadStats(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to delete flow");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete flow");
   }
 }
 
@@ -546,7 +586,7 @@ async function handleRenameFlow(flowId: number, newName: string) {
       catalogStore.loadFollowing(),
     ]);
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to rename flow");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to rename flow");
   }
 }
 
@@ -556,7 +596,7 @@ async function openRunSnapshot(runId: number) {
     flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to open flow snapshot");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to open flow snapshot");
   }
 }
 
@@ -566,7 +606,7 @@ async function openFlowInDesigner(flowPath: string) {
     flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {
-    alert(e?.response?.data?.detail ?? "Failed to open flow");
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to open flow");
   }
 }
 
@@ -575,6 +615,17 @@ function navigateToFlow(registrationId: number) {
     name: "catalog",
     query: { tab: "catalog", flowId: String(registrationId) },
   });
+}
+
+function selectSchedule(scheduleId: number) {
+  router.push({
+    name: "catalog",
+    query: { tab: catalogStore.activeTab, scheduleId: String(scheduleId) },
+  });
+}
+
+function navigateToScheduleRuns(scheduleId: number) {
+  selectSchedule(scheduleId);
 }
 
 function handleAddFlowSchedule(flowId: number) {
@@ -661,6 +712,53 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
   }
 }
 
+async function handleToggleScheduleFromDetail(id: number, enabled: boolean) {
+  try {
+    await CatalogApi.updateSchedule(id, { enabled });
+    await Promise.all([catalogStore.loadScheduleDetail(id), catalogStore.loadSchedules()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to update schedule");
+  }
+}
+
+async function handleDeleteScheduleFromDetail(id: number) {
+  try {
+    await ElMessageBox.confirm(
+      "Are you sure you want to delete this schedule?",
+      "Delete Schedule",
+      {
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      },
+    );
+  } catch {
+    return; // User cancelled
+  }
+  try {
+    await CatalogApi.deleteSchedule(id);
+    catalogStore.clearScheduleSelection();
+    router.push({ name: "catalog", query: { tab: catalogStore.activeTab } });
+    await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
+  }
+}
+
+async function handleRunNowFromDetail(scheduleId: number) {
+  try {
+    await CatalogApi.triggerScheduleNow(scheduleId);
+    await Promise.all([
+      catalogStore.loadActiveRuns(),
+      catalogStore.loadScheduleRuns(scheduleId),
+      catalogStore.loadScheduleDetail(scheduleId),
+      catalogStore.loadSchedules(),
+    ]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
+  }
+}
+
 async function handleRunFlow(flowId: number) {
   try {
     await CatalogApi.runFlow(flowId);
@@ -696,6 +794,7 @@ function applyRouteToStore() {
   const runId = q.runId ? Number(q.runId) : null;
   const artifactId = q.artifactId ? Number(q.artifactId) : null;
   const tableId = q.tableId ? Number(q.tableId) : null;
+  const scheduleId = q.scheduleId ? Number(q.scheduleId) : null;
 
   // Update tab (set directly to avoid setActiveTab clearing selections)
   if (catalogStore.activeTab !== tab) {
@@ -706,20 +805,27 @@ function applyRouteToStore() {
     else if (tab === "catalog") catalogStore.loadTree();
   }
 
-  // Handle selections (mutually exclusive: table, artifact, or flow+run)
+  // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)
   if (tableId !== null) {
     if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
+    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
+  } else if (scheduleId !== null) {
+    if (scheduleId !== catalogStore.selectedScheduleId) catalogStore.selectSchedule(scheduleId);
+    if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
+    if (catalogStore.selectedTable) catalogStore.clearTableSelection();
   } else if (artifactId !== null) {
     if (artifactId !== catalogStore.selectedArtifactId) {
       catalogStore.selectedFlowId = null;
       catalogStore.clearTableSelection();
+      catalogStore.clearScheduleSelection();
       catalogStore.selectArtifact(artifactId);
     }
   } else {
-    // Clear table and artifact if not in URL
+    // Clear table, artifact, and schedule if not in URL
     if (catalogStore.selectedTable) catalogStore.clearTableSelection();
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
+    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
     if (flowId !== null) {
@@ -727,6 +833,7 @@ function applyRouteToStore() {
         catalogStore.selectedFlowId = flowId;
         catalogStore.clearTableSelection();
         catalogStore.clearArtifactSelection();
+        catalogStore.clearScheduleSelection();
         catalogStore.loadRuns(flowId);
         catalogStore.loadFlowArtifacts(flowId);
         catalogStore.loadFlowSchedules(flowId);
@@ -767,6 +874,513 @@ onUnmounted(() => {
   }
 });
 </script>
+
+<!-- Shared catalog styles: inherited by all child components via .catalog-view ancestor -->
+<style>
+/* ========== Back Button ========== */
+.catalog-view .back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-bottom: var(--spacing-3);
+}
+
+.catalog-view .back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ========== Meta Grid ========== */
+.catalog-view .meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-5);
+}
+
+.catalog-view .meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+}
+
+.catalog-view .meta-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.catalog-view .meta-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.catalog-view .meta-value.mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
+/* ========== Sections ========== */
+.catalog-view .section {
+  margin-bottom: var(--spacing-5);
+}
+
+.catalog-view .section h3 {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--spacing-3) 0;
+  color: var(--color-text-primary);
+}
+
+.catalog-view .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-2);
+}
+
+.catalog-view .section-header h3 {
+  margin: 0;
+}
+
+.catalog-view .section-icon {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-right: var(--spacing-1);
+}
+
+/* ========== Summary Cards ========== */
+.catalog-view .summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
+}
+
+.catalog-view .summary-cards-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.catalog-view .summary-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+}
+
+.catalog-view .summary-icon {
+  font-size: var(--font-size-lg);
+  color: var(--color-primary);
+}
+
+.catalog-view .success-icon {
+  color: var(--color-success);
+}
+
+.catalog-view .failure-icon {
+  color: var(--color-danger);
+}
+
+.catalog-view .running-icon {
+  color: var(--color-info);
+}
+
+.catalog-view .enabled-icon {
+  color: var(--color-success);
+}
+
+.catalog-view .summary-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.catalog-view .summary-value {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.catalog-view .summary-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ========== Status Badges ========== */
+.catalog-view .status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.catalog-view .status-badge.success,
+.catalog-view .status-badge.active {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.catalog-view .status-badge.failure {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+.catalog-view .status-badge.pending {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+
+.catalog-view .status-badge.running {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  color: var(--color-info);
+}
+
+.catalog-view .status-badge.enabled {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.catalog-view .status-badge.paused {
+  background: rgba(156, 163, 175, 0.15);
+  color: var(--color-text-muted);
+}
+
+.catalog-view .status-badge.deleted {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+/* ========== Overview Table ========== */
+.catalog-view .overview-table,
+.catalog-view .runs-table,
+.catalog-view .schedules-table {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.catalog-view .table-header {
+  display: grid;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.catalog-view .table-row {
+  display: grid;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3);
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: var(--font-size-sm);
+  align-items: center;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.catalog-view .table-row:last-child {
+  border-bottom: none;
+}
+
+.catalog-view .table-row:hover {
+  background: var(--color-background-hover);
+}
+
+.catalog-view .table-row.row-disabled {
+  opacity: 0.6;
+}
+
+/* ========== Common Column Styles ========== */
+.catalog-view .col-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.catalog-view .trigger-icon {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.catalog-view .type-icon {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.catalog-view .col-started,
+.catalog-view .col-duration,
+.catalog-view .col-last {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.catalog-view .col-nodes {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+}
+
+.catalog-view .col-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.catalog-view .col-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.catalog-view .col-flow {
+  min-width: 0;
+}
+
+/* ========== Flow Name / Link / Snapshot ========== */
+.catalog-view .flow-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-view .flow-link {
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.catalog-view .flow-link:hover {
+  color: var(--color-primary);
+}
+
+.catalog-view .snapshot-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+}
+
+.catalog-view .no-snapshot {
+  color: var(--color-text-muted);
+}
+
+/* ========== Description Editing ========== */
+.catalog-view .col-description {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.catalog-view .col-description .btn-icon-inline {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.catalog-view .table-row:hover .col-description .btn-icon-inline {
+  opacity: 1;
+}
+
+.catalog-view .btn-icon-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.catalog-view .btn-icon-inline:hover {
+  background: var(--color-background-hover);
+  color: var(--color-primary);
+}
+
+.catalog-view .description-text {
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.catalog-view .description-text:hover {
+  color: var(--color-text-primary);
+}
+
+.catalog-view .description-text.placeholder {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.catalog-view .edit-description-input {
+  width: 100%;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  outline: none;
+}
+
+/* ========== Pagination ========== */
+.catalog-view .pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4) 0;
+}
+
+.catalog-view .page-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.catalog-view .page-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.catalog-view .page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.catalog-view .page-info {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  padding: 0 var(--spacing-2);
+}
+
+/* ========== Empty State (catalog variant) ========== */
+.catalog-view .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-5) var(--spacing-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.catalog-view .empty-state-icon,
+.catalog-view .empty-icon {
+  font-size: var(--font-size-xl);
+  opacity: 0.4;
+}
+
+.catalog-view .empty-state h3 {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+}
+
+.catalog-view .empty-state p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* ========== Text Status Colors ========== */
+.catalog-view .text-success {
+  color: var(--color-success);
+}
+
+.catalog-view .text-danger {
+  color: var(--color-danger);
+}
+
+.catalog-view .text-pending {
+  color: var(--color-warning);
+}
+
+/* ========== Mono ========== */
+.catalog-view .mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* ========== Info Card (CatalogView + StatsPanel) ========== */
+.catalog-view .info-card {
+  padding: var(--spacing-4);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+.catalog-view .info-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
+  color: var(--color-primary);
+}
+
+.catalog-view .info-card-header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.catalog-view .info-card p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+</style>
 
 <style scoped>
 .catalog-view {
@@ -814,7 +1428,7 @@ onUnmounted(() => {
 
 .tab-badge {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: 11px;
   padding: 0 6px;
   border-radius: var(--border-radius-full);
@@ -925,8 +1539,7 @@ onUnmounted(() => {
 }
 
 /* ========== States ========== */
-.loading-state,
-.empty-state {
+.loading-state {
   padding: var(--spacing-6);
   text-align: center;
   color: var(--color-text-muted);
@@ -935,50 +1548,6 @@ onUnmounted(() => {
 
 .empty-state .muted {
   margin-top: var(--spacing-1);
-  font-size: var(--font-size-xs);
-}
-
-/* ========== Buttons ========== */
-.btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.btn-icon:hover {
-  background: var(--color-background-hover);
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.btn-primary {
-  padding: var(--spacing-2) var(--spacing-4);
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-}
-
-.btn-primary:hover {
-  opacity: 0.9;
-}
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn-sm {
-  padding: var(--spacing-1) var(--spacing-3);
   font-size: var(--font-size-xs);
 }
 
@@ -1024,34 +1593,5 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-3);
-}
-
-.info-card {
-  padding: var(--spacing-4);
-  background: var(--color-background-secondary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-}
-
-.info-card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-2);
-  color: var(--color-primary);
-}
-
-.info-card-header h4 {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.info-card p {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.5;
 }
 </style>

@@ -132,7 +132,7 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { GlobalArtifact } from "../../types";
-import { formatDate } from "./catalog-formatters";
+import { formatDate, formatSize, formatType } from "./catalog-formatters";
 
 const props = defineProps<{
   artifact: GlobalArtifact;
@@ -140,8 +140,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "close"): void;
-  (e: "navigate-to-flow", registrationId: number): void;
+  close: [];
+  "navigate-to-flow": [registrationId: number];
 }>();
 
 const catalogStore = useCatalogStore();
@@ -152,47 +152,12 @@ const sourceFlowName = computed((): string | null => {
   const flow = catalogStore.allFlows.find((f) => f.id === regId);
   return flow?.name ?? null;
 });
-
-function formatType(artifact: GlobalArtifact): string {
-  if (artifact.python_type) {
-    const parts = artifact.python_type.split(".");
-    return parts[parts.length - 1];
-  }
-  return artifact.serialization_format ?? "unknown";
-}
-
-function formatSize(bytes: number | null): string {
-  if (bytes === null) return "--";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 </script>
 
 <style scoped>
 .artifact-detail {
   max-width: 1000px;
   margin: 0 auto;
-}
-
-.back-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-2);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  margin-bottom: var(--spacing-3);
-}
-
-.back-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
 }
 
 .detail-header {
@@ -217,78 +182,10 @@ function formatSize(bytes: number | null): string {
   color: var(--color-text-primary);
 }
 
-.status-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.status-badge.active {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-}
-.status-badge.deleted {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-}
-.status-badge.pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
-}
-
 .description {
   margin: var(--spacing-2) 0 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-}
-
-/* ========== Meta Grid ========== */
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-5);
-}
-
-.meta-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
-}
-
-.meta-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.meta-value {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-}
-
-.meta-value.mono {
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-}
-
-/* ========== Sections ========== */
-.section {
-  margin-bottom: var(--spacing-5);
-}
-
-.section h3 {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  margin: 0 0 var(--spacing-3) 0;
 }
 
 /* ========== Detail List ========== */
@@ -323,7 +220,7 @@ function formatSize(bytes: number | null): string {
 }
 
 .detail-value.mono {
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   word-break: break-all;
 }
@@ -394,7 +291,7 @@ function formatSize(bytes: number | null): string {
 }
 
 .versions-row.current {
-  background: rgba(59, 130, 246, 0.05);
+  background: var(--color-background-selected);
 }
 
 .latest-tag {
@@ -403,15 +300,10 @@ function formatSize(bytes: number | null): string {
   padding: 0 4px;
   border-radius: var(--border-radius-sm);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   margin-left: 4px;
   line-height: 16px;
   vertical-align: middle;
-}
-
-.mono {
-  font-family: monospace;
-  font-size: var(--font-size-xs);
 }
 
 /* ========== Code Block ========== */
@@ -423,7 +315,7 @@ function formatSize(bytes: number | null): string {
 }
 
 .code-block code {
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
