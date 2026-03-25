@@ -92,6 +92,19 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN name TEXT"))
                 conn.commit()
 
+        # Migrate flow_runs: rename run_type 'full_run' → 'in_designer_run'
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
+        if result.fetchone():
+            updated = conn.execute(
+                text("UPDATE flow_runs SET run_type = 'in_designer_run' WHERE run_type = 'full_run'")
+            )
+            if updated.rowcount:
+                conn.commit()
+                logger.info(
+                    "Migration complete: renamed %d flow_runs from 'full_run' to 'in_designer_run'",
+                    updated.rowcount,
+                )
+
 
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()

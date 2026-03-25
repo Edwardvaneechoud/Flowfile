@@ -33,13 +33,15 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"scheduled_run_{run_id}.log"
         fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        proc = subprocess.Popen(
-            cmd,
-            stdout=fd,
-            stderr=fd,
-            start_new_session=True,
-        )
-        os.close(fd)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=fd,
+                stderr=fd,
+                start_new_session=True,
+            )
+        finally:
+            os.close(fd)
         logger.info("Subprocess log: %s (pid=%s)", log_file, proc.pid)
         return proc.pid
     except Exception:

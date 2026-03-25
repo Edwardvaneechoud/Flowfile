@@ -111,128 +111,151 @@
     <!-- Run History -->
     <div class="section">
       <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
+      <RunHistoryTable
+        :registration-id="flow.id"
+        collapsible
+        @view-run="$emit('viewRun', $event)"
+        @view-flow="$emit('viewFlow', $event)"
+        @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+      />
+    </div>
 
-      <!-- Run summary cards -->
-      <div class="summary-cards">
+
+      <!-- Schedule summary cards -->
+      <div class="summary-cards summary-cards-3">
         <div class="summary-card">
-          <i class="fa-solid fa-clock-rotate-left summary-icon"></i>
+          <i class="fa-solid fa-calendar-days summary-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.runsTotal }}</span>
+            <span class="summary-value">{{ catalogStore.flowSchedules.length }}</span>
             <span class="summary-label">Total</span>
           </div>
         </div>
         <div class="summary-card">
-          <i class="fa-solid fa-circle-check summary-icon success-icon"></i>
+          <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.runsTotalSuccess }}</span>
-            <span class="summary-label">Successful</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-circle-xmark summary-icon failure-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.runsTotalFailed }}</span>
-            <span class="summary-label">Failed</span>
+            <span class="summary-value">{{ scheduleEnabledCount }}</span>
+            <span class="summary-label">Enabled</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-spinner summary-icon running-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.runsTotalRunning }}</span>
+            <span class="summary-value">{{ scheduleRunningCount }}</span>
             <span class="summary-label">Running</span>
           </div>
         </div>
       </div>
 
-      <div v-if="catalogStore.runsTotal === 0" class="empty-runs">No runs recorded yet.</div>
-      <div v-else class="overview-table runs-grid">
+      <div v-if="catalogStore.flowSchedules.length === 0" class="empty-state">
+        <i class="fa-solid fa-calendar-xmark empty-state-icon"></i>
+        <span>No schedules configured</span>
+      </div>
+      <div v-else class="overview-table schedules-grid">
         <div class="table-header">
           <span class="col-status">Status</span>
-          <span class="col-trigger">Triggered By</span>
-          <span class="col-started">Started</span>
-          <span class="col-duration">Duration</span>
-          <span class="col-nodes">Nodes</span>
-          <span class="col-version">Version</span>
+          <span class="col-name">Name</span>
+          <span class="col-description">Description</span>
+          <span class="col-type">Type</span>
+          <span class="col-last">Last Triggered</span>
+          <span class="col-actions">Actions</span>
         </div>
         <div
-          v-for="run in visibleRuns"
-          :key="run.id"
+          v-for="schedule in catalogStore.flowSchedules"
+          :key="schedule.id"
           class="table-row"
-          @click="$emit('viewRun', run.id)"
+          :class="{ 'row-disabled': !schedule.enabled }"
+          @click="$emit('selectSchedule', schedule.id)"
         >
           <div class="col-status">
-            <span class="status-badge" :class="runStatusClass(run)">
-              <i v-if="run.success === null" class="fa-solid fa-spinner fa-spin" />
-              <i v-else-if="run.success" class="fa-solid fa-circle-check" />
-              <i v-else class="fa-solid fa-circle-xmark" />
-              {{ runStatusText(run) }}
+            <span v-if="isScheduleRunning(schedule)" class="status-badge running">
+              <i class="fa-solid fa-spinner fa-spin" /> Running
+            </span>
+            <span v-else-if="schedule.enabled" class="status-badge enabled">
+              <i class="fa-solid fa-circle-check" /> Enabled
+            </span>
+            <span v-else class="status-badge paused">
+              <i class="fa-solid fa-circle-pause" /> Disabled
             </span>
           </div>
-          <div class="col-trigger">
-            <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
-            {{ formatRunType(run.run_type) }}
+          <div class="col-name">
+            {{ getScheduleDisplayName(schedule, schedule.id) }}
           </div>
-          <div class="col-started">{{ formatDate(run.started_at) }}</div>
-          <div class="col-duration">{{ formatDuration(run.duration_seconds) }}</div>
-          <div class="col-nodes">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</div>
-          <div class="col-version">
-            <span v-if="run.has_snapshot" class="snapshot-link">
-              <i class="fa-solid fa-code-branch" /> View
-            </span>
-            <span v-else class="no-snapshot">--</span>
+          <div class="col-description" @click.stop>
+            <template v-if="editingScheduleId === schedule.id">
+              <input
+                ref="descriptionInput"
+                v-model="editDescription"
+                class="edit-description-input"
+                placeholder="Add description..."
+                maxlength="200"
+                @keydown.enter="saveDescription(schedule.id)"
+                @keydown.escape="cancelEditDescription"
+                @blur="saveDescription(schedule.id)"
+              />
+            </template>
+            <template v-else>
+              <span
+                class="description-text"
+                :class="{ placeholder: !schedule.description }"
+                @click="startEditDescription(schedule)"
+              >
+                {{ schedule.description || "Add description..." }}
+              </span>
+              <button
+                class="btn-icon-inline"
+                title="Edit description"
+                @click="startEditDescription(schedule)"
+              >
+                <i class="fa-solid fa-pen"></i>
+              </button>
+            </template>
+          </div>
+          <div class="col-type">
+            <i :class="scheduleIcon(schedule)" class="type-icon" />
+            {{ formatScheduleType(schedule) }}
+          </div>
+          <div class="col-last">
+            {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
+          </div>
+          <div class="col-actions" @click.stop>
+            <el-tooltip
+              v-if="isScheduleRunning(schedule)"
+              content="Cancel run"
+              placement="top"
+              :show-after="400"
+            >
+              <el-button
+                size="small"
+                type="warning"
+                text
+                @click="handleCancelScheduleRun(schedule)"
+              >
+                <i class="fa-solid fa-stop" />
+              </el-button>
+            </el-tooltip>
+            <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
+              <el-button
+                size="small"
+                type="success"
+                text
+                :disabled="isFlowRunning"
+                @click="handleRunNow(schedule.id)"
+              >
+                <i class="fa-solid fa-play" />
+              </el-button>
+            </el-tooltip>
+            <el-switch
+              :model-value="schedule.enabled"
+              size="small"
+              @change="(val: boolean) => handleToggleSchedule(schedule.id, val)"
+            />
+            <el-button size="small" type="danger" text @click="handleDeleteSchedule(schedule.id)">
+              <i class="fa-solid fa-trash" />
+            </el-button>
           </div>
         </div>
       </div>
-
-      <!-- Expand / Collapse toggle -->
-      <button
-        v-if="catalogStore.runsTotal > collapsedRunCount"
-        class="runs-toggle-btn"
-        @click="runsExpanded = !runsExpanded"
-      >
-        <i :class="runsExpanded ? 'fa-solid fa-chevron-up' : 'fa-solid fa-chevron-down'" />
-        {{ runsExpanded ? "Show less" : `Show all ${catalogStore.runsTotal} runs` }}
-      </button>
-
-      <!-- Pagination (only when expanded) -->
-      <div
-        v-if="runsExpanded && catalogStore.runsTotal > catalogStore.runsPageSize"
-        class="pagination-bar"
-      >
-        <button
-          class="page-btn"
-          :disabled="catalogStore.runsPage <= 1"
-          @click="catalogStore.setRunsPage(1, flow.id)"
-        >
-          <i class="fa-solid fa-angles-left" />
-        </button>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.runsPage <= 1"
-          @click="catalogStore.setRunsPage(catalogStore.runsPage - 1, flow.id)"
-        >
-          <i class="fa-solid fa-angle-left" />
-        </button>
-        <span class="page-info">
-          Page {{ catalogStore.runsPage }} of {{ catalogStore.runsTotalPages }}
-        </span>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.runsPage >= catalogStore.runsTotalPages"
-          @click="catalogStore.setRunsPage(catalogStore.runsPage + 1, flow.id)"
-        >
-          <i class="fa-solid fa-angle-right" />
-        </button>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.runsPage >= catalogStore.runsTotalPages"
-          @click="catalogStore.setRunsPage(catalogStore.runsTotalPages, flow.id)"
-        >
-          <i class="fa-solid fa-angles-right" />
-        </button>
-      </div>
     </div>
-
     <!-- Data Lineage -->
     <div
       v-if="
@@ -341,137 +364,6 @@
         </el-button>
       </div>
 
-      <!-- Schedule summary cards -->
-      <div class="summary-cards summary-cards-3">
-        <div class="summary-card">
-          <i class="fa-solid fa-calendar-days summary-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.flowSchedules.length }}</span>
-            <span class="summary-label">Total</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ scheduleEnabledCount }}</span>
-            <span class="summary-label">Enabled</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-spinner summary-icon running-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ scheduleRunningCount }}</span>
-            <span class="summary-label">Running</span>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="catalogStore.flowSchedules.length === 0" class="empty-state">
-        <i class="fa-solid fa-calendar-xmark empty-state-icon"></i>
-        <span>No schedules configured</span>
-      </div>
-      <div v-else class="overview-table schedules-grid">
-        <div class="table-header">
-          <span class="col-status">Status</span>
-          <span class="col-description">Description</span>
-          <span class="col-type">Type</span>
-          <span class="col-last">Last Triggered</span>
-          <span class="col-actions">Actions</span>
-        </div>
-        <div
-          v-for="schedule in catalogStore.flowSchedules"
-          :key="schedule.id"
-          class="table-row"
-          :class="{ 'row-disabled': !schedule.enabled }"
-          @click="$emit('selectSchedule', schedule.id)"
-        >
-          <div class="col-status">
-            <span v-if="isScheduleRunning(schedule)" class="status-badge running">
-              <i class="fa-solid fa-spinner fa-spin" /> Running
-            </span>
-            <span v-else-if="schedule.enabled" class="status-badge enabled">
-              <i class="fa-solid fa-circle-check" /> Enabled
-            </span>
-            <span v-else class="status-badge paused">
-              <i class="fa-solid fa-circle-pause" /> Disabled
-            </span>
-          </div>
-          <div class="col-description" @click.stop>
-            <template v-if="editingScheduleId === schedule.id">
-              <input
-                ref="descriptionInput"
-                v-model="editDescription"
-                class="edit-description-input"
-                placeholder="Add description..."
-                maxlength="200"
-                @keydown.enter="saveDescription(schedule.id)"
-                @keydown.escape="cancelEditDescription"
-                @blur="saveDescription(schedule.id)"
-              />
-            </template>
-            <template v-else>
-              <span
-                class="description-text"
-                :class="{ placeholder: !schedule.description }"
-                @click="startEditDescription(schedule)"
-              >
-                {{ schedule.description || "Add description..." }}
-              </span>
-              <button
-                class="btn-icon-inline"
-                title="Edit description"
-                @click="startEditDescription(schedule)"
-              >
-                <i class="fa-solid fa-pen"></i>
-              </button>
-            </template>
-          </div>
-          <div class="col-type">
-            <i :class="scheduleIcon(schedule)" class="type-icon" />
-            {{ formatScheduleType(schedule) }}
-          </div>
-          <div class="col-last">
-            {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
-          </div>
-          <div class="col-actions" @click.stop>
-            <el-tooltip
-              v-if="isScheduleRunning(schedule)"
-              content="Cancel run"
-              placement="top"
-              :show-after="400"
-            >
-              <el-button
-                size="small"
-                type="warning"
-                text
-                @click="handleCancelScheduleRun(schedule)"
-              >
-                <i class="fa-solid fa-stop" />
-              </el-button>
-            </el-tooltip>
-            <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
-              <el-button
-                size="small"
-                type="success"
-                text
-                :disabled="isFlowRunning"
-                @click="handleRunNow(schedule.id)"
-              >
-                <i class="fa-solid fa-play" />
-              </el-button>
-            </el-tooltip>
-            <el-switch
-              :model-value="schedule.enabled"
-              size="small"
-              @change="(val: boolean) => handleToggleSchedule(schedule.id, val)"
-            />
-            <el-button size="small" type="danger" text @click="handleDeleteSchedule(schedule.id)">
-              <i class="fa-solid fa-trash" />
-            </el-button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -480,29 +372,29 @@ import { computed, nextTick, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
-import type { FlowRegistration, FlowRun, FlowSchedule, GlobalArtifact } from "../../types";
+import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
 import {
   formatDate,
-  formatDuration,
-  formatRunType,
   formatScheduleType,
   formatSize,
   formatType,
-  runTypeIcon,
+  getScheduleDisplayName,
   scheduleIcon,
 } from "./catalog-formatters";
+import RunHistoryTable from "./RunHistoryTable.vue";
 
 const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   flow: FlowRegistration;
-  runs: FlowRun[];
   artifacts: GlobalArtifact[];
 }>();
 
 const emit = defineEmits<{
   close: [];
   viewRun: [runId: number];
+  viewFlow: [registrationId: number];
+  viewScheduleRuns: [scheduleId: number];
   toggleFavorite: [flowId: number];
   openFlow: [flowPath: string];
   selectTable: [tableId: number];
@@ -520,13 +412,6 @@ const editInput = ref<HTMLInputElement | null>(null);
 const editingScheduleId = ref<number | null>(null);
 const editDescription = ref("");
 const descriptionInput = ref<HTMLInputElement | null>(null);
-const runsExpanded = ref(false);
-const collapsedRunCount = 5;
-
-const visibleRuns = computed(() => {
-  if (runsExpanded.value) return props.runs;
-  return props.runs.slice(0, collapsedRunCount);
-});
 
 function startRename() {
   editName.value = props.flow.name;
@@ -588,16 +473,6 @@ const statusText = computed(() => {
   if (props.flow.last_run_success === null) return "No runs";
   return props.flow.last_run_success ? "Success" : "Failed";
 });
-
-function runStatusClass(run: FlowRun): string {
-  if (run.success === null) return "pending";
-  return run.success ? "success" : "failure";
-}
-
-function runStatusText(run: FlowRun): string {
-  if (run.success === null) return "Running";
-  return run.success ? "Success" : "Failed";
-}
 
 function startEditDescription(schedule: FlowSchedule) {
   editingScheduleId.value = schedule.id;
@@ -741,44 +616,16 @@ async function handleDeleteSchedule(id: number) {
 }
 
 /* ========== Grid column templates ========== */
-.runs-grid .table-header,
-.runs-grid .table-row {
-  grid-template-columns: 100px 120px 150px 100px 90px 80px;
-}
-
 .schedules-grid .table-header,
 .schedules-grid .table-row {
-  grid-template-columns: 100px minmax(120px, 1fr) 150px 130px 120px;
+  grid-template-columns: 100px 1fr minmax(120px, 1fr) 150px 130px 120px;
 }
 
-.empty-runs {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-4);
-  text-align: center;
-}
-
-.runs-toggle-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-1);
-  width: 100%;
-  padding: var(--spacing-2) 0;
-  margin-top: var(--spacing-2);
-  background: none;
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.runs-toggle-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: var(--color-background-hover);
+.col-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ========== Artifacts Table ========== */

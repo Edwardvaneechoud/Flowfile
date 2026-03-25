@@ -143,131 +143,13 @@
     <!-- Run History -->
     <div class="section">
       <h3><i class="fa-solid fa-clock-rotate-left section-icon"></i> Run History</h3>
-
-      <!-- Run summary cards -->
-      <div class="summary-cards">
-        <div class="summary-card">
-          <i class="fa-solid fa-clock-rotate-left summary-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.scheduleRunsTotal }}</span>
-            <span class="summary-label">Total</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-circle-check summary-icon success-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.scheduleRunsTotalSuccess }}</span>
-            <span class="summary-label">Successful</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-circle-xmark summary-icon failure-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.scheduleRunsTotalFailed }}</span>
-            <span class="summary-label">Failed</span>
-          </div>
-        </div>
-        <div class="summary-card">
-          <i class="fa-solid fa-spinner summary-icon running-icon"></i>
-          <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.scheduleRunsTotalRunning }}</span>
-            <span class="summary-label">Running</span>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="catalogStore.scheduleRunsTotal === 0" class="empty-runs">
-        No runs recorded yet.
-      </div>
-      <div v-else class="overview-table runs-grid">
-        <div class="table-header">
-          <span class="col-status">Status</span>
-          <span class="col-trigger">Triggered By</span>
-          <span class="col-started">Started</span>
-          <span class="col-duration">Duration</span>
-          <span class="col-nodes">Nodes</span>
-          <span class="col-version">Version</span>
-        </div>
-        <div
-          v-for="run in visibleRuns"
-          :key="run.id"
-          class="table-row"
-          @click="$emit('viewRun', run.id)"
-        >
-          <div class="col-status">
-            <span class="status-badge" :class="runStatusClass(run)">
-              <i v-if="run.success === null" class="fa-solid fa-spinner fa-spin" />
-              <i v-else-if="run.success" class="fa-solid fa-circle-check" />
-              <i v-else class="fa-solid fa-circle-xmark" />
-              {{ runStatusText(run) }}
-            </span>
-          </div>
-          <div class="col-trigger">
-            <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
-            {{ formatRunType(run.run_type) }}
-          </div>
-          <div class="col-started">{{ formatDate(run.started_at) }}</div>
-          <div class="col-duration">{{ formatDuration(run.duration_seconds) }}</div>
-          <div class="col-nodes">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</div>
-          <div class="col-version">
-            <span v-if="run.has_snapshot" class="snapshot-link">
-              <i class="fa-solid fa-code-branch" /> View
-            </span>
-            <span v-else class="no-snapshot">--</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Expand / Collapse toggle -->
-      <button
-        v-if="catalogStore.scheduleRunsTotal > collapsedRunCount"
-        class="runs-toggle-btn"
-        @click="runsExpanded = !runsExpanded"
-      >
-        <i :class="runsExpanded ? 'fa-solid fa-chevron-up' : 'fa-solid fa-chevron-down'" />
-        {{ runsExpanded ? "Show less" : `Show all ${catalogStore.scheduleRunsTotal} runs` }}
-      </button>
-
-      <!-- Pagination (only when expanded) -->
-      <div
-        v-if="runsExpanded && catalogStore.scheduleRunsTotal > catalogStore.runsPageSize"
-        class="pagination-bar"
-      >
-        <button
-          class="page-btn"
-          :disabled="catalogStore.scheduleRunsPage <= 1"
-          @click="catalogStore.setScheduleRunsPage(1, schedule.id)"
-        >
-          <i class="fa-solid fa-angles-left" />
-        </button>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.scheduleRunsPage <= 1"
-          @click="catalogStore.setScheduleRunsPage(catalogStore.scheduleRunsPage - 1, schedule.id)"
-        >
-          <i class="fa-solid fa-angle-left" />
-        </button>
-        <span class="page-info">
-          Page {{ catalogStore.scheduleRunsPage }} of
-          {{ catalogStore.scheduleRunsTotalPages }}
-        </span>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.scheduleRunsPage >= catalogStore.scheduleRunsTotalPages"
-          @click="catalogStore.setScheduleRunsPage(catalogStore.scheduleRunsPage + 1, schedule.id)"
-        >
-          <i class="fa-solid fa-angle-right" />
-        </button>
-        <button
-          class="page-btn"
-          :disabled="catalogStore.scheduleRunsPage >= catalogStore.scheduleRunsTotalPages"
-          @click="
-            catalogStore.setScheduleRunsPage(catalogStore.scheduleRunsTotalPages, schedule.id)
-          "
-        >
-          <i class="fa-solid fa-angles-right" />
-        </button>
-      </div>
+      <RunHistoryTable
+        :schedule-id="schedule.id"
+        collapsible
+        @view-run="$emit('viewRun', $event)"
+        @view-flow="$emit('viewFlow', $event)"
+        @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+      />
     </div>
   </div>
 </template>
@@ -277,36 +159,31 @@ import { computed, nextTick, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
-import type { FlowRun, FlowSchedule } from "../../types";
+import type { FlowSchedule } from "../../types";
 import {
   formatDate,
-  formatDuration,
-  formatRunType,
   formatScheduleType,
   getScheduleDisplayName,
-  runTypeIcon,
   scheduleIcon,
 } from "./catalog-formatters";
+import RunHistoryTable from "./RunHistoryTable.vue";
 
 const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   schedule: FlowSchedule;
-  runs: FlowRun[];
 }>();
 
 defineEmits<{
   close: [];
   viewRun: [runId: number];
   viewFlow: [registrationId: number];
+  viewScheduleRuns: [scheduleId: number];
   toggleSchedule: [id: number, enabled: boolean];
   deleteSchedule: [scheduleId: number];
   runNow: [scheduleId: number];
   cancelScheduleRun: [schedule: FlowSchedule];
 }>();
-
-const runsExpanded = ref(false);
-const collapsedRunCount = 5;
 
 const isEditingName = ref(false);
 const editName = ref("");
@@ -337,21 +214,6 @@ const isScheduleRunning = computed(() =>
 const isFlowRunning = computed(() =>
   catalogStore.activeRuns.some((r) => r.registration_id === props.schedule.registration_id),
 );
-
-const visibleRuns = computed(() => {
-  if (runsExpanded.value) return props.runs;
-  return props.runs.slice(0, collapsedRunCount);
-});
-
-function runStatusClass(run: FlowRun): string {
-  if (run.success === null) return "pending";
-  return run.success ? "success" : "failure";
-}
-
-function runStatusText(run: FlowRun): string {
-  if (run.success === null) return "Running";
-  return run.success ? "Success" : "Failed";
-}
 
 function startRename() {
   editName.value = props.schedule.name ?? "";
@@ -483,39 +345,4 @@ async function saveDescription() {
   flex: 1;
 }
 
-/* ========== Grid column templates ========== */
-.runs-grid .table-header,
-.runs-grid .table-row {
-  grid-template-columns: 100px 120px 150px 100px 90px 80px;
-}
-
-.empty-runs {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-4);
-  text-align: center;
-}
-
-.runs-toggle-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-1);
-  width: 100%;
-  padding: var(--spacing-2) 0;
-  margin-top: var(--spacing-2);
-  background: none;
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.runs-toggle-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: var(--color-background-hover);
-}
 </style>

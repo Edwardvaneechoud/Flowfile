@@ -112,6 +112,7 @@
       <div class="table-header">
         <span class="col-status">Status</span>
         <span class="col-flow">Flow</span>
+        <span class="col-name">Name</span>
         <span class="col-description">Description</span>
         <span class="col-type">Type</span>
         <span class="col-last">Last Triggered</span>
@@ -141,6 +142,9 @@
             @click.stop="$emit('viewFlow', schedule.registration_id)"
             >{{ schedule.flowName }}</span
           >
+        </div>
+        <div class="col-name">
+          {{ getScheduleDisplayName(schedule, schedule.id) }}
         </div>
         <div class="col-description" @click.stop>
           <template v-if="editingScheduleId === schedule.id">
@@ -242,7 +246,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { authService } from "../../services/auth.service";
 import type { FlowSchedule } from "../../types";
-import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
+import { formatDate, formatScheduleType, getScheduleDisplayName, scheduleIcon } from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInElectronMode());
@@ -457,10 +461,17 @@ async function saveDescription(scheduleId: number) {
 /* Grid column template */
 .table-header,
 .table-row {
-  grid-template-columns: 120px 1fr 1fr 160px 160px 160px;
+  grid-template-columns: 120px 1fr 1fr 1fr 160px 160px 160px;
 }
 
 /* Column overrides */
+.col-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .col-flow {
   display: flex;
   flex-direction: column;

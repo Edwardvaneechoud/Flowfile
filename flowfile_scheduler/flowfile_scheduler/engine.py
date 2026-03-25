@@ -369,6 +369,12 @@ class FlowScheduler:
         if pid is not None:
             run.pid = pid
             db.commit()
+        else:
+            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+            run.ended_at = _utcnow()
+            run.success = False
+            db.commit()
+            return False
         return True
 
     def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:

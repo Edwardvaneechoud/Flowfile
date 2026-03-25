@@ -52,6 +52,7 @@ interface CatalogState {
   scheduleRunsTotalFailed: number;
   scheduleRunsTotalRunning: number;
   scheduleRunsPage: number;
+  scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
   schedulerStatus: SchedulerStatus | null;
   activeTab: CatalogTab;
@@ -96,6 +97,7 @@ export const useCatalogStore = defineStore("catalog", {
     scheduleRunsTotalFailed: 0,
     scheduleRunsTotalRunning: 0,
     scheduleRunsPage: 1,
+    scheduleRunsTriggerFilter: null,
     activeRuns: [],
     schedulerStatus: null,
     activeTab: "runs",
@@ -441,7 +443,8 @@ export const useCatalogStore = defineStore("catalog", {
     async loadScheduleRuns(scheduleId: number) {
       try {
         const offset = (this.scheduleRunsPage - 1) * this.runsPageSize;
-        const result = await CatalogApi.getRuns(null, this.runsPageSize, offset, scheduleId);
+        const runType = this.scheduleRunsTriggerFilter ?? undefined;
+        const result = await CatalogApi.getRuns(null, this.runsPageSize, offset, scheduleId, runType);
         this.scheduleRuns = result.items;
         this.scheduleRunsTotal = result.total;
         this.scheduleRunsTotalSuccess = result.total_success;
@@ -457,6 +460,12 @@ export const useCatalogStore = defineStore("catalog", {
       this.loadScheduleRuns(scheduleId);
     },
 
+    setScheduleTriggerFilter(filter: string | null, scheduleId: number) {
+      this.scheduleRunsTriggerFilter = filter;
+      this.scheduleRunsPage = 1;
+      this.loadScheduleRuns(scheduleId);
+    },
+
     clearScheduleSelection() {
       this.selectedScheduleId = null;
       this.selectedSchedule = null;
@@ -466,6 +475,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.scheduleRunsTotalFailed = 0;
       this.scheduleRunsTotalRunning = 0;
       this.scheduleRunsPage = 1;
+      this.scheduleRunsTriggerFilter = null;
     },
 
     // -- Scheduler actions --

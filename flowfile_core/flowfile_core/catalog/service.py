@@ -1167,7 +1167,12 @@ class CatalogService:
             if pid is not None:
                 run.pid = pid
                 self.repo.update_run(run)
-            launched += 1
+                launched += 1
+            else:
+                logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+                run.ended_at = datetime.now(timezone.utc)
+                run.success = False
+                self.repo.update_run(run)
 
         return launched
 
@@ -1566,6 +1571,11 @@ class CatalogService:
         if pid is not None:
             run.pid = pid
             self.repo.update_run(run)
+        else:
+            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+            run.ended_at = datetime.now(timezone.utc)
+            run.success = False
+            self.repo.update_run(run)
 
         return self._run_to_out(run)
 
@@ -1610,6 +1620,11 @@ class CatalogService:
         pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
         if pid is not None:
             run.pid = pid
+            self.repo.update_run(run)
+        else:
+            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+            run.ended_at = datetime.now(timezone.utc)
+            run.success = False
             self.repo.update_run(run)
 
         return self._run_to_out(run)

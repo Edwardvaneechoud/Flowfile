@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import polars as pl
 import pytest
 
-from flowfile_core.kernel.execution import write_inputs_to_parquet
+from flowfile_core.configs.utils import MutableBool
+from flowfile_core.kernel.execution import _write_parquet_locally, write_inputs_to_parquet
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest
 from flowfile_core.schemas import input_schema
@@ -318,6 +320,94 @@ class TestWriteInputsToParquet:
 
         result = write_inputs_to_parquet((), mgr, input_dir, 1, 2)
         assert result == {"main": []}
+
+    def test_unnamed_inputs_local_write(self, tmp_path: Path):
+        """When OFFLOAD_TO_WORKER is False, writes parquet locally without ExternalDfFetcher."""
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1, ft2 = MagicMock(), MagicMock()
+        with (
+            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
+            patch("flowfile_core.kernel.execution._write_parquet_locally") as mock_write,
+        ):
+            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2)
+
+        assert mock_write.call_count == 2
+        assert list(result.keys()) == ["main"]
+        assert len(result["main"]) == 2
+        for p in result["main"]:
+            assert p.startswith("/shared/")
+
+    def test_named_inputs_local_write(self, tmp_path: Path):
+        """When OFFLOAD_TO_WORKER is False, named inputs write locally."""
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1, ft2 = MagicMock(), MagicMock()
+        with (
+            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
+            patch("flowfile_core.kernel.execution._write_parquet_locally") as mock_write,
+        ):
+            result = write_inputs_to_parquet(
+                (ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"]
+            )
+
+        assert mock_write.call_count == 2
+        assert "orders" in result
+        assert "clients" in result
+        assert "main" in result
+
+    def test_local_write_error_propagates(self, tmp_path: Path):
+        """When local write fails, the error propagates naturally."""
+        mgr = _make_manager(str(tmp_path))
+        input_dir = str(tmp_path / "inputs")
+        os.makedirs(input_dir, exist_ok=True)
+
+        ft1 = MagicMock()
+        with (
+            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
+            patch(
+                "flowfile_core.kernel.execution._write_parquet_locally",
+                side_effect=OSError("disk full"),
+            ),
+        ):
+            with pytest.raises(OSError, match="disk full"):
+                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
+
+
+class TestWriteParquetLocally:
+    """Unit tests for _write_parquet_locally."""
+
+    def test_writes_valid_parquet(self, tmp_path: Path):
+        """Creates a valid parquet file from a LazyFrame."""
+        lf = pl.LazyFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        output_path = str(tmp_path / "sub" / "test.parquet")
+        _write_parquet_locally(lf, output_path)
+
+        df = pl.read_parquet(output_path)
+        assert df.shape == (3, 2)
+        assert df.columns == ["a", "b"]
+
+    def test_accepts_dataframe(self, tmp_path: Path):
+        """Accepts a DataFrame directly without collecting."""
+        df_in = pl.DataFrame({"x": [10, 20]})
+        output_path = str(tmp_path / "test.parquet")
+        _write_parquet_locally(df_in, output_path)
+
+        df_out = pl.read_parquet(output_path)
+        assert df_out.shape == (2, 1)
+        assert df_out["x"].to_list() == [10, 20]
+
+    def test_creates_parent_dirs(self, tmp_path: Path):
+        """Creates parent directories if they don't exist."""
+        lf = pl.LazyFrame({"a": [1]})
+        output_path = str(tmp_path / "deep" / "nested" / "dir" / "test.parquet")
+        _write_parquet_locally(lf, output_path)
+
+        assert os.path.exists(output_path)
 
 
 # ---------------------------------------------------------------------------
