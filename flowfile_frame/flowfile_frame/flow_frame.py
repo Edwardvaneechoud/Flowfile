@@ -2063,6 +2063,18 @@ class FlowFrame:
             if len(actual_exprs_to_process) == 1 and isinstance(actual_exprs_to_process[0], Expr):
                 pass
 
+            # Try flowfile formula conversion (all-or-nothing)
+            if all(
+                isinstance(e, Expr) and e._ff_repr is not None and e.column_name is not None
+                for e in actual_exprs_to_process
+            ):
+                ff = self
+                for i, expr_obj in enumerate(actual_exprs_to_process):
+                    desc = f"{i}: {description}" if len(actual_exprs_to_process) > 1 and description else description
+                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, desc)
+                return ff
+
+            # Fall through to polars code path
             for current_expr_obj in actual_exprs_to_process:
                 all_input_expr_objects.append(current_expr_obj)
                 pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
