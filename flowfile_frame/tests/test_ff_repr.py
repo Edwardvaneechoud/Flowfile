@@ -51,6 +51,7 @@ class TestFfReprBasic:
     """Test _ff_repr tracking on basic expression operations."""
 
     def test_col_ff_repr(self):
+        breakpoint()
         assert col("x")._ff_repr == "[x]"
 
     def test_col_with_spaces_ff_repr(self):
