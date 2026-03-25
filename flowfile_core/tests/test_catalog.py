@@ -403,7 +403,7 @@ class TestRuns:
                     user_id=1,
                     started_at=datetime.now(timezone.utc),
                     number_of_nodes=3,
-                    run_type="full_run",
+                    run_type="in_designer_run",
                 )
                 db.add(run)
             db.commit()

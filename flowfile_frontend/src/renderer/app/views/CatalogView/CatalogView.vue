@@ -168,7 +168,6 @@
           @run-now="handleRunNow"
           @cancel-schedule-run="handleCancelScheduleRun"
           @view-flow="navigateToFlow"
-          @view-schedule-runs="navigateToScheduleRuns"
           @select-schedule="selectSchedule"
         />
         <!-- Favorites list -->

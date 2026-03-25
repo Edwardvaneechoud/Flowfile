@@ -180,16 +180,6 @@
           {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
         </div>
         <div class="col-actions" @click.stop>
-          <el-tooltip content="View runs" placement="top" :show-after="400">
-            <el-button
-              size="small"
-              type="primary"
-              text
-              @click="$emit('viewScheduleRuns', schedule.id)"
-            >
-              <i class="fa-solid fa-clock-rotate-left" />
-            </el-button>
-          </el-tooltip>
           <el-tooltip
             v-if="schedule.isRunning"
             content="Cancel run"
@@ -264,7 +254,6 @@ defineEmits<{
   runNow: [id: number];
   cancelScheduleRun: [schedule: FlowSchedule];
   viewFlow: [registrationId: number];
-  viewScheduleRuns: [scheduleId: number];
   selectSchedule: [scheduleId: number];
 }>();
 

@@ -1,7 +1,11 @@
+from typing import Literal
+
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
 
 Base = declarative_base()
 
@@ -159,7 +163,7 @@ class FlowRun(Base):
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
-    run_type = Column(String, nullable=False, default="full_run")
+    run_type: RunType = Column(String, nullable=False, default="in_designer_run")
     pid = Column(Integer, nullable=True)
     schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
     # YAML snapshot of the flow definition at run time

@@ -173,7 +173,7 @@ class CatalogService:
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
         """Return the log file path if it exists for subprocess-spawned runs."""
-        if run_type not in ("scheduled", "manual"):
+        if run_type not in ("scheduled", "manual", "on_demand"):
             return None
         log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
         if log_file.exists():
@@ -621,7 +621,7 @@ class CatalogService:
         flow_path: str | None,
         user_id: int,
         number_of_nodes: int,
-        run_type: str = "full_run",
+        run_type: str = "in_designer_run",
         flow_snapshot: str | None = None,
     ) -> FlowRun:
         """Record a new flow run start."""
@@ -1602,7 +1602,7 @@ class CatalogService:
             user_id=user_id,
             started_at=now,
             number_of_nodes=0,
-            run_type="manual",
+            run_type="on_demand",
             schedule_id=schedule.id,
         )
         run = self.repo.create_run(run)

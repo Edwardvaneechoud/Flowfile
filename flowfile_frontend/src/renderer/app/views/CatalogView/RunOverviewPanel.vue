@@ -46,7 +46,8 @@
       >
         <el-option label="Scheduled runs" value="scheduled" />
         <el-option label="Manual runs" value="manual" />
-        <el-option label="Full runs" value="full_run" />
+        <el-option label="On-demand runs" value="on_demand" />
+        <el-option label="Designer runs" value="in_designer_run" />
         <el-option-group v-if="catalogStore.enrichedSchedules.length > 0" label="Specific Schedule">
           <el-option
             v-for="schedule in catalogStore.enrichedSchedules"

@@ -311,7 +311,7 @@ def _run_and_track(flow, user_id: int | None):
                 flow_path=flow_path,
                 user_id=user_id if user_id is not None else 0,
                 number_of_nodes=len(flow.nodes),
-                run_type="full_run",
+                run_type="in_designer_run",
                 flow_snapshot=snapshot_yaml,
             )
             run_id = db_run.id

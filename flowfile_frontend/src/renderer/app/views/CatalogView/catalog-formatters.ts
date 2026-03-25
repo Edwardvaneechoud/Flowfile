@@ -85,14 +85,16 @@ export function getScheduleDisplayName(
   return formatScheduleType(schedule);
 }
 
-export function formatRunType(runType: "full_run" | "scheduled" | "manual"): string {
+export function formatRunType(runType: "in_designer_run" | "scheduled" | "manual" | "on_demand"): string {
   if (runType === "scheduled") return "Scheduled";
   if (runType === "manual") return "Manual";
-  return "Full Run";
+  if (runType === "on_demand") return "On-demand";
+  return "Designer";
 }
 
-export function runTypeIcon(runType: "full_run" | "scheduled" | "manual"): string {
+export function runTypeIcon(runType: "in_designer_run" | "scheduled" | "manual" | "on_demand"): string {
   if (runType === "scheduled") return "fa-solid fa-calendar-days";
   if (runType === "manual") return "fa-solid fa-hand-pointer";
-  return "fa-solid fa-play";
+  if (runType === "on_demand") return "fa-solid fa-bolt";
+  return "fa-solid fa-pencil-ruler";
 }

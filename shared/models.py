@@ -8,10 +8,14 @@ flowfile_core** and its heavy dependency tree (FastAPI, Pydantic, etc.).
 Only columns required by non-core consumers are mapped here.
 """
 
+from typing import Literal
+
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
+
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
 
 
 class FlowSchedule(Base):
@@ -54,7 +58,7 @@ class FlowRun(Base):
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
-    run_type = Column(String, nullable=False, default="full_run")
+    run_type: RunType = Column(String, nullable=False, default="in_designer_run")
     pid = Column(Integer, nullable=True)
     schedule_id = Column(Integer, nullable=True)
     flow_snapshot = Column(Text, nullable=True)
