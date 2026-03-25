@@ -130,20 +130,6 @@ Active runs are automatically polled every 20 seconds. When all runs complete, t
 
 ---
 
-## Run History Integration
-
-Scheduled and manual runs appear in the Run History with additional context:
-
-<!-- PLACEHOLDER: Screenshot of the Run History tab showing the Triggered By column with scheduled/manual/full run indicators -->
-![Run history with schedule info](../../assets/images/guides/schedules/run-history-scheduled.png)
-
-*Run history showing run types and trigger information*
-
-| Column | Description |
-|--------|-------------|
-| **Triggered By** | Shows how the run was started: Scheduled, Manual, or Full Run |
-| **Run Type Icon** | Calendar icon for scheduled, hand icon for manual, play icon for full run |
-
 ### Run Logs
 
 Scheduled and manual runs write their output to log files. When viewing a run's detail panel, click **View log** to see the full execution log. Logs are stored at `~/.flowfile/logs/scheduled_run_{run_id}.log`.
@@ -153,9 +139,6 @@ Scheduled and manual runs write their output to log files. When viewing a run's 
 ## Scheduler Status
 
 The scheduler status bar at the top of the Schedules tab shows whether the scheduler is active:
-
-<!-- PLACEHOLDER: Screenshot of the scheduler status bar showing green dot (running) and orange dot (not running) states -->
-![Scheduler status bar](../../assets/images/guides/schedules/scheduler-status.png)
 
 *Scheduler status bar — green when running, orange when stopped*
 
