@@ -324,6 +324,7 @@ class FlowScheduler:
             started_at=now,
             number_of_nodes=0,
             run_type="scheduled",
+            schedule_id=sched.id,
         )
         db.add(run)
         sched.last_triggered_at = now

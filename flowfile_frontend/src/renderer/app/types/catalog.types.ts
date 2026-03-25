@@ -87,7 +87,8 @@ export interface FlowRun {
   nodes_completed: number;
   number_of_nodes: number;
   duration_seconds: number | null;
-  run_type: "full_run" | "scheduled";
+  run_type: "full_run" | "scheduled" | "manual";
+  schedule_id: number | null;
   has_snapshot: boolean;
   has_log: boolean;
 }
@@ -242,7 +243,7 @@ export interface ActiveFlowRun {
   started_at: string;
   nodes_completed: number;
   number_of_nodes: number;
-  run_type: "full_run" | "scheduled";
+  run_type: "full_run" | "scheduled" | "manual";
 }
 
 // ============================================================================

@@ -311,8 +311,8 @@ def get_run_log(
     except RunNotFoundError:
         raise HTTPException(404, "Run not found") from None
 
-    if run.run_type != "scheduled":
-        raise HTTPException(404, "Logs are only available for scheduled runs")
+    if run.run_type not in ("scheduled", "manual"):
+        raise HTTPException(404, "Logs are only available for scheduled/manual runs")
 
     log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
     if not log_file.exists():
@@ -722,6 +722,7 @@ def list_active_runs(
 @router.post("/runs/{run_id}/cancel", status_code=204)
 def cancel_run(
     run_id: int,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Cancel a running flow by marking it as failed."""

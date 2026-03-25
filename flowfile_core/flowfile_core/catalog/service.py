@@ -172,8 +172,8 @@ class CatalogService:
 
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
-        """Return the log file path if it exists for scheduled runs."""
-        if run_type != "scheduled":
+        """Return the log file path if it exists for subprocess-spawned runs."""
+        if run_type not in ("scheduled", "manual"):
             return None
         log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
         if log_file.exists():
@@ -195,6 +195,7 @@ class CatalogService:
             number_of_nodes=run.number_of_nodes,
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
+            schedule_id=run.schedule_id,
             has_snapshot=run.flow_snapshot is not None,
             has_log=CatalogService._resolve_log_path(run.id, run.run_type) is not None,
         )
@@ -587,6 +588,7 @@ class CatalogService:
             number_of_nodes=run.number_of_nodes,
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
+            schedule_id=run.schedule_id,
             has_snapshot=run.flow_snapshot is not None,
             has_log=self._resolve_log_path(run.id, run.run_type) is not None,
             flow_snapshot=run.flow_snapshot,
@@ -1115,6 +1117,7 @@ class CatalogService:
                 started_at=now,
                 number_of_nodes=0,
                 run_type="scheduled",
+                schedule_id=schedule.id,
             )
             run = self.repo.create_run(run)
 
@@ -1511,7 +1514,7 @@ class CatalogService:
             user_id=user_id,
             started_at=now,
             number_of_nodes=0,
-            run_type="scheduled",
+            run_type="manual",
         )
         run = self.repo.create_run(run)
 
@@ -1555,7 +1558,8 @@ class CatalogService:
             user_id=user_id,
             started_at=now,
             number_of_nodes=0,
-            run_type="scheduled",
+            run_type="manual",
+            schedule_id=schedule.id,
         )
         run = self.repo.create_run(run)
 

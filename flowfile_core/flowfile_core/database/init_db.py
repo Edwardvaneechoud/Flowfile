@@ -71,6 +71,11 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE flow_runs ADD COLUMN pid INTEGER"))
                 conn.commit()
 
+            if "schedule_id" not in run_columns:
+                logger.info("Adding schedule_id column to flow_runs")
+                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN schedule_id INTEGER"))
+                conn.commit()
+
         # Migrate flow_schedules: add description column
         result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_schedules'"))
         if result.fetchone():

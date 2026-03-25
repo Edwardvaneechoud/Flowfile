@@ -53,6 +53,7 @@ class FlowRun(Base):
     duration_seconds = Column(Float, nullable=True)
     run_type = Column(String, nullable=False, default="full_run")
     pid = Column(Integer, nullable=True)
+    schedule_id = Column(Integer, nullable=True)
     flow_snapshot = Column(Text, nullable=True)
     node_results_json = Column(Text, nullable=True)
 

@@ -50,10 +50,14 @@ export function scheduleIcon(schedule: FlowSchedule): string {
   return "fa-solid fa-table";
 }
 
-export function formatRunType(runType: "full_run" | "scheduled"): string {
-  return runType === "scheduled" ? "Schedule" : "Manual";
+export function formatRunType(runType: "full_run" | "scheduled" | "manual"): string {
+  if (runType === "scheduled") return "Scheduled";
+  if (runType === "manual") return "Manual";
+  return "Full Run";
 }
 
-export function runTypeIcon(runType: "full_run" | "scheduled"): string {
-  return runType === "scheduled" ? "fa-solid fa-calendar-days" : "fa-solid fa-play";
+export function runTypeIcon(runType: "full_run" | "scheduled" | "manual"): string {
+  if (runType === "scheduled") return "fa-solid fa-calendar-days";
+  if (runType === "manual") return "fa-solid fa-hand-pointer";
+  return "fa-solid fa-play";
 }

@@ -431,6 +431,12 @@ export const useCatalogStore = defineStore("catalog", {
 
     setActiveTab(tab: CatalogTab) {
       this.activeTab = tab;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.selectedArtifactId = null;
+      this.selectedArtifact = null;
+      this.clearTableSelection();
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();
