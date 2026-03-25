@@ -841,7 +841,6 @@ function applyRouteToStore() {
     } else if (catalogStore.selectedFlowId !== null) {
       catalogStore.selectedFlowId = null;
     }
-
   }
 
   // Run detail can coexist with any selection (schedule, flow, etc.)

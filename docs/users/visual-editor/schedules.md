@@ -113,23 +113,6 @@ The flow detail panel includes:
 
 ---
 
-## Active Runs
-
-When flows are running (either from schedules or manual triggers), an **active runs banner** appears showing:
-
-- The name of each running flow
-- When the run started
-- A **Cancel** button to stop the run
-
-<!-- PLACEHOLDER: Screenshot of the active runs banner showing running flows with cancel buttons -->
-![Active runs banner](../../assets/images/guides/schedules/active-runs.png)
-
-*Active runs banner with running flow information and cancel buttons*
-
-Active runs are automatically polled every 20 seconds. When all runs complete, the run history and schedule data refresh automatically.
-
----
-
 ### Run Logs
 
 Scheduled and manual runs write their output to log files. When viewing a run's detail panel, click **View log** to see the full execution log. Logs are stored at `~/.flowfile/logs/scheduled_run_{run_id}.log`.
