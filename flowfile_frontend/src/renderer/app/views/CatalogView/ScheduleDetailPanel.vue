@@ -344,5 +344,4 @@ async function saveDescription() {
 .description-block .edit-description-input {
   flex: 1;
 }
-
 </style>

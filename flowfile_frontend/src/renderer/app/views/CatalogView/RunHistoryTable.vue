@@ -80,11 +80,7 @@
         <span class="col-version">Version</span>
         <span class="col-actions"></span>
       </div>
-      <div
-        v-for="run in runs"
-        :key="run.id"
-        class="table-row"
-      >
+      <div v-for="run in runs" :key="run.id" class="table-row">
         <div class="col-status">
           <span class="status-badge" :class="runStatusClass(run)">
             <i v-if="run.success === null" class="fa-solid fa-spinner fa-spin" />
@@ -107,10 +103,7 @@
         </div>
         <div class="col-schedule">
           <template v-if="run.schedule_id">
-            <span
-              class="schedule-link"
-              @click.stop="$emit('viewScheduleRuns', run.schedule_id)"
-            >
+            <span class="schedule-link" @click.stop="$emit('viewScheduleRuns', run.schedule_id)">
               {{
                 getScheduleDisplayName(
                   catalogStore.getScheduleById(run.schedule_id),
@@ -233,9 +226,7 @@ const totalPages = computed(() =>
   isScheduleMode.value ? catalogStore.scheduleRunsTotalPages : catalogStore.runsTotalPages,
 );
 const triggerFilter = computed(() =>
-  isScheduleMode.value
-    ? catalogStore.scheduleRunsTriggerFilter
-    : catalogStore.runsTriggerFilter,
+  isScheduleMode.value ? catalogStore.scheduleRunsTriggerFilter : catalogStore.runsTriggerFilter,
 );
 
 function handleFilterChange(value: string | null) {

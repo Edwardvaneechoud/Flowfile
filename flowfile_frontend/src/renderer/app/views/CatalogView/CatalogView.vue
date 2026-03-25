@@ -842,13 +842,14 @@ function applyRouteToStore() {
       catalogStore.selectedFlowId = null;
     }
 
-    // Run detail (can coexist with flow, or standalone)
-    if (runId !== null) {
-      if (runId !== catalogStore.selectedRunId) catalogStore.loadRunDetail(runId);
-    } else if (catalogStore.selectedRunDetail) {
-      catalogStore.selectedRunId = null;
-      catalogStore.selectedRunDetail = null;
-    }
+  }
+
+  // Run detail can coexist with any selection (schedule, flow, etc.)
+  if (runId !== null) {
+    if (runId !== catalogStore.selectedRunId) catalogStore.loadRunDetail(runId);
+  } else if (catalogStore.selectedRunDetail) {
+    catalogStore.selectedRunId = null;
+    catalogStore.selectedRunDetail = null;
   }
 }
 

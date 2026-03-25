@@ -117,6 +117,7 @@
         <span class="col-type">Type</span>
         <span class="col-last">Last Triggered</span>
         <span class="col-actions">Actions</span>
+        <span class="col-arrow"></span>
       </div>
       <div
         v-for="schedule in paginatedSchedules"
@@ -213,6 +214,15 @@
             <i class="fa-solid fa-trash" />
           </el-button>
         </div>
+        <div class="col-arrow">
+          <button
+            class="btn-icon-inline"
+            title="View schedule details"
+            @click.stop="$emit('selectSchedule', schedule.id)"
+          >
+            <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -246,7 +256,12 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { authService } from "../../services/auth.service";
 import type { FlowSchedule } from "../../types";
-import { formatDate, formatScheduleType, getScheduleDisplayName, scheduleIcon } from "./catalog-formatters";
+import {
+  formatDate,
+  formatScheduleType,
+  getScheduleDisplayName,
+  scheduleIcon,
+} from "./catalog-formatters";
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInElectronMode());
@@ -461,7 +476,7 @@ async function saveDescription(scheduleId: number) {
 /* Grid column template */
 .table-header,
 .table-row {
-  grid-template-columns: 120px 1fr 1fr 1fr 160px 160px 160px;
+  grid-template-columns: 120px 1fr 1fr 1fr 160px 160px 160px 40px;
 }
 
 /* Column overrides */
