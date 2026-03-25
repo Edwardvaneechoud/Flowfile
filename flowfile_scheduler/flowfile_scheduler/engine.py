@@ -199,6 +199,31 @@ class FlowScheduler:
     # ------------------------------------------------------------------
 
     def _process_table_trigger_schedules(self, db: Session) -> int:
+        """Detect table changes and launch table_trigger flows (poll path).
+
+        This is the **poll path** of the dual trigger mechanism for
+        ``table_trigger`` schedules.  It runs on every scheduler tick
+        (~30 s) and compares each watched table's ``updated_at`` against
+        the schedule's ``last_trigger_table_updated_at``.
+
+        A parallel **push path** exists in
+        ``CatalogService._fire_table_trigger_schedules`` (service.py).
+        The push path fires synchronously inside ``overwrite_table_data``
+        and is the primary/fast trigger.  This poll path serves as a
+        **safety net** — if the push path fails (exception, process crash,
+        network error, etc.) this method will still detect the stale
+        timestamp and launch the flow on the next tick.
+
+        Double-firing is prevented by two guards:
+
+        1. ``has_active_run`` (checked inside ``_maybe_launch``) — if the
+           push path already spawned a run, ``_maybe_launch`` sees it and
+           skips.
+        2. ``last_trigger_table_updated_at`` — the push path commits this
+           value equal to ``table.updated_at`` before returning, so this
+           method's ``table_updated > last_seen`` comparison evaluates to
+           ``False`` and the schedule is skipped.
+        """
         schedules: list[FlowSchedule] = (
             db.query(FlowSchedule)
             .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_trigger")

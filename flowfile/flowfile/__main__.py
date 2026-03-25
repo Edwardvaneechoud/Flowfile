@@ -108,17 +108,14 @@ def _complete_run_if_needed(
     if run_id is None:
         return
     try:
-        from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-        from flowfile_core.database.connection import get_db_context
+        from shared.run_completion import complete_run
 
-        with get_db_context() as db:
-            service = CatalogService(SQLAlchemyCatalogRepository(db))
-            service.complete_run(
-                run_id=run_id,
-                success=success,
-                nodes_completed=nodes_completed,
-                number_of_nodes=number_of_nodes,
-            )
+        complete_run(
+            run_id=run_id,
+            success=success,
+            nodes_completed=nodes_completed,
+            number_of_nodes=number_of_nodes,
+        )
     except Exception as e:
         print(f"Warning: Failed to update run record {run_id}: {e}", file=sys.stderr)
 

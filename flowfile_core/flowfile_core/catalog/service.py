@@ -1092,7 +1092,39 @@ class CatalogService:
         return self._table_to_out(table)
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
-        """Fire enabled table_trigger schedules watching *table_id*.
+        """Fire enabled table_trigger schedules watching *table_id* (push path).
+
+        This is the **push path** of the dual trigger mechanism for
+        ``table_trigger`` schedules.  It runs synchronously inside
+        ``overwrite_table_data`` — i.e. immediately when a catalog table's
+        data is replaced — so the downstream flow starts without waiting
+        for the next scheduler poll tick.
+
+        A parallel **poll path** exists in
+        ``FlowScheduler._process_table_trigger_schedules`` (engine.py).
+        The poll path runs every ~30 s and compares
+        ``CatalogTable.updated_at`` against
+        ``FlowSchedule.last_trigger_table_updated_at``.  It acts as a
+        **safety net**: if the push path fails (exception, process crash,
+        etc.) the poll path will still detect the table change on its next
+        tick and launch the flow.
+
+        Double-firing is prevented by two guards:
+
+        1. ``has_active_run`` — if the push path already spawned a
+           subprocess, the poll path (and any concurrent push) sees an
+           active run and skips the schedule.
+        2. ``last_trigger_table_updated_at`` — the push path commits
+           this timestamp (equal to the table's ``updated_at``) via
+           ``repo.update_schedule`` *before* returning.  When the poll
+           path later compares ``table.updated_at`` against this value
+           it finds them equal and skips the schedule.
+
+        There is a small race window (~poll interval) where the poll path
+        could run *after* the table update but *before* the push path
+        commits the timestamp.  In that scenario ``has_active_run`` is the
+        final safeguard — the subprocess spawned by the push path will
+        already have created a ``FlowRun`` record.
 
         Returns the number of flows launched.
         """
