@@ -205,8 +205,8 @@ function formatCell(value: any): string {
 
 <style scoped>
 .table-detail {
-  padding-right: 10px;
-  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 /* ========== Header ========== */

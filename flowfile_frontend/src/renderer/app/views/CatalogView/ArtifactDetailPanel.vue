@@ -171,7 +171,8 @@ function formatSize(bytes: number | null): string {
 
 <style scoped>
 .artifact-detail {
-  max-width: 900px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .back-btn {

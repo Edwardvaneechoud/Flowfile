@@ -194,7 +194,8 @@ const formattedSnapshot = computed(() => {
 
 <style scoped>
 .run-detail {
-  max-width: 900px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .detail-header {

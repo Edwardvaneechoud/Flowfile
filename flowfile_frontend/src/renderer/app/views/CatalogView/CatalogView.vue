@@ -7,7 +7,7 @@
         :key="tab.key"
         class="catalog-tab"
         :class="{ active: catalogStore.activeTab === tab.key }"
-        @click="catalogStore.setActiveTab(tab.key)"
+        @click="handleTabClick(tab.key)"
       >
         <i :class="tab.icon"></i>
         <span>{{ tab.label }}</span>
@@ -96,10 +96,7 @@
         <RunDetailPanel
           v-if="catalogStore.selectedRunDetail"
           :run="catalogStore.selectedRunDetail"
-          @close="
-            catalogStore.selectedRunId = null;
-            catalogStore.selectedRunDetail = null;
-          "
+          @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
         />
@@ -108,7 +105,7 @@
           v-else-if="catalogStore.selectedArtifact"
           :artifact="catalogStore.selectedArtifact"
           :versions="selectedArtifactVersions"
-          @close="catalogStore.clearArtifactSelection()"
+          @close="handleCloseDetail"
           @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Table detail view -->
@@ -117,7 +114,7 @@
           :table="catalogStore.selectedTable"
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
-          @close="catalogStore.clearTableSelection()"
+          @close="handleCloseDetail"
           @delete-table="handleDeleteTable($event)"
           @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
           @navigate-to-flow="navigateToFlow($event)"
@@ -128,8 +125,8 @@
           :flow="catalogStore.selectedFlow"
           :runs="catalogStore.flowRuns"
           :artifacts="catalogStore.flowArtifacts"
-          @close="catalogStore.selectFlow(null)"
-          @view-run="catalogStore.loadRunDetail($event)"
+          @close="handleCloseDetail"
+          @view-run="handleViewRun"
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
           @open-flow="openFlowInDesigner($event)"
@@ -143,7 +140,7 @@
         <!-- Run history overview -->
         <RunOverviewPanel
           v-else-if="catalogStore.activeTab === 'runs'"
-          @view-run="catalogStore.loadRunDetail($event)"
+          @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
         />
         <!-- Schedule overview -->
@@ -170,7 +167,7 @@
               :key="flow.id"
               :flow="flow"
               :selected="catalogStore.selectedFlowId === flow.id"
-              @select="catalogStore.selectFlow(flow.id)"
+              @select="selectFlow(flow.id)"
               @toggle-favorite="catalogStore.toggleFavorite(flow.id)"
             />
           </div>
@@ -183,7 +180,7 @@
           :tables="catalogStore.allTables"
           :favorites="catalogStore.favorites"
           :runs="catalogStore.runs"
-          @view-run="catalogStore.loadRunDetail($event)"
+          @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
           @view-table="selectTable($event)"
           @create-schedule="showCreateSchedule = true"
@@ -270,15 +267,25 @@
             produced by flows are versioned and linked back to the run that created them.
           </p>
         </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-calendar-days"></i>
+            <h4>Schedules</h4>
+          </div>
+          <p>
+            Automate flow execution with cron-based or table-trigger schedules. Monitor active runs
+            and manage schedules from the Schedules tab.
+          </p>
+        </div>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
@@ -305,6 +312,7 @@ import type {
 } from "../../types";
 
 const router = useRouter();
+const route = useRoute();
 
 const catalogStore = useCatalogStore();
 const flowStore = useFlowStore();
@@ -391,20 +399,44 @@ async function refreshAll() {
   }
 }
 
+// --- Route-based navigation ---
+
+function handleTabClick(tab: CatalogTab) {
+  router.push({ name: "catalog", query: { tab } });
+}
+
 function selectFlow(flowId: number) {
-  catalogStore.clearArtifactSelection();
-  catalogStore.selectFlow(flowId);
+  router.push({
+    name: "catalog",
+    query: { tab: catalogStore.activeTab, flowId: String(flowId) },
+  });
 }
 
 function selectTable(tableId: number) {
-  catalogStore.clearArtifactSelection();
-  catalogStore.selectTable(tableId);
+  router.push({
+    name: "catalog",
+    query: { tab: catalogStore.activeTab, tableId: String(tableId) },
+  });
 }
 
 function selectArtifact(artifactId: number) {
-  catalogStore.selectedFlowId = null;
-  catalogStore.clearTableSelection();
-  catalogStore.selectArtifact(artifactId);
+  router.push({
+    name: "catalog",
+    query: { tab: catalogStore.activeTab, artifactId: String(artifactId) },
+  });
+}
+
+function handleViewRun(runId: number) {
+  const q: Record<string, string> = { tab: catalogStore.activeTab };
+  if (catalogStore.selectedFlowId !== null) {
+    q.flowId = String(catalogStore.selectedFlowId);
+  }
+  q.runId = String(runId);
+  router.push({ name: "catalog", query: q });
+}
+
+function handleCloseDetail() {
+  router.back();
 }
 
 /** Collect all versions of the selected artifact from the tree. */
@@ -539,10 +571,10 @@ async function openFlowInDesigner(flowPath: string) {
 }
 
 function navigateToFlow(registrationId: number) {
-  catalogStore.selectedRunId = null;
-  catalogStore.selectedRunDetail = null;
-  catalogStore.selectFlow(registrationId);
-  catalogStore.setActiveTab("catalog");
+  router.push({
+    name: "catalog",
+    query: { tab: "catalog", flowId: String(registrationId) },
+  });
 }
 
 function handleAddFlowSchedule(flowId: number) {
@@ -655,8 +687,70 @@ async function handleCancelFlowRun(flowId: number) {
   }
 }
 
+// --- Route → Store sync ---
+
+function applyRouteToStore() {
+  const q = route.query;
+  const tab = (q.tab as CatalogTab) || "runs";
+  const flowId = q.flowId ? Number(q.flowId) : null;
+  const runId = q.runId ? Number(q.runId) : null;
+  const artifactId = q.artifactId ? Number(q.artifactId) : null;
+  const tableId = q.tableId ? Number(q.tableId) : null;
+
+  // Update tab (set directly to avoid setActiveTab clearing selections)
+  if (catalogStore.activeTab !== tab) {
+    catalogStore.activeTab = tab;
+    if (tab === "favorites") catalogStore.loadFavorites();
+    else if (tab === "runs" && !flowId) catalogStore.loadRuns();
+    else if (tab === "schedules") catalogStore.loadSchedules();
+    else if (tab === "catalog") catalogStore.loadTree();
+  }
+
+  // Handle selections (mutually exclusive: table, artifact, or flow+run)
+  if (tableId !== null) {
+    if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
+    if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
+  } else if (artifactId !== null) {
+    if (artifactId !== catalogStore.selectedArtifactId) {
+      catalogStore.selectedFlowId = null;
+      catalogStore.clearTableSelection();
+      catalogStore.selectArtifact(artifactId);
+    }
+  } else {
+    // Clear table and artifact if not in URL
+    if (catalogStore.selectedTable) catalogStore.clearTableSelection();
+    if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
+
+    // Flow selection (set manually to avoid selectFlow clearing run detail)
+    if (flowId !== null) {
+      if (flowId !== catalogStore.selectedFlowId) {
+        catalogStore.selectedFlowId = flowId;
+        catalogStore.clearTableSelection();
+        catalogStore.clearArtifactSelection();
+        catalogStore.loadRuns(flowId);
+        catalogStore.loadFlowArtifacts(flowId);
+        catalogStore.loadFlowSchedules(flowId);
+      }
+    } else if (catalogStore.selectedFlowId !== null) {
+      catalogStore.selectedFlowId = null;
+    }
+
+    // Run detail (can coexist with flow, or standalone)
+    if (runId !== null) {
+      if (runId !== catalogStore.selectedRunId) catalogStore.loadRunDetail(runId);
+    } else if (catalogStore.selectedRunDetail) {
+      catalogStore.selectedRunId = null;
+      catalogStore.selectedRunDetail = null;
+    }
+  }
+}
+
+// Watch route changes (handles browser back/forward)
+watch(() => route.query, applyRouteToStore);
+
 onMounted(async () => {
   await catalogStore.initialize();
+  applyRouteToStore(); // Restore state from URL after data is loaded
   try {
     defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
   } catch {
@@ -890,7 +984,8 @@ onUnmounted(() => {
 
 /* ========== Favorites Panel ========== */
 .favorites-panel {
-  max-width: 600px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .favorites-panel h2 {

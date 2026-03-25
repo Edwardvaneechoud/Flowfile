@@ -626,7 +626,8 @@ async function handleDeleteSchedule(id: number) {
 
 <style scoped>
 .flow-detail {
-  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .back-btn {
@@ -877,7 +878,6 @@ async function handleDeleteSchedule(id: number) {
   grid-template-columns: repeat(4, 1fr);
   gap: var(--spacing-3);
   margin-bottom: var(--spacing-4);
-  max-width: 800px;
 }
 
 .summary-cards-3 {
@@ -937,7 +937,6 @@ async function handleDeleteSchedule(id: number) {
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   overflow: hidden;
-  max-width: 800px;
 }
 
 .table-header {

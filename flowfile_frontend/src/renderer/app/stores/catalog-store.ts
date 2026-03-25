@@ -80,7 +80,7 @@ export const useCatalogStore = defineStore("catalog", {
     flowSchedules: [],
     activeRuns: [],
     schedulerStatus: null,
-    activeTab: "catalog",
+    activeTab: "runs",
     loading: false,
     error: null,
   }),

@@ -190,6 +190,54 @@
       </div>
     </div>
 
+    <!-- Getting started / info section -->
+    <div v-if="!activeSection" class="info-section">
+      <h3>Getting Started</h3>
+      <div class="info-cards">
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-folder-tree"></i>
+            <h4>Organization</h4>
+          </div>
+          <p>
+            Flows and tables are organized into <strong>catalogs</strong> and
+            <strong>schemas</strong>. Use catalogs for broad groupings (e.g. by team or domain) and
+            schemas for finer separation within them.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <h4>Run History</h4>
+          </div>
+          <p>
+            Every registered flow tracks its executions automatically. View status, duration, and
+            node-level progress for each run, or open a snapshot to inspect a past state.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-table"></i>
+            <h4>Tables &amp; Artifacts</h4>
+          </div>
+          <p>
+            Register datasets as catalog tables to preview and track them centrally. Artifacts
+            produced by flows are versioned and linked back to the run that created them.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-calendar-days"></i>
+            <h4>Schedules</h4>
+          </div>
+          <p>
+            Automate flow execution with cron-based or table-trigger schedules. Monitor active runs
+            and manage schedules from the Schedules tab.
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- Empty state -->
     <div v-if="!stats || (stats.total_flows === 0 && stats.total_runs === 0)" class="welcome">
       <i class="fa-solid fa-folder-tree welcome-icon"></i>
@@ -271,6 +319,7 @@ function formatNumber(n: number | null): string {
 <style scoped>
 .stats-panel {
   max-width: 1000px;
+  margin: 0 auto;
 }
 
 .stats-panel h2 {
@@ -404,6 +453,53 @@ function formatNumber(n: number | null): string {
 .item-meta {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* Info Section */
+.info-section {
+  margin-bottom: var(--spacing-5);
+}
+
+.info-section h3 {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--spacing-3) 0;
+  color: var(--color-text-primary);
+}
+
+.info-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-3);
+}
+
+.info-card {
+  padding: var(--spacing-4);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+.info-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
+  color: var(--color-primary);
+}
+
+.info-card-header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.info-card p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
 }
 
 /* Welcome */

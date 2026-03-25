@@ -310,7 +310,8 @@ async function saveDescription(scheduleId: number) {
 
 <style scoped>
 .schedule-overview {
-  max-width: 900px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .schedule-header {

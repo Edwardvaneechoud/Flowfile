@@ -162,6 +162,7 @@ function runStatusText(run: FlowRun): string {
 <style scoped>
 .run-overview {
   max-width: 1000px;
+  margin: 0 auto;
 }
 
 .run-overview h2 {
