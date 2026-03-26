@@ -574,37 +574,24 @@ class FlowFrame:
                     "Cannot execute Polars operation: method_name is missing and "
                     "could not be inferred for serialization fallback."
                 )
-            udf_lost = False
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
-                    serialized_value_for_code = result_lazyframe_or_expr.serialize(format="json")
-                    # Verify the serialized plan preserves UDFs by deserializing and
-                    # checking the plan for empty function calls like ".()".
-                    deserialized_lf = pl.LazyFrame.deserialize(
-                        BytesIO(serialized_value_for_code.encode("utf-8")), format="json"
+                    import base64
+
+                    serialized_bytes = result_lazyframe_or_expr.serialize()
+                    b64_str = base64.b64encode(serialized_bytes).decode("ascii")
+                    polars_code_for_node = "\n".join(
+                        [
+                            f"serialized_value = base64.b64decode('{b64_str}')",
+                            "buffer = BytesIO(serialized_value)",
+                            "output_df = pl.LazyFrame.deserialize(buffer)",
+                        ]
                     )
-                    if ".()" in deserialized_lf.explain():
-                        logger.warning(
-                            f"Transformation '{effective_method_name}' contains UDFs that were lost during "
-                            "serialization. Using passthrough code and keeping live result."
-                        )
-                        polars_code_for_node = "output_df = input_df"
-                        udf_lost = True
-                        self._pending_udf_result = result_lazyframe_or_expr
-                    else:
-                        polars_code_for_node = "\n".join(
-                            [
-                                f"serialized_value = r'''{serialized_value_for_code}'''",
-                                "buffer = BytesIO(serialized_value.encode('utf-8'))",
-                                "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
-                            ]
-                        )
-                    if not udf_lost:
-                        logger.warning(
-                            f"Transformation '{effective_method_name}' uses non-serializable elements. "
-                            "Falling back to serializing the resulting Polars LazyFrame object."
-                            "This will result in a breaking graph when using the the ui."
-                        )
+                    logger.warning(
+                        f"Transformation '{effective_method_name}' uses non-serializable elements. "
+                        "Falling back to serializing the resulting Polars LazyFrame object. "
+                        "This will result in a breaking graph when using the the ui."
+                    )
                 else:
                     logger.error(
                         f"Fallback for non-convertible code for method '{effective_method_name}' "

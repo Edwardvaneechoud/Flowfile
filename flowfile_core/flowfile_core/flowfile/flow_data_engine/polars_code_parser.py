@@ -1,4 +1,5 @@
 import ast
+import base64
 import textwrap
 import time
 from collections.abc import Callable
@@ -194,6 +195,7 @@ class PolarsCodeParser:
             "None": None,
             "time": time,
             "BytesIO": BytesIO,
+            "base64": base64,
             "datetime": datetime,
         }
 
