@@ -45,10 +45,7 @@ defineProps<{
   selected: boolean;
 }>();
 
-defineEmits<{
-  select: [];
-  toggleFavorite: [];
-}>();
+defineEmits(["select", "toggleFavorite"]);
 </script>
 
 <style scoped>

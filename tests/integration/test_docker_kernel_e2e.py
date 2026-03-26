@@ -52,6 +52,7 @@ def _dump_kernel_logs(kernel_id: str) -> str:
     )
     return f"\n{'=' * 60}\nkernel ({kernel_id}) logs:\n{'=' * 60}\n{result.stdout}\n{result.stderr}"
 
+
 pytestmark = pytest.mark.docker_integration
 
 KERNEL_ID = "e2e-test"
@@ -117,7 +118,7 @@ FLOW_JSON = {
                 "python_script_input": {
                     "code": (
                         "\nimport numpy as np\nimport polars as pl\n\n"
-                        'df = flowfile.read_input().collect()\n'
+                        "df = flowfile.read_input().collect()\n"
                         'X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])\n'
                         'y_vals = df["y"].to_numpy()\n'
                         "coeffs = np.linalg.lstsq(X, y_vals, rcond=None)[0]\n"
@@ -147,7 +148,7 @@ FLOW_JSON = {
                 "python_script_input": {
                     "code": (
                         "\nimport numpy as np\nimport polars as pl\n\n"
-                        'df = flowfile.read_input().collect()\n'
+                        "df = flowfile.read_input().collect()\n"
                         'model = flowfile.read_artifact("linear_model")\n'
                         'coeffs = np.array(model["coefficients"])\n'
                         'X = np.column_stack([df["x1"].to_numpy(), df["x2"].to_numpy(), np.ones(len(df))])\n'
@@ -226,6 +227,10 @@ class TestDockerKernelE2E:
         # Step 9: run the flow
         resp = auth_client.post("/flow/run/", params={"flow_id": flow_id})
         assert resp.status_code == 200, f"Failed to start flow: {resp.text}"
+        # Give the background task time to start run_graph() and set is_running=True
+        # before we begin polling. Without this the first poll can see is_running=False
+        # (the background task hasn't started yet) and return 200 with empty results.
+        time.sleep(3)
         # Poll until finished (200 = done, 202 = still running)
         deadline = time.monotonic() + 180
         run_info = None
@@ -238,10 +243,7 @@ class TestDockerKernelE2E:
         else:
             logs = _dump_compose_logs(["flowfile-core"])
             kernel_logs = _dump_kernel_logs(kernel_ready)
-            pytest.fail(
-                f"Flow did not finish within timeout. Last status: {run_info}"
-                f"{logs}{kernel_logs}"
-            )
+            pytest.fail(f"Flow did not finish within timeout. Last status: {run_info}" f"{logs}{kernel_logs}")
 
         # Step 10: validate results
         assert run_info["success"] is True, (

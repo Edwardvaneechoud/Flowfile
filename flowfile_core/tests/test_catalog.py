@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import init_db
 from flowfile_core.database.models import (
@@ -19,11 +20,11 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    FlowSchedule,
+    ScheduleTriggerTable,
     User,
 )
-from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.routes.routes import _auto_register_flow
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,6 +50,8 @@ client = _get_test_client()
 def _cleanup_catalog():
     """Remove all catalog-related rows so tests start clean."""
     with get_db_context() as db:
+        db.query(ScheduleTriggerTable).delete()
+        db.query(FlowSchedule).delete()
         db.query(CatalogTableReadLink).delete()
         db.query(CatalogTable).delete()
         db.query(FlowFollow).delete()
@@ -367,11 +370,73 @@ class TestRuns:
     def test_list_runs_empty(self):
         resp = client.get("/catalog/runs")
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert isinstance(data["items"], list)
+        assert data["total"] == 0
 
     def test_get_run_not_found(self):
         resp = client.get("/catalog/runs/999999")
         assert resp.status_code == 404
+
+    def test_list_runs_pagination(self):
+        """Create multiple runs and verify pagination works."""
+        from datetime import datetime, timezone
+
+        cat = client.post("/catalog/namespaces", json={"name": "RunCat"}).json()
+        schema = client.post(
+            "/catalog/namespaces", json={"name": "RunSch", "parent_id": cat["id"]}
+        ).json()
+        flow = client.post(
+            "/catalog/flows",
+            json={"name": "run_flow", "flow_path": "/tmp/run_flow.yaml", "namespace_id": schema["id"]},
+        ).json()
+
+        # Create 5 runs directly in DB
+        with get_db_context() as db:
+            for i in range(5):
+                run = FlowRun(
+                    registration_id=flow["id"],
+                    flow_name="run_flow",
+                    flow_path="/tmp/run_flow.yaml",
+                    user_id=1,
+                    started_at=datetime.now(timezone.utc),
+                    number_of_nodes=3,
+                    run_type="in_designer_run",
+                )
+                db.add(run)
+            db.commit()
+
+        # Page 1: limit=2, offset=0
+        resp = client.get("/catalog/runs", params={"limit": 2, "offset": 0})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["items"]) == 2
+        assert data["total"] == 5
+
+        # Page 2: limit=2, offset=2
+        resp = client.get("/catalog/runs", params={"limit": 2, "offset": 2})
+        data = resp.json()
+        assert len(data["items"]) == 2
+        assert data["total"] == 5
+
+        # Page 3: limit=2, offset=4
+        resp = client.get("/catalog/runs", params={"limit": 2, "offset": 4})
+        data = resp.json()
+        assert len(data["items"]) == 1
+        assert data["total"] == 5
+
+        # Filter by registration_id
+        resp = client.get("/catalog/runs", params={"registration_id": flow["id"]})
+        data = resp.json()
+        assert data["total"] == 5
+
+        # Filter by non-existent registration_id
+        resp = client.get("/catalog/runs", params={"registration_id": 99999})
+        data = resp.json()
+        assert data["total"] == 0
+        assert len(data["items"]) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -870,3 +935,143 @@ class TestServiceLineageEnrichment:
         assert len(flow_out.tables_produced) >= 1
         table_ids = [t.id for t in flow_out.tables_produced]
         assert table_id in table_ids
+
+
+# ---------------------------------------------------------------------------
+# Push-driven table trigger tests
+# ---------------------------------------------------------------------------
+
+
+class TestPushTableTrigger:
+    """Tests for push-driven table_trigger schedule firing on overwrite_table_data."""
+
+    @staticmethod
+    def _setup_table_and_schedule(schedule_type="table_trigger"):
+        """Create namespace, flow, table, and schedule. Returns (schema_id, flow_id, table_id, schedule_id)."""
+        import tempfile
+
+        import polars as pl
+
+        # Write a real parquet file so overwrite_table_data can read it
+        tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        pl.DataFrame({"a": [1, 2, 3]}).write_parquet(tmp.name)
+
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="PushCat", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+
+            schema = CatalogNamespace(name="PushSch", level=1, parent_id=cat.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            db.refresh(schema)
+
+            flow = FlowRegistration(
+                name="triggered_flow",
+                flow_path="/tmp/triggered.yaml",
+                namespace_id=schema.id,
+                owner_id=1,
+            )
+            db.add(flow)
+            db.commit()
+            db.refresh(flow)
+
+            table = CatalogTable(
+                name="watched_table",
+                namespace_id=schema.id,
+                owner_id=1,
+                file_path=tmp.name,
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+
+            schedule = FlowSchedule(
+                registration_id=flow.id,
+                owner_id=1,
+                enabled=True,
+                schedule_type=schedule_type,
+                trigger_table_id=table.id if schedule_type == "table_trigger" else None,
+            )
+            db.add(schedule)
+            db.commit()
+            db.refresh(schedule)
+
+            return schema.id, flow.id, table.id, schedule.id, tmp.name
+
+    def test_overwrite_fires_push_trigger(self, monkeypatch):
+        """Overwriting a table should create a FlowRun for its table_trigger schedule."""
+        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
+
+        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            svc.overwrite_table_data(table_id, parquet_path)
+
+            runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
+            assert len(runs) == 1
+
+    def test_push_trigger_skips_active_run(self, monkeypatch):
+        """If the flow already has an active run, no new FlowRun should be created."""
+        from datetime import datetime, timezone
+
+        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
+
+        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+
+        # Create an active (unfinished) run
+        with get_db_context() as db:
+            active_run = FlowRun(
+                registration_id=flow_id,
+                flow_name="triggered_flow",
+                flow_path="/tmp/triggered.yaml",
+                user_id=1,
+                started_at=datetime.now(timezone.utc),
+                number_of_nodes=0,
+                run_type="scheduled",
+            )
+            db.add(active_run)
+            db.commit()
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            svc.overwrite_table_data(table_id, parquet_path)
+
+            runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
+            # Only the pre-existing active run, no new one
+            assert len(runs) == 1
+
+    def test_push_trigger_updates_schedule_timestamps(self, monkeypatch):
+        """After firing, the schedule's last_triggered_at and last_trigger_table_updated_at should be set."""
+        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
+
+        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            svc.overwrite_table_data(table_id, parquet_path)
+
+            schedule = db.query(FlowSchedule).get(schedule_id)
+            assert schedule.last_triggered_at is not None
+            assert schedule.last_trigger_table_updated_at is not None
+
+    def test_push_trigger_ignores_table_set_triggers(self, monkeypatch):
+        """table_set_trigger schedules should NOT be fired by the push mechanism."""
+        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule(
+            schedule_type="table_set_trigger"
+        )
+
+        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            svc.overwrite_table_data(table_id, parquet_path)
+
+            runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
+            assert len(runs) == 0

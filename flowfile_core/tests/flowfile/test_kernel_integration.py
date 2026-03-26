@@ -430,6 +430,74 @@ flowfile.publish_output(df)
         # Should fail because no kernel is selected
         assert not run_info.success
 
+    def test_python_script_without_worker(self, kernel_manager: tuple[KernelManager, str]):
+        """
+        python_script node succeeds when OFFLOAD_TO_WORKER is False
+        (mimics ``flowfile run flow`` CLI mode where no worker is running).
+        """
+        manager, kernel_id = kernel_manager
+        import flowfile_core.kernel as _kernel_mod
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        _prev = _kernel_mod._manager
+        _kernel_mod._manager = manager
+
+        # Disable worker offloading (same as flowfile run flow does)
+        _prev_offload = bool(OFFLOAD_TO_WORKER)
+        OFFLOAD_TO_WORKER.set(False)
+
+        try:
+            graph = _create_graph(execution_location="local")
+
+            # Node 1: manual input
+            data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+            node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input")
+            graph.add_node_promise(node_promise)
+            graph.add_manual_input(
+                input_schema.NodeManualInput(
+                    flow_id=1,
+                    node_id=1,
+                    raw_data_format=input_schema.RawData.from_pylist(data),
+                )
+            )
+
+            # Node 2: python_script passthrough
+            node_promise_2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script")
+            graph.add_node_promise(node_promise_2)
+
+            code = """
+df = flowfile.read_input()
+flowfile.publish_output(df)
+"""
+            graph.add_python_script(
+                input_schema.NodePythonScript(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_ids=[1],
+                    python_script_input=input_schema.PythonScriptInput(
+                        code=code,
+                        kernel_id=kernel_id,
+                    ),
+                )
+            )
+
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+            run_info = graph.run_graph()
+            _handle_run_info(run_info)
+
+            result = graph.get_node(2).get_resulting_data()
+            assert result is not None
+            df = result.data_frame
+            if hasattr(df, "collect"):
+                df = df.collect()
+            assert len(df) == 2
+            assert set(df.columns) >= {"name", "age"}
+
+        finally:
+            OFFLOAD_TO_WORKER.set(_prev_offload)
+            _kernel_mod._manager = _prev
+
 
 # ---------------------------------------------------------------------------
 # Tests — ArtifactContext integration (requires real kernel container)

@@ -338,3 +338,21 @@ def get_global_artifacts_directory() -> str:
 def get_artifact_staging_directory() -> str:
     """Get artifact staging directory path as string."""
     return str(storage.artifact_staging_directory)
+
+
+def get_database_url() -> str:
+    """Resolve the SQLite database URL for the Flowfile catalog.
+
+    Priority:
+    1. ``FLOWFILE_DB_PATH`` env var (explicit override)
+    2. ``TESTING=True`` env var → temp directory test DB
+    3. Default: ``<storage.database_directory>/flowfile.db``
+    """
+    custom = os.environ.get("FLOWFILE_DB_PATH")
+    if custom:
+        return f"sqlite:///{custom}"
+
+    if os.environ.get("TESTING") == "True":
+        return f"sqlite:///{storage.temp_directory / 'test_flowfile.db'}"
+
+    return f"sqlite:///{storage.database_directory / 'flowfile.db'}"

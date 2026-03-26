@@ -191,9 +191,7 @@
                 v-model="connection.azureClientSecret"
                 :type="showAzureSecret ? 'text' : 'password'"
                 class="form-input"
-                :placeholder="
-                  props.isEditing ? 'Leave blank to keep existing' : 'Client secret'
-                "
+                :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'Client secret'"
                 :required="connection.authMethod === 'service_principal'"
               />
               <button

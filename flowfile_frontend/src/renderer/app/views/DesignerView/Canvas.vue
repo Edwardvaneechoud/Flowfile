@@ -238,11 +238,13 @@ async function onConnect(params: Connection & { label?: string }) {
     const nodeConnection: NodeConnection = {
       input_connection: {
         node_id: parseInt(params.target, 10),
-        connection_class: params.targetHandle as NodeConnection["input_connection"]["connection_class"],
+        connection_class:
+          params.targetHandle as NodeConnection["input_connection"]["connection_class"],
       },
       output_connection: {
         node_id: parseInt(params.source, 10),
-        connection_class: params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
+        connection_class:
+          params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
       },
     };
     const response = await connectNode(flowStore.flowId, nodeConnection);

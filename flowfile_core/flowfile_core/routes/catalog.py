@@ -21,6 +21,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
     CatalogService,
     FavoriteNotFoundError,
+    FlowAlreadyRunningError,
     FlowHasArtifactsError,
     FlowNotFoundError,
     FollowNotFoundError,
@@ -30,15 +31,19 @@ from flowfile_core.catalog import (
     NestingLimitError,
     NoSnapshotError,
     RunNotFoundError,
+    ScheduleNotFoundError,
     SQLAlchemyCatalogRepository,
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
+from flowfile_core.database.models import SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
+    ActiveFlowRun,
     CatalogStats,
     CatalogTableCreate,
     CatalogTableOut,
@@ -50,12 +55,17 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRegistrationUpdate,
     FlowRunDetail,
     FlowRunOut,
+    FlowScheduleCreate,
+    FlowScheduleOut,
+    FlowScheduleUpdate,
     FollowOut,
     GlobalArtifactOut,
     NamespaceCreate,
     NamespaceOut,
     NamespaceTree,
     NamespaceUpdate,
+    PaginatedFlowRuns,
+    SchedulerStatusOut,
     TableFavoriteOut,
 )
 from shared.storage_config import storage
@@ -261,14 +271,18 @@ def list_flow_artifacts(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/runs", response_model=list[FlowRunOut])
+@router.get("/runs", response_model=PaginatedFlowRuns)
 def list_runs(
     registration_id: int | None = None,
+    schedule_id: int | None = None,
+    run_type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_runs(registration_id=registration_id, limit=limit, offset=offset)
+    return service.list_runs(
+        registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, limit=limit, offset=offset
+    )
 
 
 @router.get("/runs/{run_id}", response_model=FlowRunDetail)
@@ -281,6 +295,34 @@ def get_run_detail(
         return service.get_run_detail(run_id)
     except RunNotFoundError:
         raise HTTPException(404, "Run not found") from None
+
+
+# ---------------------------------------------------------------------------
+# Run Logs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/runs/{run_id}/log")
+def get_run_log(
+    run_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the log content for a scheduled run."""
+    from pathlib import Path
+
+    try:
+        run = service.get_run_detail(run_id)
+    except RunNotFoundError:
+        raise HTTPException(404, "Run not found") from None
+
+    if run.run_type not in ("scheduled", "manual"):
+        raise HTTPException(404, "Logs are only available for scheduled/manual runs")
+
+    log_file = Path.home() / ".flowfile" / "logs" / f"scheduled_run_{run_id}.log"
+    if not log_file.exists():
+        raise HTTPException(404, "Log file not found")
+
+    return {"log": log_file.read_text(errors="replace")}
 
 
 # ---------------------------------------------------------------------------
@@ -553,3 +595,196 @@ def get_catalog_stats(
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.get_catalog_stats(user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Schedules
+# ---------------------------------------------------------------------------
+
+
+@router.get("/schedules", response_model=list[FlowScheduleOut])
+def list_schedules(
+    registration_id: int | None = None,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List schedules, optionally filtered by flow registration."""
+    return service.list_schedules(registration_id=registration_id)
+
+
+@router.post("/schedules", response_model=FlowScheduleOut, status_code=201)
+def create_schedule(
+    body: FlowScheduleCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.create_schedule(
+            registration_id=body.registration_id,
+            owner_id=current_user.id,
+            schedule_type=body.schedule_type,
+            interval_seconds=body.interval_seconds,
+            trigger_table_id=body.trigger_table_id,
+            trigger_table_ids=body.trigger_table_ids,
+            enabled=body.enabled,
+            name=body.name,
+            description=body.description,
+        )
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found") from None
+    except TableNotFoundError:
+        raise HTTPException(404, "Trigger table not found") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.get("/schedules/{schedule_id}", response_model=FlowScheduleOut)
+def get_schedule(
+    schedule_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.get_schedule(schedule_id)
+    except ScheduleNotFoundError:
+        raise HTTPException(404, "Schedule not found") from None
+
+
+@router.put("/schedules/{schedule_id}", response_model=FlowScheduleOut)
+def update_schedule(
+    schedule_id: int,
+    body: FlowScheduleUpdate,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.update_schedule(
+            schedule_id=schedule_id,
+            enabled=body.enabled,
+            interval_seconds=body.interval_seconds,
+            name=body.name,
+            description=body.description,
+        )
+    except ScheduleNotFoundError:
+        raise HTTPException(404, "Schedule not found") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_schedule(
+    schedule_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        service.delete_schedule(schedule_id)
+    except ScheduleNotFoundError:
+        raise HTTPException(404, "Schedule not found") from None
+
+
+@router.post("/flows/{flow_id}/run", response_model=FlowRunOut)
+def run_flow_now(
+    flow_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Trigger a registered flow immediately without needing a schedule."""
+    try:
+        return service.run_flow_now(registration_id=flow_id, user_id=current_user.id)
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found") from None
+    except FlowAlreadyRunningError:
+        raise HTTPException(409, "Flow already has an active run") from None
+
+
+@router.post("/schedules/{schedule_id}/run-now", response_model=FlowRunOut)
+def trigger_schedule_now(
+    schedule_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Manually trigger a scheduled flow immediately."""
+    try:
+        return service.trigger_schedule_now(schedule_id=schedule_id, user_id=current_user.id)
+    except ScheduleNotFoundError:
+        raise HTTPException(404, "Schedule not found") from None
+    except FlowNotFoundError:
+        raise HTTPException(404, "Flow not found") from None
+    except FlowAlreadyRunningError:
+        raise HTTPException(409, "Flow already has an active run") from None
+
+
+# ---------------------------------------------------------------------------
+# Active Runs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/active-runs", response_model=list[ActiveFlowRun])
+def list_active_runs(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List all currently running flows."""
+    return service.list_active_runs()
+
+
+@router.post("/runs/{run_id}/cancel", status_code=204)
+def cancel_run(
+    run_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Cancel a running flow by marking it as failed."""
+    try:
+        service.cancel_run(run_id)
+    except RunNotFoundError:
+        raise HTTPException(404, "Run not found") from None
+
+
+# ---------------------------------------------------------------------------
+# Scheduler management
+# ---------------------------------------------------------------------------
+
+
+@router.get("/scheduler/status", response_model=SchedulerStatusOut)
+def scheduler_status(
+    db=Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Return the current scheduler lock status."""
+    lock = db.get(SchedulerLock, 1)
+    if lock is None:
+        return SchedulerStatusOut(active=False)
+
+    embedded = get_scheduler()
+    is_embedded = embedded is not None and getattr(embedded, "_holder_id", None) == lock.holder_id
+
+    return SchedulerStatusOut(
+        active=True,
+        holder_id=lock.holder_id,
+        started_at=lock.started_at,
+        heartbeat_at=lock.heartbeat_at,
+        is_embedded=is_embedded,
+    )
+
+
+@router.post("/scheduler/start", status_code=200)
+async def scheduler_start(current_user=Depends(get_current_active_user)):
+    """Start the embedded scheduler. No-op if already running."""
+    scheduler = get_scheduler()
+    if scheduler is not None:
+        return {"message": "Scheduler already running"}
+
+    scheduler = FlowScheduler()
+    await scheduler.start()
+    set_scheduler(scheduler)
+    return {"message": "Scheduler started"}
+
+
+@router.post("/scheduler/stop", status_code=200)
+async def scheduler_stop(current_user=Depends(get_current_active_user)):
+    """Stop the embedded scheduler. No-op if not running."""
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return {"message": "Scheduler not running"}
+
+    await scheduler.stop()
+    set_scheduler(None)
+    return {"message": "Scheduler stopped"}

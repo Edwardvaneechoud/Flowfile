@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.7.2"
+version = "0.8.0"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -9,6 +9,7 @@ packages = [
     { include = "flowfile_worker", from = "flowfile_worker" },
     { include = "build_backends", from = "build_backends" },
     { include = "flowfile_frame", from = "flowfile_frame" },
+    { include = "flowfile_scheduler", from = "flowfile_scheduler" },
     { include = "shared" },
     { include = "test_utils" },
     { include = "flowfile", from = "flowfile"},
@@ -72,6 +73,7 @@ build_backends_prd = "build_backends.main_prd:main"
 start_postgres = "test_utils.postgres.commands:start_postgres"
 stop_postgres = "test_utils.postgres.commands:stop_postgres"
 flowfile = "flowfile.__main__:main"
+flowfile_scheduler = "flowfile_scheduler.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
 flowfile-migrate = "tools.migrate.__main__:main"
@@ -165,7 +167,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.isort]
 # Group imports: standard library, third-party, local
-known-first-party = ["flowfile", "flowfile_core", "flowfile_worker", "flowfile_frame", "shared", "test_utils", "tools", "build_backends"]
+known-first-party = ["flowfile", "flowfile_core", "flowfile_worker", "flowfile_frame", "flowfile_scheduler", "shared", "test_utils", "tools", "build_backends"]
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore specific rules for tests, rather than excluding them entirely
