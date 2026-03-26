@@ -464,7 +464,10 @@ class Expr:
                 try:
                     self.column_name = self.expr._name
                 except AttributeError:
-                    pass
+                    try:
+                        self.column_name = self.expr.meta.output_name()
+                    except Exception:
+                        pass
         self._list_namespace: ExprListNameSpace | None = None
         self._str_namespace: StringMethods | None = None
         self._dt_namespace: DateTimeMethods | None = None
@@ -634,10 +637,18 @@ class Expr:
         else:
             new_ff = None
 
+        # Derive output column name from the polars expression metadata
+        output_column_name = None
+        if result_expr is not None:
+            try:
+                output_column_name = result_expr.meta.output_name()
+            except Exception:
+                pass
+
         # Binary ops clear the aggregation state and selector link
         return Expr(
             result_expr,
-            None,
+            output_column_name,
             repr_str=f"({new_repr})",
             initial_column_name=self._initial_column_name,
             selector=None,

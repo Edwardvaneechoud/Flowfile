@@ -51,7 +51,6 @@ class TestFfReprBasic:
     """Test _ff_repr tracking on basic expression operations."""
 
     def test_col_ff_repr(self):
-        breakpoint()
         assert col("x")._ff_repr == "[x]"
 
     def test_col_with_spaces_ff_repr(self):
@@ -403,12 +402,13 @@ class TestWithColumnsFormulaConversion:
         node = result.get_node_settings()
         assert _is_polars_code_node(node), "Expected NodePolarsCode for mixed expressions"
 
-    def test_no_alias_falls_back(self, sample_ff):
-        """Expression without alias/column_name should fall back."""
-        # (col('x') + col('y')) has column_name=None, so should fall back
+    def test_no_alias_uses_left_operand_name(self, sample_ff):
+        """Expression without alias derives column name from left operand (Polars behavior)."""
+        # (col('x') + col('y')) derives column_name='x' from polars meta.output_name()
         result = sample_ff.with_columns((col("x") + col("y")))
         node = result.get_node_settings()
-        assert _is_polars_code_node(node), "Expected NodePolarsCode when no alias"
+        assert _is_formula_node(node), "Expected NodeFormula with derived column name"
+        assert _get_formula(node) == "([x] + [y])"
 
     def test_col_alias_creates_formula(self, sample_ff):
         """Simple column rename should create formula."""
@@ -541,3 +541,205 @@ class TestFormulaCorrectness:
     def test_named_expr_correctness(self, sample_ff):
         result = sample_ff.with_columns(double_x=col("x") * 2).collect()
         assert result["double_x"].to_list() == [2, 4, 6]
+
+
+# ---------------------------------------------------------------------------
+# Output column name derivation tests
+# ---------------------------------------------------------------------------
+
+class TestBinaryOpColumnName:
+    """Test that binary ops derive column_name from polars meta.output_name()."""
+
+    def test_add_two_cols_gets_left_name(self):
+        expr = col("a") + col("b")
+        assert expr.column_name == "a"
+
+    def test_sub_two_cols_gets_left_name(self):
+        expr = col("x") - col("y")
+        assert expr.column_name == "x"
+
+    def test_mul_two_cols_gets_left_name(self):
+        expr = col("price") * col("qty")
+        assert expr.column_name == "price"
+
+    def test_div_two_cols_gets_left_name(self):
+        expr = col("total") / col("count")
+        assert expr.column_name == "total"
+
+    def test_mod_two_cols_gets_left_name(self):
+        expr = col("a") % col("b")
+        assert expr.column_name == "a"
+
+    def test_col_plus_literal_gets_col_name(self):
+        expr = col("score") + 10
+        assert expr.column_name == "score"
+
+    def test_col_mul_literal_gets_col_name(self):
+        expr = col("price") * 1.1
+        assert expr.column_name == "price"
+
+    def test_literal_plus_col_gets_literal_name(self):
+        """Reverse ops: literal on left means polars uses 'literal' as output name."""
+        expr = 5 + col("x")
+        # Polars names this 'literal' since the left operand is a literal
+        assert expr.column_name == "literal"
+
+    def test_comparison_gets_left_name(self):
+        expr = col("age") > 18
+        assert expr.column_name == "age"
+
+    def test_nested_ops_get_root_left_name(self):
+        """Nested binary ops: output name traces back to leftmost column."""
+        expr = (col("a") + col("b")) * col("c")
+        assert expr.column_name == "a"
+
+    def test_alias_overrides_derived_name(self):
+        expr = (col("a") + col("b")).alias("total")
+        assert expr.column_name == "total"
+
+    def test_matches_polars_meta_output_name(self):
+        """Verify our column_name matches pl.Expr.meta.output_name() for various patterns."""
+        cases = [
+            (col("x") + col("y"), pl.col("x") + pl.col("y")),
+            (col("x") - 1, pl.col("x") - 1),
+            (col("x") * col("y"), pl.col("x") * pl.col("y")),
+            (col("x") / 2, pl.col("x") / 2),
+            ((col("a") + col("b")) * col("c"), (pl.col("a") + pl.col("b")) * pl.col("c")),
+            (col("x") > 0, pl.col("x") > 0),
+            (col("x") == col("y"), pl.col("x") == pl.col("y")),
+        ]
+        for ff_expr, pl_expr in cases:
+            assert ff_expr.column_name == pl_expr.meta.output_name(), (
+                f"Mismatch for {ff_expr._repr_str}: "
+                f"ff={ff_expr.column_name}, pl={pl_expr.meta.output_name()}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Polars parity tests — flowfile results must match polars results exactly
+# ---------------------------------------------------------------------------
+
+class TestPolarsParityWithColumns:
+    """Verify that flowfile with_columns produces identical results to polars,
+    especially for expressions without an explicit alias."""
+
+    @pytest.fixture
+    def base_data(self):
+        return {
+            "a": [1, 2, 3, 4, 5],
+            "b": [10, 20, 30, 40, 50],
+            "c": [1.5, 2.5, 3.5, 4.5, 5.5],
+        }
+
+    @pytest.fixture
+    def pl_df(self, base_data):
+        return pl.DataFrame(base_data)
+
+    @pytest.fixture
+    def ff_df(self, base_data):
+        return FlowFrame(base_data)
+
+    def test_add_no_alias(self, pl_df, ff_df):
+        """col('a') + col('b') without alias should overwrite 'a', matching polars."""
+        expected = pl_df.with_columns(pl.col("a") + pl.col("b"))
+        result = ff_df.with_columns(col("a") + col("b")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_sub_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("a") - pl.col("b"))
+        result = ff_df.with_columns(col("a") - col("b")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_mul_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("a") * pl.col("b"))
+        result = ff_df.with_columns(col("a") * col("b")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_div_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("a") / pl.col("b"))
+        result = ff_df.with_columns(col("a") / col("b")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_mod_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("b") % pl.col("a"))
+        result = ff_df.with_columns(col("b") % col("a")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_add_literal_no_alias(self, pl_df, ff_df):
+        """col('a') + 100 should overwrite 'a'."""
+        expected = pl_df.with_columns(pl.col("a") + 100)
+        result = ff_df.with_columns(col("a") + 100).collect()
+        assert_frame_equal(result, expected)
+
+    def test_mul_float_literal_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("c") * 2.0)
+        result = ff_df.with_columns(col("c") * 2.0).collect()
+        assert_frame_equal(result, expected)
+
+    def test_nested_arithmetic_no_alias(self, pl_df, ff_df):
+        """(col('a') + col('b')) * col('c') — output name is 'a'."""
+        expected = pl_df.with_columns((pl.col("a") + pl.col("b")) * pl.col("c"))
+        result = ff_df.with_columns((col("a") + col("b")) * col("c")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_comparison_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("a") > 2)
+        result = ff_df.with_columns(col("a") > 2).collect()
+        assert_frame_equal(result, expected)
+
+    def test_add_with_alias(self, pl_df, ff_df):
+        """With alias, new column is created instead of overwriting."""
+        expected = pl_df.with_columns((pl.col("a") + pl.col("b")).alias("sum"))
+        result = ff_df.with_columns((col("a") + col("b")).alias("sum")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_multiple_exprs_no_alias(self, pl_df, ff_df):
+        """Multiple expressions without aliases — each overwrites its left operand column."""
+        expected = pl_df.with_columns(
+            pl.col("a") + pl.col("b"),
+            pl.col("c") * 2,
+        )
+        result = ff_df.with_columns(
+            col("a") + col("b"),
+            col("c") * 2,
+        ).collect()
+        assert_frame_equal(result, expected)
+
+    def test_mixed_alias_and_no_alias(self, pl_df, ff_df):
+        """Mix of aliased and non-aliased expressions."""
+        expected = pl_df.with_columns(
+            pl.col("a") * 10,
+            (pl.col("b") + pl.col("c")).alias("bc_sum"),
+        )
+        result = ff_df.with_columns(
+            col("a") * 10,
+            (col("b") + col("c")).alias("bc_sum"),
+        ).collect()
+        assert_frame_equal(result, expected)
+
+    def test_overwrite_preserves_column_order(self, pl_df, ff_df):
+        """Overwriting 'a' should keep it in its original position."""
+        expected = pl_df.with_columns(pl.col("a") + 1)
+        result = ff_df.with_columns(col("a") + 1).collect()
+        assert_frame_equal(result, expected)
+        assert result.columns == expected.columns
+
+    def test_chained_with_columns_no_alias(self, pl_df, ff_df):
+        """Chained with_columns both without aliases."""
+        expected = pl_df.with_columns(
+            pl.col("a") + pl.col("b")
+        ).with_columns(
+            pl.col("a") * pl.col("c")
+        )
+        result = ff_df.with_columns(
+            col("a") + col("b")
+        ).with_columns(
+            col("a") * col("c")
+        ).collect()
+        assert_frame_equal(result, expected)
+
+    def test_named_kwarg_parity(self, pl_df, ff_df):
+        """Named kwargs create new columns — should match polars."""
+        expected = pl_df.with_columns(total=pl.col("a") + pl.col("b"))
+        result = ff_df.with_columns(total=col("a") + col("b")).collect()
+        assert_frame_equal(result, expected)
