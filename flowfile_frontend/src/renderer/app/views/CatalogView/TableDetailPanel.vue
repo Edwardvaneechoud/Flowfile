@@ -22,7 +22,7 @@
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
-          class="btn-danger-outline"
+          class="btn btn-danger btn-sm"
           title="Delete table"
           @click="emit('deleteTable', table.id)"
         >
@@ -76,14 +76,14 @@
     <!-- Read by Flows Modal -->
     <Teleport to="body">
       <div v-if="showReadByModal" class="modal-overlay" @click.self="showReadByModal = false">
-        <div class="modal-content">
+        <div class="modal-container">
           <div class="modal-header">
-            <h3>Flows reading "{{ table.name }}"</h3>
+            <h3 class="modal-title">Flows reading "{{ table.name }}"</h3>
             <button class="modal-close" @click="showReadByModal = false">
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
-          <div class="modal-body">
+          <div class="modal-content">
             <div
               v-for="flow in table.read_by_flows"
               :key="flow.id"
@@ -155,6 +155,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { CatalogTable, CatalogTablePreview } from "../../types";
+import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 
 const showReadByModal = ref(false);
 
@@ -164,34 +165,11 @@ defineProps<{
   loadingPreview: boolean;
 }>();
 
-const emit = defineEmits<{
-  close: [];
-  deleteTable: [id: number];
-  toggleTableFavorite: [id: number];
-  navigateToFlow: [registrationId: number];
-}>();
+const emit = defineEmits(["close", "deleteTable", "toggleTableFavorite", "navigateToFlow"]);
 
 function handleReadByClick(flowId: number) {
   emit("navigateToFlow", flowId);
   showReadByModal.value = false;
-}
-
-function formatNumber(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "--";
-  return n.toLocaleString();
-}
-
-function formatSize(bytes: number | null | undefined): string {
-  if (bytes === null || bytes === undefined) return "--";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function formatDate(isoStr: string): string {
-  const d = new Date(isoStr);
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 function formatCell(value: any): string {
@@ -205,31 +183,11 @@ function formatCell(value: any): string {
 
 <style scoped>
 .table-detail {
-  padding-right: 10px;
-  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 /* ========== Header ========== */
-.back-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1);
-  padding: var(--spacing-1) var(--spacing-2);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  margin-bottom: var(--spacing-3);
-}
-
-.back-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
 .detail-header {
   display: flex;
   justify-content: space-between;
@@ -283,55 +241,28 @@ function formatCell(value: any): string {
   color: var(--color-primary);
 }
 .action-btn-lg.active {
-  color: #f59e0b;
-  border-color: #f59e0b;
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
-.btn-danger-outline {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-1) var(--spacing-3);
-  background: transparent;
-  color: #ef4444;
-  border: 1px solid #ef4444;
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.btn-danger-outline:hover {
-  background: rgba(239, 68, 68, 0.1);
-}
-
-/* ========== Meta Grid ========== */
+/* ========== Meta Grid (override minmax for table) ========== */
 .meta-grid {
-  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--spacing-3);
   margin-bottom: var(--spacing-6);
 }
 
 .meta-card {
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
+  display: block;
 }
 
 .meta-label {
   display: block;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   margin-bottom: var(--spacing-1);
 }
 
 .meta-value {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
 }
 
 .meta-link {
@@ -391,24 +322,6 @@ function formatCell(value: any): string {
   margin-bottom: var(--spacing-6);
 }
 
-.section h3 {
-  margin: 0 0 var(--spacing-3) 0;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-3);
-}
-
-.section-header h3 {
-  margin: 0;
-}
-
 .preview-info {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
@@ -434,8 +347,8 @@ function formatCell(value: any): string {
   color: var(--color-text-primary);
 }
 
-.col-type {
-  font-family: monospace;
+.schema-table .col-type {
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
@@ -466,7 +379,7 @@ function formatCell(value: any): string {
 }
 
 .col-header-type {
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: 10px;
   color: var(--color-text-muted);
 }
@@ -478,74 +391,15 @@ function formatCell(value: any): string {
 }
 
 /* ========== States ========== */
-.loading-state,
-.empty-state {
+.loading-state {
   padding: var(--spacing-6);
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
 
-/* ========== Modal ========== */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
+/* ========== Modal (read-by list items) ========== */
 .modal-content {
-  background: var(--color-background-primary);
-  border-radius: var(--border-radius-lg);
-  border: 1px solid var(--color-border-primary);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-  width: 420px;
-  max-width: 90vw;
-  max-height: 70vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-4);
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.modal-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: var(--border-radius-md);
-  transition: all var(--transition-fast);
-}
-
-.modal-close:hover {
-  background: var(--color-background-hover);
-  color: var(--color-text-primary);
-}
-
-.modal-body {
-  padding: var(--spacing-3);
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-1);

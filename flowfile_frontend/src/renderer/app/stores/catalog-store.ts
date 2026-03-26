@@ -2,6 +2,7 @@
 import { defineStore } from "pinia";
 import { CatalogApi } from "../api/catalog.api";
 import type {
+  ActiveFlowRun,
   CatalogStats,
   CatalogTab,
   CatalogTable,
@@ -9,8 +10,10 @@ import type {
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
+  FlowSchedule,
   GlobalArtifact,
   NamespaceTree,
+  SchedulerStatus,
 } from "../types";
 
 interface CatalogState {
@@ -19,6 +22,13 @@ interface CatalogState {
   favorites: FlowRegistration[];
   following: FlowRegistration[];
   runs: FlowRun[];
+  runsTotal: number;
+  runsTotalSuccess: number;
+  runsTotalFailed: number;
+  runsTotalRunning: number;
+  runsPage: number;
+  runsPageSize: number;
+  runsTriggerFilter: string | null;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
@@ -32,6 +42,19 @@ interface CatalogState {
   tablePreview: CatalogTablePreview | null;
   loadingTablePreview: boolean;
   allTables: CatalogTable[];
+  schedules: FlowSchedule[];
+  flowSchedules: FlowSchedule[];
+  selectedScheduleId: number | null;
+  selectedSchedule: FlowSchedule | null;
+  scheduleRuns: FlowRun[];
+  scheduleRunsTotal: number;
+  scheduleRunsTotalSuccess: number;
+  scheduleRunsTotalFailed: number;
+  scheduleRunsTotalRunning: number;
+  scheduleRunsPage: number;
+  scheduleRunsTriggerFilter: string | null;
+  activeRuns: ActiveFlowRun[];
+  schedulerStatus: SchedulerStatus | null;
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -44,6 +67,13 @@ export const useCatalogStore = defineStore("catalog", {
     favorites: [],
     following: [],
     runs: [],
+    runsTotal: 0,
+    runsTotalSuccess: 0,
+    runsTotalFailed: 0,
+    runsTotalRunning: 0,
+    runsPage: 1,
+    runsPageSize: 25,
+    runsTriggerFilter: null,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
@@ -57,7 +87,20 @@ export const useCatalogStore = defineStore("catalog", {
     tablePreview: null,
     loadingTablePreview: false,
     allTables: [],
-    activeTab: "catalog",
+    schedules: [],
+    flowSchedules: [],
+    selectedScheduleId: null,
+    selectedSchedule: null,
+    scheduleRuns: [],
+    scheduleRunsTotal: 0,
+    scheduleRunsTotalSuccess: 0,
+    scheduleRunsTotalFailed: 0,
+    scheduleRunsTotalRunning: 0,
+    scheduleRunsPage: 1,
+    scheduleRunsTriggerFilter: null,
+    activeRuns: [],
+    schedulerStatus: null,
+    activeTab: "runs",
     loading: false,
     error: null,
   }),
@@ -69,6 +112,29 @@ export const useCatalogStore = defineStore("catalog", {
     flowRuns: (state): FlowRun[] => {
       if (state.selectedFlowId === null) return state.runs;
       return state.runs.filter((r) => r.registration_id === state.selectedFlowId);
+    },
+
+    runsTotalPages: (state): number => Math.max(1, Math.ceil(state.runsTotal / state.runsPageSize)),
+
+    getScheduleById:
+      (state) =>
+      (scheduleId: number): FlowSchedule | undefined =>
+        state.schedules.find((s) => s.id === scheduleId),
+
+    scheduleRunsTotalPages: (state): number =>
+      Math.max(1, Math.ceil(state.scheduleRunsTotal / state.runsPageSize)),
+
+    enrichedSchedules(state) {
+      const activeIds = new Set(
+        state.activeRuns.map((r) => r.registration_id).filter((id) => id !== null),
+      );
+      return state.schedules.map((s) => ({
+        ...s,
+        flowName:
+          state.allFlows.find((f) => f.id === s.registration_id)?.name ??
+          `Flow #${s.registration_id}`,
+        isRunning: activeIds.has(s.registration_id),
+      }));
     },
   },
 
@@ -111,10 +177,42 @@ export const useCatalogStore = defineStore("catalog", {
 
     async loadRuns(registrationId?: number | null) {
       try {
-        this.runs = await CatalogApi.getRuns(registrationId);
+        const offset = (this.runsPage - 1) * this.runsPageSize;
+        let scheduleId: number | undefined;
+        let runType: string | undefined;
+        if (this.runsTriggerFilter) {
+          if (this.runsTriggerFilter.startsWith("schedule:")) {
+            scheduleId = Number(this.runsTriggerFilter.split(":")[1]);
+          } else {
+            runType = this.runsTriggerFilter;
+          }
+        }
+        const result = await CatalogApi.getRuns(
+          registrationId,
+          this.runsPageSize,
+          offset,
+          scheduleId,
+          runType,
+        );
+        this.runs = result.items;
+        this.runsTotal = result.total;
+        this.runsTotalSuccess = result.total_success;
+        this.runsTotalFailed = result.total_failed;
+        this.runsTotalRunning = result.total_running;
       } catch (e: any) {
         this.error = e?.message ?? "Failed to load runs";
       }
+    },
+
+    setRunsPage(page: number, registrationId?: number | null) {
+      this.runsPage = page;
+      this.loadRuns(registrationId);
+    },
+
+    setTriggerFilter(filter: string | null) {
+      this.runsTriggerFilter = filter;
+      this.runsPage = 1;
+      this.loadRuns(this.selectedFlowId);
     },
 
     async loadRunDetail(runId: number) {
@@ -302,22 +400,158 @@ export const useCatalogStore = defineStore("catalog", {
       return null;
     },
 
+    // -- Schedule actions --
+
+    async loadSchedules() {
+      try {
+        this.schedules = await CatalogApi.getSchedules();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedules";
+      }
+    },
+
+    async loadFlowSchedules(registrationId: number) {
+      try {
+        this.flowSchedules = await CatalogApi.getSchedules(registrationId);
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load flow schedules";
+      }
+    },
+
+    // -- Schedule detail actions --
+
+    async selectSchedule(scheduleId: number) {
+      this.selectedScheduleId = scheduleId;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.clearTableSelection();
+      this.clearArtifactSelection();
+      this.scheduleRunsPage = 1;
+      await Promise.all([this.loadScheduleDetail(scheduleId), this.loadScheduleRuns(scheduleId)]);
+    },
+
+    async loadScheduleDetail(scheduleId: number) {
+      try {
+        this.selectedSchedule = await CatalogApi.getSchedule(scheduleId);
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedule detail";
+        this.selectedSchedule = null;
+      }
+    },
+
+    async loadScheduleRuns(scheduleId: number) {
+      try {
+        const offset = (this.scheduleRunsPage - 1) * this.runsPageSize;
+        const runType = this.scheduleRunsTriggerFilter ?? undefined;
+        const result = await CatalogApi.getRuns(null, this.runsPageSize, offset, scheduleId, runType);
+        this.scheduleRuns = result.items;
+        this.scheduleRunsTotal = result.total;
+        this.scheduleRunsTotalSuccess = result.total_success;
+        this.scheduleRunsTotalFailed = result.total_failed;
+        this.scheduleRunsTotalRunning = result.total_running;
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load schedule runs";
+      }
+    },
+
+    setScheduleRunsPage(page: number, scheduleId: number) {
+      this.scheduleRunsPage = page;
+      this.loadScheduleRuns(scheduleId);
+    },
+
+    setScheduleTriggerFilter(filter: string | null, scheduleId: number) {
+      this.scheduleRunsTriggerFilter = filter;
+      this.scheduleRunsPage = 1;
+      this.loadScheduleRuns(scheduleId);
+    },
+
+    clearScheduleSelection() {
+      this.selectedScheduleId = null;
+      this.selectedSchedule = null;
+      this.scheduleRuns = [];
+      this.scheduleRunsTotal = 0;
+      this.scheduleRunsTotalSuccess = 0;
+      this.scheduleRunsTotalFailed = 0;
+      this.scheduleRunsTotalRunning = 0;
+      this.scheduleRunsPage = 1;
+      this.scheduleRunsTriggerFilter = null;
+    },
+
+    // -- Scheduler actions --
+
+    async loadSchedulerStatus() {
+      try {
+        this.schedulerStatus = await CatalogApi.getSchedulerStatus();
+      } catch {
+        // Non-critical — leave current state
+      }
+    },
+
+    async startScheduler() {
+      try {
+        await CatalogApi.startScheduler();
+        await this.loadSchedulerStatus();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to start scheduler";
+      }
+    },
+
+    async stopScheduler() {
+      try {
+        await CatalogApi.stopScheduler();
+        await this.loadSchedulerStatus();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to stop scheduler";
+      }
+    },
+
+    // -- Active runs actions --
+
+    async loadActiveRuns() {
+      try {
+        this.activeRuns = await CatalogApi.getActiveRuns();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load active runs";
+      }
+    },
+
+    async cancelRun(runId: number) {
+      try {
+        await CatalogApi.cancelRun(runId);
+        await this.loadActiveRuns();
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to cancel run";
+      }
+    },
+
     selectFlow(flowId: number | null) {
       this.selectedFlowId = flowId;
       this.selectedRunId = null;
       this.selectedRunDetail = null;
       this.clearTableSelection();
+      this.clearScheduleSelection();
       if (flowId !== null) {
+        this.runsPage = 1;
         this.loadRuns(flowId);
         this.loadFlowArtifacts(flowId);
+        this.loadFlowSchedules(flowId);
       }
     },
 
     setActiveTab(tab: CatalogTab) {
       this.activeTab = tab;
+      this.selectedFlowId = null;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.selectedArtifactId = null;
+      this.selectedArtifact = null;
+      this.clearTableSelection();
+      this.clearScheduleSelection();
       if (tab === "favorites") this.loadFavorites();
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();
+      else if (tab === "schedules") this.loadSchedules();
       else if (tab === "catalog") this.loadTree();
     },
 
@@ -329,6 +563,9 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadStats(),
         this.loadFavorites(),
         this.loadRuns(),
+        this.loadSchedules(),
+        this.loadActiveRuns(),
+        this.loadSchedulerStatus(),
       ]);
     },
   },

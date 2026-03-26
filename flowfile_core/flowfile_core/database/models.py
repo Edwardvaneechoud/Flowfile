@@ -1,7 +1,11 @@
+from typing import Literal
+
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
 
 Base = declarative_base()
 
@@ -159,7 +163,9 @@ class FlowRun(Base):
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
-    run_type = Column(String, nullable=False, default="full_run")
+    run_type: RunType = Column(String, nullable=False, default="in_designer_run")
+    pid = Column(Integer, nullable=True)
+    schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
     # YAML snapshot of the flow definition at run time
     flow_snapshot = Column(Text, nullable=True)
     # JSON-serialised node step results
@@ -190,6 +196,39 @@ class FlowFollow(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "registration_id", name="uq_user_follow"),)
+
+
+class FlowSchedule(Base):
+    """Defines a schedule for automatic flow execution."""
+
+    __tablename__ = "flow_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    name = Column(String, nullable=True)
+    description = Column(String, nullable=True)
+    schedule_type = Column(String, nullable=False)  # "interval" | "table_trigger" | "table_set_trigger"
+    interval_seconds = Column(Integer, nullable=True)
+    trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    last_trigger_table_updated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ScheduleTriggerTable(Base):
+    """Join table linking a table_set_trigger schedule to multiple catalog tables."""
+
+    __tablename__ = "schedule_trigger_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=False)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("schedule_id", "table_id", name="uq_schedule_trigger_table"),)
 
 
 class TableFavorite(Base):
@@ -316,3 +355,20 @@ class CatalogTableReadLink(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)
+
+
+class SchedulerLock(Base):
+    """Advisory lock row to ensure only one scheduler instance is active.
+
+    The table always contains at most one row (id=1). The active scheduler
+    updates ``heartbeat_at`` every poll cycle. A new scheduler can only
+    acquire the lock if no heartbeat has been seen for ``STALE_THRESHOLD``
+    seconds, or if the row doesn't exist yet.
+    """
+
+    __tablename__ = "scheduler_lock"
+
+    id = Column(Integer, primary_key=True, default=1)
+    holder_id = Column(String, nullable=False)
+    started_at = Column(DateTime, default=func.now(), nullable=False)
+    heartbeat_at = Column(DateTime, default=func.now(), nullable=False)

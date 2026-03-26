@@ -1,6 +1,7 @@
 // Catalog API Service - Handles all catalog-related HTTP requests
 import axios from "../services/axios.config";
 import type {
+  ActiveFlowRun,
   CatalogNamespace,
   CatalogStats,
   CatalogTable,
@@ -12,10 +13,15 @@ import type {
   FlowRegistrationUpdate,
   FlowRun,
   FlowRunDetail,
+  FlowSchedule,
+  FlowScheduleCreate,
+  FlowScheduleUpdate,
   GlobalArtifact,
   NamespaceCreate,
   NamespaceTree,
   NamespaceUpdate,
+  PaginatedFlowRuns,
+  SchedulerStatus,
 } from "../types";
 
 export class CatalogApi {
@@ -75,6 +81,11 @@ export class CatalogApi {
     await axios.delete(`/catalog/flows/${id}`);
   }
 
+  static async runFlow(flowId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
+    return response.data;
+  }
+
   // ====== Favorites ======
 
   static async getFavorites(): Promise<FlowRegistration[]> {
@@ -111,11 +122,15 @@ export class CatalogApi {
     registrationId?: number | null,
     limit = 50,
     offset = 0,
-  ): Promise<FlowRun[]> {
+    scheduleId?: number | null,
+    runType?: string | null,
+  ): Promise<PaginatedFlowRuns> {
     const params: Record<string, any> = { limit, offset };
     if (registrationId !== undefined && registrationId !== null)
       params.registration_id = registrationId;
-    const response = await axios.get<FlowRun[]>("/catalog/runs", { params });
+    if (scheduleId !== undefined && scheduleId !== null) params.schedule_id = scheduleId;
+    if (runType) params.run_type = runType;
+    const response = await axios.get<PaginatedFlowRuns>("/catalog/runs", { params });
     return response.data;
   }
 
@@ -132,6 +147,11 @@ export class CatalogApi {
   }
 
   // ====== Open Snapshot ======
+
+  static async getRunLog(runId: number): Promise<string> {
+    const response = await axios.get<{ log: string }>(`/catalog/runs/${runId}/log`);
+    return response.data.log;
+  }
 
   static async openRunSnapshot(runId: number): Promise<number> {
     const response = await axios.post<{ flow_id: number }>(`/catalog/runs/${runId}/open`);
@@ -195,6 +215,66 @@ export class CatalogApi {
     const url = `/catalog/tables/${tableId}/preview`;
     const response = await axios.get<CatalogTablePreview>(url, { params: { limit } });
     return response.data;
+  }
+
+  // ====== Schedules ======
+
+  static async getSchedule(scheduleId: number): Promise<FlowSchedule> {
+    const response = await axios.get<FlowSchedule>(`/catalog/schedules/${scheduleId}`);
+    return response.data;
+  }
+
+  static async getSchedules(registrationId?: number | null): Promise<FlowSchedule[]> {
+    const params: Record<string, any> = {};
+    if (registrationId !== undefined && registrationId !== null)
+      params.registration_id = registrationId;
+    const response = await axios.get<FlowSchedule[]>("/catalog/schedules", { params });
+    return response.data;
+  }
+
+  static async createSchedule(body: FlowScheduleCreate): Promise<FlowSchedule> {
+    const response = await axios.post<FlowSchedule>("/catalog/schedules", body);
+    return response.data;
+  }
+
+  static async updateSchedule(id: number, body: FlowScheduleUpdate): Promise<FlowSchedule> {
+    const response = await axios.put<FlowSchedule>(`/catalog/schedules/${id}`, body);
+    return response.data;
+  }
+
+  static async deleteSchedule(id: number): Promise<void> {
+    await axios.delete(`/catalog/schedules/${id}`);
+  }
+
+  static async triggerScheduleNow(scheduleId: number): Promise<FlowRun> {
+    const response = await axios.post<FlowRun>(`/catalog/schedules/${scheduleId}/run-now`);
+    return response.data;
+  }
+
+  // ====== Active Runs ======
+
+  static async getActiveRuns(): Promise<ActiveFlowRun[]> {
+    const response = await axios.get<ActiveFlowRun[]>("/catalog/active-runs");
+    return response.data;
+  }
+
+  static async cancelRun(runId: number): Promise<void> {
+    await axios.post(`/catalog/runs/${runId}/cancel`);
+  }
+
+  // ====== Scheduler ======
+
+  static async getSchedulerStatus(): Promise<SchedulerStatus> {
+    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+    return response.data;
+  }
+
+  static async startScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/start");
+  }
+
+  static async stopScheduler(): Promise<void> {
+    await axios.post("/catalog/scheduler/stop");
   }
 
   // ====== Stats ======

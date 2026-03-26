@@ -47,9 +47,31 @@
           <span class="stat-label">Favorites</span>
         </div>
       </div>
+      <div
+        class="stat-card clickable"
+        :class="{ 'stat-card--active': activeSection === 'schedules' }"
+        @click="toggleSection('schedules')"
+      >
+        <i class="fa-solid fa-calendar-days stat-icon"></i>
+        <div class="stat-info">
+          <span class="stat-value">{{ stats.total_schedules }}</span>
+          <span class="stat-label">
+            Schedules
+            <span
+              class="scheduler-indicator"
+              :class="catalogStore.schedulerStatus?.active ? 'indicator-green' : 'indicator-orange'"
+              :title="
+                catalogStore.schedulerStatus?.active ? 'Scheduler running' : 'Scheduler not running'
+              "
+            ></span>
+          </span>
+        </div>
+      </div>
     </div>
 
-    <!-- Expanded list for clicked stat card -->
+    <!-- Expanded sections -->
+
+    <!-- Flows list -->
     <div v-if="activeSection === 'flows' && flows.length > 0" class="section">
       <h3>All Flows</h3>
       <div class="item-list">
@@ -66,6 +88,7 @@
       </div>
     </div>
 
+    <!-- Tables list -->
     <div v-if="activeSection === 'tables' && tables.length > 0" class="section">
       <h3>All Tables</h3>
       <div class="item-list">
@@ -82,7 +105,11 @@
       </div>
     </div>
 
-    <div v-if="activeSection === 'favorites' && (favorites.length > 0 || favoriteTables.length > 0)" class="section">
+    <!-- Favorites list -->
+    <div
+      v-if="activeSection === 'favorites' && (favorites.length > 0 || favoriteTables.length > 0)"
+      class="section"
+    >
       <h3>Favorites</h3>
       <div class="item-list">
         <div
@@ -109,24 +136,24 @@
       </div>
     </div>
 
-    <div v-if="activeSection === 'runs' && runs.length > 0" class="section">
-      <h3>Run History</h3>
-      <div class="item-list">
-        <div
-          v-for="run in runs"
-          :key="run.id"
-          class="item-row clickable"
-          @click="$emit('viewRun', run.id)"
-        >
-          <span
-            class="status-dot"
-            :class="run.success ? 'success' : run.success === false ? 'failure' : 'pending'"
-          ></span>
-          <span class="item-name">{{ run.flow_name }}</span>
-          <span class="item-meta">{{ formatDate(run.started_at) }}</span>
-          <span class="item-duration">{{ formatDuration(run.duration_seconds) }}</span>
-        </div>
-      </div>
+    <!-- Run History (full overview panel) -->
+    <div v-if="activeSection === 'runs'" class="section">
+      <RunOverviewPanel
+        @view-run="$emit('viewRun', $event)"
+        @view-flow="$emit('viewFlow', $event)"
+      />
+    </div>
+
+    <!-- Schedules (full overview panel) -->
+    <div v-if="activeSection === 'schedules'" class="section">
+      <ScheduleOverviewPanel
+        @create-schedule="$emit('createSchedule')"
+        @toggle-schedule="(id: number, val: boolean) => $emit('toggleSchedule', id, val)"
+        @delete-schedule="$emit('deleteSchedule', $event)"
+        @run-now="$emit('runNow', $event)"
+        @cancel-schedule-run="$emit('cancelScheduleRun', $event)"
+        @view-flow="$emit('viewFlow', $event)"
+      />
     </div>
 
     <!-- Favorite Flows (always visible) -->
@@ -163,6 +190,54 @@
       </div>
     </div>
 
+    <!-- Getting started / info section -->
+    <div v-if="!activeSection" class="info-section">
+      <h3>Getting Started</h3>
+      <div class="info-cards">
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-folder-tree"></i>
+            <h4>Organization</h4>
+          </div>
+          <p>
+            Flows and tables are organized into <strong>catalogs</strong> and
+            <strong>schemas</strong>. Use catalogs for broad groupings (e.g. by team or domain) and
+            schemas for finer separation within them.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <h4>Run History</h4>
+          </div>
+          <p>
+            Every registered flow tracks its executions automatically. View status, duration, and
+            node-level progress for each run, or open a snapshot to inspect a past state.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-table"></i>
+            <h4>Tables &amp; Artifacts</h4>
+          </div>
+          <p>
+            Register datasets as catalog tables to preview and track them centrally. Artifacts
+            produced by flows are versioned and linked back to the run that created them.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
+            <i class="fa-solid fa-calendar-days"></i>
+            <h4>Schedules</h4>
+          </div>
+          <p>
+            Automate flow execution with cron-based or table-trigger schedules. Monitor active runs
+            and manage schedules from the Schedules tab.
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- Empty state -->
     <div v-if="!stats || (stats.total_flows === 0 && stats.total_runs === 0)" class="welcome">
       <i class="fa-solid fa-folder-tree welcome-icon"></i>
@@ -191,9 +266,15 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { CatalogStats, CatalogTable, FlowRegistration, FlowRun } from "../../types";
+import { formatNumber } from "./catalog-formatters";
+import RunOverviewPanel from "./RunOverviewPanel.vue";
+import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 
-type Section = "flows" | "tables" | "favorites" | "runs";
+type Section = "flows" | "tables" | "favorites" | "runs" | "schedules";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   stats: CatalogStats | null;
@@ -207,43 +288,28 @@ const favoriteTables = computed((): CatalogTable[] => {
   return props.stats?.favorite_tables ?? [];
 });
 
-defineEmits<{
-  viewRun: [runId: number];
-  viewFlow: [flowId: number];
-  viewTable: [tableId: number];
-}>();
+defineEmits([
+  "viewRun",
+  "viewFlow",
+  "viewTable",
+  "createSchedule",
+  "toggleSchedule",
+  "deleteSchedule",
+  "runNow",
+  "cancelScheduleRun",
+]);
 
 const activeSection = ref<Section | null>(null);
 
 function toggleSection(section: Section) {
   activeSection.value = activeSection.value === section ? null : section;
 }
-
-function formatNumber(n: number | null): string {
-  if (n === null) return "--";
-  return n.toLocaleString();
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
 </script>
 
 <style scoped>
 .stats-panel {
-  max-width: 900px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .stats-panel h2 {
@@ -299,8 +365,27 @@ function formatDuration(seconds: number | null): string {
 }
 
 .stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.scheduler-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--border-radius-full);
+  flex-shrink: 0;
+}
+
+.scheduler-indicator.indicator-green {
+  background: var(--color-success);
+}
+
+.scheduler-indicator.indicator-orange {
+  background: var(--color-warning);
 }
 
 /* Sections */
@@ -316,23 +401,6 @@ function formatDuration(seconds: number | null): string {
 
 .clickable {
   cursor: pointer;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--border-radius-full);
-  flex-shrink: 0;
-}
-
-.status-dot.success {
-  background: #22c55e;
-}
-.status-dot.failure {
-  background: #ef4444;
-}
-.status-dot.pending {
-  background: #eab308;
 }
 
 /* Item Lists */
@@ -364,7 +432,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 .item-icon.fav {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .item-name {
@@ -377,12 +445,22 @@ function formatDuration(seconds: number | null): string {
   font-size: var(--font-size-xs);
 }
 
-.item-duration {
-  color: var(--color-text-secondary);
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-  min-width: 60px;
-  text-align: right;
+/* Info Section */
+.info-section {
+  margin-bottom: var(--spacing-5);
+}
+
+.info-section h3 {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--spacing-3) 0;
+  color: var(--color-text-primary);
+}
+
+.info-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-3);
 }
 
 /* Welcome */
@@ -437,7 +515,7 @@ function formatDuration(seconds: number | null): string {
   height: 24px;
   border-radius: var(--border-radius-full);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
   flex-shrink: 0;

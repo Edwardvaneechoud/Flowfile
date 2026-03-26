@@ -28,6 +28,7 @@ When no item is selected, the Catalog shows an overview dashboard with:
 | **Total Runs** | Number of flow executions recorded |
 | **Tables** | Materialized data tables |
 | **Favorites** | Your bookmarked flows |
+| **Schedules** | Configured [schedules](schedules.md) for automated flow execution |
 
 ![Dashboard stats](../../assets/images/guides/catalog/catalog-stats.png)
 
@@ -64,6 +65,7 @@ The sidebar offers four tabs:
 | **Catalog** | Browse the namespace tree with flows, tables, and artifacts |
 | **Favorites** | Your starred flows for quick access |
 | **Run History** | Chronological list of all flow executions |
+| **Schedules** | Manage automated flow schedules — see [Schedules](schedules.md) |
 
 ---
 
@@ -88,8 +90,9 @@ Click a registered flow to see its detail panel:
 
 - **Name** (editable inline) and description
 - **Metrics**: total runs, success rate, last run time, artifact count
-- **Actions**: Open in Designer, Favorite, Delete
-- **Recent Runs** table with status and duration
+- **Actions**: Open in Designer, Run Flow, Cancel Run, Favorite, Delete
+- **Recent Runs** table with status, duration, and trigger type
+- **Schedules** section — manage schedules for this flow (see [Schedules](schedules.md))
 - **Produced Artifacts** list
 
 <!-- PLACEHOLDER: Screenshot of the Flow Detail Panel -->
@@ -218,6 +221,7 @@ Click an artifact in the tree to view its versions, metadata, and producing flow
 
 ## Related Documentation
 
+- [Schedules](schedules.md) — Automating flow execution with schedules
 - [Kernel Execution](kernels.md) — Publishing global artifacts from Python code
 - [Input Nodes](nodes/input.md#catalog-reader) — Catalog Reader node
 - [Output Nodes](nodes/output.md#catalog-writer) — Catalog Writer node

@@ -21,11 +21,11 @@ from flowfile_core.database.models import (
     CatalogTable,
     CatalogTableReadLink,
     FlowRegistration,
+    FlowSchedule,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,6 +36,7 @@ def _cleanup():
     """Remove all catalog / flow-registration rows so tests start clean."""
     with get_db_context() as db:
         db.query(CatalogTableReadLink).delete()
+        db.query(FlowSchedule).delete()
         db.query(CatalogTable).delete()
         db.query(FlowRegistration).delete()
         db.query(CatalogNamespace).delete()
@@ -115,7 +116,7 @@ def _run_graph(graph: FlowGraph) -> RunInformation:
         for step in run_info.node_step_result:
             if not step.success:
                 errors.append(f"node {step.node_id}: {step.error}")
-        raise AssertionError(f"Graph execution failed:\n" + "\n".join(errors))
+        raise AssertionError("Graph execution failed:\n" + "\n".join(errors))
     return run_info
 
 
@@ -207,7 +208,7 @@ class TestCatalogWriter:
             assert tables[0].source_registration_id == reg_id
 
     def test_writer_overwrite_mode_replaces_table(self):
-        """With write_mode='overwrite', running twice should replace the table."""
+        """With write_mode='overwrite', running twice should replace the table and preserve its ID."""
         ns_id = _create_namespace()
         graph = _create_graph()
 
@@ -231,6 +232,14 @@ class TestCatalogWriter:
 
         _run_graph(graph)
 
+        # Capture the original table id and updated_at
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            original_id = tables[0].id
+            original_updated_at = tables[0].updated_at
+
         # Run again with different data
         graph2 = _create_graph(flow_id=2)
         _add_manual_input(graph2, [{"name": "Diana", "age": 40, "city": "Dublin"}], node_id=1)
@@ -252,12 +261,154 @@ class TestCatalogWriter:
 
         _run_graph(graph2)
 
-        # Should be only one table with updated data
+        # Should be only one table with updated data and the SAME id
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
             assert len(tables) == 1
+            assert tables[0].id == original_id
             assert tables[0].row_count == 1
+            assert tables[0].updated_at >= original_updated_at
+
+    def test_overwrite_preserves_trigger_table_reference(self):
+        """FlowSchedule.trigger_table_id still resolves after an overwrite."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="triggered_flow")
+
+        # First write to create the table
+        graph = _create_graph()
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        graph.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="trigger_table",
+                    namespace_id=ns_id,
+                    write_mode="overwrite",
+                ),
+                user_id=1,
+            )
+        )
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph)
+
+        # Create a schedule that triggers on this table
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            table = repo.get_table_by_name("trigger_table", ns_id)
+            table_id = table.id
+            sched = FlowSchedule(
+                registration_id=reg_id,
+                owner_id=1,
+                enabled=True,
+                schedule_type="table_trigger",
+                trigger_table_id=table_id,
+            )
+            db.add(sched)
+            db.commit()
+            db.refresh(sched)
+            schedule_id = sched.id
+
+        # Overwrite the table with new data
+        graph2 = _create_graph(flow_id=2)
+        _add_manual_input(graph2, [{"name": "Eve", "age": 28, "city": "Edinburgh"}], node_id=1)
+        promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
+        graph2.add_node_promise(promise2)
+        graph2.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=2,
+                node_id=2,
+                depending_on_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="trigger_table",
+                    namespace_id=ns_id,
+                    write_mode="overwrite",
+                ),
+                user_id=1,
+            )
+        )
+        add_connection(graph2, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph2)
+
+        # The schedule's trigger_table_id should still resolve to a valid table
+        with get_db_context() as db:
+            sched = db.get(FlowSchedule, schedule_id)
+            assert sched is not None
+            assert sched.trigger_table_id == table_id
+            table = db.get(CatalogTable, sched.trigger_table_id)
+            assert table is not None
+            assert table.row_count == 1
+
+    def test_overwrite_preserves_read_links(self):
+        """CatalogTableReadLink entries survive a table overwrite."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="reader_flow", path="/tmp/reader.yaml")
+
+        # First write
+        graph = _create_graph()
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        graph.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="linked_table",
+                    namespace_id=ns_id,
+                    write_mode="overwrite",
+                ),
+                user_id=1,
+            )
+        )
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph)
+
+        # Create a read link referencing this table
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            table = repo.get_table_by_name("linked_table", ns_id)
+            table_id = table.id
+            link = CatalogTableReadLink(table_id=table_id, registration_id=reg_id)
+            db.add(link)
+            db.commit()
+
+        # Overwrite the table
+        graph2 = _create_graph(flow_id=2)
+        _add_manual_input(graph2, [{"name": "Zara", "age": 22, "city": "Zurich"}], node_id=1)
+        promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
+        graph2.add_node_promise(promise2)
+        graph2.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=2,
+                node_id=2,
+                depending_on_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="linked_table",
+                    namespace_id=ns_id,
+                    write_mode="overwrite",
+                ),
+                user_id=1,
+            )
+        )
+        add_connection(graph2, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph2)
+
+        # Read link should still exist and point to the same table ID
+        with get_db_context() as db:
+            link = db.query(CatalogTableReadLink).filter_by(
+                table_id=table_id, registration_id=reg_id
+            ).first()
+            assert link is not None
+            # Table should still be valid
+            table = db.get(CatalogTable, table_id)
+            assert table is not None
+            assert table.row_count == 1
 
 
 # ---------------------------------------------------------------------------
