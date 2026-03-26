@@ -204,6 +204,9 @@ class GroupByFrame:
             )
         return self.parent._create_child_frame(node_id_to_use)
 
+    # Aggregation methods that only work on numeric columns
+    _NUMERIC_ONLY_METHODS = {"sum", "mean", "median"}
+
     def _generate_direct_polars_code(self, method_name: str, *args, **kwargs) -> "FlowFrame":
         """Generate Polars code for simple GroupBy methods like sum(), mean(), len(), count().
 
@@ -218,9 +221,15 @@ class GroupByFrame:
         readable_group_str = self.readable_group()
         execution = "(" + ",".join(args) + ",".join([f"{k}={v}" for k, v in kwargs.items()]) + ")"
 
-        code = (
-            f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
-        )
+        if method_name in self._NUMERIC_ONLY_METHODS:
+            code = (
+                f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order})"
+                f".agg(cs.numeric().{method_name}{execution})"
+            )
+        else:
+            code = (
+                f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
+            )
         node_description = self.description or f"{method_name.capitalize()} after grouping by {readable_group_str}"
         self.parent._add_polars_code(new_node_id=self.node_id, code=code, description=node_description)
         return self.parent._create_child_frame(self.node_id)

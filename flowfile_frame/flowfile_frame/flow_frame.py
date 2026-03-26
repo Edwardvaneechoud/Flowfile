@@ -4,6 +4,7 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
+from io import BytesIO
 from typing import Any, Literal, Union, get_args, get_origin
 
 import polars as pl
@@ -337,6 +338,16 @@ class FlowFrame:
     def _create_child_frame(self, new_node_id):
         """Helper method to create a new FlowFrame that's a child of this one"""
         self._add_connection(self.node_id, new_node_id)
+        # If UDFs were lost during serialization, inject the precomputed result
+        # directly into the node AFTER the connection is added (which resets the node).
+        pending_result = getattr(self, "_pending_udf_result", None)
+        if pending_result is not None:
+            from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+            node = self.flow_graph.get_node(new_node_id)
+            if node is not None:
+                node.results.resulting_data = FlowDataEngine(pending_result)
+            self._pending_udf_result = None
         try:
             return FlowFrame(
                 data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
@@ -563,35 +574,53 @@ class FlowFrame:
                     "Cannot execute Polars operation: method_name is missing and "
                     "could not be inferred for serialization fallback."
                 )
+            udf_lost = False
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
                     serialized_value_for_code = result_lazyframe_or_expr.serialize(format="json")
-                    polars_code_for_node = "\n".join(
-                        [
-                            f"serialized_value = r'''{serialized_value_for_code}'''",
-                            "buffer = BytesIO(serialized_value.encode('utf-8'))",
-                            "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
-                        ]
+                    # Verify the serialized plan preserves UDFs by deserializing and
+                    # checking the plan for empty function calls like ".()".
+                    deserialized_lf = pl.LazyFrame.deserialize(
+                        BytesIO(serialized_value_for_code.encode("utf-8")), format="json"
                     )
-                    logger.warning(
-                        f"Transformation '{effective_method_name}' uses non-serializable elements. "
-                        "Falling back to serializing the resulting Polars LazyFrame object."
-                        "This will result in a breaking graph when using the the ui."
-                    )
+                    if ".()" in deserialized_lf.explain():
+                        logger.warning(
+                            f"Transformation '{effective_method_name}' contains UDFs that were lost during "
+                            "serialization. Using passthrough code and keeping live result."
+                        )
+                        polars_code_for_node = "output_df = input_df"
+                        udf_lost = True
+                        self._pending_udf_result = result_lazyframe_or_expr
+                    else:
+                        polars_code_for_node = "\n".join(
+                            [
+                                f"serialized_value = r'''{serialized_value_for_code}'''",
+                                "buffer = BytesIO(serialized_value.encode('utf-8'))",
+                                "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
+                            ]
+                        )
+                    if not udf_lost:
+                        logger.warning(
+                            f"Transformation '{effective_method_name}' uses non-serializable elements. "
+                            "Falling back to serializing the resulting Polars LazyFrame object."
+                            "This will result in a breaking graph when using the the ui."
+                        )
                 else:
                     logger.error(
                         f"Fallback for non-convertible code for method '{effective_method_name}' "
                         f"resulted in a '{type(result_lazyframe_or_expr).__name__}' instead of a Polars LazyFrame. "
                         "This type cannot be persisted as a LazyFrame node via this fallback."
                     )
-                    return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                    polars_code_for_node = "output_df = input_df"
+                    self._pending_udf_result = result_lazyframe_or_expr
             except Exception as e:
                 logger.warning(
                     f"Critical error: Could not serialize the result of operation '{effective_method_name}' "
-                    f"during fallback for non-convertible code. Error: {e}."
+                    f"during fallback for non-convertible code. Error: {e}. "
                     "When using a lambda function, consider defining the function first"
                 )
-                return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                polars_code_for_node = "output_df = input_df"
+                self._pending_udf_result = result_lazyframe_or_expr
         else:
             polars_code_for_node = code
         polars_code_settings = input_schema.NodePolarsCode(
