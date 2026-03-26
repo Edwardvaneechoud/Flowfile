@@ -90,11 +90,7 @@
         <div class="setting-block">
           <label class="setting-label">Output Names</label>
           <div class="output-names-editor">
-            <div
-              v-for="(name, index) in outputNames"
-              :key="index"
-              class="output-name-row"
-            >
+            <div v-for="(name, index) in outputNames" :key="index" class="output-name-row">
               <el-input
                 v-model="outputNames[index]"
                 size="small"

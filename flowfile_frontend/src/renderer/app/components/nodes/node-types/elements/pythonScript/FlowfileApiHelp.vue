@@ -32,8 +32,8 @@
           <div class="api-item">
             <code>flowfile.publish_output(df, "rejected")</code>
             <p>
-              Write to a named output handle. Configure output names in the
-              "Output Names" section above.
+              Write to a named output handle. Configure output names in the "Output Names" section
+              above.
             </p>
           </div>
         </section>

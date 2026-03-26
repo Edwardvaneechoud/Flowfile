@@ -171,3 +171,28 @@ class TableFavoriteNotFoundError(CatalogError):
         self.user_id = user_id
         self.table_id = table_id
         super().__init__(f"Table favorite not found for user={user_id}, table={table_id}")
+
+
+class ScheduleNotFoundError(CatalogError):
+    """Raised when a schedule lookup fails."""
+
+    def __init__(self, schedule_id: int):
+        self.schedule_id = schedule_id
+        super().__init__(f"Schedule with id={schedule_id} not found")
+
+
+class FlowAlreadyRunningError(CatalogError):
+    """Raised when trying to trigger a flow that already has an active run."""
+
+    def __init__(self, registration_id: int):
+        self.registration_id = registration_id
+        super().__init__(f"Flow {registration_id} already has an active run")
+
+
+class ScheduleConflictError(CatalogError):
+    """Raised when a schedule conflicts with an existing one."""
+
+    def __init__(self, registration_id: int, schedule_type: str):
+        self.registration_id = registration_id
+        self.schedule_type = schedule_type
+        super().__init__(f"A '{schedule_type}' schedule already exists for flow {registration_id}")

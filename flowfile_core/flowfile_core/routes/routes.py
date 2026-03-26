@@ -50,6 +50,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
+from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
@@ -270,10 +271,16 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
 def _run_and_track(flow, user_id: int | None):
     """Wrapper that runs a flow and persists the run record to the database.
 
+    Uses a two-phase pattern:
+    1. Create a run record BEFORE execution (makes run visible as "active")
+    2. Update the record AFTER execution with results
+
     This runs in a BackgroundTask. If DB persistence fails, the run still
     completed but won't appear in the run history. Failures are logged at
     ERROR level so they're visible in logs.
     """
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+
     flow_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
 
     # Resolve source_registration_id before execution so kernel nodes
@@ -283,13 +290,8 @@ def _run_and_track(flow, user_id: int | None):
         f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
     )
 
-    run_info = flow.run_graph()
-    if run_info is None:
-        logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
-        return
-
-    # Persist run record
-    tracking_succeeded = False
+    # Phase 1: Create run record before execution
+    run_id = None
     try:
         # Build snapshot (non-critical if fails)
         snapshot_yaml = None
@@ -299,6 +301,32 @@ def _run_and_track(flow, user_id: int | None):
         except Exception as snap_err:
             logger.warning(f"Flow '{flow_name}': snapshot serialization failed: {snap_err}")
 
+        with get_db_context() as db:
+            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
+            flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            db_run = service.start_run(
+                registration_id=reg_id,
+                flow_name=flow_name,
+                flow_path=flow_path,
+                user_id=user_id if user_id is not None else 0,
+                number_of_nodes=len(flow.nodes),
+                run_type="in_designer_run",
+                flow_snapshot=snapshot_yaml,
+            )
+            run_id = db_run.id
+            logger.info(f"Flow '{flow_name}' run started: run_id={run_id}")
+    except Exception as exc:
+        logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
+
+    # Execute the flow
+    run_info = flow.run_graph()
+    if run_info is None:
+        logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
+        return
+
+    # Phase 2: Update run record with results
+    try:
         # Serialise node results (non-critical if fails)
         node_results = None
         try:
@@ -308,50 +336,52 @@ def _run_and_track(flow, user_id: int | None):
         except Exception as node_err:
             logger.warning(f"Flow '{flow_name}': node results serialization failed: {node_err}")
 
-        duration = None
-        if run_info.start_time and run_info.end_time:
-            duration = (run_info.end_time - run_info.start_time).total_seconds()
+        if run_id is not None:
+            with get_db_context() as db:
+                service = CatalogService(SQLAlchemyCatalogRepository(db))
+                service.complete_run(
+                    run_id=run_id,
+                    success=run_info.success,
+                    nodes_completed=run_info.nodes_completed,
+                    node_results_json=node_results,
+                )
 
-        with get_db_context() as db:
-            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
-            flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-
-            db_run = FlowRun(
-                registration_id=reg_id,
-                flow_name=flow_name,
-                flow_path=flow_path,
-                user_id=user_id if user_id is not None else 0,
-                started_at=run_info.start_time,
-                ended_at=run_info.end_time,
-                success=run_info.success,
-                nodes_completed=run_info.nodes_completed,
-                number_of_nodes=run_info.number_of_nodes,
-                duration_seconds=duration,
-                run_type=run_info.run_type,
-                flow_snapshot=snapshot_yaml,
-                node_results_json=node_results,
-            )
-            db.add(db_run)
-            db.commit()
-            tracking_succeeded = True
             logger.info(
-                f"Flow '{flow_name}' run tracked: success={run_info.success}, "
-                f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}, "
-                f"duration={duration:.2f}s"
-                if duration
-                else "duration=N/A"
+                f"Flow '{flow_name}' run completed: success={run_info.success}, "
+                f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}"
             )
+        else:
+            # Fallback: create the full record if phase 1 failed
+            duration = None
+            if run_info.start_time and run_info.end_time:
+                duration = (run_info.end_time - run_info.start_time).total_seconds()
+
+            with get_db_context() as db:
+                reg_id = getattr(flow.flow_settings, "source_registration_id", None)
+                flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+                db_run = FlowRun(
+                    registration_id=reg_id,
+                    flow_name=flow_name,
+                    flow_path=flow_path,
+                    user_id=user_id if user_id is not None else 0,
+                    started_at=run_info.start_time,
+                    ended_at=run_info.end_time,
+                    success=run_info.success,
+                    nodes_completed=run_info.nodes_completed,
+                    number_of_nodes=run_info.number_of_nodes,
+                    duration_seconds=duration,
+                    run_type=run_info.run_type,
+                    node_results_json=node_results,
+                    flow_snapshot=snapshot_yaml,
+                )
+                db.add(db_run)
+                db.commit()
     except Exception as exc:
         logger.error(
-            f"Failed to persist run record for flow '{flow_name}'. "
-            f"The flow {'succeeded' if run_info.success else 'failed'} but won't appear in run history. "
+            f"Failed to update run record for flow '{flow_name}'. "
+            f"The flow {'succeeded' if run_info.success else 'failed'} but run history may be incomplete. "
             f"Error: {exc}",
             exc_info=True,
-        )
-
-    if not tracking_succeeded:
-        logger.error(
-            f"Run tracking failed for flow '{flow_name}'. " "Check database connectivity and FlowRun table schema."
         )
 
 
@@ -1086,7 +1116,13 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
 
 @router.get("/save_flow", tags=["editor"])
 def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
-    """Saves the current state of a flow to a `.yaml`."""
+    """Saves the current state of a flow to a `.yaml`.
+
+    When saving to a new path ("Save As"), the flow is treated as a new flow:
+    a new flowfile_id is generated, the old handler entry is replaced, and a
+    fresh catalog registration is created.  The new flow_id is returned so the
+    frontend can switch to it.
+    """
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
@@ -1094,15 +1130,34 @@ def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_curr
     is_new_path = (
         flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
     )
-    if is_new_path:
-        flow.flow_settings.source_registration_id = None
-    _resolve_source_registration_id(flow)
-    flow.save_flow(flow_path=flow_path)
+
     if is_new_path:
         user_id = current_user.id if current_user else None
-        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
+        old_flow_id = flow.flow_id
+        new_flow_id = create_unique_id()
+
+        # 1. Clear old catalog link and assign new flow identity
         flow.flow_settings.source_registration_id = None
+        flow.flow_id = new_flow_id  # updates flow + child nodes + settings
+
+        # 2. Save to the new path (updates flow.flow_settings.path)
+        flow.save_flow(flow_path=flow_path)
+
+        # 3. Re-key in handler: remove old entry, register under new id
+        flow_file_handler.rekey_flow(old_flow_id, new_flow_id, user_id)
+
+        # 4. Create catalog registration for the new path and resolve
+        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
         _resolve_source_registration_id(flow)
+
+        # 5. Re-save to persist the correct source_registration_id in YAML
+        flow.save_flow(flow_path=flow_path)
+
+        return new_flow_id
+
+    _resolve_source_registration_id(flow)
+    flow.save_flow(flow_path=flow_path)
+    return flow_id
 
 
 @router.get("/flow_data", tags=["manager"])

@@ -1,0 +1,91 @@
+"""Lightweight SQLAlchemy models shared across Flowfile packages.
+
+These models mirror the tables defined in ``flowfile_core.database.models``
+but are declared independently so that lightweight consumers (the scheduler,
+CLI run-completion, etc.) can talk to the database **without importing
+flowfile_core** and its heavy dependency tree (FastAPI, Pydantic, etc.).
+
+Only columns required by non-core consumers are mapped here.
+"""
+
+from typing import Literal
+
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
+
+
+class FlowSchedule(Base):
+    __tablename__ = "flow_schedules"
+
+    id = Column(Integer, primary_key=True)
+    registration_id = Column(Integer, nullable=False)
+    owner_id = Column(Integer, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    description = Column(String, nullable=True)
+    schedule_type = Column(String, nullable=False)
+    interval_seconds = Column(Integer, nullable=True)
+    trigger_table_id = Column(Integer, nullable=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    last_trigger_table_updated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FlowRegistration(Base):
+    __tablename__ = "flow_registrations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    flow_path = Column(String, nullable=False)
+    owner_id = Column(Integer, nullable=False)
+
+
+class FlowRun(Base):
+    __tablename__ = "flow_runs"
+
+    id = Column(Integer, primary_key=True)
+    registration_id = Column(Integer, nullable=True)
+    flow_name = Column(String, nullable=False)
+    flow_path = Column(String, nullable=True)
+    user_id = Column(Integer, nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    success = Column(Boolean, nullable=True)
+    nodes_completed = Column(Integer, default=0)
+    number_of_nodes = Column(Integer, default=0)
+    duration_seconds = Column(Float, nullable=True)
+    run_type: RunType = Column(String, nullable=False, default="in_designer_run")
+    pid = Column(Integer, nullable=True)
+    schedule_id = Column(Integer, nullable=True)
+    flow_snapshot = Column(Text, nullable=True)
+    node_results_json = Column(Text, nullable=True)
+
+
+class CatalogTable(Base):
+    __tablename__ = "catalog_tables"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+
+class ScheduleTriggerTable(Base):
+    __tablename__ = "schedule_trigger_tables"
+
+    id = Column(Integer, primary_key=True)
+    schedule_id = Column(Integer, nullable=False)
+    table_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class SchedulerLock(Base):
+    __tablename__ = "scheduler_lock"
+
+    id = Column(Integer, primary_key=True, default=1)
+    holder_id = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    heartbeat_at = Column(DateTime, nullable=False)

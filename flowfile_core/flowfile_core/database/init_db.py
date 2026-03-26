@@ -60,6 +60,52 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
+        # Migrate flow_runs: add pid column
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(flow_runs)"))
+            run_columns = [row[1] for row in result.fetchall()]
+
+            if "pid" not in run_columns:
+                logger.info("Adding pid column to flow_runs")
+                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN pid INTEGER"))
+                conn.commit()
+
+            if "schedule_id" not in run_columns:
+                logger.info("Adding schedule_id column to flow_runs")
+                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN schedule_id INTEGER"))
+                conn.commit()
+
+        # Migrate flow_schedules: add description column
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_schedules'"))
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(flow_schedules)"))
+            schedule_columns = [row[1] for row in result.fetchall()]
+
+            if "description" not in schedule_columns:
+                logger.info("Adding description column to flow_schedules")
+                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN description TEXT"))
+                conn.commit()
+
+            if "name" not in schedule_columns:
+                logger.info("Adding name column to flow_schedules")
+                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN name TEXT"))
+                conn.commit()
+
+        # Migrate flow_runs: rename run_type 'full_run' → 'in_designer_run'
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
+        if result.fetchone():
+            updated = conn.execute(
+                text("UPDATE flow_runs SET run_type = 'in_designer_run' WHERE run_type = 'full_run'")
+            )
+            if updated.rowcount:
+                conn.commit()
+                logger.info(
+                    "Migration complete: renamed %d flow_runs from 'full_run' to 'in_designer_run'",
+                    updated.rowcount,
+                )
+
+
 # Run migrations BEFORE create_all to update existing tables
 run_migrations()
 # Then create any new tables (this will include is_admin for new databases)

@@ -188,9 +188,7 @@
               size="small"
               @change="pushFlowSettings"
             />
-            <span class="form-hint">
-              Display input names on connections between nodes.
-            </span>
+            <span class="form-hint"> Display input names on connections between nodes. </span>
           </div>
         </div>
       </div>
@@ -345,9 +343,14 @@ const saveFlowAction = async (flowPath: string) => {
   }
 
   try {
-    await saveFlow(nodeStore.flow_id, flowPath);
+    const newFlowId = await saveFlow(nodeStore.flow_id, flowPath);
     ElMessage.success("Flow saved successfully");
     modalVisibleForSave.value = false;
+    // "Save As" produces a new flow identity — switch to it
+    if (newFlowId && newFlowId !== nodeStore.flow_id) {
+      nodeStore.setFlowId(newFlowId);
+      emit("refreshFlow");
+    }
     // Advance tutorial if we're on the "save-flow" step
     if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
       setTimeout(() => {
