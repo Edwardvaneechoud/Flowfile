@@ -142,3 +142,14 @@ nav:
     - Kernel Architecture: for-developers/kernel-architecture.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
+    - Feature Roadmap:
+      - Overview: for-developers/roadmap/index.md
+      - Iterative Nodes: for-developers/roadmap/01_iterative_nodes.md
+      - Conditional Execution: for-developers/roadmap/02_conditional_execution.md
+      - Delta Lake Catalog: for-developers/roadmap/03_delta_lake_catalog.md
+      - Flow Parameters: for-developers/roadmap/04_flow_parameters.md
+      - Catalog Query & Exploration: for-developers/roadmap/05_catalog_query_exploration.md
+      - Extended Connectors: for-developers/roadmap/06_extended_connectors.md
+      - Custom Node Designer: for-developers/roadmap/07_custom_node_designer.md
+      - Flow as Custom Node: for-developers/roadmap/08_flow_as_custom_node.md
+      - Enhanced Code Generation: for-developers/roadmap/09_enhanced_code_generation.md
