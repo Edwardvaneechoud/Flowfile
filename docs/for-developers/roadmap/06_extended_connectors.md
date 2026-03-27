@@ -129,7 +129,7 @@ class IncrementalReadSettings(BaseModel):
     enabled: bool = False
     watermark_column: str           # e.g., "updated_at"
     watermark_type: Literal["timestamp", "integer"]
-    last_watermark: Any | None      # stored in catalog metadata
+    last_watermark: Any | None      # stored per-node, persisted across runs
 ```
 
 The reader tracks the high-water mark from the last read. On subsequent runs, it adds a `WHERE watermark_column > last_watermark` predicate.

@@ -74,14 +74,14 @@ graph TD
     I --> F[Flow as Custom Node]
     C --> F
     D[Delta Lake Catalog] --- Q[Catalog Query & Exploration]
-    E[Extended Connectors] --> Q
     N[Custom Node Designer] --> F
     F --> G[Enhanced Code Generation]
+    E[Extended Connectors] --> G
 ```
 
 - **Flow Parameters (4)** is a prerequisite for iteration (loop variable) and conditions (branch expression).
 - **Iterative Nodes (1)** and **Conditional Execution (2)** share containment concepts but use different storage models.
 - **Flow as Custom Node (8)** builds on the catalog (for flow registration) and the custom node framework (for UI).
-- **Enhanced Code Generation (9)** extends to cover all new node types introduced by other features.
-- **Delta Lake (3)** and **Catalog Query (5)** both enhance the catalog layer.
-- **Extended Connectors (6)** feeds into catalog query capabilities.
+- **Enhanced Code Generation (9)** extends to cover all new node types introduced by other features, including new connectors.
+- **Delta Lake (3)** and **Catalog Query (5)** both enhance the catalog layer (internal data managed within Flowfile).
+- **Extended Connectors (6)** adds external database/cloud read and write nodes — independent of the catalog.
