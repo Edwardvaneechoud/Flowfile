@@ -1333,6 +1333,8 @@ class FlowDataEngine:
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.
 
+        Uses native ``LazyFrame.pivot`` for standard aggregations.
+
         Args:
             pivot_input: A `PivotInput` object defining the index, pivot, and value
                 columns, along with the aggregation logic.
@@ -1342,67 +1344,86 @@ class FlowDataEngine:
         Returns:
             A new, pivoted `FlowDataEngine` instance.
         """
-        # Get unique values for pivot columns
         max_unique_vals = 200
+        # Fetch unique pivot values via the worker (subprocess) to avoid blocking the core process
+        pivot_col_lf = self.data_frame.lazy() if isinstance(self.data_frame, pl.DataFrame) else self.data_frame
         new_cols_unique = fetch_unique_values(
-            self.data_frame.select(pivot_input.pivot_column)
+            pivot_col_lf.select(pivot_input.pivot_column)
             .unique()
             .sort(pivot_input.pivot_column)
             .limit(max_unique_vals)
             .cast(pl.String)
         )
-        if len(new_cols_unique) >= max_unique_vals:
-            if node_logger:
-                node_logger.warning(
-                    "Pivot column has too many unique values. Please consider using a different column."
-                    f" Max unique values: {max_unique_vals}"
-                )
+        if len(new_cols_unique) >= max_unique_vals and node_logger:
+            node_logger.warning(
+                "Pivot column has too many unique values. Please consider using a different column."
+                f" Max unique values: {max_unique_vals}"
+            )
 
+        on_columns = pl.DataFrame({pivot_input.pivot_column: new_cols_unique})
+
+        # Ensure we work with a LazyFrame for LazyFrame.pivot
+        base_df = self.data_frame.lazy() if isinstance(self.data_frame, pl.DataFrame) else self.data_frame
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
-            pivot_input.index_columns = ["__temp__"]
-            ff = self.apply_flowfile_formula("1", col_name="__temp__")
+            input_df = base_df.with_columns(pl.lit(1).alias("__temp__"))
+            index_columns = ["__temp__"]
         else:
             no_index_cols = False
-            ff = self
+            input_df = base_df
+            index_columns = pivot_input.index_columns
 
-        # Perform pivot operations
-        index_columns = pivot_input.get_index_columns()
-        grouped_ff = ff.do_group_by(pivot_input.get_group_by_input(), False)
-        pivot_column = pivot_input.get_pivot_column()
+        # Cast pivot column to String for consistent column naming
+        input_df = input_df.with_columns(pl.col(pivot_input.pivot_column).cast(pl.String))
 
-        input_df = grouped_ff.data_frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
         number_of_aggregations = len(pivot_input.aggregations)
-        # Aggregations where missing combinations should be filled with 0 to match
-        # native polars pivot behavior (polars >= 1.32)
-        _zero_fill_aggs = {"sum", "count", "len"}
-        df = (
-            input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
-            .group_by(*index_columns)
-            .agg(
-                [
-                    (pl.col("vals").filter(pivot_column == new_col_value)).first().alias(new_col_value)
-                    for new_col_value in new_cols_unique
-                ]
-            )
-            .select(
-                *index_columns,
-                *[
-                    (
-                        pl.col(new_col).struct.field(agg).fill_null(0)
-                        if agg in _zero_fill_aggs
-                        else pl.col(new_col).struct.field(agg)
-                    ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
-                    for new_col in new_cols_unique
-                    for agg in pivot_input.aggregations
-                ],
-            )
-        )
+        agg_func = pivot_input.aggregations[0] if pivot_input.aggregations else "first"
 
-        # Clean up temporary columns if needed
+        # Map custom aggregation names to polars expressions
+        def _get_agg_expr(agg: str):
+            if agg == "concat":
+                return pl.element().cast(pl.String).str.join(",")
+            return agg
+
+        if number_of_aggregations <= 1:
+            df = input_df.pivot(
+                on=pivot_input.pivot_column,
+                on_columns=on_columns,
+                index=index_columns,
+                values=pivot_input.value_col,
+                aggregate_function=_get_agg_expr(agg_func),
+            )
+        else:
+            # Multiple aggregations: pivot each separately and join
+            frames = []
+            for agg in pivot_input.aggregations:
+                pivoted = input_df.pivot(
+                    on=pivot_input.pivot_column,
+                    on_columns=on_columns,
+                    index=index_columns,
+                    values=pivot_input.value_col,
+                    aggregate_function=_get_agg_expr(agg),
+                )
+                # Rename value columns to include aggregation suffix
+                new_col_names = [c for c in pivoted.collect_schema().names() if c not in index_columns]
+                rename_map = {c: f"{c}_{agg}" for c in new_col_names}
+                frames.append(pivoted.rename(rename_map))
+
+            df = frames[0]
+            for frame in frames[1:]:
+                df = df.join(frame, on=index_columns, how="left")
+
+        # For concat aggregation, replace empty strings with null to match expected behavior
+        if "concat" in pivot_input.aggregations:
+            value_cols = [c for c in new_cols_unique]
+            df = df.with_columns([
+                pl.when(pl.col(c) == "").then(None).otherwise(pl.col(c)).alias(c)
+                for c in value_cols
+                if c in (df.collect_schema().names() if isinstance(df, pl.LazyFrame) else df.columns)
+            ])
+
         if no_index_cols:
             df = df.drop("__temp__")
-            pivot_input.index_columns = []
 
         return FlowDataEngine(df, calculate_schema_stats=False)
 
