@@ -160,21 +160,14 @@ This uses `pl.LazyFrame.sink_delta()` directly — no need to convert to Arrow o
 
 Note: `sink_delta` is marked as unstable in Polars. This should be monitored across Polars releases.
 
-### Phase 4: Cloud Delta Tables
-
-The existing cloud storage infrastructure already supports Delta format. This phase connects the catalog to cloud-hosted Delta tables:
-
-- **S3**: `s3://bucket/catalog/{namespace}/{table}/`
-- **ADLS**: `abfss://container@account/{namespace}/{table}/`
-- **GCS**: `gs://bucket/catalog/{namespace}/{table}/`
-
-Cloud credentials flow through the existing `FullCloudStorageConnection` model with per-user encryption.
-
 ### Backward Compatibility
 
 - **Migration tool**: A one-time script converts existing `.parquet` catalog files to Delta tables.
 - **Read fallback**: If a table path contains a `.parquet` file (old format), read it directly. If it contains a `_delta_log/` directory, use `read_delta()`.
 - **Version field**: Add `storage_format: Literal["parquet", "delta"] = "delta"` to catalog table metadata for the transition period.
+
+!!! note
+    Cloud-hosted Delta tables (S3, ADLS, GCS) and decentralized catalog backends (PostgreSQL instead of SQLite) are covered in [Feature 10: Cloud & Distributed Catalog](10_cloud_distributed_catalog.md).
 
 ## Key Files to Modify
 

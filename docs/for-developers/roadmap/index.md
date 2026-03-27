@@ -62,6 +62,7 @@ class FlowfileNode(BaseModel):
 | 7 | [Standardized Custom Node Designer](07_custom_node_designer.md) | Visual designer, packaging, and sharing | — |
 | 8 | [Flow as Custom Node](08_flow_as_custom_node.md) | Reuse catalog-registered flows as nodes | Option C |
 | 9 | [Enhanced Code Generation](09_enhanced_code_generation.md) | Catalog reads/writes and kernel code wrapping | — |
+| 10 | [Cloud & Distributed Catalog](10_cloud_distributed_catalog.md) | PostgreSQL metadata, cloud table storage, catalog federation | — |
 
 ---
 
