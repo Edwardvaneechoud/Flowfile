@@ -103,6 +103,33 @@ class CatalogTableVersion(BaseModel):
 
 **Merge (upsert) support**:
 
+Merge needs to know which columns to match on. These merge keys come from the **`catalog_writer` node's settings** — the user specifies them when configuring the write, alongside the write mode.
+
+**`catalog_writer` node extension** (`input_schema.py`):
+
+```python
+class NodeCatalogWriter(NodeSingleInput):
+    catalog_table_id: int | None = None
+    catalog_table_name: str | None = None
+    catalog_namespace_id: int | None = None
+    write_mode: Literal["overwrite", "append", "merge"] = "overwrite"   # NEW
+    merge_keys: list[str] | None = None     # NEW: required when write_mode == "merge"
+```
+
+The UI shows a column selector for `merge_keys` when `write_mode` is set to `"merge"` — populated from the input DataFrame's schema.
+
+Optionally, the catalog table metadata can also store declared primary keys for validation:
+
+```python
+class CatalogTableMetadata(BaseModel):
+    # ... existing fields ...
+    primary_keys: list[str] | None = None   # declared key columns (optional)
+```
+
+If the table has declared primary keys and the writer's `merge_keys` don't match, a warning is surfaced.
+
+**Catalog service merge method**:
+
 ```python
 def merge_into_table(self, table_id: int, source_df: pl.DataFrame, merge_keys: list[str]):
     """Upsert: update matching rows, insert new rows."""
