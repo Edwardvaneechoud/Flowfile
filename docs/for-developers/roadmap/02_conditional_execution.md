@@ -2,19 +2,39 @@
 
 ## Motivation
 
-Real-world ETL pipelines need branching logic: route data differently based on conditions, skip processing steps when criteria aren't met, or apply different transformations to different subsets. Today Flowfile's `filter` node can subset rows, but there is no way to express "if this condition, run these nodes; otherwise, run those nodes." Users must create separate flows or use workarounds with filters and unions.
+Real-world ETL pipelines need flow-level branching: "if the data meets this condition, run these nodes; otherwise, run those nodes." This is a **Python if/else at the flow level**, not a row-level filter. Examples:
 
-Conditional execution introduces a **Condition** container node with inline branch sub-graphs, enabling if/else routing within a single flow.
+- If `df.count() == 12` (expected monthly records), proceed with processing; otherwise, run an error-handling branch.
+- If a required column exists in the schema, run enrichment; otherwise, skip it.
+- If the data passes validation checks, write to production; otherwise, write to a quarantine table.
+
+Today Flowfile's `filter` node can subset rows, but there's no way to route the **entire DataFrame** down one path or another based on a dataset-level condition. Users must create separate flows or manually check conditions outside Flowfile.
+
+Conditional execution introduces a **Condition** container node that evaluates a condition against the whole DataFrame and executes **only the matching branch** — the entire DataFrame goes to one branch, not both.
 
 ## Current State
 
-- **`filter` node**: Subsets rows based on an expression, but outputs a single stream (no else branch).
+- **`filter` node**: Row-level subsetting. Outputs rows where the expression is true. This is fundamentally different from flow-level branching.
 - **No branching**: The execution engine executes all nodes in topological order. There is no mechanism to skip a subset of nodes based on a runtime condition.
 - **`FlowfileNode`** (`schemas.py:227`): No `parent_node_id` field — all nodes are peers.
 - **`ExecutionStage`** (`execution_orderer.py:10`): Flat list of nodes, no conditional logic.
 - **VueFlow frontend**: Supports `parentNode` natively for visual containment, but the backend has no counterpart.
 
 ## Proposed Design
+
+### Core Semantics: Flow-Level If/Else
+
+The condition node evaluates an expression against the **entire input DataFrame** (or its properties like count, schema, column values). The result is a boolean. The entire DataFrame is routed to exactly one branch:
+
+```python
+# Conceptual execution:
+if df.count() == 12:
+    result = if_branch.process(df)       # entire df goes here
+else:
+    result = else_branch.process(df)     # OR here — never both
+```
+
+This is NOT row-level splitting. The `filter` node already handles that. Condition nodes are control flow.
 
 ### Storage Model: Option A (Parent Pointer)
 
@@ -31,21 +51,22 @@ nodes:
     input_ids: [5]
     outputs: [20]
     setting_input:
-      condition_expression: "col('status') == 'active'"
+      condition_expression: "df.count() == 12"
       branches:
         - branch_id: "if"
-          label: "Active records"
+          label: "Expected row count"
         - branch_id: "else"
-          label: "Inactive records"
+          label: "Unexpected data"
 
   # Children of condition node 10, "if" branch
+  # These receive the ENTIRE input df when the condition is True
   - id: 11
     type: formula
     parent_node_id: 10
     branch_id: "if"
     x_position: 140        # relative to parent
     y_position: 50
-    input_ids: []           # implicit: receives data from parent's "if" route
+    input_ids: []           # implicit: receives data from parent
     outputs: [12]
 
   - id: 12
@@ -58,16 +79,19 @@ nodes:
     outputs: []             # terminal node of this branch
 
   # Children of condition node 10, "else" branch
+  # These receive the ENTIRE input df when the condition is False
   - id: 13
-    type: filter
+    type: catalog_writer
     parent_node_id: 10
     branch_id: "else"
     x_position: 140
     y_position: 200
     input_ids: []
+    setting_input:
+      catalog_table_name: "quarantine_data"
     outputs: []
 
-  # Downstream of condition (receives merged output)
+  # Downstream of condition (receives output from whichever branch ran)
   - id: 20
     type: output
     input_ids: [10]
@@ -94,12 +118,28 @@ class ConditionBranch(BaseModel):
     label: str = ""                       # display label
 
 class NodeCondition(NodeSingleInput):
-    condition_expression: str             # Polars expression string
+    condition_expression: str             # expression evaluated against the DataFrame
     branches: list[ConditionBranch] = [
         ConditionBranch(branch_id="if", label="True"),
         ConditionBranch(branch_id="else", label="False"),
     ]
-    merge_output: bool = True             # whether to concat branch outputs
+```
+
+**Condition expression examples**:
+
+```python
+# Row count checks
+"df.count() == 12"
+"df.count() > 0"
+
+# Schema checks
+"'expected_column' in df.columns"
+
+# Aggregate checks
+"df.select(pl.col('amount').sum()).item() > 10000"
+
+# Null checks
+"df.select(pl.col('id').null_count()).item() == 0"
 ```
 
 **New node template** (`nodes.py`):
@@ -130,7 +170,7 @@ NodeTemplate(
 ```python
 @dataclass(frozen=True)
 class ConditionalExecutionStage:
-    """A stage that evaluates a condition and executes the matching branch."""
+    """A stage that evaluates a condition and executes only the matching branch."""
     container_node: FlowNode
     branches: dict[str, list[FlowNode]]   # branch_id → ordered child nodes
 ```
@@ -138,21 +178,64 @@ class ConditionalExecutionStage:
 **`flow_graph.py`** — conditional execution path:
 
 ```
-1. Evaluate condition_expression against the input DataFrame
-2. Split data:
-   - "if" branch: rows where condition is True
-   - "else" branch: rows where condition is False
-3. For each branch with data:
-   a. Identify the branch's child nodes (filter by parent_node_id + branch_id)
-   b. Build a mini execution plan from those nodes
-   c. Inject the branch's data subset as input to the first child node
-   d. Execute the child nodes in order
-   e. Collect the terminal node's output
-4. If merge_output is True:
-   - pl.concat() the branch outputs
-   - Pass to downstream nodes via the container's outputs
-5. If merge_output is False:
-   - Each branch's terminal nodes connect directly to different downstream nodes
+1. Get the input DataFrame
+2. Evaluate condition_expression against it → boolean result
+3. Determine which branch to execute:
+   - True  → execute the "if" branch's child nodes
+   - False → execute the "else" branch's child nodes
+4. The NON-matching branch is skipped entirely (no execution, no resource use)
+5. Inject the ENTIRE input DataFrame as input to the first child node of the matching branch
+6. Execute the matching branch's child nodes in order
+7. Collect the terminal node's output
+8. Pass result to downstream nodes via the container's outputs
+```
+
+**Key difference from filter**: The entire DataFrame goes to one branch. The other branch does NOT execute. This is true conditional control flow.
+
+**Condition evaluation**: The expression runs in a controlled context where `df` refers to the input DataFrame and `pl` refers to polars. The expression must evaluate to a boolean scalar.
+
+```python
+def evaluate_condition(df: pl.DataFrame, expression: str) -> bool:
+    context = {"df": df, "pl": pl}
+    result = eval(expression, {"__builtins__": {}}, context)
+    if not isinstance(result, bool):
+        raise ValueError(f"Condition must evaluate to bool, got {type(result)}")
+    return result
+```
+
+### Code Generation
+
+Condition nodes generate Python if/else with the branch logic in separate modules:
+
+```python
+# main_flow.py
+from pipeline_name.branch_if_validation import process as handle_valid
+from pipeline_name.branch_else_validation import process as handle_invalid
+
+df = read_from_catalog("production", "raw_data")
+
+if df.count() == 12:
+    result = handle_valid(df)
+else:
+    result = handle_invalid(df)
+
+write_to_catalog(result, "production", "output")
+```
+
+```python
+# branch_if_validation.py
+def process(df: pl.DataFrame) -> pl.DataFrame:
+    """Branch: Expected row count."""
+    df = df.with_columns(pl.col("amount").round(2))
+    return df.select(["id", "name", "amount"])
+```
+
+```python
+# branch_else_validation.py
+def process(df: pl.DataFrame) -> pl.DataFrame:
+    """Branch: Unexpected data — write to quarantine."""
+    write_to_catalog(df, "production", "quarantine_data")
+    return df
 ```
 
 ### Frontend Changes
@@ -165,13 +248,13 @@ class ConditionalExecutionStage:
 
 **Visual indicators**:
 - The condition expression is displayed on the container header.
-- Branch labels ("Active records" / "Inactive records") are shown above each zone.
-- During execution, the active branch highlights while the inactive branch dims.
+- Branch labels are shown above each zone.
+- During execution, the active branch highlights while the skipped branch dims.
 
 **Node configuration panel**:
-- `condition_expression`: Code editor (CodeMirror) with Polars expression syntax.
+- `condition_expression`: Code editor (CodeMirror) with Python expression syntax. Autocomplete for `df.count()`, `df.columns`, `df.select(...)`, etc.
 - Branch list: Add/remove/rename branches.
-- `merge_output`: Toggle switch.
+- Expression help: examples of common conditions (count checks, schema checks, aggregate checks).
 
 ### Serialization Round-trip
 
@@ -181,9 +264,9 @@ class ConditionalExecutionStage:
 
 ### Schema Inference
 
-- Each branch's output schema is inferred independently by tracing the child nodes.
-- If `merge_output` is True, the container's output schema is the union of all branch schemas (with nulls for missing columns).
-- If branches produce incompatible schemas, a warning is surfaced in the UI.
+- Only the "if" branch's output schema is used for downstream schema inference (it's the "expected" path).
+- If the else branch produces a different schema, a warning is surfaced.
+- Schema inference does not require executing the condition — it traces the "if" branch statically.
 
 ## Key Files to Modify
 
@@ -193,14 +276,15 @@ class ConditionalExecutionStage:
 | `flowfile_core/flowfile_core/schemas/input_schema.py` | Add `NodeCondition`, `ConditionBranch` models |
 | `flowfile_core/flowfile_core/configs/node_store/nodes.py` | Add `condition` node template |
 | `flowfile_core/flowfile_core/flowfile/util/execution_orderer.py` | Add `ConditionalExecutionStage`, exclude children from main sort |
-| `flowfile_core/flowfile_core/flowfile/flow_graph.py` | Add branch evaluation and per-branch execution logic |
+| `flowfile_core/flowfile_core/flowfile/flow_graph.py` | Add condition evaluation and single-branch execution logic |
 | `flowfile_core/flowfile_core/flowfile/flow_node/executor.py` | Handle `condition` execution strategy |
+| `flowfile_core/flowfile_core/flowfile/code_generator/` | Generate if/else with branch modules |
 | `flowfile_frontend/` | VueFlow container with branch zones, parentNode mapping |
 
 ## Open Questions
 
-1. **Multi-way branching**: Should conditions support more than if/else (e.g., switch/case with multiple expressions)? The `branches` list model supports this, but the UI and expression evaluation would need to handle N conditions.
-2. **Empty branches**: What happens when a branch receives zero rows? Skip execution entirely, or execute with an empty DataFrame?
-3. **Cross-branch references**: Can a node in the "else" branch reference data from the "if" branch? (Proposed: no — branches are isolated.)
+1. **Multi-way branching**: Should conditions support more than if/else? E.g., a switch/case: "if count == 12, elif count == 6 (semi-annual), else error." The `branches` list model supports this — each branch would need its own condition expression except the last (default/else).
+2. **Expression safety**: Using `eval()` for condition expressions is flexible but risky. Should conditions be restricted to a safe subset (e.g., only `df.count()`, `df.columns`, `df.select().item()`)? Or is kernel-level sandboxing sufficient?
+3. **Branch with no output**: If the else branch writes to quarantine but doesn't return data (a dead end), what does the condition node pass downstream? `None`? An empty DataFrame?
 4. **Nested conditions**: A condition node inside another condition node is technically possible with parent pointers. Should this be supported from day one?
-5. **Parameter integration**: Once Flow Parameters (feature 4) exists, condition expressions should support `{{param}}` references for parameter-driven branching.
+5. **Parameter integration**: Once Flow Parameters (feature 4) is merged, condition expressions should support `${param}` references for parameter-driven branching (e.g., `df.count() == ${expected_count}`).
