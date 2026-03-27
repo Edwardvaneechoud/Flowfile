@@ -175,6 +175,7 @@ class GroupByFrame:
         """Create node for explicit aggregations via self.agg()."""
 
         if can_be_converted:
+            precomputed = None
             group_by_settings = input_schema.NodeGroupBy(
                 flow_id=self.parent.flow_graph.flow_id,
                 node_id=node_id_to_use,
@@ -191,7 +192,7 @@ class GroupByFrame:
             pl_agg_expressions = list(map(get_pl_expr_from_expr, ensure_inputs_as_iterable(agg_expressions)))
             pl_group_expr = list(map(get_pl_expr_from_expr, ensure_inputs_as_iterable(self.expr_by_cols)))
             pl_kwargs_expr = {k: self._create_expr_col(c).expr for k, c in named_agg_exprs.items()}
-            self.parent._add_polars_code(
+            precomputed = self.parent._add_polars_code(
                 new_node_id=node_id_to_use,
                 code=code,
                 description=description,
@@ -202,7 +203,7 @@ class GroupByFrame:
                 kwargs_expr=pl_kwargs_expr,
                 group_kwargs={"maintain_order": self.maintain_order},
             )
-        return self.parent._create_child_frame(node_id_to_use)
+        return self.parent._create_child_frame(node_id_to_use, precomputed_result=precomputed)
 
     # Aggregation methods that only work on numeric columns
     _NUMERIC_ONLY_METHODS = {"sum", "mean", "median"}
