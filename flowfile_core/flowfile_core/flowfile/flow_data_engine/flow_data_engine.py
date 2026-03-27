@@ -1373,6 +1373,9 @@ class FlowDataEngine:
 
         input_df = grouped_ff.data_frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
         number_of_aggregations = len(pivot_input.aggregations)
+        # Aggregations where missing combinations should be filled with 0 to match
+        # native polars pivot behavior (polars >= 1.32)
+        _zero_fill_aggs = {"sum", "count", "len"}
         df = (
             input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
             .group_by(*index_columns)
@@ -1385,9 +1388,11 @@ class FlowDataEngine:
             .select(
                 *index_columns,
                 *[
-                    pl.col(new_col)
-                    .struct.field(agg)
-                    .alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col }')
+                    (
+                        pl.col(new_col).struct.field(agg).fill_null(0)
+                        if agg in _zero_fill_aggs
+                        else pl.col(new_col).struct.field(agg)
+                    ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
                     for new_col in new_cols_unique
                     for agg in pivot_input.aggregations
                 ],
