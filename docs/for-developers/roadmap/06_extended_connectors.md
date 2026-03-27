@@ -2,37 +2,78 @@
 
 ## Motivation
 
-Flowfile already has broad database connectivity — the `database_reader` node can connect to any database that ConnectorX supports (PostgreSQL, MySQL, MariaDB, SQLite, MSSQL, Oracle, and more) via `pl.read_database_uri()`, with both table-based reads and custom SQL queries. The `database_writer` writes to any SQLAlchemy-compatible database. A comprehensive SQL type mapper (100+ type mappings) converts database types to Polars types, and connections can be stored as references with encrypted credentials via the secrets system.
+Flowfile currently supports **only PostgreSQL** for database connectivity and **only AWS S3** for cloud storage. While the underlying libraries (ConnectorX, SQLAlchemy, Polars) can theoretically connect to other databases, Flowfile has only implemented, tested, and exposed PostgreSQL in the UI. The frontend database type dropdown literally has one option: `postgresql`.
 
-What's missing is not basic connectivity, but **database-specific optimizations and cloud-native data warehouses**:
+This feature is about building **real, tested, production-ready support** for additional databases and cloud storage providers:
 
-- **Partitioned reads**: ConnectorX supports `PARTITION ON` for parallel reads, but this is not exposed in the node settings.
-- **Bulk loading**: Writes use generic `df.write_database()` (row-by-row INSERT). Database-specific bulk methods (PostgreSQL `COPY`, MySQL `LOAD DATA`) would be 10-100x faster.
-- **Cloud data warehouses**: BigQuery and Snowflake use fundamentally different connection models (OAuth, project IDs, warehouses, stages) that don't fit the current `host:port/database` URI pattern.
-- **Incremental loading**: No built-in support for watermark-based reads or change data capture.
-- **Schema browsing in UI**: The backend can inspect schemas via SQLAlchemy `inspect()`, but the frontend doesn't expose a visual schema browser in the node configuration panel.
+- **MySQL** — the most widely used open-source database; many ETL workloads need it.
+- **ADLS (Azure Data Lake Storage)** — Azure-native cloud storage, required for Azure-centric organizations.
+- **GCS (Google Cloud Storage)** — Google Cloud equivalent.
+- **BigQuery** — Google's serverless data warehouse, widely used for analytics.
+- **Snowflake** — dominant cloud data warehouse, fundamentally different connection model.
+
+Beyond new connectors, existing PostgreSQL support can be enhanced with partitioned reads, bulk loading, and incremental loading.
 
 ## Current State
 
+### Database Support: PostgreSQL Only
+
 - **`database_reader` node** (`input_schema.py`): `NodeDatabaseReader` with `DatabaseSettings` supporting:
   - `connection_mode`: `"inline"` (direct settings) or `"reference"` (stored connection name)
-  - `DatabaseConnection` model: `database_type` (free-form string, default `"postgresql"`), `username`, `password_ref` (SecretRef), `host`, `port`, `database`, optional `url` override
+  - `DatabaseConnection` model: `database_type` (string, default `"postgresql"`), `username`, `password_ref` (SecretRef), `host`, `port`, `database`, optional `url` override
   - `query_mode`: `"query"` (custom SQL), `"table"` (full table read), or `"reference"`
-  - `schema_name` and `table_name` fields
   - SQL validation: strict allow-list for SELECT/WITH, blocks DDL/DML
 - **`database_writer` node** (`input_schema.py`): `NodeDatabaseWriter` with the same `DatabaseSettings`, writing via `df.write_database()`.
-- **ConnectorX** (`connectorx ^0.4.2`): Primary read driver, supports PostgreSQL, MySQL, MariaDB, SQLite, MSSQL, Oracle. Used via `pl.read_database_uri()`.
-- **SQLAlchemy** (`sqlalchemy ^2.0.27`): Used for writes, schema inspection (`inspect()`), and type mapping.
-- **SQL type mapper** (`sql_source/utils.py`): 100+ SQLAlchemy-to-Polars type mappings covering Int64, Float64, Utf8, Date, Datetime, Boolean, Decimal, Binary, etc.
-- **URI construction** (`sql_source/utils.py`): Builds `{database_type}://{username}:{password}@{host}:{port}/{database}` from `DatabaseConnection` fields.
-- **Cloud storage connectors**: S3, ADLS, GCS with 7 authentication methods. Well-structured with `AuthSettingsInput`, `FullCloudStorageConnection`, etc. in `cloud_storage_schemas.py`. Cloud read supports CSV, Parquet, JSON, Delta, and Iceberg formats.
-- **Connection management**: Cloud connections are registered and encrypted per-user via the secrets system. Database connections support both inline and reference modes.
+- **Tests**: Only PostgreSQL is tested (`test_sql_source.py` uses `postgresql://` connections). Test infrastructure in `test_utils/postgres/` provides Docker-based PostgreSQL via testcontainers.
+- **Frontend**: `DatabaseConnectionSettings.vue` has a single `<option value="postgresql">PostgreSQL</option>`.
+- **Documentation**: The database tutorial covers only PostgreSQL (via Supabase).
+- **Type mapping** (`sql_source/utils.py`): 100+ SQLAlchemy-to-Polars type mappings exist, but only validated against PostgreSQL types.
+- **URI construction** (`sql_source/utils.py`): Builds `{database_type}://{username}:{password}@{host}:{port}/{database}`. Works for standard databases but not for BigQuery/Snowflake.
+
+### Cloud Storage Support: AWS S3 Only
+
+- **`cloud_storage_reader`/`cloud_storage_writer` nodes**: Schema definitions exist for S3, ADLS, and GCS (`cloud_storage_schemas.py`) with 7 auth methods and multiple file formats (CSV, Parquet, JSON, Delta, Iceberg).
+- **Actual implementation and testing**: Only AWS S3 is implemented and tested. ADLS and GCS connection types are defined in the schema but not production-ready — no tests, no verified integration, no documented workflows.
+
+### What Exists in Code but is NOT Implemented
+
+- `flowfile_frame` defines `database_type: Literal["postgresql", "mysql", "sqlite", "mssql", "oracle"]` in type hints — but these are aspirational, not functional.
+- `cloud_storage_schemas.py` defines `storage_type: Literal["s3", "adls", "gcs"]` — but only S3 is tested and supported.
+- ConnectorX is a dependency (`^0.4.2`) but the actual database reads go through `pl.read_database_uri()`. ConnectorX's multi-database support is not actively leveraged or tested.
 
 ## Proposed Design
 
-### Extended Connection Model for Cloud Data Warehouses
+### Phase 1: MySQL Support
 
-The existing `DatabaseConnection` model uses a standard `host:port/database` URI pattern that works well for PostgreSQL, MySQL, MSSQL, etc. Cloud data warehouses (BigQuery, Snowflake) need additional fields that don't fit this pattern.
+MySQL is the most impactful addition — it's the world's most popular open-source database and many ETL workloads involve MySQL sources.
+
+**Implementation**:
+1. **Backend**: Add MySQL-specific URI construction, test type mapping against MySQL types, handle MySQL-specific SQL dialect differences.
+2. **Tests**: Add MySQL testcontainer to `test_utils/`, mirror PostgreSQL test suite for MySQL.
+3. **Frontend**: Add `<option value="mysql">MySQL</option>` to database type dropdown. Adjust port default (3306 vs 5432).
+4. **Documentation**: Add MySQL connection tutorial.
+
+**Type mapping gaps**: MySQL-specific types (`ENUM`, `SET`, `MEDIUMINT`, `TINYINT`, `YEAR`) need explicit Polars mappings.
+
+### Phase 2: ADLS and GCS Cloud Storage
+
+The schema infrastructure exists. The work is in implementation and testing.
+
+**ADLS (Azure)**:
+1. Implement actual connection logic for `service_principal`, `managed_identity`, `sas_token`, and `access_key` auth methods.
+2. Add ADLS test infrastructure (Azurite emulator or integration tests).
+3. Test read/write for all supported formats (CSV, Parquet, JSON, Delta).
+4. Frontend: Verify ADLS connection form works end-to-end.
+
+**GCS (Google)**:
+1. Implement GCS connection logic with service account and application default credentials.
+2. Add GCS test infrastructure (fake-gcs-server or integration tests).
+3. Test read/write for all supported formats.
+4. Frontend: Verify GCS connection form works end-to-end.
+
+### Phase 3: BigQuery and Snowflake
+
+These are fundamentally different from standard databases and need dedicated connector implementations.
 
 **Extend `DatabaseConnection`** (`input_schema.py`):
 
@@ -54,17 +95,52 @@ class DatabaseConnection(BaseModel):
     role: str | None = None
 ```
 
-BigQuery and Snowflake use their own connector libraries that build connection strings differently from the standard URI pattern. The `url` override field can accommodate this, but explicit fields improve the UI experience.
+**BigQuery**:
+- Read via `google-cloud-bigquery` with Storage API for large result sets.
+- Write via load jobs (Parquet staging → BigQuery load).
+- Support for partitioned/clustered table writes.
+- Dedicated frontend form (project ID, dataset, credentials).
+
+**Snowflake**:
+- Read via `snowflake-connector-python` with result set caching.
+- Write via internal stage → COPY INTO for bulk loading.
+- Dedicated frontend form (account, warehouse, role, database).
+
+### Phase 4: PostgreSQL Enhancements
+
+Improve the existing PostgreSQL connector:
+
+**Partitioned reads**: Expose ConnectorX's `PARTITION ON` for parallel reads of large tables.
+
+```python
+class DatabaseSettings(BaseModel):
+    # ... existing fields ...
+    # NEW: Performance optimization
+    partition_column: str | None = None
+    partition_count: int = 4
+```
+
+**Bulk loading**: Replace `df.write_database()` (row-by-row INSERT) with `COPY FROM STDIN` via psycopg2 for 10-100x faster writes.
+
+**Incremental loading**:
+
+```python
+class IncrementalReadSettings(BaseModel):
+    enabled: bool = False
+    watermark_column: str           # e.g., "updated_at"
+    watermark_type: Literal["timestamp", "integer"]
+    last_watermark: Any | None      # stored in catalog metadata
+```
+
+The reader tracks the high-water mark from the last read. On subsequent runs, it adds a `WHERE watermark_column > last_watermark` predicate.
 
 ### Schema Browser
+
+A visual schema browser in the node configuration panel, for all supported databases:
 
 **New API endpoints**:
 
 ```python
-@router.get("/connections/{id}/databases")
-async def list_databases(id: int) -> list[str]:
-    ...
-
 @router.get("/connections/{id}/schemas")
 async def list_schemas(id: int, database: str | None = None) -> list[str]:
     ...
@@ -82,123 +158,41 @@ async def preview_table(id: int, table: str, limit: int = 100) -> PreviewResult:
     ...
 ```
 
-**Schema browser models**:
-
-```python
-class TableInfo(BaseModel):
-    name: str
-    schema: str
-    row_count: int | None       # estimated, from statistics
-    size_bytes: int | None
-    table_type: str             # "TABLE", "VIEW", "MATERIALIZED_VIEW"
-
-class ColumnInfo(BaseModel):
-    name: str
-    data_type: str              # database-native type
-    polars_type: str            # mapped Polars type
-    nullable: bool
-    is_primary_key: bool
-    default_value: str | None
-```
-
-### Database-Specific Optimizations
-
-**PostgreSQL**:
-- Read via `connectorx` with partitioned queries for large tables (`PARTITION ON` column).
-- Write via `COPY FROM STDIN` for bulk loading (10-100x faster than INSERT).
-- Support for `LISTEN/NOTIFY` for CDC use cases (future).
-
-**MySQL**:
-- Read via `connectorx` with partition pushdown.
-- Write via `LOAD DATA LOCAL INFILE` for bulk loading.
-- Support for binary log CDC (future).
-
-**BigQuery**:
-- Read via `google-cloud-bigquery` with Storage API for large result sets.
-- Write via load jobs (Parquet staging → BigQuery load).
-- Support for partitioned/clustered table writes.
-
-**Snowflake**:
-- Read via `snowflake-connector-python` with result set caching.
-- Write via internal stage → COPY INTO for bulk loading.
-- Support for warehouse auto-scaling hints.
-
-### Incremental Loading
-
-**Watermark-based reads**:
-
-```python
-class IncrementalReadSettings(BaseModel):
-    enabled: bool = False
-    watermark_column: str           # e.g., "updated_at"
-    watermark_type: Literal["timestamp", "integer"]
-    last_watermark: Any | None      # stored in catalog metadata
-```
-
-The reader tracks the high-water mark from the last read. On subsequent runs, it adds a `WHERE watermark_column > last_watermark` predicate. The watermark is stored in the catalog as table metadata.
-
-### Enhanced Node Settings
-
-**Extend `DatabaseSettings`** (used by both reader and writer):
-
-```python
-class DatabaseSettings(BaseModel):
-    # ... existing fields (connection_mode, database_connection, query_mode, etc.) ...
-
-    # NEW: Performance optimization
-    partition_column: str | None = None      # ConnectorX PARTITION ON column
-    partition_count: int = 4                 # number of parallel read partitions
-    selected_columns: list[str] | None = None  # column pruning (SELECT specific cols)
-
-    # NEW: Incremental loading
-    incremental: IncrementalReadSettings | None = None
-
-    # NEW: Write optimization
-    bulk_load: bool = True                   # use DB-specific bulk loading (COPY, LOAD DATA)
-    write_mode: Literal["append", "replace", "fail", "upsert"] = "append"
-    upsert_keys: list[str] | None = None     # for upsert mode
-    batch_size: int = 10000
-```
-
-These extend the existing `DatabaseSettings` model rather than replacing `NodeDatabaseReader`/`NodeDatabaseWriter`, preserving backward compatibility with existing flows.
+**Frontend**: Tree view in database reader node config — connection → schema → table → columns. Click to auto-fill node settings.
 
 ### Frontend Changes
 
-**Connection manager** (new page or modal):
-- List registered database connections.
-- Add/edit/test connections with database-specific forms.
-- Test connectivity button with status indicator.
+**Database type dropdown**: Expand from just PostgreSQL to all supported databases, with database-specific form fields:
 
-**Schema browser** (in database reader node config):
-- Tree view: connection → database → schema → table → columns.
-- Click table to auto-fill node settings.
-- Column checkboxes for `selected_columns`.
-- Preview button for sample data.
+| Database | Form Fields |
+|----------|-------------|
+| PostgreSQL | host, port (5432), database, username, password, schema |
+| MySQL | host, port (3306), database, username, password |
+| BigQuery | project ID, dataset, service account JSON |
+| Snowflake | account, warehouse, role, database, username, password |
 
-**Database writer config**:
-- Table selector from schema browser.
-- Write mode dropdown with explanations.
-- Column mapping grid for upsert keys.
+**Connection test**: "Test connection" button for all database types.
 
 ## Key Files to Modify
 
 | File | Change |
 |------|--------|
-| `flowfile_core/flowfile_core/schemas/input_schema.py` | Extend `DatabaseSettings`, `DatabaseConnection` with new fields |
-| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/sql_source.py` | Add BigQuery/Snowflake connection builders, bulk write strategies |
-| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/utils.py` | Add BigQuery/Snowflake type mappings, URI construction |
-| `flowfile_core/flowfile_core/configs/node_store/nodes.py` | Update database node templates |
-| `flowfile_core/flowfile_core/main.py` | Add connection management and schema browser endpoints |
-| `flowfile_core/flowfile_core/catalog/` | Store database connections as catalog entities |
-| `flowfile_worker/` | Implement DB-specific read/write strategies |
-| `flowfile_frontend/` | Connection manager, schema browser, updated node configs |
-| `pyproject.toml` | Add optional deps: `psycopg2`, `mysql-connector-python`, `google-cloud-bigquery`, `snowflake-connector-python` |
+| `flowfile_core/flowfile_core/schemas/input_schema.py` | Extend `DatabaseConnection` with BigQuery/Snowflake fields |
+| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/sql_source.py` | Add MySQL/BigQuery/Snowflake connection logic |
+| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/utils.py` | Add MySQL/BigQuery/Snowflake type mappings and URI construction |
+| `flowfile_core/flowfile_core/main.py` | Add schema browser endpoints |
+| `flowfile_worker/flowfile_worker/external_sources/sql_source/` | Database-specific read/write strategies, bulk loading |
+| `flowfile_frontend/.../databaseReader/DatabaseConnectionSettings.vue` | Expand database type dropdown, add DB-specific forms |
+| `flowfile_frontend/.../databaseReader/databaseConnectionTypes.ts` | Extend type from `"postgresql"` to union of supported types |
+| `test_utils/` | Add MySQL testcontainer (mirror `test_utils/postgres/`) |
+| `flowfile_core/tests/`, `flowfile_worker/tests/` | Add MySQL, BigQuery, Snowflake test suites |
+| `pyproject.toml` | Add optional deps: `mysql-connector-python`, `google-cloud-bigquery`, `snowflake-connector-python` |
 
 ## Open Questions
 
-1. **Connection pooling**: Should the worker maintain persistent connection pools? This complicates the stateless worker model. Alternative: create connections per-request but cache credentials.
-2. **Pushdown predicates**: How much of Polars' filter expressions should be pushed down to SQL? Start with simple column comparisons, expand later.
-3. **BigQuery/Snowflake type mapping**: The existing SQL type mapper covers standard SQL types well. BigQuery (STRUCT, ARRAY, GEOGRAPHY) and Snowflake (VARIANT, OBJECT) have proprietary types that need new mappings.
+1. **Prioritization**: Which database after MySQL is most requested by users? BigQuery or Snowflake?
+2. **ADLS/GCS testing**: Use emulators (Azurite, fake-gcs-server) for CI, or rely on integration tests with real cloud credentials?
+3. **BigQuery/Snowflake type mapping**: Both have proprietary types (BigQuery: STRUCT, ARRAY, GEOGRAPHY; Snowflake: VARIANT, OBJECT) that need new Polars mappings.
 4. **OAuth for BigQuery/Snowflake**: Both support OAuth flows. How to integrate with the existing secrets/auth model?
-5. **Dependency management**: BigQuery and Snowflake drivers are heavy. Should they be optional extras (`pip install flowfile[bigquery]`) or bundled? ConnectorX already covers PostgreSQL/MySQL/MSSQL without extra drivers.
-6. **ConnectorX vs native drivers**: ConnectorX already supports PostgreSQL, MySQL, etc. For bulk write operations, we need native drivers (psycopg2, mysql-connector). Should reads also use native drivers for consistency, or keep ConnectorX for read performance?
+5. **Dependency management**: BigQuery and Snowflake drivers are heavy. Should they be optional extras (`pip install flowfile[bigquery]`) or bundled?
+6. **Bulk write across databases**: PostgreSQL has `COPY`, MySQL has `LOAD DATA`. Should the API expose this as a generic "bulk mode" toggle, or database-specific options?

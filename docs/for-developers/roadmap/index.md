@@ -58,7 +58,7 @@ class FlowfileNode(BaseModel):
 | 3 | [Delta Lake Catalog Storage](03_delta_lake_catalog.md) | ACID-compliant catalog storage with time travel | — |
 | 4 | [Flow Parameters](04_flow_parameters.md) | Runtime-configurable flow inputs | — |
 | 5 | [Catalog Query & Data Exploration](05_catalog_query_exploration.md) | SQL queries and GraphicWalker on catalog tables | — |
-| 6 | [Extended Connectors](06_extended_connectors.md) | PostgreSQL, MySQL, BigQuery, Snowflake | — |
+| 6 | [Extended Connectors](06_extended_connectors.md) | MySQL, ADLS, GCS, BigQuery, Snowflake + PostgreSQL enhancements | — |
 | 7 | [Standardized Custom Node Designer](07_custom_node_designer.md) | Visual designer, packaging, and sharing | — |
 | 8 | [Flow as Custom Node](08_flow_as_custom_node.md) | Reuse catalog-registered flows as nodes | Option C |
 | 9 | [Enhanced Code Generation](09_enhanced_code_generation.md) | Catalog reads/writes and kernel code wrapping | — |
