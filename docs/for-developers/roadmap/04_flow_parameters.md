@@ -130,8 +130,7 @@ When a flow is used as a sub-node, its parameters become the node's configuratio
 
 ## Open Questions
 
-1. **Merge readiness**: The branch has 10 commits and tests. What's blocking merge to main?
-2. **String-only vs typed**: Is `default_value: str` sufficient, or should v1 include typed parameters?
+1. **String-only vs typed**: Is `default_value: str` sufficient, or should v1 include typed parameters?
 3. **Secret parameters**: Should there be a `secret` type that uses the existing secrets system and masks values in the UI?
 4. **Environment variable fallback**: Should `${param}` fall back to `os.environ["param"]` if no value is provided? Useful for CI/CD without explicit parameter passing.
 5. **Parameter history**: Should the UI remember recently used parameter values per flow?
