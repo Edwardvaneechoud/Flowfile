@@ -48,14 +48,9 @@ def materialize_table(self, table_id: int) -> CatalogMaterializationResult:
     # ... writes a single .parquet file
     df.write_parquet(file_path)
 
-# Proposed materialization
+# Proposed materialization (using LazyFrame.sink_delta)
 def materialize_table(self, table_id: int, mode: str = "overwrite") -> CatalogMaterializationResult:
-    # ... writes a Delta table
-    df.write_delta(
-        delta_table_path,
-        mode=mode,                    # "overwrite", "append", "merge"
-        delta_write_options={...},
-    )
+    lf.sink_delta(delta_table_path, mode=mode)
 ```
 
 **Read path**:
@@ -128,19 +123,42 @@ class CatalogTableMetadata(BaseModel):
 
 If the table has declared primary keys and the writer's `merge_keys` don't match, a warning is surfaced.
 
-**Catalog service merge method**:
+**Catalog service write/merge method** using Polars' native `sink_delta`:
 
 ```python
-def merge_into_table(self, table_id: int, source_df: pl.DataFrame, merge_keys: list[str]):
-    """Upsert: update matching rows, insert new rows."""
-    dt = DeltaTable(delta_table_path)
-    dt.merge(
-        source=source_df.to_arrow(),
-        predicate=" AND ".join(f"target.{k} = source.{k}" for k in merge_keys),
-        source_alias="source",
-        target_alias="target",
-    ).when_matched_update_all().when_not_matched_insert_all().execute()
+def materialize_table(
+    self,
+    table_id: int,
+    source_lf: pl.LazyFrame,
+    mode: Literal["overwrite", "append", "merge"] = "overwrite",
+    merge_keys: list[str] | None = None,
+):
+    table_info = self.get_table(table_id)
+    delta_path = table_info.file_path
+
+    if mode == "merge":
+        predicate = " AND ".join(f"s.{k} = t.{k}" for k in merge_keys)
+        (
+            source_lf.sink_delta(
+                delta_path,
+                mode="merge",
+                delta_merge_options={
+                    "predicate": predicate,
+                    "source_alias": "s",
+                    "target_alias": "t",
+                },
+            )
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+            .execute()
+        )
+    else:
+        source_lf.sink_delta(delta_path, mode=mode)
 ```
+
+This uses `pl.LazyFrame.sink_delta()` directly — no need to convert to Arrow or manage `DeltaTable` objects manually. The merge mode returns a `TableMerger` that supports the same `.when_matched_update_all().when_not_matched_insert_all()` API.
+
+Note: `sink_delta` is marked as unstable in Polars. This should be monitored across Polars releases.
 
 ### Phase 4: Cloud Delta Tables
 
