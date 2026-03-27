@@ -13,7 +13,9 @@ The problem is the **kernel code generation layer**. When a custom node runs in 
 
 This generated kernel code is hard to read, hard to debug, and doesn't look like the clean Python the user wrote. When something goes wrong in kernel execution, users see error traces through the proxy code, not their original logic.
 
-**The goal is to standardize the custom node experience so that the code users write is the code that runs** — same syntax whether executing locally or in the kernel. Plus: packaging and sharing nodes across teams.
+The visual Node Designer in the frontend is already excellent — a full drag-and-drop builder with component palette, property editor, code editor with Polars autocompletion, and code preview. Custom nodes always use Polars code in the `process()` method, which is a clean design choice.
+
+**The goal is to standardize the kernel execution layer so that the code users write is the code that runs** — same syntax whether executing locally or in the kernel. Plus: packaging and sharing nodes across teams.
 
 ## Current State
 
@@ -27,6 +29,15 @@ This generated kernel code is hard to read, hard to debug, and doesn't look like
   5. Wraps everything with `flowfile.read_inputs()` and `flowfile.publish_output()`.
   6. Assembles a standalone script that looks nothing like the original `process()` method.
 - **Kernel runtime** (`kernel_runtime/main.py`): Sandboxed execution with namespace persistence. Works well, but receives the transformed code, not the original.
+- **Visual Node Designer** (frontend — fully implemented): A complete 3-panel designer at `/nodes/designer` with:
+  - **Component Palette**: Drag-and-drop 9 UI component types (TextInput, NumericInput, ToggleSwitch, SingleSelect, MultiSelect, ColumnSelector, ColumnActionInput, SliderInput, SecretSelector).
+  - **Design Canvas**: Node metadata (name, category, icon, inputs/outputs), section-based layout with drop zones, and a CodeMirror Python editor for `process()` logic with Polars autocompletion.
+  - **Property Editor**: Right panel to configure selected component properties (defaults, validation, options source).
+  - **Code Preview**: Shows the generated `CustomNodeBase` subclass.
+  - **Node Browser**: Browse, view, and delete saved custom nodes.
+  - **Auto-save**: Session storage persistence.
+  - **Validation**: Name rules, duplicate checks, process method structure.
+  - Custom nodes always use Polars code in the `process()` method — this is a core design choice.
 - **No packaging format**: Custom nodes are Python files, no manifest or versioning.
 - **No sharing mechanism**: No import/export, no registry.
 

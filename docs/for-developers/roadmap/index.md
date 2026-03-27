@@ -56,7 +56,7 @@ class FlowfileNode(BaseModel):
 | 1 | [Iterative Nodes](01_iterative_nodes.md) | Scatter-gather execution over partitions with embedded sub-flows | Option B |
 | 2 | [Conditional Execution](02_conditional_execution.md) | If/else branching via parent-pointer grouping | Option A |
 | 3 | [Delta Lake Catalog Storage](03_delta_lake_catalog.md) | ACID-compliant catalog storage with time travel | — |
-| 4 | [Flow Parameters](04_flow_parameters.md) | Runtime-configurable flow inputs | — |
+| 4 | [Flow Parameters](04_flow_parameters.md) | Runtime-configurable flow inputs (**in progress** — `feature/add-flow-parameters`) | — |
 | 5 | [Catalog Query & Data Exploration](05_catalog_query_exploration.md) | SQL queries and GraphicWalker on catalog tables | — |
 | 6 | [Extended Connectors](06_extended_connectors.md) | MySQL, ADLS, GCS, BigQuery, Snowflake + PostgreSQL enhancements | — |
 | 7 | [Standardized Custom Node Designer](07_custom_node_designer.md) | Visual designer, packaging, and sharing | — |

@@ -8,20 +8,74 @@ Flows today are static — every value (file paths, filter expressions, column n
 - A flow shared between teams cannot adapt to different connection strings or schema names.
 - Scheduled flows cannot receive runtime inputs (e.g., date range, environment).
 
-Flow parameters allow users to define named, typed inputs on a flow that are resolved at execution time. Parameters can be supplied via the UI, CLI arguments, API calls, or parent flows (when used as a sub-flow in Feature 8).
+Flow parameters allow users to define named inputs on a flow that are resolved at execution time via `${param_name}` syntax.
 
-## Current State
+## Current State: In Progress (`feature/add-flow-parameters`)
 
-- **No parameter support**: `FlowfileSettings` (`schemas.py:205`) contains execution configuration but no parameter definitions. `FlowfileData` has no parameter field.
-- **Node settings are static**: Models like `NodeFilter.filter_expression` or `NodeRead` file paths are plain strings with no template/variable resolution.
-- **CLI entry point** (`flowfile/__main__.py`): Runs flows but has no mechanism to pass runtime arguments.
-- **Code generator** (`code_generator.py`): Generates hardcoded values — no variable injection.
+This feature has substantial implementation on the `feature/add-flow-parameters` branch. Here is what exists:
 
-## Proposed Design
+### Backend — Implemented
 
-### Parameter Model
+**`FlowParameter` model** (`schemas.py`):
 
-**New Pydantic models** (`schemas.py` or new `parameters.py`):
+```python
+class FlowParameter(BaseModel):
+    """A single flow-level parameter that can be referenced via ${name} syntax."""
+    name: str
+    default_value: str = ""
+    description: str = ""
+```
+
+Parameters are stored on `FlowGraphConfig`:
+
+```python
+class FlowGraphConfig(BaseModel):
+    # ... existing fields ...
+    parameters: list[FlowParameter] = Field(default_factory=list)
+```
+
+**Parameter resolver** (`parameter_resolver.py` — 177 lines, fully implemented):
+
+- `resolve_parameters(text, params)` — replaces `${name}` patterns in strings.
+- `apply_parameters_in_place(obj, params)` — recursively mutates Pydantic model string fields, returning restoration triples so originals can be restored after execution.
+- `restore_parameters(restorations)` — restores original field values post-execution.
+- `find_unresolved_in_model(obj)` — detects unresolved `${...}` references.
+- Validates that all references resolve; raises `ValueError` with unresolved names if not.
+- Uses regex pattern: `\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`
+
+**`flow_graph.py` integration**:
+
+- `_execute_single_node()` applies parameters in-place before execution, restores after.
+- Saves and restores node `_hash` to prevent spurious cache invalidation from resolved values.
+- On parameter change (via `flow_settings` setter), nodes with `${...}` references are reset.
+- Each node gets a `_params_getter` callable that reads the latest parameters from the graph (lazy, not a copy).
+
+**CLI support** (`flowfile/__main__.py`):
+
+- Parameter passing via command-line arguments (implementation on branch).
+
+### Frontend — Implemented
+
+**`FlowParametersPanel.vue`** (223 lines):
+
+- Panel with name / value / description columns per parameter.
+- Add parameter button, delete button per row.
+- Saves to backend via `FlowApi.updateFlowSettings()` on change.
+- Empty state with explanation of `${param_name}` syntax.
+- Integrated into the header layout.
+
+### Tests — Implemented
+
+- **`test_parameter_resolver.py`** (154 lines): Unit tests for the resolver — string substitution, nested Pydantic models, unresolved detection, edge cases.
+- **`test_parameter_integration.py`** (609 lines): Integration tests for end-to-end parameter flow — graph execution with parameters, cache invalidation on parameter change, multiple nodes referencing same parameter, etc.
+
+## What Remains
+
+The core infrastructure is built. Remaining work to get this feature to production:
+
+### 1. Type Support
+
+Currently all parameters are strings (`default_value: str`). The original plan proposed typed parameters:
 
 ```python
 class FlowParameterType(str, Enum):
@@ -30,157 +84,54 @@ class FlowParameterType(str, Enum):
     FLOAT = "float"
     BOOLEAN = "boolean"
     DATE = "date"
-    DATETIME = "datetime"
     FILE_PATH = "file_path"
-    SECRET = "secret"           # encrypted at rest, masked in UI
-
-class FlowParameter(BaseModel):
-    name: str                   # unique identifier, e.g. "input_date"
-    display_name: str = ""      # human-readable label
-    type: FlowParameterType = FlowParameterType.STRING
-    default_value: Any | None = None
-    required: bool = True
-    description: str = ""
-    validation: str | None = None  # optional regex or range expression
+    SECRET = "secret"
 ```
 
-**`FlowfileSettings` extension**:
+**Decision needed**: Is string-only sufficient for v1? Many use cases (file paths, dates, thresholds) work as strings since they're substituted into string fields. Typed parameters would add validation and type-specific UI inputs but also complexity.
+
+### 2. Parameter Prompt on Execution
+
+When a flow has parameters, clicking "Run" should open a dialog where users fill in values before execution starts. Currently the panel lets you set default values, but there's no execution-time prompt for overriding them.
+
+### 3. Code Generation
+
+The code generator (`code_generator.py`) should emit parameters as function arguments:
 
 ```python
-class FlowfileSettings(BaseModel):
-    # ... existing fields ...
-    parameters: list[FlowParameter] = Field(default_factory=list)
-```
-
-**`FlowfileData` extension**:
-
-```python
-class FlowfileData(BaseModel):
-    # ... existing fields ...
-    # Parameter values are NOT stored in the flow file — they are runtime inputs.
-    # The flow file only stores parameter definitions (in flowfile_settings.parameters).
-```
-
-### Parameter Resolution
-
-**Syntax**: Parameters are referenced in node settings using `{{param_name}}` template syntax.
-
-```yaml
-nodes:
-  - id: 1
-    type: read
-    setting_input:
-      file_path: "/data/sales_{{input_date}}.csv"
-
-  - id: 2
-    type: filter
-    setting_input:
-      filter_expression: "col('amount') > {{min_amount}}"
-```
-
-**Resolution engine** (new module: `flowfile_core/flowfile_core/flowfile/parameters.py`):
-
-```python
-def resolve_parameters(setting_input: Any, parameter_values: dict[str, Any]) -> Any:
-    """Deep-walk a node's setting_input, replacing {{param}} references with values."""
-    # 1. Serialize setting_input to dict
-    # 2. Recursively walk all string values
-    # 3. Replace {{param_name}} with parameter_values[param_name]
-    # 4. Cast to the parameter's declared type
-    # 5. Deserialize back to the setting_input model
-```
-
-**Resolution timing**: Parameters are resolved **before** execution starts, during `FlowGraph` initialization. This means:
-- Schema inference can use resolved values (e.g., to determine file schema).
-- The execution plan sees concrete values, not templates.
-- Parameter values are passed as a `dict[str, Any]` alongside the flow definition.
-
-### Execution Integration
-
-**`flow_graph.py`**:
-
-```python
-class FlowGraph:
-    def __init__(self, flow_data: FlowfileData, parameter_values: dict[str, Any] | None = None):
-        # Validate parameter_values against flow_data.flowfile_settings.parameters
-        # Resolve all node setting_inputs with parameter values
-        # Continue with normal graph construction
-```
-
-**CLI** (`flowfile/__main__.py`):
-
-```bash
-# Pass parameters via CLI
-flowfile run my_flow.yaml --param input_date=2024-03-15 --param min_amount=100
-
-# Pass parameters via JSON file
-flowfile run my_flow.yaml --params-file params.json
-```
-
-**API** (new endpoint in `main.py`):
-
-```
-POST /flow/run
-{
-    "flow_id": 42,
-    "parameter_values": {
-        "input_date": "2024-03-15",
-        "min_amount": 100
-    }
-}
-```
-
-### Frontend Changes
-
-**Parameter definition UI** (flow settings panel):
-- Table/list editor for defining parameters: name, type, default, required, description.
-- Type-specific default value editors (date picker for `date`, file browser for `file_path`, etc.).
-
-**Parameter prompt on execution**:
-- When a flow has parameters, clicking "Run" opens a parameter form dialog.
-- Fields are generated from parameter definitions with type-appropriate inputs.
-- Default values are pre-filled.
-- Required parameters must be filled before execution can start.
-- `secret` type parameters show a password input and are not stored in run history.
-
-**Template syntax highlighting**:
-- In node setting text fields, `{{param_name}}` is highlighted distinctly.
-- Autocomplete suggests available parameter names.
-
-### Code Generation
-
-The code generator should emit parameters as function arguments:
-
-```python
-# Generated code
-def run_flow(input_date: str = "2024-01-01", min_amount: float = 0):
+def run_flow(input_date: str = "2024-01-01", min_amount: str = "0"):
     df = pl.read_csv(f"/data/sales_{input_date}.csv")
-    df = df.filter(pl.col("amount") > min_amount)
     ...
 ```
 
-### Integration with Other Features
+### 4. Validation UX
 
-- **Feature 1 (Iterative Nodes)**: The iteration variable could be a parameter.
-- **Feature 2 (Conditional Execution)**: Condition expressions can reference `{{param}}` values.
-- **Feature 8 (Flow as Custom Node)**: When a flow is used as a sub-node, its parameters become the node's input configuration — the parent flow maps values to the child flow's parameters.
+- Highlight `${param_name}` references in node setting text fields.
+- Show warnings when a parameter is referenced but not defined.
+- Autocomplete parameter names in settings fields.
 
-## Key Files to Modify
+### 5. Integration with Feature 8 (Flow as Custom Node)
 
-| File | Change |
-|------|--------|
-| `flowfile_core/flowfile_core/schemas/schemas.py` | Add `FlowParameter`, `FlowParameterType`; extend `FlowfileSettings` |
-| `flowfile_core/flowfile_core/flowfile/parameters.py` | NEW: parameter resolution engine |
-| `flowfile_core/flowfile_core/flowfile/flow_graph.py` | Accept and resolve parameters during initialization |
-| `flowfile_core/flowfile_core/main.py` | Add parameter-aware run endpoint |
-| `flowfile/flowfile/__main__.py` | Add `--param` / `--params-file` CLI arguments |
-| `flowfile_core/flowfile_core/flowfile/code_generator/code_generator.py` | Emit parameters as function arguments |
-| `flowfile_frontend/` | Parameter definition UI, execution prompt dialog, template highlighting |
+When a flow is used as a sub-node, its parameters become the node's configuration inputs. The parent flow maps values to the child flow's parameters.
+
+## Key Files (Existing on Branch)
+
+| File | Status | Description |
+|------|--------|-------------|
+| `flowfile_core/flowfile_core/schemas/schemas.py` | Modified | `FlowParameter` model, `parameters` on `FlowGraphConfig` |
+| `flowfile_core/flowfile_core/flowfile/parameter_resolver.py` | New | Full resolver with in-place mutation and restoration |
+| `flowfile_core/flowfile_core/flowfile/flow_graph.py` | Modified | Per-node parameter injection, reset on change |
+| `flowfile_core/flowfile_core/flowfile/flow_node/flow_node.py` | Modified | `_params_getter` callable |
+| `flowfile/flowfile/__main__.py` | Modified | CLI parameter support |
+| `flowfile_frontend/.../FlowParametersPanel/FlowParametersPanel.vue` | New | Parameter management UI |
+| `flowfile_frontend/.../Header/HeaderButtons.vue` | Modified | Panel integration |
+| `flowfile_core/tests/test_parameter_resolver.py` | New | Unit tests (154 lines) |
+| `flowfile_core/tests/test_parameter_integration.py` | New | Integration tests (609 lines) |
 
 ## Open Questions
 
-1. **Nested parameters**: Should parameters support expressions like `{{base_path}}/{{file_name}}`? Proposed: yes, simple string interpolation.
-2. **Parameter validation**: Beyond regex, should we support enum constraints (dropdown of allowed values)?
-3. **Environment variable fallback**: Should `{{param}}` fall back to `os.environ["param"]` if no value is provided? This would enable CI/CD integration without explicit parameter passing.
-4. **Parameter history**: Should the UI remember recently used parameter values per flow?
-5. **Secret handling**: How are `secret` type parameters passed to the worker? They should be encrypted in transit and never logged.
+1. **Merge readiness**: The branch has 10 commits and tests. What's blocking merge to main?
+2. **String-only vs typed**: Is `default_value: str` sufficient, or should v1 include typed parameters?
+3. **Secret parameters**: Should there be a `secret` type that uses the existing secrets system and masks values in the UI?
+4. **Environment variable fallback**: Should `${param}` fall back to `os.environ["param"]` if no value is provided? Useful for CI/CD without explicit parameter passing.
+5. **Parameter history**: Should the UI remember recently used parameter values per flow?
