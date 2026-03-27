@@ -2,64 +2,59 @@
 
 ## Motivation
 
-Flowfile currently supports file-based I/O (CSV, Parquet, Excel, JSON), cloud storage (S3, ADLS, GCS), and generic database read/write. However, real-world ETL pipelines need robust, optimized connectors for specific database systems with features like:
+Flowfile already has broad database connectivity — the `database_reader` node can connect to any database that ConnectorX supports (PostgreSQL, MySQL, MariaDB, SQLite, MSSQL, Oracle, and more) via `pl.read_database_uri()`, with both table-based reads and custom SQL queries. The `database_writer` writes to any SQLAlchemy-compatible database. A comprehensive SQL type mapper (100+ type mappings) converts database types to Polars types, and connections can be stored as references with encrypted credentials via the secrets system.
 
-- Connection pooling and persistent sessions.
-- Schema browsing (list databases, schemas, tables, columns).
-- Database-specific optimizations (pushdown predicates, partitioned reads).
-- Incremental loading (CDC, watermark-based reads).
-- Bulk loading (COPY commands, staging tables).
+What's missing is not basic connectivity, but **database-specific optimizations and cloud-native data warehouses**:
 
-This feature extends the connector ecosystem with first-class support for PostgreSQL, MySQL, BigQuery, and Snowflake.
+- **Partitioned reads**: ConnectorX supports `PARTITION ON` for parallel reads, but this is not exposed in the node settings.
+- **Bulk loading**: Writes use generic `df.write_database()` (row-by-row INSERT). Database-specific bulk methods (PostgreSQL `COPY`, MySQL `LOAD DATA`) would be 10-100x faster.
+- **Cloud data warehouses**: BigQuery and Snowflake use fundamentally different connection models (OAuth, project IDs, warehouses, stages) that don't fit the current `host:port/database` URI pattern.
+- **Incremental loading**: No built-in support for watermark-based reads or change data capture.
+- **Schema browsing in UI**: The backend can inspect schemas via SQLAlchemy `inspect()`, but the frontend doesn't expose a visual schema browser in the node configuration panel.
 
 ## Current State
 
-- **`database_reader` node**: Reads from databases using generic SQL via `connectorx` or `sqlalchemy`. Configuration is a connection string + SQL query. No schema browsing, no connection management.
-- **`database_writer` node**: Writes DataFrames to database tables. Generic approach, no bulk loading optimization.
-- **Cloud storage connectors**: S3, ADLS, GCS with 7 authentication methods. Well-structured with `AuthSettingsInput`, `FullCloudStorageConnection`, etc. in `cloud_storage_schemas.py`. These serve as the model for database connector architecture.
-- **Connection management**: Cloud connections are registered and encrypted per-user via the secrets system. Database connections are ad-hoc (connection string in node settings).
-- **Node templates** (`nodes.py`): `database_reader` and `database_writer` exist as standard nodes.
+- **`database_reader` node** (`input_schema.py`): `NodeDatabaseReader` with `DatabaseSettings` supporting:
+  - `connection_mode`: `"inline"` (direct settings) or `"reference"` (stored connection name)
+  - `DatabaseConnection` model: `database_type` (free-form string, default `"postgresql"`), `username`, `password_ref` (SecretRef), `host`, `port`, `database`, optional `url` override
+  - `query_mode`: `"query"` (custom SQL), `"table"` (full table read), or `"reference"`
+  - `schema_name` and `table_name` fields
+  - SQL validation: strict allow-list for SELECT/WITH, blocks DDL/DML
+- **`database_writer` node** (`input_schema.py`): `NodeDatabaseWriter` with the same `DatabaseSettings`, writing via `df.write_database()`.
+- **ConnectorX** (`connectorx ^0.4.2`): Primary read driver, supports PostgreSQL, MySQL, MariaDB, SQLite, MSSQL, Oracle. Used via `pl.read_database_uri()`.
+- **SQLAlchemy** (`sqlalchemy ^2.0.27`): Used for writes, schema inspection (`inspect()`), and type mapping.
+- **SQL type mapper** (`sql_source/utils.py`): 100+ SQLAlchemy-to-Polars type mappings covering Int64, Float64, Utf8, Date, Datetime, Boolean, Decimal, Binary, etc.
+- **URI construction** (`sql_source/utils.py`): Builds `{database_type}://{username}:{password}@{host}:{port}/{database}` from `DatabaseConnection` fields.
+- **Cloud storage connectors**: S3, ADLS, GCS with 7 authentication methods. Well-structured with `AuthSettingsInput`, `FullCloudStorageConnection`, etc. in `cloud_storage_schemas.py`. Cloud read supports CSV, Parquet, JSON, Delta, and Iceberg formats.
+- **Connection management**: Cloud connections are registered and encrypted per-user via the secrets system. Database connections support both inline and reference modes.
 
 ## Proposed Design
 
-### Connection Registry
+### Extended Connection Model for Cloud Data Warehouses
 
-Model database connections similarly to cloud storage connections — registered, encrypted, and reusable.
+The existing `DatabaseConnection` model uses a standard `host:port/database` URI pattern that works well for PostgreSQL, MySQL, MSSQL, etc. Cloud data warehouses (BigQuery, Snowflake) need additional fields that don't fit this pattern.
 
-**New models** (`schemas/database_schemas.py`):
+**Extend `DatabaseConnection`** (`input_schema.py`):
 
 ```python
-class DatabaseType(str, Enum):
-    POSTGRESQL = "postgresql"
-    MYSQL = "mysql"
-    BIGQUERY = "bigquery"
-    SNOWFLAKE = "snowflake"
-    MSSQL = "mssql"
-    SQLITE = "sqlite"
-
-class DatabaseConnectionSettings(BaseModel):
-    name: str
-    database_type: DatabaseType
-    host: str
-    port: int
-    database: str
-    username: str
-    password: SecretStr
-    schema: str | None = None
-    extra_params: dict[str, str] = {}
-    # BigQuery-specific
+class DatabaseConnection(BaseModel):
+    database_type: str = "postgresql"
+    username: str | None = None
+    password_ref: SecretRef | None = None
+    host: str | None = None
+    port: int | None = None
+    database: str | None = None
+    url: str | None = None
+    # NEW: BigQuery-specific
     project_id: str | None = None
-    credentials_json: SecretStr | None = None
-    # Snowflake-specific
-    account: str | None = None
+    credentials_json_ref: SecretRef | None = None   # service account JSON
+    # NEW: Snowflake-specific
+    account: str | None = None                       # e.g., "xy12345.us-east-1"
     warehouse: str | None = None
     role: str | None = None
-
-class DatabaseConnectionRef(BaseModel):
-    """Reference to a registered connection (stored encrypted in catalog)."""
-    connection_id: int
-    database_type: DatabaseType
 ```
+
+BigQuery and Snowflake use their own connector libraries that build connection strings differently from the standard URI pattern. The `url` override field can accommodate this, but explicit fields improve the UI experience.
 
 ### Schema Browser
 
@@ -144,38 +139,28 @@ The reader tracks the high-water mark from the last read. On subsequent runs, it
 
 ### Enhanced Node Settings
 
-**Updated `NodeDatabaseReader`**:
+**Extend `DatabaseSettings`** (used by both reader and writer):
 
 ```python
-class NodeDatabaseReader(NodeBase):
-    connection_ref: DatabaseConnectionRef    # registered connection
-    # Option 1: table-based read
-    table_name: str | None = None
-    schema_name: str | None = None
-    selected_columns: list[str] | None = None
-    filter_expression: str | None = None     # WHERE clause
-    # Option 2: SQL query read
-    sql_query: str | None = None
-    # Optimization
-    partition_column: str | None = None
-    partition_count: int = 4
-    # Incremental
+class DatabaseSettings(BaseModel):
+    # ... existing fields (connection_mode, database_connection, query_mode, etc.) ...
+
+    # NEW: Performance optimization
+    partition_column: str | None = None      # ConnectorX PARTITION ON column
+    partition_count: int = 4                 # number of parallel read partitions
+    selected_columns: list[str] | None = None  # column pruning (SELECT specific cols)
+
+    # NEW: Incremental loading
     incremental: IncrementalReadSettings | None = None
-```
 
-**Updated `NodeDatabaseWriter`**:
-
-```python
-class NodeDatabaseWriter(NodeSingleInput):
-    connection_ref: DatabaseConnectionRef
-    table_name: str
-    schema_name: str | None = None
-    write_mode: Literal["append", "overwrite", "upsert"] = "append"
-    upsert_keys: list[str] | None = None    # for upsert mode
-    bulk_load: bool = True                   # use DB-specific bulk loading
+    # NEW: Write optimization
+    bulk_load: bool = True                   # use DB-specific bulk loading (COPY, LOAD DATA)
+    write_mode: Literal["append", "replace", "fail", "upsert"] = "append"
+    upsert_keys: list[str] | None = None     # for upsert mode
     batch_size: int = 10000
-    create_table_if_not_exists: bool = True
 ```
+
+These extend the existing `DatabaseSettings` model rather than replacing `NodeDatabaseReader`/`NodeDatabaseWriter`, preserving backward compatibility with existing flows.
 
 ### Frontend Changes
 
@@ -199,8 +184,9 @@ class NodeDatabaseWriter(NodeSingleInput):
 
 | File | Change |
 |------|--------|
-| `flowfile_core/flowfile_core/schemas/database_schemas.py` | NEW: database connection, schema browser models |
-| `flowfile_core/flowfile_core/schemas/input_schema.py` | Update `NodeDatabaseReader`, `NodeDatabaseWriter` |
+| `flowfile_core/flowfile_core/schemas/input_schema.py` | Extend `DatabaseSettings`, `DatabaseConnection` with new fields |
+| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/sql_source.py` | Add BigQuery/Snowflake connection builders, bulk write strategies |
+| `flowfile_core/flowfile_core/flowfile/sources/external_sources/sql_source/utils.py` | Add BigQuery/Snowflake type mappings, URI construction |
 | `flowfile_core/flowfile_core/configs/node_store/nodes.py` | Update database node templates |
 | `flowfile_core/flowfile_core/main.py` | Add connection management and schema browser endpoints |
 | `flowfile_core/flowfile_core/catalog/` | Store database connections as catalog entities |
@@ -212,6 +198,7 @@ class NodeDatabaseWriter(NodeSingleInput):
 
 1. **Connection pooling**: Should the worker maintain persistent connection pools? This complicates the stateless worker model. Alternative: create connections per-request but cache credentials.
 2. **Pushdown predicates**: How much of Polars' filter expressions should be pushed down to SQL? Start with simple column comparisons, expand later.
-3. **Type mapping**: Database types don't map 1:1 to Polars types. Where should the mapping logic live? Proposed: a `TypeMapper` per database type in the worker.
-4. **OAuth for BigQuery/Snowflake**: Both support OAuth flows. How to integrate with the existing auth model?
-5. **Dependency management**: Database drivers are heavy. Should they be optional extras (`pip install flowfile[postgresql]`) or bundled?
+3. **BigQuery/Snowflake type mapping**: The existing SQL type mapper covers standard SQL types well. BigQuery (STRUCT, ARRAY, GEOGRAPHY) and Snowflake (VARIANT, OBJECT) have proprietary types that need new mappings.
+4. **OAuth for BigQuery/Snowflake**: Both support OAuth flows. How to integrate with the existing secrets/auth model?
+5. **Dependency management**: BigQuery and Snowflake drivers are heavy. Should they be optional extras (`pip install flowfile[bigquery]`) or bundled? ConnectorX already covers PostgreSQL/MySQL/MSSQL without extra drivers.
+6. **ConnectorX vs native drivers**: ConnectorX already supports PostgreSQL, MySQL, etc. For bulk write operations, we need native drivers (psycopg2, mysql-connector). Should reads also use native drivers for consistency, or keep ConnectorX for read performance?
