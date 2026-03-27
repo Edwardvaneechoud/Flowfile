@@ -200,18 +200,29 @@ for region, partition_df in df.partition_by("region", as_dict=True).items():
 df_cleaned = pl.concat(results)
 ```
 
-**Condition nodes** (Feature 2): Each branch becomes a function:
+**Condition nodes** (Feature 2): A proper if/else — the entire DataFrame goes one way:
 
 ```python
-from daily_sales_pipeline.branch_active import process as handle_active
-from daily_sales_pipeline.branch_inactive import process as handle_inactive
+from daily_sales_pipeline.branch_expected import process as handle_expected
+from daily_sales_pipeline.branch_unexpected import process as handle_unexpected
 
-df_active = df.filter(pl.col("status") == "active")
-df_inactive = df.filter(pl.col("status") != "active")
+if df.count() == 12:
+    df = handle_expected(df)
+else:
+    df = handle_unexpected(df)
+```
 
-df_active = handle_active(df_active)
-df_inactive = handle_inactive(df_inactive)
-df = pl.concat([df_active, df_inactive])
+If the else branch is a dead end (e.g., writes to quarantine and doesn't continue):
+
+```python
+from daily_sales_pipeline.branch_process import process as handle_process
+from daily_sales_pipeline.branch_quarantine import process as handle_quarantine
+
+if df.select(pl.col("id").null_count()).item() == 0:
+    df = handle_process(df)
+else:
+    handle_quarantine(df)
+    return  # stop pipeline — data was quarantined
 ```
 
 ### Phase 5: Import Management
