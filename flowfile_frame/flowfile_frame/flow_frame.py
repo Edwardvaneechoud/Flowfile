@@ -61,7 +61,7 @@ def _to_string_val(v) -> str:
         return v
 
 
-def _extract_expr_parts(expr_obj) -> tuple[str, str]:
+def _extract_expr_parts(expr_obj: Expr | Any) -> tuple[str, str]:
     """
     Extract the pure expression string and any raw definitions (including function sources) from an Expr object.
 
