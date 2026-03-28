@@ -59,6 +59,11 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     group_nodes_by_depth,
 )
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+from flowfile_core.flowfile.parameter_resolver import (
+    apply_parameters_in_place,
+    find_unresolved_in_model,
+    restore_parameters,
+)
 from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
@@ -391,6 +396,13 @@ class FlowGraph:
             self._flow_settings.execution_mode != flow_settings.execution_mode
         ):
             self.reset()
+        else:
+            old_params = {p.name: p.default_value for p in self._flow_settings.parameters}
+            new_params = {p.name: p.default_value for p in flow_settings.parameters}
+            if old_params != new_params:
+                for node in self.nodes:
+                    if node.setting_input is not None and find_unresolved_in_model(node.setting_input):
+                        node.reset(deep=True)
         self._flow_settings = flow_settings
 
     # ==================== History Management Methods ====================
@@ -1941,6 +1953,17 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        # Give the node a callable that returns the current flow parameters so
+        # that lazy schema prediction (_predicted_data_getter) can substitute
+        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # the node always reads the LATEST parameters, whether they were set via
+        # the flow_settings.setter or mutated directly on flow_settings.parameters.
+        _graph = self
+
+        def _get_params() -> dict[str, str]:
+            return {p.name: p.default_value for p in (_graph.flow_settings.parameters or [])}
+
+        node._params_getter = _get_params
         return node
 
     def add_include_cols(self, include_columns: list[str]):
@@ -2819,6 +2842,7 @@ class FlowGraph:
         node: FlowNode,
         performance_mode: bool,
         run_info_lock: threading.Lock,
+        params: dict[str, str] | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -2828,6 +2852,7 @@ class FlowGraph:
             node: The node to execute.
             performance_mode: Whether to run in performance mode.
             run_info_lock: Lock protecting shared RunInformation state.
+            params: Optional parameter dict for ${name} substitution in node settings.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -2838,12 +2863,43 @@ class FlowGraph:
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
 
+        # Temporarily substitute parameters into node settings (in-place so closures see the values)
+        restorations = []
+        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # while setting_input is mutated, which recomputes _hash from the resolved path.
+        # After restore_parameters the path returns to the original ${...} form but _hash
+        # still holds the resolved-path hash → needs_reset() returns True on the next
+        # setting_input write → clears example_data_generator / has_completed_last_run.
+        # Restoring _hash after restore_parameters keeps the hash consistent with the
+        # restored setting_input and prevents that spurious reset.
+        saved_hash = node._hash
+        if params:
+            try:
+                restorations = apply_parameters_in_place(node.setting_input, params)
+            except ValueError as e:
+                node_result.error = str(e)
+                node_result.success = False
+                node_result.end_timestamp = time()
+                node_result.run_time = 0
+                node_result.is_running = False
+                node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
+                return node_result, node
+
         logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-        node.execute_node(
-            run_location=self.flow_settings.execution_location,
-            performance_mode=performance_mode,
-            node_logger=node_logger,
-        )
+        try:
+            node.execute_node(
+                run_location=self.flow_settings.execution_location,
+                performance_mode=performance_mode,
+                node_logger=node_logger,
+            )
+        finally:
+            # Restore original ${...} refs so the saved flow is unchanged
+            if restorations:
+                restore_parameters(restorations)
+            # Restore the hash to match the restored setting_input so that
+            # subsequent get_node_data / setting_input writes don't trigger
+            # a spurious reset (and lose example_data_generator / has_completed_last_run).
+            node._hash = saved_hash
         try:
             node_result.error = str(node.results.errors)
             if self.flow_settings.is_canceled:
@@ -2949,6 +3005,9 @@ class FlowGraph:
             execution_order_message(self.flow_logger, execution_plan.stages)
             performance_mode = self.flow_settings.execution_mode == "Performance"
 
+            # Build parameter lookup dict once for the entire run
+            params: dict[str, str] = {p.name: p.default_value for p in self.flow_settings.parameters}
+
             run_info_lock = threading.Lock()
             skip_node_ids: set[str | int] = plan_skip_ids
 
@@ -2972,7 +3031,8 @@ class FlowGraph:
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     # Single node or parallelism disabled — run sequentially
                     stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run
+                        self._execute_single_node(node, performance_mode, run_info_lock, params or None)
+                        for node in nodes_to_run
                     ]
                 else:
                     # Multiple independent nodes — run in parallel
@@ -2980,7 +3040,9 @@ class FlowGraph:
                     workers = min(max_workers, len(nodes_to_run))
                     with ThreadPoolExecutor(max_workers=workers) as executor:
                         futures = {
-                            executor.submit(self._execute_single_node, node, performance_mode, run_info_lock): node
+                            executor.submit(
+                                self._execute_single_node, node, performance_mode, run_info_lock, params or None
+                            ): node
                             for node in nodes_to_run
                         }
                         for future in as_completed(futures):
@@ -3084,6 +3146,7 @@ class FlowGraph:
             show_detailed_progress=self.flow_settings.show_detailed_progress,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
+            parameters=self.flow_settings.parameters,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

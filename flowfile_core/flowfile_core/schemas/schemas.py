@@ -97,6 +97,14 @@ def get_prio_execution_location(
         return local_execution_location
 
 
+class FlowParameter(BaseModel):
+    """A single flow-level parameter that can be referenced via ${name} syntax."""
+
+    name: str
+    default_value: str = ""
+    description: str = ""
+
+
 class FlowGraphConfig(BaseModel):
     """
     Configuration model for a flow graph's basic properties.
@@ -111,6 +119,7 @@ class FlowGraphConfig(BaseModel):
         execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
         max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
             stage. Set to 1 to disable parallelism. Defaults to 4.
+        parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
     """
 
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
@@ -125,6 +134,7 @@ class FlowGraphConfig(BaseModel):
     execution_mode: ExecutionModeLiteral = "Performance"
     execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
+    parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
 
     @field_validator("execution_mode", mode="before")
     @classmethod
@@ -215,6 +225,7 @@ class FlowfileSettings(BaseModel):
     show_detailed_progress: bool = True
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
+    parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
 
     @field_validator("execution_mode", mode="before")
     @classmethod
