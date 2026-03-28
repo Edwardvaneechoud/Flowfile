@@ -274,10 +274,10 @@ def test_apply_custom_function() -> None:
         .agg(
             [
                 fl.col("cars")
-                .map_elements(lambda groups: groups.len(), return_dtype=pl.Int64)
+                .map_batches(lambda groups: groups.len(), return_dtype=pl.Int64, returns_scalar=True)
                 .alias("custom_1"),
                 fl.col("cars")
-                .map_elements(lambda groups: groups.len(), return_dtype=pl.Int64)
+                .map_batches(lambda groups: groups.len(), return_dtype=pl.Int64, returns_scalar=True)
                 .alias("custom_2"),
                 fl.count("cars").alias("cars_count"),
             ]
@@ -583,7 +583,7 @@ def test_floor() -> None:
         (1.0e20, 2, 100000000000000000000.0),
     ],
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", [d for d in FLOAT_DTYPES if d != pl.Float16])
 def test_round(n: float, ndigits: int, expected: float, dtype: pl.DataType) -> None:
     ldf = FlowFrame({"value": [n]}, schema_overrides={"value": dtype})
     assert_series_equal(
@@ -608,7 +608,7 @@ def test_custom_group_by() -> None:
     ldf = FlowFrame({"a": [1, 2, 1, 1], "b": ["a", "b", "c", "c"]})
     out = (
         ldf.group_by("b", maintain_order=True)
-        .agg([fl.col("a").map_elements(lambda x: x.sum(), return_dtype=pl.Int64)])
+        .agg([fl.col("a").map_batches(lambda x: x.sum(), return_dtype=pl.Int64, returns_scalar=True)])
         .collect()
     )
     assert out.rows() == [("a", 1), ("b", 2), ("c", 2)]

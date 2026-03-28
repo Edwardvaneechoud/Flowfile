@@ -196,9 +196,12 @@ class FlowfileColumn:
             "integer",
             "boolean",
             "double",
+            "Int8",
             "Int16",
             "Int32",
             "Int64",
+            "Int128",
+            "Float16",
             "Float32",
             "Float64",
             "Decimal",
@@ -212,6 +215,7 @@ class FlowfileColumn:
             "UInt16",
             "UInt32",
             "UInt64",
+            "UInt128",
         ):
             return "numeric"
         elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
@@ -229,9 +233,12 @@ class FlowfileColumn:
             "integer",
             "boolean",
             "double",
+            "Int8",
             "Int16",
             "Int32",
             "Int64",
+            "Int128",
+            "Float16",
             "Float32",
             "Float64",
             "Decimal",
@@ -241,6 +248,11 @@ class FlowfileColumn:
             "Uint16",
             "Uint32",
             "Uint64",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "UInt128",
         ):
             return "Numeric"
         elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):

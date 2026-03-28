@@ -14,9 +14,9 @@ from flowfile_core.types import DataType, TypeGroup, Types
 
 # Helper lists for expected sorted outputs from TypeGroups
 NUMERIC_TYPES_SORTED = sorted([
-    DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64,
-    DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64,
-    DataType.Float32, DataType.Float64, DataType.Decimal
+    DataType.Int8, DataType.Int16, DataType.Int32, DataType.Int64, DataType.Int128,
+    DataType.UInt8, DataType.UInt16, DataType.UInt32, DataType.UInt64, DataType.UInt128,
+    DataType.Float16, DataType.Float32, DataType.Float64, DataType.Decimal
 ], key=lambda x: x.value)
 
 STRING_TYPES_SORTED = sorted([

@@ -1,4 +1,5 @@
 import ast
+import base64
 import textwrap
 import time
 from collections.abc import Callable
@@ -141,6 +142,7 @@ class PolarsCodeParser:
             "__builtins__": {},
             # Polars functionality
             "pl": pl,
+            "cs": pl.selectors,
             "col": pl.col,
             "lit": pl.lit,
             "expr": pl.expr,
@@ -154,6 +156,8 @@ class PolarsCodeParser:
             "UInt16": pl.UInt16,
             "UInt32": pl.UInt32,
             "UInt64": pl.UInt64,
+            "UInt128": pl.UInt128,
+            "Float16": pl.Float16,
             "Float32": pl.Float32,
             "Float64": pl.Float64,
             "Boolean": pl.Boolean,
@@ -191,6 +195,7 @@ class PolarsCodeParser:
             "None": None,
             "time": time,
             "BytesIO": BytesIO,
+            "base64": base64,
             "datetime": datetime,
         }
 
