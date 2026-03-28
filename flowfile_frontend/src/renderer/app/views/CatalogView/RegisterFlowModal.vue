@@ -75,9 +75,7 @@ const props = defineProps<{
   defaultNamespaceId: number | null;
 }>();
 
-const emit = defineEmits<{
-  close: [];
-}>();
+const emit = defineEmits(["close"]);
 
 const catalogStore = useCatalogStore();
 const name = ref("");
@@ -279,7 +277,7 @@ async function submit() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
 }
 

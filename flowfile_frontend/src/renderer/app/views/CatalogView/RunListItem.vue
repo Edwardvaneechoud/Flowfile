@@ -6,6 +6,17 @@
       <span class="run-time">{{ formatDate(run.started_at) }}</span>
     </div>
     <div class="run-right">
+      <el-tooltip
+        :content="
+          run.run_type === 'scheduled' && run.schedule_id
+            ? `${formatRunType(run.run_type)}: ${getScheduleDisplayName(catalogStore.getScheduleById(run.schedule_id), run.schedule_id)}`
+            : formatRunType(run.run_type)
+        "
+        placement="top"
+        :show-after="400"
+      >
+        <i :class="runTypeIcon(run.run_type)" class="run-type-icon"></i>
+      </el-tooltip>
       <span class="run-duration">{{ formatDuration(run.duration_seconds) }}</span>
       <i
         v-if="run.has_snapshot"
@@ -18,35 +29,29 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
+import {
+  formatDate,
+  formatDuration,
+  formatRunType,
+  getScheduleDisplayName,
+  runTypeIcon,
+} from "./catalog-formatters";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   run: FlowRun;
   selected: boolean;
 }>();
 
-defineEmits<{ select: [] }>();
+defineEmits(["select"]);
 
 const statusClass = computed(() => {
   if (props.run.success === null) return "pending";
   return props.run.success ? "success" : "failure";
 });
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "--";
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
 </script>
 
 <style scoped>
@@ -114,7 +119,12 @@ function formatDuration(seconds: number | null): string {
 .run-duration {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  font-family: monospace;
+  font-family: var(--font-family-mono);
+}
+
+.run-type-icon {
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .snapshot-icon {

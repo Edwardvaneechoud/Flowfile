@@ -76,3 +76,4 @@ master_key.txt
 *.pem
 !requirements*.txt
 test-embed
+/.opencode/

@@ -1,4 +1,3 @@
-import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -6,37 +5,15 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from flowfile_core.configs import logger
-from shared.storage_config import storage
+from shared.storage_config import get_database_url, storage
 
 
 def get_app_data_dir() -> Path:
     """Get the appropriate application data directory for the current platform."""
-
     return storage.database_directory
 
 
-def get_database_url():
-    """Get the database URL based on the current environment."""
-    if os.environ.get("TESTING") == "True":
-        # Use a temporary test database
-        test_db_path = storage.temp_directory / "test_flowfile.db"
-        logger.debug(f"Using TESTING database URL: sqlite:///{test_db_path}")
-        return f"sqlite:///{test_db_path}"
-
-    custom_db_path = os.environ.get("FLOWFILE_DB_PATH")
-    if custom_db_path:
-        # logger.error("Using database URL:", os.environ.get("FLOWFILE_DB_URL"))
-        return f"sqlite:///{custom_db_path}"
-    # Use centralized location
-    app_dir = get_app_data_dir()
-
-    db_path = app_dir / "flowfile.db"
-    logger.debug(f"Using database URL: sqlite:///{db_path}")
-    return f"sqlite:///{db_path}"
-
-
-def get_database_path() -> Path:
+def get_database_path() -> Path | None:
     """Get the actual path to the database file (useful for backup/info purposes)."""
     url = get_database_url()
     if url.startswith("sqlite:///"):

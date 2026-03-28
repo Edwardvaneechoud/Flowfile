@@ -4,7 +4,6 @@ import { startServices, cleanupProcesses, setupProcessMonitoring } from "./servi
 import { createWindow, getMainWindow, createLoadingWindow } from "./windowManager";
 import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
-import { loadWindow } from "./windowLoader";
 import {
   setupIpcHandlers,
   setupWindowIpcHandlers,
@@ -16,7 +15,7 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
   const refreshHandler = async (): Promise<void> => {
     try {
       await mainWindow.webContents.session.clearCache();
-      loadWindow(mainWindow);
+      mainWindow.webContents.reload();
     } catch (error) {
       console.error("Failed to clear cache:", error);
     }

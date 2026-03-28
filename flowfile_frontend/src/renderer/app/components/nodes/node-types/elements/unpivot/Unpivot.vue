@@ -310,7 +310,7 @@ onUnmounted(() => {
 }
 
 .context-menu li:hover {
-  background-color: var(--color-background-primary)
+  background-color: var(--color-background-primary);
 }
 
 .switch-container {

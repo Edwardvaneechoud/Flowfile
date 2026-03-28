@@ -19,7 +19,9 @@ from flowfile_core.database.models import (
     FlowFollow,
     FlowRegistration,
     FlowRun,
+    FlowSchedule,
     GlobalArtifact,
+    ScheduleTriggerTable,
     TableFavorite,
 )
 
@@ -97,6 +99,8 @@ class CatalogRepository(Protocol):
     def list_runs(
         self,
         registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]: ...
@@ -105,7 +109,19 @@ class CatalogRepository(Protocol):
 
     def update_run(self, run: FlowRun) -> FlowRun: ...
 
-    def count_runs(self) -> int: ...
+    def count_runs(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> int: ...
+
+    def count_runs_by_status(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
 
@@ -192,6 +208,42 @@ class CatalogRepository(Protocol):
     def list_read_tables_for_flow(self, registration_id: int) -> list[CatalogTable]: ...
 
     def bulk_get_read_tables_for_flows(self, flow_ids: list[int]) -> dict[int, list[CatalogTable]]: ...
+
+    # -- Schedule operations -------------------------------------------------
+
+    def get_schedule(self, schedule_id: int) -> FlowSchedule | None: ...
+
+    def list_schedules(
+        self,
+        registration_id: int | None = None,
+        enabled_only: bool = False,
+    ) -> list[FlowSchedule]: ...
+
+    def create_schedule(self, schedule: FlowSchedule) -> FlowSchedule: ...
+
+    def update_schedule(self, schedule: FlowSchedule) -> FlowSchedule: ...
+
+    def delete_schedule(self, schedule_id: int) -> None: ...
+
+    def count_schedules(self) -> int: ...
+
+    # -- Active run operations -----------------------------------------------
+
+    def list_active_runs(self) -> list[FlowRun]: ...
+
+    def has_active_run(self, registration_id: int) -> bool: ...
+
+    def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
+
+    def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
+
+    def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]: ...
+
+    def get_trigger_table_ids(self, schedule_id: int) -> list[int]: ...
+
+    def set_trigger_table_ids(self, schedule_id: int, table_ids: list[int]) -> None: ...
+
+    def delete_trigger_table_ids(self, schedule_id: int) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -366,12 +418,18 @@ class SQLAlchemyCatalogRepository:
     def list_runs(
         self,
         registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]:
         q = self._db.query(FlowRun)
         if registration_id is not None:
             q = q.filter_by(registration_id=registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
     def create_run(self, run: FlowRun) -> FlowRun:
@@ -385,8 +443,43 @@ class SQLAlchemyCatalogRepository:
         self._db.refresh(run)
         return run
 
-    def count_runs(self) -> int:
-        return self._db.query(FlowRun).count()
+    def count_runs(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> int:
+        q = self._db.query(FlowRun)
+        if registration_id is not None:
+            q = q.filter_by(registration_id=registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
+        return q.count()
+
+    def count_runs_by_status(
+        self,
+        registration_id: int | None = None,
+        schedule_id: int | None = None,
+        run_type: str | None = None,
+    ) -> dict[str, int]:
+        from sqlalchemy import case, func
+
+        q = self._db.query(
+            func.count().label("total"),
+            func.count(case((FlowRun.success.is_(True), 1))).label("success"),
+            func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
+            func.count(case((FlowRun.success.is_(None), 1))).label("running"),
+        )
+        if registration_id is not None:
+            q = q.filter(FlowRun.registration_id == registration_id)
+        if schedule_id is not None:
+            q = q.filter(FlowRun.schedule_id == schedule_id)
+        if run_type is not None:
+            q = q.filter(FlowRun.run_type == run_type)
+        row = q.one()
+        return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
 
     # -- Favorites -----------------------------------------------------------
 
@@ -690,3 +783,110 @@ class SQLAlchemyCatalogRepository:
             if table:
                 result.setdefault(link.registration_id, []).append(table)
         return result
+
+    # -- Schedule operations -------------------------------------------------
+
+    def get_schedule(self, schedule_id: int) -> FlowSchedule | None:
+        return self._db.get(FlowSchedule, schedule_id)
+
+    def list_schedules(
+        self,
+        registration_id: int | None = None,
+        enabled_only: bool = False,
+    ) -> list[FlowSchedule]:
+        q = self._db.query(FlowSchedule)
+        if registration_id is not None:
+            q = q.filter_by(registration_id=registration_id)
+        if enabled_only:
+            q = q.filter(FlowSchedule.enabled.is_(True))
+        return q.order_by(FlowSchedule.created_at.desc()).all()
+
+    def create_schedule(self, schedule: FlowSchedule) -> FlowSchedule:
+        self._db.add(schedule)
+        self._db.commit()
+        self._db.refresh(schedule)
+        return schedule
+
+    def update_schedule(self, schedule: FlowSchedule) -> FlowSchedule:
+        self._db.commit()
+        self._db.refresh(schedule)
+        return schedule
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        schedule = self._db.get(FlowSchedule, schedule_id)
+        if schedule is not None:
+            self._db.delete(schedule)
+            self._db.commit()
+
+    def count_schedules(self) -> int:
+        return self._db.query(FlowSchedule).count()
+
+    # -- Active run operations -----------------------------------------------
+
+    def list_active_runs(self) -> list[FlowRun]:
+        """Return runs that have not yet ended (ended_at IS NULL)."""
+        return (
+            self._db.query(FlowRun)
+            .filter(FlowRun.ended_at.is_(None))
+            .order_by(FlowRun.started_at.desc())
+            .all()
+        )
+
+    def has_active_run(self, registration_id: int) -> bool:
+        """Check if a flow already has an active (unfinished) run."""
+        return (
+            self._db.query(FlowRun)
+            .filter(FlowRun.registration_id == registration_id, FlowRun.ended_at.is_(None))
+            .first()
+            is not None
+        )
+
+    def list_due_interval_schedules(self) -> list[FlowSchedule]:
+        """Return enabled interval schedules (filtering done in Python)."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "interval")
+            .all()
+        )
+
+    def list_table_trigger_schedules(self) -> list[FlowSchedule]:
+        """Return enabled table-trigger schedules."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(FlowSchedule.enabled.is_(True), FlowSchedule.schedule_type == "table_trigger")
+            .all()
+        )
+
+    def list_table_trigger_schedules_for_table(self, table_id: int) -> list[FlowSchedule]:
+        """Return enabled table-trigger schedules watching a specific table."""
+        return (
+            self._db.query(FlowSchedule)
+            .filter(
+                FlowSchedule.enabled.is_(True),
+                FlowSchedule.schedule_type == "table_trigger",
+                FlowSchedule.trigger_table_id == table_id,
+            )
+            .all()
+        )
+
+    def get_trigger_table_ids(self, schedule_id: int) -> list[int]:
+        """Return table IDs linked to a table_set_trigger schedule."""
+        rows = (
+            self._db.query(ScheduleTriggerTable.table_id)
+            .filter(ScheduleTriggerTable.schedule_id == schedule_id)
+            .all()
+        )
+        return [r[0] for r in rows]
+
+    def set_trigger_table_ids(self, schedule_id: int, table_ids: list[int]) -> None:
+        """Replace all trigger table links for a schedule."""
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        for tid in table_ids:
+            self._db.add(ScheduleTriggerTable(schedule_id=schedule_id, table_id=tid))
+        self._db.commit()
+
+    def delete_trigger_table_ids(self, schedule_id: int) -> None:
+        """Remove all trigger table links for a schedule."""
+        self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
+        self._db.commit()
