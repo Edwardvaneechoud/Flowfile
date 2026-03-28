@@ -10,6 +10,8 @@
 @import './components/_forms.css';
 @import './components/_modals.css';
 @import './components/_context-menu.css';
+@import './components/_status-badges.css';
+@import './components/_detail-panels.css';
 @import './utils/_spacing.css';
 @import './utils/_layout.css';
 
@@ -36,6 +38,17 @@ body {
   font-weight: var(--font-weight-normal);
   color: var(--color-text-primary);
   background-color: var(--color-background-primary);
+}
+
+/* ========== Page Transitions ========== */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
 }
 
 /* ========== Typography Base ========== */

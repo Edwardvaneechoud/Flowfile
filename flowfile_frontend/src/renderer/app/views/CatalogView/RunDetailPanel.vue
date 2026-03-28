@@ -61,7 +61,8 @@
     <!-- Node Results -->
     <div v-if="nodeResults.length > 0" class="section">
       <h3>Node Results</h3>
-      <table class="results-table">
+      <div class="table-wrapper">
+      <table class="styled-table results-table">
         <thead>
           <tr>
             <th>Node</th>
@@ -86,6 +87,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- Run Log (scheduled runs) -->
@@ -266,19 +268,8 @@ const formattedSnapshot = computed(() => {
   margin-right: 4px;
 }
 
-/* Results Table */
-.results-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
-}
-
+/* Results Table - extends .styled-table */
 .results-table th {
-  text-align: left;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-primary);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -290,6 +281,11 @@ const formattedSnapshot = computed(() => {
   color: var(--color-text-primary);
 }
 
+.mono {
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+}
+
 .error-text {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
@@ -299,6 +295,26 @@ const formattedSnapshot = computed(() => {
   white-space: nowrap;
 }
 
+.status-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.status-badge.success {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+.status-badge.failure {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+.status-badge.pending {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
 /* Snapshot Header */
 .snapshot-header {
   display: flex;

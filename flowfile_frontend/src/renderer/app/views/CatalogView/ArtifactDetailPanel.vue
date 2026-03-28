@@ -179,6 +179,26 @@ const sourceFlowName = computed((): string | null => {
   color: var(--color-text-primary);
 }
 
+.status-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.status-badge.active {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+.status-badge.deleted {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+.status-badge.pending {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
 .description {
   margin: var(--spacing-2) 0 0;
   color: var(--color-text-secondary);

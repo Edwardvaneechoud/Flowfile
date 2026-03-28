@@ -66,7 +66,7 @@
 .empty-state i {
   font-size: var(--font-size-4xl);
   margin-bottom: var(--spacing-3);
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .empty-state p {
@@ -76,6 +76,21 @@
 
 .empty-state p + p {
   margin-top: var(--spacing-1);
+}
+
+.empty-state__title {
+  margin: 0 0 var(--spacing-1);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.empty-state__subtitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  max-width: 320px;
+  line-height: var(--line-height-relaxed);
 }
 
 .loading-state {

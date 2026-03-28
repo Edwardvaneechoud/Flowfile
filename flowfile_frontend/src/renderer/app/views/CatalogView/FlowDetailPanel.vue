@@ -331,7 +331,7 @@
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
       </div>
-      <table v-else class="artifacts-table">
+      <table v-else class="styled-table artifacts-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -613,6 +613,23 @@ async function handleDeleteSchedule(id: number) {
   width: 100%;
 }
 
+.btn-danger-outline {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-danger-outline:hover {
+  background: var(--color-danger-light);
+}
+
 /* ========== Grid column templates ========== */
 .schedules-grid .table-header,
 .schedules-grid .table-row {
@@ -626,29 +643,75 @@ async function handleDeleteSchedule(id: number) {
   white-space: nowrap;
 }
 
-/* ========== Artifacts Table ========== */
-.artifacts-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
+.action-btn-primary:hover {
+  opacity: 0.9;
 }
 
-.artifacts-table th {
-  text-align: left;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-medium);
+/* ========== Meta Grid ========== */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-5);
+}
+
+.meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+}
+
+.meta-label {
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.meta-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.meta-value.mono {
+  font-family: monospace;
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
+.text-success {
+  color: var(--color-success);
+}
+.text-danger {
+  color: var(--color-danger);
+}
+
+/* ========== Sections ========== */
+.section {
+  margin-bottom: var(--spacing-5);
+}
+
+.section h3 {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--spacing-3) 0;
+}
+
+/* ========== Artifacts Table (extends .styled-table) ========== */
+.artifacts-table th {
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.artifacts-table td {
-  padding: var(--spacing-2) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
-}
+
 
 .artifact-row td {
   vertical-align: top;
