@@ -224,8 +224,8 @@ def test_pivot_numeric():
                                               aggregations=['sum'])
     output = fl_table.do_pivot(pivot_input)
     expected_output = FlowDataEngine([{'category': 'C', '1': 5, '2': 30},
-                                     {'category': 'B', '1': None, '2': 40},
-                                     {'category': 'A', '1': 40, '2': None}])
+                                     {'category': 'B', '1': 0, '2': 40},
+                                     {'category': 'A', '1': 40, '2': 0}])
     output.assert_equal(expected_output)
 
 

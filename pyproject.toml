@@ -30,25 +30,22 @@ databases = "~0.9.0"
 passlib = "~1.7.4"
 pyarrow = "^18.0.0"
 python-multipart = "~0.0.12"
-polars = [
-    { version = ">=1.8.2, <=1.25.2", markers = "sys_platform == 'win32'" }, # For Windows, max version 1.25.2 due to failing issues in greater versions
-    { version = ">=1.8.2, <1.32", markers = "sys_platform != 'win32'" }
-]
+polars = ">=1.8.2, <1.40"
 methodtools = "~0.4.7"
 faker = "~23.1.0"
 XlsxWriter = "~3.2.0"
 loky = "~3.4.1"
 fastexcel = "~0.12.0"
 openpyxl = "~3.1.2"
-polars-distance = "~0.4.3"
-polars-expr-transformer = ">=0.5.0"
+polars-distance = ">=0.4.3"
+polars-expr-transformer = ">=0.5.1"
 polars-grouper = "~0.3.0"
-polars-ds = ">=0.6.0"
+polars-ds = ">=0.11.0"
 aiofiles = "^24.1.0"
 python-jose = "^3.4.0"
 bcrypt = "^4.3.0"
 connectorx = "^0.4.2"
-polars_simed = "^0.3.4"
+polars_simed = ">=0.4.0"
 
 # Only install pendulum for Python versions below 3.12
 pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
@@ -60,7 +57,7 @@ httpx = "^0.28.1"
 docker = ">=7.0.0"
 tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
-pl-fuzzy-frame-match = ">=0.4.0"
+pl-fuzzy-frame-match = ">=0.6.0"
 pyyaml = "^6.0.3"
 xlsx2csv = "^0.8.6"
 
