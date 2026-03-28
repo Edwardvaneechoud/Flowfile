@@ -11,6 +11,7 @@ This module is a thin HTTP adapter: it delegates all business logic to
 """
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -749,15 +750,58 @@ def scheduler_status(
     current_user=Depends(get_current_active_user),
 ):
     """Return the current scheduler lock status."""
+    import logging
+
+    from flowfile_scheduler.engine import STALE_THRESHOLD
+
+    logger = logging.getLogger("flowfile.scheduler.status")
+
     lock = db.get(SchedulerLock, 1)
     if lock is None:
+        logger.debug("No scheduler lock row found — reporting inactive")
         return SchedulerStatusOut(active=False)
 
     embedded = get_scheduler()
     is_embedded = embedded is not None and getattr(embedded, "_holder_id", None) == lock.holder_id
 
+    # Detect stale heartbeat — scheduler may have died without releasing the lock
+    active = True
+    if lock.heartbeat_at is not None:
+        heartbeat = lock.heartbeat_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+        if elapsed > STALE_THRESHOLD:
+            active = False
+            logger.warning(
+                "Scheduler heartbeat is STALE: last heartbeat %.1fs ago (threshold=%ds), "
+                "holder_id=%s, heartbeat_at=%s — marking inactive",
+                elapsed,
+                STALE_THRESHOLD,
+                lock.holder_id,
+                lock.heartbeat_at,
+            )
+        else:
+            logger.debug(
+                "Scheduler heartbeat OK: %.1fs ago (threshold=%ds), holder_id=%s",
+                elapsed,
+                STALE_THRESHOLD,
+                lock.holder_id,
+            )
+    else:
+        logger.warning("Scheduler lock exists but heartbeat_at is None — holder_id=%s", lock.holder_id)
+
+    logger.debug(
+        "Scheduler status response: active=%s, holder_id=%s, is_embedded=%s, started_at=%s, heartbeat_at=%s",
+        active,
+        lock.holder_id,
+        is_embedded,
+        lock.started_at,
+        lock.heartbeat_at,
+    )
+
     return SchedulerStatusOut(
-        active=True,
+        active=active,
         holder_id=lock.holder_id,
         started_at=lock.started_at,
         heartbeat_at=lock.heartbeat_at,
