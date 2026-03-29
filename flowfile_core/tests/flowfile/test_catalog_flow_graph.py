@@ -139,7 +139,6 @@ class TestCatalogWriter:
         """Running a flow with a catalog_writer should create a CatalogTable row."""
         ns_id = _create_namespace()
         graph = _create_graph()
-        breakpoint()
         # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
