@@ -193,6 +193,22 @@ export interface CatalogTablePreview {
 }
 
 // ============================================================================
+// Delta Version History
+// ============================================================================
+
+export interface DeltaVersionCommit {
+  version: number;
+  timestamp: string | null;
+  operation: string | null;
+  parameters: Record<string, any> | null;
+}
+
+export interface DeltaTableHistory {
+  current_version: number;
+  history: DeltaVersionCommit[];
+}
+
+// ============================================================================
 // Schedule
 // ============================================================================
 

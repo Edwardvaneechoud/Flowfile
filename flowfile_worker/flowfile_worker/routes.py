@@ -17,6 +17,9 @@ from shared.storage_config import storage
 
 router = APIRouter()
 
+# Re-use the single validation helper from funcs (backed by shared.delta_utils).
+_validate_catalog_path = funcs._validate_catalog_path
+
 
 def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
     default_cache_dir = CACHE_DIR / str(flowfile_flow_id)
@@ -342,14 +345,14 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
 
     dest_dir = storage.catalog_tables_directory
     dest_dir.mkdir(parents=True, exist_ok=True)
-    if payload.parquet_filename:
-        parquet_filename = payload.parquet_filename
-    elif payload.table_name:
-        parquet_filename = f"{payload.table_name}_{uuid.uuid4().hex[:8]}.parquet"
-    else:
-        parquet_filename = f"catalog_{uuid.uuid4().hex}.parquet"
 
-    dest_path = str(dest_dir / parquet_filename)
+    # Generate a directory name for the Delta table (not a .parquet filename)
+    if payload.table_name:
+        dir_name = f"{payload.table_name}_{uuid.uuid4().hex[:8]}"
+    else:
+        dir_name = f"catalog_{uuid.uuid4().hex}"
+
+    dest_path = str(dest_dir / dir_name)
 
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
@@ -383,8 +386,11 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
 
         result = queue.get(timeout=5)
         schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        table_path = result.get("table_path", result.get("parquet_path"))
         return models.CatalogMaterializeResponse(
-            parquet_path=result["parquet_path"],
+            table_path=table_path,
+            parquet_path=table_path,  # backward compat
+            storage_format=result.get("storage_format", "delta"),
             schema=schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
@@ -393,6 +399,55 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
     finally:
         del p, progress, error_message, queue
         gc.collect()
+
+
+@router.post("/catalog/table_metadata", response_model=models.TableMetadataResponse)
+def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMetadataResponse:
+    """Read schema, row_count, column_count, size_bytes from a table path.
+
+    This offloads metadata reading from the core process to the worker.
+    """
+    try:
+        _validate_catalog_path(payload.table_path)
+        result = funcs.read_table_metadata(payload.table_path, payload.storage_format)
+        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        return models.TableMetadataResponse(
+            schema=schema,
+            row_count=result["row_count"],
+            column_count=result["column_count"],
+            size_bytes=result["size_bytes"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Error reading table metadata: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/catalog/delta_history", response_model=models.DeltaHistoryResponse)
+def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistoryResponse:
+    """Read version history from a Delta table."""
+    try:
+        _validate_catalog_path(payload.table_path)
+        return funcs.get_delta_history(payload.table_path, payload.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Error reading delta history: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/catalog/delta_version_preview", response_model=models.DeltaVersionPreviewResponse)
+def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> models.DeltaVersionPreviewResponse:
+    """Preview data from a Delta table at a specific version."""
+    try:
+        _validate_catalog_path(payload.table_path)
+        return funcs.read_delta_version_preview(payload.table_path, payload.version, payload.n_rows)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Error reading delta version preview: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 def validate_result(task_id: str) -> bool | None:
