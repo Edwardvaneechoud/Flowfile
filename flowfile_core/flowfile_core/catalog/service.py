@@ -80,29 +80,10 @@ from flowfile_core.schemas.catalog_schema import (
     PaginatedFlowRuns,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
+from shared.delta_utils import format_delta_timestamp, make_json_safe
 from shared.subprocess_utils import spawn_flow_subprocess
 
 logger = logging.getLogger(__name__)
-
-
-def _make_json_safe(val: object) -> object:
-    if val is None or isinstance(val, bool | int | float | str):
-        return val
-    return str(val)
-
-
-def _format_delta_timestamp(ts: object) -> str | None:
-    """Convert a raw delta log timestamp to an ISO 8601 string."""
-    if ts is None:
-        return None
-    if isinstance(ts, str):
-        return ts
-    if isinstance(ts, datetime):
-        return ts.isoformat()
-    if isinstance(ts, int | float):
-        # Milliseconds since epoch
-        return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
-    return str(ts)
 
 
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
@@ -110,7 +91,7 @@ def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
     return [
         DeltaVersionCommit(
             version=h.get("version"),
-            timestamp=_format_delta_timestamp(h.get("timestamp")),
+            timestamp=format_delta_timestamp(h.get("timestamp")),
             operation=h.get("operation"),
             parameters=h.get("operationParameters"),
         )
@@ -144,9 +125,7 @@ class CatalogService:
         storage_format: str = "delta"
 
     @staticmethod
-    def _read_table_metadata(
-        table_path: str, storage_format: str
-    ) -> tuple[list[dict[str, str]], int, int, int]:
+    def _read_table_metadata(table_path: str, storage_format: str) -> tuple[list[dict[str, str]], int, int, int]:
         """Read schema, row_count, column_count, size_bytes from a table.
 
         Offloads the work to the worker process when available.  Only falls
@@ -156,7 +135,6 @@ class CatalogService:
 
         if OFFLOAD_TO_WORKER:
             try:
-
                 data = trigger_read_table_metadata(Path(table_path).name, storage_format)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
@@ -983,13 +961,10 @@ class CatalogService:
         self,
         source_file_path: str,
         table_name: str | None = None,
-        parquet_filename: str | None = None,
     ) -> CatalogMaterializationResult:
-
         response = trigger_catalog_materialize(
             source_file_path=source_file_path,
             table_name=table_name,
-            parquet_filename=parquet_filename,
         )
         if response.ok:
             data = response.json()
@@ -1129,9 +1104,7 @@ class CatalogService:
                 column_count = len(schema_list)
         else:
             # Fallback: read metadata from the table on disk
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
-                table_path, storage_format
-            )
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(table_path, storage_format)
 
         return self._create_table_record_from_metadata(
             name=name,
@@ -1215,13 +1188,11 @@ class CatalogService:
             if column_count is None:
                 column_count = len(schema_list)
         else:
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
-                str(dest_path), storage_format
-            )
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(str(dest_path), storage_format)
 
         # Remove old storage if it differs from the new one
         old_path = Path(table.file_path)
-        if old_path != dest_path and (old_path.exists() or old_path.is_dir()):
+        if old_path != dest_path and old_path.exists():
             try:
                 delete_table_storage(old_path)
             except OSError:
@@ -1413,10 +1384,9 @@ class CatalogService:
             if table is not None:
                 return table.file_path
         elif table_name:
-            tables = self.repo.list_tables(namespace_id=namespace_id)
-            for t in tables:
-                if t.name == table_name:
-                    return t.file_path
+            table = self.repo.get_table_by_name(table_name, namespace_id)
+            if table is not None:
+                return table.file_path
         return None
 
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
@@ -1482,7 +1452,7 @@ class CatalogService:
 
         try:
             storage_path = Path(file_path)
-            if storage_path.exists() or storage_path.is_dir():
+            if storage_path.exists():
                 delete_table_storage(storage_path)
         except OSError:
             logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
@@ -1518,7 +1488,7 @@ class CatalogService:
         dtypes = [str(field.type) for field in pa_table.schema]
         rows_data = pa_table.to_pylist()
 
-        rows = [[_make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+        rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
 
         return CatalogTablePreview(
             columns=columns,
@@ -1534,7 +1504,6 @@ class CatalogService:
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:
             try:
-
                 return trigger_delta_version_preview(data_path.name, version, limit)
             except Exception:
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
@@ -1545,13 +1514,7 @@ class CatalogService:
         columns = pa_table.column_names
         dtypes = [str(field.type) for field in pa_table.schema]
         rows_data = pa_table.to_pylist()
-
-        def _make_json_safe(val: object) -> object:
-            if val is None or isinstance(val, bool | int | float | str):
-                return val
-            return str(val)
-
-        rows = [[_make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+        rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
         return CatalogTablePreview(columns=columns, dtypes=dtypes, rows=rows, total_rows=len(rows))
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
@@ -1577,7 +1540,6 @@ class CatalogService:
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:
             try:
-
                 return trigger_delta_history(data_path.name, limit)
             except Exception:
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)

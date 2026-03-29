@@ -4,7 +4,7 @@ Covers:
 - write_delta (multiprocessing task)
 - read_table_metadata (delta + parquet)
 - _get_delta_size_bytes
-- _format_delta_timestamp
+- format_delta_timestamp
 - get_delta_history
 - read_delta_version_preview
 - materialize_catalog_table_task (now writes delta)
@@ -22,7 +22,6 @@ from fastapi.testclient import TestClient
 
 from flowfile_worker import main, mp_context
 from flowfile_worker.funcs import (
-    _format_delta_timestamp,
     _get_delta_size_bytes,
     get_delta_history,
     materialize_catalog_table_task,
@@ -30,6 +29,7 @@ from flowfile_worker.funcs import (
     read_table_metadata,
     write_delta,
 )
+from shared.delta_utils import format_delta_timestamp
 from shared.storage_config import storage
 
 
@@ -98,26 +98,26 @@ class TestGetDeltaSizeBytes:
 
 
 # ---------------------------------------------------------------------------
-# _format_delta_timestamp
+# format_delta_timestamp
 # ---------------------------------------------------------------------------
 
 
 class TestFormatDeltaTimestamp:
     def test_none(self):
-        assert _format_delta_timestamp(None) is None
+        assert format_delta_timestamp(None) is None
 
     def test_string_passthrough(self):
-        assert _format_delta_timestamp("2024-01-01") == "2024-01-01"
+        assert format_delta_timestamp("2024-01-01") == "2024-01-01"
 
     def test_datetime(self):
         from datetime import datetime, timezone
 
         dt = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        result = _format_delta_timestamp(dt)
+        result = format_delta_timestamp(dt)
         assert "2024-01-15" in result
 
     def test_millis(self):
-        result = _format_delta_timestamp(1700000000000)
+        result = format_delta_timestamp(1700000000000)
         assert result is not None
         assert "2023" in result
 

@@ -2,7 +2,6 @@ import gc
 import json
 import os
 import uuid
-from pathlib import Path
 
 import polars as pl
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -18,26 +17,8 @@ from shared.storage_config import storage
 
 router = APIRouter()
 
-
-def _validate_catalog_path(table_name: str) -> Path:
-    """Validate that *table_name* is a simple directory/file name and resolve it
-    within the catalog tables directory.
-
-    Only a bare name is accepted (no path separators, no ``..``, no null bytes).
-    The full path is constructed from the trusted catalog base directory.
-    Raises ``ValueError`` (-> HTTP 400) when the input is invalid.
-    """
-    if not table_name:
-        raise ValueError("table_name must not be empty")
-    if "\x00" in table_name:
-        raise ValueError("table_name contains null bytes")
-    if "/" in table_name or "\\" in table_name:
-        raise ValueError("table_name must not contain path separators")
-    if ".." in table_name:
-        raise ValueError("table_name must not contain '..'")
-
-    catalog_dir = storage.catalog_tables_directory.resolve()
-    return catalog_dir / table_name
+# Re-use the single validation helper from funcs (backed by shared.delta_utils).
+_validate_catalog_path = funcs._validate_catalog_path
 
 
 def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:

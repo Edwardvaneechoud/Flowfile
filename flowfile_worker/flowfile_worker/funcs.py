@@ -6,8 +6,6 @@ from logging import Logger
 from multiprocessing import Array, Queue, Value
 from pathlib import Path
 
-import pyarrow as pa
-
 import polars as pl
 from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
@@ -19,29 +17,19 @@ from flowfile_worker.external_sources.sql_source.main import write_df_to_databas
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
+from shared.delta_utils import format_delta_timestamp, get_delta_size_bytes, make_json_safe, validate_catalog_path
 from shared.storage_config import storage
 
 
 def _validate_catalog_path(table_name: str) -> Path:
-    """Validate that *table_name* is a simple directory/file name and resolve it
-    within the catalog tables directory.
+    """Validate and resolve *table_name* under the catalog tables directory."""
+    return validate_catalog_path(table_name, storage.catalog_tables_directory)
 
-    Only a bare name is accepted (no path separators, no ``..``, no null bytes).
-    The full path is constructed from the trusted catalog base directory.
 
-    Raises ``ValueError`` when the input is invalid.
-    """
-    if not table_name:
-        raise ValueError("table_name must not be empty")
-    if "\x00" in table_name:
-        raise ValueError("table_name contains null bytes")
-    if "/" in table_name or "\\" in table_name:
-        raise ValueError("table_name must not contain path separators")
-    if ".." in table_name:
-        raise ValueError("table_name must not contain '..'")
+def _get_delta_size_bytes(delta_dir: Path) -> int:
+    """Delegate to ``shared.delta_utils.get_delta_size_bytes``."""
+    return get_delta_size_bytes(delta_dir)
 
-    allowed_dir = storage.catalog_tables_directory.resolve()
-    return allowed_dir / table_name
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 
@@ -490,14 +478,16 @@ def write_delta(
         size_bytes = _get_delta_size_bytes(Path(output_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
-        queue.put({
-            "table_path": output_path,
-            "storage_format": "delta",
-            "schema": schema,
-            "row_count": df.height,
-            "column_count": len(df.columns),
-            "size_bytes": size_bytes,
-        })
+        queue.put(
+            {
+                "table_path": output_path,
+                "storage_format": "delta",
+                "schema": schema,
+                "row_count": df.height,
+                "column_count": len(df.columns),
+                "size_bytes": size_bytes,
+            }
+        )
         flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
         with progress.get_lock():
             progress.value = 100
@@ -538,14 +528,16 @@ def materialize_catalog_table_task(
         size_bytes = _get_delta_size_bytes(Path(dest_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
-        queue.put({
-            "table_path": dest_path,
-            "storage_format": "delta",
-            "schema": schema,
-            "row_count": df.height,
-            "column_count": len(df.columns),
-            "size_bytes": size_bytes,
-        })
+        queue.put(
+            {
+                "table_path": dest_path,
+                "storage_format": "delta",
+                "schema": schema,
+                "row_count": df.height,
+                "column_count": len(df.columns),
+                "size_bytes": size_bytes,
+            }
+        )
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
@@ -585,36 +577,6 @@ def read_table_metadata(table_name: str, storage_format: str = "delta") -> dict:
     }
 
 
-def _get_delta_size_bytes(delta_dir: Path) -> int:
-    """Sum the sizes of active data files from the Delta transaction log.
-
-    Falls back to filesystem scanning if the delta log can't be read.
-    """
-    try:
-
-        dt = DeltaTable(str(delta_dir))
-        add_actions = dt.get_add_actions(flatten=True)
-        size_col = add_actions.column("size_bytes")
-        return sum(v for v in size_col.to_pylist() if v is not None)
-    except Exception:
-        return sum(f.stat().st_size for f in delta_dir.rglob("*.parquet"))
-
-
-def _format_delta_timestamp(ts: object) -> str | None:
-    """Convert a raw delta log timestamp to an ISO 8601 string."""
-    from datetime import datetime, timezone
-
-    if ts is None:
-        return None
-    if isinstance(ts, str):
-        return ts
-    if isinstance(ts, datetime):
-        return ts.isoformat()
-    if isinstance(ts, int | float):
-        return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
-    return str(ts)
-
-
 def get_delta_history(table_name: str, limit: int | None = None) -> models.DeltaHistoryResponse:
     """Read version history from a Delta table using the deltalake library.
 
@@ -629,7 +591,7 @@ def get_delta_history(table_name: str, limit: int | None = None) -> models.Delta
         entries.append(
             models.DeltaVersionCommit(
                 version=h.get("version"),
-                timestamp=_format_delta_timestamp(h.get("timestamp")),
+                timestamp=format_delta_timestamp(h.get("timestamp")),
                 operation=h.get("operation"),
                 parameters=h.get("operationParameters"),
             )
@@ -650,18 +612,11 @@ def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100)
     dtypes = [str(field.type) for field in pa_table.schema]
     rows = pa_table.to_pylist()
 
-    def _make_json_safe(val: object) -> object:
-        if val is None or isinstance(val, bool | int | float | str):
-            return val
-        return str(val)
-
-    row_list = [[_make_json_safe(row.get(c)) for c in columns] for row in rows]
+    row_list = [[make_json_safe(row.get(c)) for c in columns] for row in rows]
     # Estimate total rows from Delta metadata
     try:
-        pa.table( dt.get_add_actions(flatten=True))
         total_rows = sum(
-            action for action in dt.get_add_actions(flatten=True).column("num_records").to_pylist()
-            if action is not None
+            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
         )
     except Exception:
         total_rows = len(row_list)

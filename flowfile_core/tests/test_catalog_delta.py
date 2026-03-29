@@ -1,7 +1,7 @@
 """Tests for Delta Lake–related additions to the Catalog system.
 
 Covers:
-- _format_delta_timestamp / _parse_delta_history helpers
+- format_delta_timestamp / _parse_delta_history helpers
 - CatalogService.register_table_from_data (with pre-computed metadata)
 - CatalogService.overwrite_table_data (delta-aware, with pre-computed metadata)
 - CatalogService.resolve_write_destination
@@ -25,7 +25,8 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService, TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.service import _format_delta_timestamp, _parse_delta_history
+from flowfile_core.catalog.service import _parse_delta_history
+from shared.delta_utils import format_delta_timestamp
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -99,36 +100,36 @@ def _make_namespace() -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# _format_delta_timestamp
+# format_delta_timestamp
 # ---------------------------------------------------------------------------
 
 
 class TestFormatDeltaTimestamp:
     def test_none_returns_none(self):
-        assert _format_delta_timestamp(None) is None
+        assert format_delta_timestamp(None) is None
 
     def test_string_passthrough(self):
-        assert _format_delta_timestamp("2024-01-01T00:00:00") == "2024-01-01T00:00:00"
+        assert format_delta_timestamp("2024-01-01T00:00:00") == "2024-01-01T00:00:00"
 
     def test_datetime_to_iso(self):
         dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
-        result = _format_delta_timestamp(dt)
+        result = format_delta_timestamp(dt)
         assert "2024-06-15" in result
         assert "12:30" in result
 
     def test_epoch_millis_int(self):
         # 1700000000000 ms = 2023-11-14T22:13:20 UTC
-        result = _format_delta_timestamp(1700000000000)
+        result = format_delta_timestamp(1700000000000)
         assert result is not None
         assert "2023-11-14" in result
 
     def test_epoch_millis_float(self):
-        result = _format_delta_timestamp(1700000000000.0)
+        result = format_delta_timestamp(1700000000000.0)
         assert result is not None
         assert "2023" in result
 
     def test_other_type_stringified(self):
-        result = _format_delta_timestamp(42)
+        result = format_delta_timestamp(42)
         # 42 ms since epoch — still returns something
         assert result is not None
 
@@ -488,7 +489,11 @@ class TestResolveWriteDestination:
         assert delta_mode == "overwrite"
 
     def test_existing_legacy_parquet_overwrite(self, tmp_path):
-        """Legacy parquet file should be removed and a new directory used."""
+        """Legacy parquet: resolve returns new dir path but does NOT delete old file.
+
+        Deletion is deferred to ``overwrite_table_data`` so that the old data
+        is preserved if the subsequent write fails.
+        """
         _, schema_id = _make_namespace()
         pq_file = tmp_path / "legacy.parquet"
         pl.DataFrame({"a": [1]}).write_parquet(pq_file)
@@ -515,8 +520,8 @@ class TestResolveWriteDestination:
             )
         assert existing is not None
         assert delta_mode == "overwrite"
-        # Legacy parquet should have been deleted
-        assert not pq_file.exists()
+        # Old parquet must still exist (deleted only after new write succeeds)
+        assert pq_file.exists()
         # New path should be a directory at the same stem
         assert dest_path == tmp_path / "legacy"
 

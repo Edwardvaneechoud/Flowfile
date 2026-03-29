@@ -13,6 +13,8 @@ from pathlib import Path
 import pyarrow as pa
 from deltalake import DeltaTable
 
+from shared.delta_utils import get_delta_size_bytes
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,18 +38,9 @@ def table_exists(path: str | Path) -> bool:
 def get_delta_table_size_bytes(path: str | Path) -> int:
     """Sum the sizes of active data files from the Delta transaction log.
 
-    Uses the Delta log metadata rather than filesystem scanning, which
-    correctly excludes tombstoned files from previous versions.
+    Delegates to ``shared.delta_utils.get_delta_size_bytes``.
     """
-
-    try:
-        dt = DeltaTable(str(path))
-        add_actions = dt.get_add_actions(flatten=True)
-        size_col = add_actions.column("size_bytes")
-        return sum(v for v in size_col.to_pylist() if v is not None)
-    except Exception:
-        logger.warning("Failed to read size from delta log, falling back to filesystem scan", exc_info=True)
-        return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
+    return get_delta_size_bytes(path)
 
 
 def read_delta_preview(path: str, n_rows: int = 100) -> pa.Table:

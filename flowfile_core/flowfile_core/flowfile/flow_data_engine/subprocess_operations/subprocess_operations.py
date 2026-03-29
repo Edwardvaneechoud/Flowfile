@@ -145,12 +145,10 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
 def trigger_catalog_materialize(
     source_file_path: str,
     table_name: str | None = None,
-    parquet_filename: str | None = None,
 ):
     payload = {
         "source_file_path": source_file_path,
         "table_name": table_name,
-        "parquet_filename": parquet_filename,
     }
     response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
     return response

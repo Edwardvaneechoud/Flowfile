@@ -6,6 +6,7 @@ from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
 
 # Custom type for bytes that serializes to/from base64 string in JSON
@@ -154,7 +155,6 @@ class ColumnSchema(BaseModel):
 
 class CatalogMaterializeRequest(BaseModel):
     source_file_path: str
-    parquet_filename: str | None = None
     table_name: str | None = None
 
 
@@ -183,13 +183,6 @@ class TableMetadataResponse(BaseModel):
 class DeltaHistoryRequest(BaseModel):
     table_path: str  # Bare table directory name (no path separators)
     limit: int | None = None
-
-
-class DeltaVersionCommit(BaseModel):
-    version: int
-    timestamp: str | None = None
-    operation: str | None = None
-    parameters: dict | None = None
 
 
 class DeltaHistoryResponse(BaseModel):
