@@ -7,6 +7,7 @@ from multiprocessing import Array, Queue, Value
 from pathlib import Path
 
 import polars as pl
+from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 
 from flowfile_worker import models
@@ -19,28 +20,26 @@ from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get
 from shared.storage_config import storage
 
 
-def _validate_catalog_path(table_path: str) -> Path:
-    """Resolve and validate that a table path is within the catalog tables directory.
+def _validate_catalog_path(table_name: str) -> Path:
+    """Validate that *table_name* is a simple directory/file name and resolve it
+    within the catalog tables directory.
 
-    Raises ValueError if the path escapes the allowed directory.
+    Only a bare name is accepted (no path separators, no ``..``, no null bytes).
+    The full path is constructed from the trusted catalog base directory.
+
+    Raises ``ValueError`` when the input is invalid.
     """
-    if "\x00" in table_path:
-        raise ValueError("table_path contains null bytes")
+    if not table_name:
+        raise ValueError("table_name must not be empty")
+    if "\x00" in table_name:
+        raise ValueError("table_name contains null bytes")
+    if "/" in table_name or "\\" in table_name:
+        raise ValueError("table_name must not contain path separators")
+    if ".." in table_name:
+        raise ValueError("table_name must not contain '..'")
 
     allowed_dir = storage.catalog_tables_directory.resolve()
-    candidate = Path(table_path)
-
-    if candidate.is_absolute():
-        resolved = candidate.resolve()
-    else:
-        resolved = (allowed_dir / candidate).resolve()
-
-    try:
-        resolved.relative_to(allowed_dir)
-    except ValueError:
-        raise ValueError(f"table_path must be within the catalog tables directory: {allowed_dir}")
-
-    return resolved
+    return allowed_dir / table_name
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 
@@ -555,12 +554,15 @@ def materialize_catalog_table_task(
             progress.value = -1
 
 
-def read_table_metadata(table_path: str, storage_format: str = "delta") -> dict:
+def read_table_metadata(table_name: str, storage_format: str = "delta") -> dict:
     """Read schema, row_count, column_count, size_bytes from a table on disk.
+
+    *table_name* is the bare directory/file name inside the catalog tables
+    directory (no path separators allowed).
 
     Called by the worker endpoint so the core process never touches data files.
     """
-    p = _validate_catalog_path(table_path)
+    p = _validate_catalog_path(table_name)
     if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
         lf = pl.scan_delta(str(p))
         schema = lf.collect_schema()
@@ -587,7 +589,6 @@ def _get_delta_size_bytes(delta_dir: Path) -> int:
     Falls back to filesystem scanning if the delta log can't be read.
     """
     try:
-        from deltalake import DeltaTable
 
         dt = DeltaTable(str(delta_dir))
         add_actions = dt.get_add_actions(flatten=True)
@@ -612,11 +613,12 @@ def _format_delta_timestamp(ts: object) -> str | None:
     return str(ts)
 
 
-def get_delta_history(table_path: str, limit: int | None = None) -> models.DeltaHistoryResponse:
-    """Read version history from a Delta table using the deltalake library."""
-    from deltalake import DeltaTable
+def get_delta_history(table_name: str, limit: int | None = None) -> models.DeltaHistoryResponse:
+    """Read version history from a Delta table using the deltalake library.
 
-    validated = _validate_catalog_path(table_path)
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    validated = _validate_catalog_path(table_name)
     dt = DeltaTable(str(validated))
     history = dt.history(limit)
     current_version = dt.version()
@@ -633,11 +635,12 @@ def get_delta_history(table_path: str, limit: int | None = None) -> models.Delta
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
-def read_delta_version_preview(table_path: str, version: int, n_rows: int = 100) -> models.DeltaVersionPreviewResponse:
-    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars)."""
-    from deltalake import DeltaTable
+def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100) -> models.DeltaVersionPreviewResponse:
+    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars).
 
-    validated = _validate_catalog_path(table_path)
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    validated = _validate_catalog_path(table_name)
     dt = DeltaTable(str(validated), version=version)
     dataset = dt.to_pyarrow_dataset()
     pa_table = dataset.head(n_rows)

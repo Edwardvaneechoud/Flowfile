@@ -169,7 +169,7 @@ class CatalogMaterializeResponse(BaseModel):
 
 
 class TableMetadataRequest(BaseModel):
-    table_path: str
+    table_path: str  # Bare table directory/file name (no path separators)
     storage_format: str = "delta"  # "delta" or "parquet"
 
 
@@ -181,7 +181,7 @@ class TableMetadataResponse(BaseModel):
 
 
 class DeltaHistoryRequest(BaseModel):
-    table_path: str
+    table_path: str  # Bare table directory name (no path separators)
     limit: int | None = None
 
 
@@ -198,7 +198,7 @@ class DeltaHistoryResponse(BaseModel):
 
 
 class DeltaVersionPreviewRequest(BaseModel):
-    table_path: str
+    table_path: str  # Bare table directory name (no path separators)
     version: int
     n_rows: int = 100
 

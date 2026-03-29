@@ -158,7 +158,7 @@ class CatalogService:
         if OFFLOAD_TO_WORKER:
             try:
 
-                data = trigger_read_table_metadata(table_path, storage_format)
+                data = trigger_read_table_metadata(Path(table_path).name, storage_format)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
             except Exception:
@@ -1535,7 +1535,7 @@ class CatalogService:
         if OFFLOAD_TO_WORKER:
             try:
 
-                return trigger_delta_version_preview(table_path, version, limit)
+                return trigger_delta_version_preview(data_path.name, version, limit)
             except Exception:
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
@@ -1578,7 +1578,7 @@ class CatalogService:
         if OFFLOAD_TO_WORKER:
             try:
 
-                return trigger_delta_history(table_path, limit)
+                return trigger_delta_history(data_path.name, limit)
             except Exception:
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
 

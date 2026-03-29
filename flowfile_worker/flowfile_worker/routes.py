@@ -19,18 +19,25 @@ from shared.storage_config import storage
 router = APIRouter()
 
 
-def _validate_catalog_path(raw_path: str) -> str:
-    """Ensure *raw_path* is inside the catalog tables directory.
+def _validate_catalog_path(table_name: str) -> Path:
+    """Validate that *table_name* is a simple directory/file name and resolve it
+    within the catalog tables directory.
 
-    Resolves the path, rejects ``..`` traversal, and checks that the
-    resolved path is anchored under a trusted base directory.  Raises
-    ``ValueError`` (→ HTTP 400) when the check fails.
+    Only a bare name is accepted (no path separators, no ``..``, no null bytes).
+    The full path is constructed from the trusted catalog base directory.
+    Raises ``ValueError`` (-> HTTP 400) when the input is invalid.
     """
-    resolved = Path(raw_path).resolve()
+    if not table_name:
+        raise ValueError("table_name must not be empty")
+    if "\x00" in table_name:
+        raise ValueError("table_name contains null bytes")
+    if "/" in table_name or "\\" in table_name:
+        raise ValueError("table_name must not contain path separators")
+    if ".." in table_name:
+        raise ValueError("table_name must not contain '..'")
+
     catalog_dir = storage.catalog_tables_directory.resolve()
-    if not str(resolved).startswith(str(catalog_dir) + os.sep) and resolved != catalog_dir:
-        raise ValueError(f"Path is outside the catalog tables directory: {raw_path}")
-    return str(resolved)
+    return catalog_dir / table_name
 
 
 def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
@@ -420,8 +427,8 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
     This offloads metadata reading from the core process to the worker.
     """
     try:
-        safe_path = _validate_catalog_path(payload.table_path)
-        result = funcs.read_table_metadata(safe_path, payload.storage_format)
+        _validate_catalog_path(payload.table_path)
+        result = funcs.read_table_metadata(payload.table_path, payload.storage_format)
         schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.TableMetadataResponse(
             schema=schema,
@@ -440,8 +447,8 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
 def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistoryResponse:
     """Read version history from a Delta table."""
     try:
-        safe_path = _validate_catalog_path(payload.table_path)
-        return funcs.get_delta_history(safe_path, payload.limit)
+        _validate_catalog_path(payload.table_path)
+        return funcs.get_delta_history(payload.table_path, payload.limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -453,8 +460,8 @@ def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistor
 def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> models.DeltaVersionPreviewResponse:
     """Preview data from a Delta table at a specific version."""
     try:
-        safe_path = _validate_catalog_path(payload.table_path)
-        return funcs.read_delta_version_preview(safe_path, payload.version, payload.n_rows)
+        _validate_catalog_path(payload.table_path)
+        return funcs.read_delta_version_preview(payload.table_path, payload.version, payload.n_rows)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

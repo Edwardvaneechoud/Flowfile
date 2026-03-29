@@ -129,7 +129,7 @@ class TestFormatDeltaTimestamp:
 
 class TestReadTableMetadata:
     def test_delta_metadata(self, delta_path):
-        result = read_table_metadata(str(delta_path), "delta")
+        result = read_table_metadata("test_delta", "delta")
         assert result["row_count"] == 3
         assert result["column_count"] == 2
         assert result["size_bytes"] > 0
@@ -138,7 +138,7 @@ class TestReadTableMetadata:
         assert names == {"id", "value"}
 
     def test_parquet_metadata(self, parquet_path):
-        result = read_table_metadata(str(parquet_path), "parquet")
+        result = read_table_metadata("test.parquet", "parquet")
         assert result["row_count"] == 2
         assert result["column_count"] == 2
         assert result["size_bytes"] > 0
@@ -151,18 +151,18 @@ class TestReadTableMetadata:
 
 class TestGetDeltaHistory:
     def test_single_version(self, delta_path):
-        result = get_delta_history(str(delta_path))
+        result = get_delta_history("test_delta")
         assert result.current_version == 0
         assert len(result.history) >= 1
         assert result.history[0].version == 0
 
     def test_multiple_versions(self, versioned_delta):
-        result = get_delta_history(str(versioned_delta))
+        result = get_delta_history("versioned")
         assert result.current_version == 1
         assert len(result.history) >= 2
 
     def test_limit(self, versioned_delta):
-        result = get_delta_history(str(versioned_delta), limit=1)
+        result = get_delta_history("versioned", limit=1)
         assert len(result.history) == 1
 
 
@@ -173,18 +173,18 @@ class TestGetDeltaHistory:
 
 class TestReadDeltaVersionPreview:
     def test_version_0(self, versioned_delta):
-        result = read_delta_version_preview(str(versioned_delta), version=0)
+        result = read_delta_version_preview("versioned", version=0)
         assert result.version == 0
         assert result.columns == ["v"]
         assert len(result.rows) == 1
 
     def test_version_1(self, versioned_delta):
-        result = read_delta_version_preview(str(versioned_delta), version=1)
+        result = read_delta_version_preview("versioned", version=1)
         assert result.version == 1
         assert len(result.rows) == 2
 
     def test_n_rows_limit(self, versioned_delta):
-        result = read_delta_version_preview(str(versioned_delta), version=1, n_rows=1)
+        result = read_delta_version_preview("versioned", version=1, n_rows=1)
         assert len(result.rows) == 1
 
 
@@ -343,7 +343,7 @@ class TestWorkerRoutes:
     def test_table_metadata_delta(self, worker_client, delta_path):
         resp = worker_client.post(
             "/catalog/table_metadata",
-            json={"table_path": str(delta_path), "storage_format": "delta"},
+            json={"table_path": "test_delta", "storage_format": "delta"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -355,7 +355,7 @@ class TestWorkerRoutes:
     def test_table_metadata_parquet(self, worker_client, parquet_path):
         resp = worker_client.post(
             "/catalog/table_metadata",
-            json={"table_path": str(parquet_path), "storage_format": "parquet"},
+            json={"table_path": "test.parquet", "storage_format": "parquet"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -364,7 +364,7 @@ class TestWorkerRoutes:
     def test_delta_history(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_history",
-            json={"table_path": str(versioned_delta)},
+            json={"table_path": "versioned"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -374,7 +374,7 @@ class TestWorkerRoutes:
     def test_delta_history_with_limit(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_history",
-            json={"table_path": str(versioned_delta), "limit": 1},
+            json={"table_path": "versioned", "limit": 1},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -383,7 +383,7 @@ class TestWorkerRoutes:
     def test_delta_version_preview(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_version_preview",
-            json={"table_path": str(versioned_delta), "version": 0, "n_rows": 100},
+            json={"table_path": "versioned", "version": 0, "n_rows": 100},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -394,7 +394,7 @@ class TestWorkerRoutes:
     def test_delta_version_preview_v1(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_version_preview",
-            json={"table_path": str(versioned_delta), "version": 1, "n_rows": 100},
+            json={"table_path": "versioned", "version": 1, "n_rows": 100},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -403,13 +403,22 @@ class TestWorkerRoutes:
     def test_delta_version_preview_n_rows(self, worker_client, versioned_delta):
         resp = worker_client.post(
             "/catalog/delta_version_preview",
-            json={"table_path": str(versioned_delta), "version": 1, "n_rows": 1},
+            json={"table_path": "versioned", "version": 1, "n_rows": 1},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["rows"]) == 1
 
-    def test_table_metadata_invalid_path(self, worker_client):
+    def test_table_metadata_path_traversal(self, worker_client):
+        """Path with separators should be rejected as 400."""
+        resp = worker_client.post(
+            "/catalog/table_metadata",
+            json={"table_path": "../etc/passwd", "storage_format": "delta"},
+        )
+        assert resp.status_code == 400
+
+    def test_table_metadata_absolute_path(self, worker_client):
+        """Absolute path should be rejected as 400."""
         resp = worker_client.post(
             "/catalog/table_metadata",
             json={"table_path": "/nonexistent/path", "storage_format": "delta"},
