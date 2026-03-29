@@ -65,7 +65,7 @@ def migrate_table(table: CatalogTable, *, dry_run: bool = False) -> bool:
         # Verify
         verify_df = pl.scan_delta(str(new_dir))
         row_count = verify_df.select(pl.len()).collect().item()
-        if row_count != lf.count():
+        if row_count != original_row_count:
             logger.error(
                 "  [ERROR] Row count mismatch: parquet=%d delta=%d. Leaving original intact.",
                 original_row_count,

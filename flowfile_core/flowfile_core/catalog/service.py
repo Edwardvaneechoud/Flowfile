@@ -23,7 +23,6 @@ from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     get_delta_table_size_bytes,
     is_delta_table,
-    is_legacy_parquet,
     read_delta_preview,
     table_exists,
 )
@@ -1389,10 +1388,11 @@ class CatalogService:
             if is_delta_table(old_path):
                 return existing, old_path, "overwrite"
 
-            # Legacy parquet file — remove it, create new delta dir at same stem
+            # Legacy parquet file — compute new delta dir at same stem.
+            # Do NOT delete the old file here; the caller's
+            # ``overwrite_table_data`` will clean it up *after* the new
+            # write succeeds, avoiding data loss if the write fails.
             new_dir = old_path.parent / old_path.stem
-            if is_legacy_parquet(old_path):
-                old_path.unlink()
             return existing, new_dir, "overwrite"
 
         dir_name = f"{table_name}_{uuid4().hex[:8]}"

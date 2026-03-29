@@ -6,6 +6,8 @@ from logging import Logger
 from multiprocessing import Array, Queue, Value
 from pathlib import Path
 
+import pyarrow as pa
+
 import polars as pl
 from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
@@ -654,12 +656,11 @@ def read_delta_version_preview(table_name: str, version: int, n_rows: int = 100)
         return str(val)
 
     row_list = [[_make_json_safe(row.get(c)) for c in columns] for row in rows]
-
     # Estimate total rows from Delta metadata
     try:
+        pa.table( dt.get_add_actions(flatten=True))
         total_rows = sum(
-            action["num_records"]
-            for action in dt.get_add_actions(flatten=True).to_pydict().get("num_records", [])
+            action for action in dt.get_add_actions(flatten=True).column("num_records").to_pylist()
             if action is not None
         )
     except Exception:
