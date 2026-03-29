@@ -812,7 +812,7 @@ class TestMaterializeWorkerDeltaResponse:
                 return response_payload
 
         monkeypatch.setattr(
-            "flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations.trigger_catalog_materialize",
+            "flowfile_core.catalog.service.trigger_catalog_materialize",
             lambda *args, **kwargs: FakeResponse(),
         )
 
@@ -851,7 +851,7 @@ class TestMaterializeWorkerDeltaResponse:
                 return response_payload
 
         monkeypatch.setattr(
-            "flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations.trigger_catalog_materialize",
+            "flowfile_core.catalog.service.trigger_catalog_materialize",
             lambda *args, **kwargs: FakeResponse(),
         )
 

@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 import polars as pl
+import pyarrow as pa
 import pytest
 
 from flowfile_core.catalog.delta_utils import (
@@ -141,18 +142,18 @@ class TestGetDeltaTableSizeBytes:
 class TestReadDeltaPreview:
     def test_reads_all_rows(self, delta_table_path: Path):
         df = read_delta_preview(delta_table_path, n_rows=100)
-        assert isinstance(df, pl.DataFrame)
-        assert df.height == 3
-        assert set(df.columns) == {"id", "name"}
+        assert isinstance(df, pa.Table)
+        assert df.num_rows == 3
+        assert set(df.column_names) == {"id", "name"}
 
     def test_limits_rows(self, delta_table_path: Path):
         df = read_delta_preview(delta_table_path, n_rows=2)
-        assert df.height == 2
+        assert df.num_rows == 2
 
     def test_preserves_dtypes(self, delta_table_path: Path):
         df = read_delta_preview(delta_table_path, n_rows=100)
-        assert df["id"].dtype == pl.Int64
-        assert df["name"].dtype == pl.String
+        assert df.schema.field("id").type == pa.int64()
+        assert df.schema.field("name").type == pa.string()
 
 
 # ---------------------------------------------------------------------------
