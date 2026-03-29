@@ -3,6 +3,7 @@ import typing
 
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from polars_expr_transformer import PolarsCodeGenError, to_polars_code
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
@@ -767,21 +768,42 @@ class FlowGraphToPolarsConverter:
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle formula/expression nodes."""
         input_df = input_vars.get("main", "df")
-        self.imports.add("from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr")
-
         # Convert SQL-like formula to Polars expression
         formula = settings.function.function
         col_name = settings.function.field.name
-        self._add_code(f"{var_name} = {input_df}.with_columns([")
-        self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
-        if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-            output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-            if output_type[:3] != "pl.":
-                output_type = "pl." + output_type
-            self._add_code(f"    .cast({output_type})")
+        can_convert_to_pl_code: bool = False
+        pl_code: str | None = None
+        try:
+            pl_code = to_polars_code(formula)
+            if pl_code:
+                can_convert_to_pl_code = True
+        except PolarsCodeGenError:
+            can_convert_to_pl_code = False
+        except Exception as e:
+            logger.debug(f'Unhandled conversion of the formula to polars expression falling back to expression {e}')
+            can_convert_to_pl_code = False
 
-        self._add_code("])")
-        self._add_code("")
+        if can_convert_to_pl_code:
+            expr_str = f'({pl_code}).alias("{col_name}")'
+            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
+                if output_type[:3] != "pl.":
+                    output_type = "pl." + output_type
+                expr_str += f".cast({output_type})"
+            self._add_code(f"{var_name} = {input_df}.with_columns([{expr_str}])")
+            self._add_code("")
+        else:
+            self.imports.add(
+                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr")
+            self._add_code(f"{var_name} = {input_df}.with_columns([")
+            self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
+            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
+                if output_type[:3] != "pl.":
+                    output_type = "pl." + output_type
+                self._add_code(f"    .cast({output_type})")
+            self._add_code("])")
+            self._add_code("")
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input
