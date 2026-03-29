@@ -144,7 +144,6 @@ nav:
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
     - Feature Roadmap:
       - Overview: for-developers/roadmap/index.md
-      - Flow Parameters: for-developers/roadmap/04_flow_parameters.md
       - Delta Lake Catalog: for-developers/roadmap/03_delta_lake_catalog.md
       - Extended Connectors: for-developers/roadmap/06_extended_connectors.md
       - Catalog Query & Exploration: for-developers/roadmap/05_catalog_query_exploration.md

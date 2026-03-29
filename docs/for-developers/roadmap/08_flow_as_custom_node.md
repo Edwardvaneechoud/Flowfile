@@ -210,7 +210,7 @@ df_cleaned.sink_parquet("/data/cleaned_orders.parquet")
 
 ### Integration with Other Features
 
-- **Feature 4 (Flow Parameters)**: Sub-flow parameters become the node's configuration inputs. The parameter form is reused.
+- **Flow Parameters** (shipped): Sub-flow parameters become the node's configuration inputs. The parameter form is reused.
 - **Feature 7 (Custom Node Designer)**: A flow-as-node appears in the node palette similarly to custom nodes. The designer could offer a "Create from Flow" option.
 - **Feature 9 (Code Generation)**: The referenced flow's code is generated as a function, and the `sub_flow_node` emits a function call.
 

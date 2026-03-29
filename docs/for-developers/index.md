@@ -71,7 +71,7 @@ print(results_df)
 - **[Technical Architecture](architecture.md)**: An overview of the system design, including the three-service architecture and performance optimizations.
 - **[Python API Reference](python-api-reference.md)**: The complete, auto-generated API reference for all core classes and methods.
 - **[Visual UI Integration](../users/python-api/reference/visual-ui.md)**: Learn how to launch and control the visual editor from Python.
-- **[Feature Roadmap](roadmap/index.md)**: Planned features including iterative nodes, conditional execution, Delta Lake catalog, flow parameters, and more.
+- **[Feature Roadmap](roadmap/index.md)**: Planned features including iterative nodes, conditional execution, Delta Lake catalog, extended connectors, and more.
 ---
 ## Contributing to Flowfile
 

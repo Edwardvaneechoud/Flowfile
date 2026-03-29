@@ -287,4 +287,4 @@ def process(df: pl.DataFrame) -> pl.DataFrame:
 2. **Expression safety**: Using `eval()` for condition expressions is flexible but risky. Should conditions be restricted to a safe subset (e.g., only `df.count()`, `df.columns`, `df.select().item()`)? Or is kernel-level sandboxing sufficient?
 3. **Branch with no output**: If the else branch writes to quarantine but doesn't return data (a dead end), what does the condition node pass downstream? `None`? An empty DataFrame?
 4. **Nested conditions**: A condition node inside another condition node is technically possible with parent pointers. Should this be supported from day one?
-5. **Parameter integration**: Once Flow Parameters (feature 4) is merged, condition expressions should support `${param}` references for parameter-driven branching (e.g., `df.count() == ${expected_count}`).
+5. **Parameter integration**: Flow Parameters has shipped — condition expressions should support `${param}` references for parameter-driven branching (e.g., `df.count() == ${expected_count}`).
