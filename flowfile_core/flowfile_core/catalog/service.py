@@ -14,8 +14,19 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
-from flowfile_core.catalog.delta_utils import delete_table_storage, is_delta_table, read_delta_preview, table_exists
+from deltalake import DeltaTable
+from pyarrow import dataset as ds
+
+from flowfile_core.catalog.delta_utils import (
+    delete_table_storage,
+    get_delta_table_size_bytes,
+    is_delta_table,
+    is_legacy_parquet,
+    read_delta_preview,
+    table_exists,
+)
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -45,6 +56,12 @@ from flowfile_core.database.models import (
     GlobalArtifact,
     TableFavorite,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_catalog_materialize,
+    trigger_delta_history,
+    trigger_delta_version_preview,
+    trigger_read_table_metadata,
+)
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogStats,
@@ -63,8 +80,16 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
     PaginatedFlowRuns,
 )
+from flowfile_core.utils.arrow_reader import read_top_n
+from shared.subprocess_utils import spawn_flow_subprocess
 
 logger = logging.getLogger(__name__)
+
+
+def _make_json_safe(val: object) -> object:
+    if val is None or isinstance(val, bool | int | float | str):
+        return val
+    return str(val)
 
 
 def _format_delta_timestamp(ts: object) -> str | None:
@@ -132,9 +157,6 @@ class CatalogService:
 
         if OFFLOAD_TO_WORKER:
             try:
-                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-                    trigger_read_table_metadata,
-                )
 
                 data = trigger_read_table_metadata(table_path, storage_format)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
@@ -143,24 +165,27 @@ class CatalogService:
                 logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
 
         # Fallback: read locally (only when worker is unavailable)
-        import polars as pl
-
-        from flowfile_core.catalog.delta_utils import get_delta_table_size_bytes, is_delta_table
 
         p = Path(table_path)
+
         if storage_format == "delta" or (storage_format is None and is_delta_table(p)):
-            lf = pl.scan_delta(str(p))
-            schema = lf.collect_schema()
-            schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
-            row_count = lf.select(pl.len()).collect().item()
+            dt = DeltaTable(str(p))
+            pa_schema = dt.schema().to_arrow()
+            schema_list = [{"name": field.name, "dtype": str(field.type)} for field in pa_schema]
+
+            # Leverage pyarrow dataset for a fast, metadata-only row count
+            row_count = dt.to_pyarrow_dataset().count_rows()
             size_bytes = get_delta_table_size_bytes(p)
+
         else:
-            lf = pl.scan_parquet(p)
-            schema = lf.collect_schema()
-            schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
-            row_count = lf.select(pl.len()).collect().item()
+            # Handle legacy Parquet files
+            dataset = ds.dataset(str(p), format="parquet")
+            schema_list = [{"name": field.name, "dtype": str(field.type)} for field in dataset.schema]
+
+            row_count = dataset.count_rows()
             size_bytes = p.stat().st_size
-        return schema_list, row_count, len(schema), size_bytes
+
+        return schema_list, row_count, len(schema_list), size_bytes
 
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         """Attach favourite/follow flags and run stats to a single registration.
@@ -961,9 +986,6 @@ class CatalogService:
         table_name: str | None = None,
         parquet_filename: str | None = None,
     ) -> CatalogMaterializationResult:
-        from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-            trigger_catalog_materialize,
-        )
 
         response = trigger_catalog_materialize(
             source_file_path=source_file_path,
@@ -1356,7 +1378,6 @@ class CatalogService:
         TableExistsError
             If the table exists and *write_mode* is not ``"overwrite"``.
         """
-        from flowfile_core.catalog.delta_utils import is_delta_table, is_legacy_parquet
 
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
@@ -1373,8 +1394,6 @@ class CatalogService:
             if is_legacy_parquet(old_path):
                 old_path.unlink()
             return existing, new_dir, "overwrite"
-
-        from uuid import uuid4
 
         dir_name = f"{table_name}_{uuid4().hex[:8]}"
         return None, catalog_dir / dir_name, "error"
@@ -1491,28 +1510,21 @@ class CatalogService:
         if version is not None and is_delta_table(data_path):
             return self._get_delta_version_preview(data_path, version, limit)
 
-        import polars as pl
-
         if is_delta_table(data_path):
-            df = read_delta_preview(data_path, n_rows=limit)
+            pa_table = read_delta_preview(str(data_path), n_rows=limit)
         else:
-            df = pl.read_parquet(data_path, n_rows=limit)
+            pa_table = read_top_n(str(data_path), n=limit)
+        columns = pa_table.column_names
+        dtypes = [str(field.type) for field in pa_table.schema]
+        rows_data = pa_table.to_pylist()
 
-        columns = df.columns
-        dtypes = [str(df[col].dtype) for col in columns]
-
-        def _make_json_safe(val: object) -> object:
-            if val is None or isinstance(val, bool | int | float | str):
-                return val
-            return str(val)
-
-        rows = [[_make_json_safe(v) for v in row] for row in df.rows()]
+        rows = [[_make_json_safe(row.get(c)) for c in columns] for row in rows_data]
 
         return CatalogTablePreview(
             columns=columns,
             dtypes=dtypes,
             rows=rows,
-            total_rows=table.row_count or len(df),
+            total_rows=table.row_count or len(rows_data),
         )
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
@@ -1522,16 +1534,10 @@ class CatalogService:
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:
             try:
-                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-                    trigger_delta_version_preview,
-                )
 
                 return trigger_delta_version_preview(table_path, version, limit)
             except Exception:
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
-
-        # Local fallback using deltalake + PyArrow
-        from deltalake import DeltaTable
 
         dt = DeltaTable(table_path, version=version)
         dataset = dt.to_pyarrow_dataset()
@@ -1571,18 +1577,13 @@ class CatalogService:
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:
             try:
-                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-                    trigger_delta_history,
-                )
 
                 return trigger_delta_history(table_path, limit)
             except Exception:
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
 
         # Local fallback
-        from deltalake import DeltaTable as DT
-
-        dt = DT(table_path)
+        dt = DeltaTable(table_path, without_files=True)
         raw_history = dt.history(limit)
         current_version = dt.version()
         history = _parse_delta_history(raw_history)
@@ -1812,7 +1813,6 @@ class CatalogService:
 
         Returns the child PID on success, or ``None`` on failure.
         """
-        from shared.subprocess_utils import spawn_flow_subprocess
 
         return spawn_flow_subprocess(flow_path, run_id)
 

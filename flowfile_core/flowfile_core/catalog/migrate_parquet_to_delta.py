@@ -59,16 +59,16 @@ def migrate_table(table: CatalogTable, *, dry_run: bool = False) -> bool:
         return True
 
     try:
-        df = pl.read_parquet(old_path)
-        df.write_delta(str(new_dir), mode="error")
-
+        lf: pl.LazyFrame = pl.scan_parquet(old_path)
+        lf.sink_delta(target=str(new_dir), mode="error")
+        original_row_count = lf.select(pl.len()).collect().item()
         # Verify
         verify_df = pl.scan_delta(str(new_dir))
         row_count = verify_df.select(pl.len()).collect().item()
-        if row_count != df.height:
+        if row_count != lf.count():
             logger.error(
                 "  [ERROR] Row count mismatch: parquet=%d delta=%d. Leaving original intact.",
-                df.height,
+                original_row_count,
                 row_count,
             )
             return False

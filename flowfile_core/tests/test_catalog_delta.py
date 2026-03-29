@@ -608,7 +608,6 @@ class TestGetTableHistory:
         _, schema_id = _make_namespace()
         delta_dir = tmp_path / "hist_delta"
         pl.DataFrame({"x": [1, 2, 3]}).write_delta(str(delta_dir), mode="error")
-
         with get_db_context() as db:
             table = CatalogTable(
                 name="delta_hist",
@@ -623,10 +622,12 @@ class TestGetTableHistory:
 
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
+
             # Disable worker offload so it reads locally
             import flowfile_core.configs.settings
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
             flowfile_core.configs.settings.OFFLOAD_TO_WORKER = False
+
             try:
                 history = svc.get_table_history(table.id)
             finally:
@@ -656,7 +657,6 @@ class TestGetTablePreviewDelta:
         _, schema_id = _make_namespace()
         delta_dir = tmp_path / "prev_delta"
         pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}).write_delta(str(delta_dir))
-
         with get_db_context() as db:
             table = CatalogTable(
                 name="prev_table",
@@ -672,6 +672,7 @@ class TestGetTablePreviewDelta:
 
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
+
             preview = svc.get_table_preview(table.id, limit=100)
 
         assert preview.columns == ["a", "b"]

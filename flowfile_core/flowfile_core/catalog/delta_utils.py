@@ -10,7 +10,8 @@ import logging
 import shutil
 from pathlib import Path
 
-import polars as pl
+import pyarrow as pa
+from deltalake import DeltaTable
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ def get_delta_table_size_bytes(path: str | Path) -> int:
     Uses the Delta log metadata rather than filesystem scanning, which
     correctly excludes tombstoned files from previous versions.
     """
-    from deltalake import DeltaTable
 
     try:
         dt = DeltaTable(str(path))
@@ -50,9 +50,14 @@ def get_delta_table_size_bytes(path: str | Path) -> int:
         return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
 
 
-def read_delta_preview(path: str | Path, n_rows: int = 100) -> pl.DataFrame:
-    """Read the first *n_rows* from a Delta table."""
-    return pl.scan_delta(str(path)).head(n_rows).collect()
+def read_delta_preview(path: str, n_rows: int = 100) -> pa.Table:
+    """Read the first N rows from a Delta table using PyArrow."""
+    dt = DeltaTable(str(path))
+
+    # Creates a lazy dataset reference, no data is loaded yet
+    dataset = dt.to_pyarrow_dataset()
+
+    return dataset.head(n_rows)
 
 
 def delete_table_storage(path: str | Path) -> None:
