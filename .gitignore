@@ -76,4 +76,6 @@ master_key.txt
 *.pem
 !requirements*.txt
 test-embed
+/expr_transformer/
 /.opencode/
+
