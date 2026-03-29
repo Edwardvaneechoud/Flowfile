@@ -647,61 +647,9 @@ async function handleDeleteSchedule(id: number) {
   opacity: 0.9;
 }
 
-/* ========== Meta Grid ========== */
+/* ========== Meta Grid (override breakpoint) ========== */
 .meta-grid {
-  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-5);
-}
-
-.meta-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  padding: var(--spacing-3);
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border-light);
-}
-
-.meta-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.meta-value {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-}
-
-.meta-value.mono {
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-  word-break: break-all;
-}
-
-.text-success {
-  color: var(--color-success);
-}
-.text-danger {
-  color: var(--color-danger);
-}
-
-/* ========== Sections ========== */
-.section {
-  margin-bottom: var(--spacing-5);
-}
-
-.section h3 {
-  display: flex;
-  align-items: center;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  margin: 0 0 var(--spacing-3) 0;
 }
 
 /* ========== Artifacts Table (extends .styled-table) ========== */
@@ -710,8 +658,6 @@ async function handleDeleteSchedule(id: number) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-
-
 
 .artifact-row td {
   vertical-align: top;

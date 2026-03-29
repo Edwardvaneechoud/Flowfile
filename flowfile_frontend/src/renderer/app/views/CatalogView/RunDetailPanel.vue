@@ -282,7 +282,7 @@ const formattedSnapshot = computed(() => {
 }
 
 .mono {
-  font-family: monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
 }
 
@@ -295,26 +295,6 @@ const formattedSnapshot = computed(() => {
   white-space: nowrap;
 }
 
-.status-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.status-badge.success {
-  background: var(--color-success-light);
-  color: var(--color-success);
-}
-.status-badge.failure {
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-}
-.status-badge.pending {
-  background: var(--color-warning-light);
-  color: var(--color-warning);
-}
 /* Snapshot Header */
 .snapshot-header {
   display: flex;
