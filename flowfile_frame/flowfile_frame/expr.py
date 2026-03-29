@@ -81,7 +81,7 @@ def _get_ff_repr(value: Any) -> str | None:
         return value._ff_repr
     elif isinstance(value, bool):
         return "true" if value else "false"
-    elif isinstance(value, (int, float)):
+    elif isinstance(value, int | float):
         return str(value)
     elif isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
@@ -632,7 +632,8 @@ class Expr:
             self._name_namespace = ExprNameNameSpace(self, self._repr_str)
         return self._name_namespace
 
-    def _create_binary_op_expr(self, op_symbol: str, other: Any, result_expr: pl.Expr | None, ff_repr: str | None = ...) -> Expr:
+    def _create_binary_op_expr(self, op_symbol: str, other: Any,
+                               result_expr: pl.Expr | None, ff_repr: str | None = ...) -> Expr:
         """Creates a new Expr for binary operations."""
         if self.expr is None:
             raise ValueError(

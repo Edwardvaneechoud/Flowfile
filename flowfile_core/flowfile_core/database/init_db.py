@@ -60,6 +60,14 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
                 conn.commit()
 
+            if "storage_format" not in table_columns:
+                logger.info("Adding storage_format column to catalog_tables")
+                conn.execute(
+                    text("ALTER TABLE catalog_tables ADD COLUMN storage_format VARCHAR NOT NULL DEFAULT 'parquet'")
+                )
+                conn.commit()
+                logger.info("Migration complete: storage_format column added (existing rows default to 'parquet')")
+
         # Migrate flow_runs: add pid column
         result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
         if result.fetchone():

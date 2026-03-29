@@ -8,6 +8,7 @@ import type {
   CatalogTableCreate,
   CatalogTablePreview,
   CatalogTableUpdate,
+  DeltaTableHistory,
   FlowRegistration,
   FlowRegistrationCreate,
   FlowRegistrationUpdate,
@@ -211,9 +212,22 @@ export class CatalogApi {
     await axios.delete(`/catalog/tables/${id}`);
   }
 
-  static async getTablePreview(tableId: number, limit = 100): Promise<CatalogTablePreview> {
+  static async getTablePreview(
+    tableId: number,
+    limit = 100,
+    version?: number | null,
+  ): Promise<CatalogTablePreview> {
     const url = `/catalog/tables/${tableId}/preview`;
-    const response = await axios.get<CatalogTablePreview>(url, { params: { limit } });
+    const params: Record<string, any> = { limit };
+    if (version !== undefined && version !== null) params.version = version;
+    const response = await axios.get<CatalogTablePreview>(url, { params });
+    return response.data;
+  }
+
+  static async getTableHistory(tableId: number): Promise<DeltaTableHistory> {
+    const response = await axios.get<DeltaTableHistory>(
+      `/catalog/tables/${tableId}/history`,
+    );
     return response.data;
   }
 

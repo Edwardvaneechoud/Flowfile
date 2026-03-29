@@ -28,6 +28,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
 )
+from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
@@ -144,15 +145,62 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
 def trigger_catalog_materialize(
     source_file_path: str,
     table_name: str | None = None,
-    parquet_filename: str | None = None,
 ):
     payload = {
         "source_file_path": source_file_path,
         "table_name": table_name,
-        "parquet_filename": parquet_filename,
     }
     response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
     return response
+
+
+def trigger_read_table_metadata(
+    table_name: str,
+    storage_format: str = "delta",
+) -> dict:
+    """Ask the worker to read table metadata (schema, row_count, size_bytes).
+
+    *table_name* is the bare directory/file name inside the catalog tables
+    directory (no path separators).
+
+    Returns the parsed JSON dict on success, raises on failure.
+    """
+    payload = {"table_path": table_name, "storage_format": storage_format}
+    response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker table metadata read failed: {response.text}")
+    return response.json()
+
+
+def trigger_delta_history(
+    table_name: str,
+    limit: int | None = None,
+) -> DeltaTableHistory:
+    """Ask the worker to read Delta table version history.
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    payload = {"table_path": table_name, "limit": limit}
+    response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta history read failed: {response.text}")
+    return DeltaTableHistory.model_validate(response.json())
+
+
+def trigger_delta_version_preview(
+    table_name: str,
+    version: int,
+    n_rows: int = 100,
+) -> CatalogTablePreview:
+    """Ask the worker to preview a Delta table at a specific version.
+
+    *table_name* is the bare directory name inside the catalog tables directory.
+    """
+    payload = {"table_path": table_name, "version": version, "n_rows": n_rows}
+    response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta version preview failed: {response.text}")
+    return CatalogTablePreview.model_validate(response.json())
 
 
 def get_results(file_ref: str) -> Status | None:

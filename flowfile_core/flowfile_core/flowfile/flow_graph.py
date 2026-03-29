@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
-from uuid import uuid1, uuid4
+from uuid import uuid1
 
 import fastexcel
 import polars as pl
@@ -19,7 +19,8 @@ import yaml
 from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
-from flowfile_core.catalog import CatalogService, TableExistsError
+from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.delta_utils import delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -88,6 +89,7 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared.storage_config import storage
 
 try:
     __version__ = version("Flowfile")
@@ -2026,24 +2028,23 @@ class FlowGraph:
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
-                if node_catalog_reader.catalog_table_id is not None:
-                    table = repo.get_table(node_catalog_reader.catalog_table_id)
-                    if table is not None:
-                        file_path = table.file_path
-                elif node_catalog_reader.catalog_table_name:
-                    tables = repo.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
-                    for t in tables:
-                        if t.name == node_catalog_reader.catalog_table_name:
-                            file_path = t.file_path
-                            break
+                svc = CatalogService(repo)
+                file_path = svc.resolve_table_file_path(
+                    table_id=node_catalog_reader.catalog_table_id,
+                    table_name=node_catalog_reader.catalog_table_name,
+                    namespace_id=node_catalog_reader.catalog_namespace_id,
+                )
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
         resolved_path = file_path
 
         def _func() -> FlowDataEngine:
+
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
+            if is_delta_table(resolved_path):
+                return FlowDataEngine(pl.scan_delta(resolved_path))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
@@ -2058,54 +2059,81 @@ class FlowGraph:
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
-        """Adds a node that writes its input to the catalog as a Parquet table."""
+        """Adds a node that writes its input to the catalog as a Delta table."""
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
-            from shared.storage_config import storage
-
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
 
-            # Materialize the dataframe to a temporary parquet, then register via the catalog service.
-            dest_dir = storage.catalog_tables_directory
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            parquet_filename = f"{settings.table_name}_{uuid4().hex[:8]}.parquet"
-            dest_path = dest_dir / parquet_filename
+            catalog_dir = storage.catalog_tables_directory
+            catalog_dir.mkdir(parents=True, exist_ok=True)
 
-            collected = df.collect()
-            collected.write_parquet(dest_path)
+            # Resolve destination path and check for existing table
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                svc = CatalogService(repo)
+                existing, dest_path, delta_mode = svc.resolve_write_destination(
+                    table_name=settings.table_name,
+                    namespace_id=settings.namespace_id,
+                    write_mode=settings.write_mode,
+                    catalog_dir=catalog_dir,
+                )
 
+            # Offload collect + write to the worker
+            fetcher = ExternalDfFetcher(
+                flow_id=self.flow_id,
+                node_id=node_catalog_writer.node_id,
+                lf=df.data_frame,
+                wait_on_completion=True,
+                operation_type="write_delta",
+                kwargs={"output_path": str(dest_path), "mode": delta_mode},
+            )
+            if fetcher.has_error:
+                raise RuntimeError(
+                    f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
+                )
+
+            # Extract metadata computed by the worker
+            meta_kwargs = {}
+            if isinstance(fetcher.result, dict):
+                meta_kwargs = {
+                    k: fetcher.result.get(k)
+                    for k in ("schema", "row_count", "column_count", "size_bytes")
+                }
+
+            # Register / update in catalog
             try:
                 with get_db_context() as db:
                     repo = SQLAlchemyCatalogRepository(db)
                     svc = CatalogService(repo)
-                    existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
                     if existing is not None:
-                        if settings.write_mode != "overwrite":
-                            raise TableExistsError(name=settings.table_name, namespace_id=settings.namespace_id)
                         svc.overwrite_table_data(
                             table_id=existing.id,
-                            parquet_path=str(dest_path),
+                            table_path=str(dest_path),
                             source_registration_id=self._flow_settings.source_registration_id,
                             description=settings.description,
+                            storage_format="delta",
+                            **meta_kwargs,
                         )
                     else:
-                        svc.register_table_from_parquet(
+                        svc.register_table_from_data(
                             name=settings.table_name,
-                            parquet_path=str(dest_path),
+                            table_path=str(dest_path),
                             owner_id=node_catalog_writer.user_id or 1,
                             namespace_id=settings.namespace_id,
                             description=settings.description,
                             source_registration_id=self._flow_settings.source_registration_id,
+                            storage_format="delta",
+                            **meta_kwargs,
                         )
             except Exception:
-                logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
-                if dest_path.exists():
+                # Only clean up if this was a new table (not an overwrite of existing)
+                if existing is None and dest_path.exists():
                     try:
-                        dest_path.unlink()
+                        delete_table_storage(dest_path)
                     except OSError:
-                        logger.warning("Failed to clean up orphan parquet %s", dest_path, exc_info=True)
+                        logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
                 raise
 
             return df

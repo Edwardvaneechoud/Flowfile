@@ -6,6 +6,7 @@ from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
 
 
 # Custom type for bytes that serializes to/from base64 string in JSON
@@ -33,6 +34,7 @@ OperationType = Literal[
     "write_to_database",
     "write_to_cloud_storage",
     "write_parquet",
+    "write_delta",
 ]
 ResultType = Literal["polars", "other"]
 
@@ -153,13 +155,50 @@ class ColumnSchema(BaseModel):
 
 class CatalogMaterializeRequest(BaseModel):
     source_file_path: str
-    parquet_filename: str | None = None
     table_name: str | None = None
 
 
 class CatalogMaterializeResponse(BaseModel):
-    parquet_path: str
+    parquet_path: str | None = None  # Legacy field for backward compat
+    table_path: str
+    storage_format: str = "delta"  # "delta" or "parquet"
     schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int
+
+
+class TableMetadataRequest(BaseModel):
+    table_path: str  # Bare table directory/file name (no path separators)
+    storage_format: str = "delta"  # "delta" or "parquet"
+
+
+class TableMetadataResponse(BaseModel):
+    schema: list[ColumnSchema]
+    row_count: int
+    column_count: int
+    size_bytes: int
+
+
+class DeltaHistoryRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    limit: int | None = None
+
+
+class DeltaHistoryResponse(BaseModel):
+    current_version: int
+    history: list[DeltaVersionCommit]
+
+
+class DeltaVersionPreviewRequest(BaseModel):
+    table_path: str  # Bare table directory name (no path separators)
+    version: int
+    n_rows: int = 100
+
+
+class DeltaVersionPreviewResponse(BaseModel):
+    version: int
+    columns: list[str]
+    dtypes: list[str]
+    rows: list[list]
+    total_rows: int

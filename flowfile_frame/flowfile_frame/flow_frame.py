@@ -4,7 +4,6 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
-from io import BytesIO
 from typing import Any, Literal, Union, get_args, get_origin
 
 import polars as pl
