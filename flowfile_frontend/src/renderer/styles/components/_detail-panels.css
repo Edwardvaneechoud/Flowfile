@@ -1,0 +1,85 @@
+/* styles/components/_detail-panels.css - Shared Detail Panel Layout Styles
+   Used by RunDetailPanel, FlowDetailPanel, ArtifactDetailPanel, TableDetailPanel */
+
+/* ========== Back Button ========== */
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-3);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.back-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ========== Metadata Grid ========== */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-5);
+}
+
+.meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border-light);
+}
+
+.meta-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.meta-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.meta-value.mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* ========== Sections ========== */
+.detail-section,
+.section {
+  margin-bottom: var(--spacing-5);
+}
+
+.detail-section h3,
+.section h3 {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--spacing-3) 0;
+  color: var(--color-text-primary);
+}
+
+.section-icon {
+  margin-right: var(--spacing-2);
+  color: var(--color-text-muted);
+}
+
+/* ========== Mono Text ========== */
+.mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}

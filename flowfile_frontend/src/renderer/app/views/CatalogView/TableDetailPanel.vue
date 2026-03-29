@@ -102,7 +102,7 @@
     <div v-if="table.schema_columns && table.schema_columns.length > 0" class="section">
       <h3>Schema</h3>
       <div class="schema-table-wrapper">
-        <table class="schema-table">
+        <table class="styled-table schema-table">
           <thead>
             <tr>
               <th>Column</th>
@@ -129,7 +129,7 @@
       </div>
       <div v-if="loadingPreview" class="loading-state">Loading preview...</div>
       <div v-else-if="preview && preview.rows.length > 0" class="preview-table-wrapper">
-        <table class="preview-table">
+        <table class="styled-table preview-table">
           <thead>
             <tr>
               <th v-for="(col, idx) in preview.columns" :key="idx">
@@ -335,29 +335,11 @@ function formatCell(value: any): string {
   border-radius: var(--border-radius-md);
 }
 
-.schema-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
-}
-
+/* schema-table extends .styled-table */
 .schema-table th {
-  position: sticky;
-  top: 0;
-  background: var(--color-background-secondary);
-  padding: var(--spacing-2) var(--spacing-3);
-  text-align: left;
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.schema-table td {
-  padding: var(--spacing-1) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
 }
 
 .col-name {
@@ -379,21 +361,9 @@ function formatCell(value: any): string {
   border-radius: var(--border-radius-md);
 }
 
+/* preview-table extends .styled-table */
 .preview-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
   white-space: nowrap;
-}
-
-.preview-table th {
-  position: sticky;
-  top: 0;
-  background: var(--color-background-secondary);
-  padding: var(--spacing-2) var(--spacing-3);
-  text-align: left;
-  border-bottom: 1px solid var(--color-border-light);
-  z-index: 1;
 }
 
 .col-header {
@@ -415,16 +385,9 @@ function formatCell(value: any): string {
 }
 
 .preview-table td {
-  padding: var(--spacing-1) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.preview-table tbody tr:hover {
-  background: var(--color-background-hover);
 }
 
 /* ========== States ========== */
