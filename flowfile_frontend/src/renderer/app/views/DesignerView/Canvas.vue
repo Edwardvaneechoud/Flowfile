@@ -657,6 +657,8 @@ defineExpose({
         :node-types="nodeTypes"
         class="custom-node-flow"
         :connection-mode="ConnectionMode.Strict"
+        :connection-radius="30"
+        :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
         @edge-update="onEdgeUpdate"
         @connect="onConnect"
@@ -823,6 +825,11 @@ body,
   cursor:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 10 10,
     grabbing;
+}
+
+.custom-node-flow .vue-flow__handle {
+  width: 8px;
+  height: 8px;
 }
 
 .custom-node-flow .vue-flow__handle.connectable {
