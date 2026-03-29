@@ -131,6 +131,7 @@ class CatalogService:
         Offloads the work to the worker process when available.  Only falls
         back to local I/O when the worker is not running.
         """
+        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         if OFFLOAD_TO_WORKER:
@@ -1499,6 +1500,7 @@ class CatalogService:
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
+        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         table_path = str(data_path)
@@ -1535,6 +1537,7 @@ class CatalogService:
         if not is_delta_table(data_path):
             return DeltaTableHistory(current_version=0, history=[])
 
+        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         table_path = str(data_path)

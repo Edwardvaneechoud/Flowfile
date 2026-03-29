@@ -16,7 +16,6 @@ Covers:
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -26,7 +25,6 @@ from flowfile_core import main
 from flowfile_core.catalog import CatalogService, TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import _parse_delta_history
-from shared.delta_utils import format_delta_timestamp
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -41,6 +39,7 @@ from flowfile_core.database.models import (
     TableFavorite,
 )
 from flowfile_core.schemas.catalog_schema import DeltaTableHistory, DeltaVersionCommit
+from shared.delta_utils import format_delta_timestamp
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,14 +52,12 @@ def _get_auth_token() -> str:
         return response.json()["access_token"]
 
 
-def _get_test_client() -> TestClient:
+@pytest.fixture(scope="module")
+def client() -> TestClient:
     token = _get_auth_token()
-    client = TestClient(main.app)
-    client.headers = {"Authorization": f"Bearer {token}"}
-    return client
-
-
-client = _get_test_client()
+    c = TestClient(main.app)
+    c.headers = {"Authorization": f"Bearer {token}"}
+    return c
 
 
 def _cleanup_catalog():
@@ -879,11 +876,11 @@ class TestMaterializeWorkerDeltaResponse:
 
 
 class TestHistoryEndpoint:
-    def test_history_404_for_missing_table(self):
+    def test_history_404_for_missing_table(self, client):
         resp = client.get("/catalog/tables/999999/history")
         assert resp.status_code == 404
 
-    def test_history_empty_for_parquet(self, tmp_path):
+    def test_history_empty_for_parquet(self, client, tmp_path):
         _, schema_id = _make_namespace()
         pq = tmp_path / "api_hist.parquet"
         pl.DataFrame({"a": [1]}).write_parquet(pq)
@@ -914,11 +911,11 @@ class TestHistoryEndpoint:
 
 
 class TestPreviewVersionEndpoint:
-    def test_preview_404_for_missing_table(self):
+    def test_preview_404_for_missing_table(self, client):
         resp = client.get("/catalog/tables/999999/preview")
         assert resp.status_code == 404
 
-    def test_preview_delta_table_via_api(self, tmp_path):
+    def test_preview_delta_table_via_api(self, client, tmp_path):
         _, schema_id = _make_namespace()
         delta_dir = tmp_path / "api_delta"
         pl.DataFrame({"val": [10, 20, 30]}).write_delta(str(delta_dir))
