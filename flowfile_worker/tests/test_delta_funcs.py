@@ -38,28 +38,40 @@ from shared.storage_config import storage
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _setup_storage(tmp_path: Path):
+    """Point storage at tmp_path so catalog_tables_directory is inside tmp_path."""
+    old_base, old_user = storage._base_dir, storage._user_data_dir
+    storage._base_dir = tmp_path
+    storage._user_data_dir = tmp_path
+    storage._ensure_directories()
+    yield
+    storage._base_dir = old_base
+    storage._user_data_dir = old_user
+
+
 @pytest.fixture()
 def delta_path(tmp_path: Path) -> Path:
-    """Create a real Delta table and return its path."""
+    """Create a real Delta table inside the catalog directory."""
     df = pl.DataFrame({"id": [1, 2, 3], "value": [10.0, 20.0, 30.0]})
-    dest = tmp_path / "test_delta"
+    dest = storage.catalog_tables_directory / "test_delta"
     df.write_delta(str(dest), mode="error")
     return dest
 
 
 @pytest.fixture()
 def parquet_path(tmp_path: Path) -> Path:
-    """Create a Parquet file and return its path."""
+    """Create a Parquet file inside the catalog directory."""
     df = pl.DataFrame({"x": [100, 200], "y": ["a", "b"]})
-    dest = tmp_path / "test.parquet"
+    dest = storage.catalog_tables_directory / "test.parquet"
     df.write_parquet(dest)
     return dest
 
 
 @pytest.fixture()
 def versioned_delta(tmp_path: Path) -> Path:
-    """Create a Delta table with two versions."""
-    dest = tmp_path / "versioned"
+    """Create a Delta table with two versions inside the catalog directory."""
+    dest = storage.catalog_tables_directory / "versioned"
     pl.DataFrame({"v": [1]}).write_delta(str(dest), mode="error")
     pl.DataFrame({"v": [1, 2]}).write_delta(str(dest), mode="overwrite")
     return dest
@@ -67,9 +79,6 @@ def versioned_delta(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def worker_client(tmp_path) -> TestClient:
-    storage._base_dir = tmp_path
-    storage._user_data_dir = tmp_path
-    storage._ensure_directories()
     return TestClient(main.app)
 
 
@@ -405,4 +414,4 @@ class TestWorkerRoutes:
             "/catalog/table_metadata",
             json={"table_path": "/nonexistent/path", "storage_format": "delta"},
         )
-        assert resp.status_code == 500
+        assert resp.status_code == 400

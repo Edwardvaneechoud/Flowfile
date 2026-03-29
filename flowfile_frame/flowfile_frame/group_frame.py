@@ -229,7 +229,8 @@ class GroupByFrame:
             )
         else:
             code = (
-                f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
+                f"input_df.group_by([{readable_group_str}], "
+                f"maintain_order={self.maintain_order}).{method_name}{execution}"
             )
         node_description = self.description or f"{method_name.capitalize()} after grouping by {readable_group_str}"
         self.parent._add_polars_code(new_node_id=self.node_id, code=code, description=node_description)

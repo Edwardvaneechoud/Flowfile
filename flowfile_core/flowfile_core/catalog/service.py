@@ -75,7 +75,7 @@ def _format_delta_timestamp(ts: object) -> str | None:
         return ts
     if isinstance(ts, datetime):
         return ts.isoformat()
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         # Milliseconds since epoch
         return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
     return str(ts)
@@ -1541,7 +1541,7 @@ class CatalogService:
         rows_data = pa_table.to_pylist()
 
         def _make_json_safe(val: object) -> object:
-            if val is None or isinstance(val, (bool, int, float, str)):
+            if val is None or isinstance(val, bool | int | float | str):
                 return val
             return str(val)
 

@@ -413,6 +413,8 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error reading table metadata: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -423,6 +425,8 @@ def get_delta_history(payload: models.DeltaHistoryRequest) -> models.DeltaHistor
     """Read version history from a Delta table."""
     try:
         return funcs.get_delta_history(payload.table_path, payload.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error reading delta history: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -433,6 +437,8 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
     """Preview data from a Delta table at a specific version."""
     try:
         return funcs.read_delta_version_preview(payload.table_path, payload.version, payload.n_rows)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error reading delta version preview: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e

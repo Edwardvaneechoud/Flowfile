@@ -4,17 +4,31 @@ import os
 from collections.abc import Callable
 from logging import Logger
 from multiprocessing import Array, Queue, Value
+from pathlib import Path
 
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 
+from flowfile_worker import models
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
-from flowfile_worker import models
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
+from shared.storage_config import storage
+
+
+def _validate_catalog_path(table_path: str) -> Path:
+    """Resolve and validate that a table path is within the catalog tables directory.
+
+    Raises ValueError if the path escapes the allowed directory.
+    """
+    allowed_dir = storage.catalog_tables_directory.resolve()
+    resolved = Path(table_path).resolve()
+    if not (resolved == allowed_dir or str(resolved).startswith(str(allowed_dir) + os.sep)):
+        raise ValueError(f"table_path must be within the catalog tables directory: {allowed_dir}")
+    return resolved
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 
@@ -534,9 +548,7 @@ def read_table_metadata(table_path: str, storage_format: str = "delta") -> dict:
 
     Called by the worker endpoint so the core process never touches data files.
     """
-    from pathlib import Path
-
-    p = Path(table_path)
+    p = _validate_catalog_path(table_path)
     if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
         lf = pl.scan_delta(str(p))
         schema = lf.collect_schema()
@@ -585,7 +597,7 @@ def _format_delta_timestamp(ts: object) -> str | None:
         return ts
     if isinstance(ts, datetime):
         return ts.isoformat()
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
     return str(ts)
 
@@ -594,7 +606,8 @@ def get_delta_history(table_path: str, limit: int | None = None) -> models.Delta
     """Read version history from a Delta table using the deltalake library."""
     from deltalake import DeltaTable
 
-    dt = DeltaTable(table_path)
+    validated = _validate_catalog_path(table_path)
+    dt = DeltaTable(str(validated))
     history = dt.history(limit)
     current_version = dt.version()
     entries: list[models.DeltaVersionCommit] = []
@@ -614,7 +627,8 @@ def read_delta_version_preview(table_path: str, version: int, n_rows: int = 100)
     """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars)."""
     from deltalake import DeltaTable
 
-    dt = DeltaTable(table_path, version=version)
+    validated = _validate_catalog_path(table_path)
+    dt = DeltaTable(str(validated), version=version)
     dataset = dt.to_pyarrow_dataset()
     pa_table = dataset.head(n_rows)
     columns = pa_table.column_names
@@ -622,7 +636,7 @@ def read_delta_version_preview(table_path: str, version: int, n_rows: int = 100)
     rows = pa_table.to_pylist()
 
     def _make_json_safe(val: object) -> object:
-        if val is None or isinstance(val, (bool, int, float, str)):
+        if val is None or isinstance(val, bool | int | float | str):
             return val
         return str(val)
 

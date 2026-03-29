@@ -19,7 +19,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status,
 )
-from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     streaming_receive,
     streaming_start,
@@ -29,6 +28,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
 )
+from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
