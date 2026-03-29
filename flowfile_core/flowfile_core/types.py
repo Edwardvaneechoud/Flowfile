@@ -29,10 +29,13 @@ DataTypeStr = Literal[
     "Int16",
     "Int32",
     "Int64",
+    "Int128",
     "UInt8",
     "UInt16",
     "UInt32",
     "UInt64",
+    "UInt128",
+    "Float16",
     "Float32",
     "Float64",
     "Decimal",
@@ -78,10 +81,13 @@ class DataType(str, Enum):
     Int16 = "Int16"
     Int32 = "Int32"
     Int64 = "Int64"
+    Int128 = "Int128"
     UInt8 = "UInt8"
     UInt16 = "UInt16"
     UInt32 = "UInt32"
     UInt64 = "UInt64"
+    UInt128 = "UInt128"
+    Float16 = "Float16"
     Float32 = "Float32"
     Float64 = "Float64"
     Decimal = "Decimal"
@@ -137,12 +143,15 @@ class Types:
     Int16 = DataType.Int16
     Int32 = DataType.Int32
     Int64 = DataType.Int64
+    Int128 = DataType.Int128
     UInt8 = DataType.UInt8
     UInt16 = DataType.UInt16
     UInt32 = DataType.UInt32
     UInt64 = DataType.UInt64
+    UInt128 = DataType.UInt128
 
     Float = DataType.Float64  # Default float
+    Float16 = DataType.Float16
     Float32 = DataType.Float32
     Float64 = DataType.Float64
     Decimal = DataType.Decimal
