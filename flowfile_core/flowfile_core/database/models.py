@@ -311,9 +311,9 @@ class GlobalArtifact(Base):
 class CatalogTable(Base):
     """A materialized data table registered in the catalog.
 
-    When a user registers a table, its data is materialized as a Parquet file
-    in the catalog tables storage directory for fast, consistent reads and
-    previews.
+    When a user registers a table, its data is materialized as a Delta table
+    (or legacy Parquet file) in the catalog tables storage directory for fast,
+    consistent reads and previews.
     """
 
     __tablename__ = "catalog_tables"
@@ -324,8 +324,9 @@ class CatalogTable(Base):
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Storage: path to the materialized Parquet file
+    # Storage: path to the materialized table (Delta directory or legacy Parquet file)
     file_path = Column(String, nullable=False)
+    storage_format = Column(String, nullable=False, default="delta")  # "delta" or "parquet"
 
     # Schema metadata (JSON array of {name, dtype} objects)
     schema_json = Column(Text, nullable=True)

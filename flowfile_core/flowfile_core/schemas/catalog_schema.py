@@ -243,6 +243,22 @@ class CatalogTablePreview(BaseModel):
     total_rows: int = 0
 
 
+class DeltaVersionCommit(BaseModel):
+    """A single version entry from a Delta table's transaction log."""
+
+    version: int
+    timestamp: str | None = None
+    operation: str | None = None
+    parameters: dict | None = None
+
+
+class DeltaTableHistory(BaseModel):
+    """Version history of a Delta table."""
+
+    current_version: int
+    history: list[DeltaVersionCommit] = Field(default_factory=list)
+
+
 # ==================== Catalog Overview ====================
 
 

@@ -128,10 +128,13 @@
           :table="catalogStore.selectedTable"
           :preview="catalogStore.tablePreview"
           :loading-preview="catalogStore.loadingTablePreview"
+          :table-history="catalogStore.tableHistory"
+          :selected-version="catalogStore.selectedVersion"
           @close="handleCloseDetail"
           @delete-table="handleDeleteTable($event)"
           @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
           @navigate-to-flow="navigateToFlow($event)"
+          @select-version="catalogStore.selectVersion($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel

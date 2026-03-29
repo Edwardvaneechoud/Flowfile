@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from flowfile_core.catalog.delta_utils import delete_table_storage, is_delta_table, read_delta_preview, table_exists
 from flowfile_core.catalog.exceptions import (
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -51,6 +52,8 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     CatalogTableSummary,
     ColumnSchema,
+    DeltaTableHistory,
+    DeltaVersionCommit,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
@@ -62,6 +65,33 @@ from flowfile_core.schemas.catalog_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _format_delta_timestamp(ts: object) -> str | None:
+    """Convert a raw delta log timestamp to an ISO 8601 string."""
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        return ts
+    if isinstance(ts, datetime):
+        return ts.isoformat()
+    if isinstance(ts, (int, float)):
+        # Milliseconds since epoch
+        return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+    return str(ts)
+
+
+def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
+    """Convert raw deltalake history dicts into typed ``DeltaVersionCommit`` models."""
+    return [
+        DeltaVersionCommit(
+            version=h.get("version"),
+            timestamp=_format_delta_timestamp(h.get("timestamp")),
+            operation=h.get("operation"),
+            parameters=h.get("operationParameters"),
+        )
+        for h in raw_history
+    ]
 
 
 class CatalogService:
@@ -82,11 +112,55 @@ class CatalogService:
 
     @dataclass(frozen=True)
     class CatalogMaterializationResult:
-        parquet_path: str
+        table_path: str
         schema: list[dict[str, str]]
         row_count: int
         column_count: int
         size_bytes: int
+        storage_format: str = "delta"
+
+    @staticmethod
+    def _read_table_metadata(
+        table_path: str, storage_format: str
+    ) -> tuple[list[dict[str, str]], int, int, int]:
+        """Read schema, row_count, column_count, size_bytes from a table.
+
+        Offloads the work to the worker process when available.  Only falls
+        back to local I/O when the worker is not running.
+        """
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        if OFFLOAD_TO_WORKER:
+            try:
+                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+                    trigger_read_table_metadata,
+                )
+
+                data = trigger_read_table_metadata(table_path, storage_format)
+                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
+                return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
+            except Exception:
+                logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
+
+        # Fallback: read locally (only when worker is unavailable)
+        import polars as pl
+
+        from flowfile_core.catalog.delta_utils import get_delta_table_size_bytes, is_delta_table
+
+        p = Path(table_path)
+        if storage_format == "delta" or (storage_format is None and is_delta_table(p)):
+            lf = pl.scan_delta(str(p))
+            schema = lf.collect_schema()
+            schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+            row_count = lf.select(pl.len()).collect().item()
+            size_bytes = get_delta_table_size_bytes(p)
+        else:
+            lf = pl.scan_parquet(p)
+            schema = lf.collect_schema()
+            schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+            row_count = lf.select(pl.len()).collect().item()
+            size_bytes = p.stat().st_size
+        return schema_list, row_count, len(schema), size_bytes
 
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         """Attach favourite/follow flags and run stats to a single registration.
@@ -817,7 +891,7 @@ class CatalogService:
             namespace_id=table.namespace_id,
             description=table.description,
             owner_id=table.owner_id,
-            file_exists=Path(table.file_path).is_file() if table.file_path else False,
+            file_exists=table_exists(table.file_path) if table.file_path else False,
             is_favorite=is_fav,
             schema_columns=columns,
             row_count=table.row_count,
@@ -865,7 +939,7 @@ class CatalogService:
                     namespace_id=table.namespace_id,
                     description=table.description,
                     owner_id=table.owner_id,
-                    file_exists=Path(table.file_path).is_file() if table.file_path else False,
+                    file_exists=table_exists(table.file_path) if table.file_path else False,
                     is_favorite=table.id in fav_ids,
                     schema_columns=columns,
                     row_count=table.row_count,
@@ -903,12 +977,16 @@ class CatalogService:
                 for col in data.get("schema", [])
                 if "name" in col and "dtype" in col
             ]
+            # Accept both table_path (new delta) and parquet_path (legacy) from worker
+            resolved_path = data.get("table_path") or data.get("parquet_path")
+            storage_format = data.get("storage_format", "parquet")
             return CatalogService.CatalogMaterializationResult(
-                parquet_path=data["parquet_path"],
+                table_path=resolved_path,
                 schema=schema,
                 row_count=data["row_count"],
                 column_count=data["column_count"],
                 size_bytes=data["size_bytes"],
+                storage_format=storage_format,
             )
 
         detail = None
@@ -967,7 +1045,7 @@ class CatalogService:
 
         return self._create_table_record_from_metadata(
             name=name,
-            parquet_path=materialized.parquet_path,
+            table_path=materialized.table_path,
             schema=materialized.schema,
             row_count=materialized.row_count,
             column_count=materialized.column_count,
@@ -977,6 +1055,76 @@ class CatalogService:
             description=description,
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
+            storage_format=materialized.storage_format,
+        )
+
+    def register_table_from_data(
+        self,
+        name: str,
+        table_path: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        source_registration_id: int | None = None,
+        source_run_id: int | None = None,
+        storage_format: str = "delta",
+        schema: list[dict[str, str]] | None = None,
+        row_count: int | None = None,
+        column_count: int | None = None,
+        size_bytes: int | None = None,
+    ) -> CatalogTableOut:
+        """Register an already-materialized table (Delta or Parquet) in the catalog.
+
+        Unlike ``register_table``, this does NOT copy the file — it records
+        the given ``table_path`` directly. Use this when the caller has
+        already written the table to the catalog tables directory
+        (e.g. the catalog writer node in a flow graph).
+
+        When *schema*, *row_count*, *column_count*, and *size_bytes* are all
+        provided the service records them directly without reading the table.
+        This is the preferred path — the worker that wrote the table should
+        supply this metadata so the core process never touches the data files.
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If ``namespace_id`` is given but doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
+
+        if schema is not None and row_count is not None and size_bytes is not None:
+            # Fast path: caller already computed metadata (from worker)
+            schema_list = schema
+            if column_count is None:
+                column_count = len(schema_list)
+        else:
+            # Fallback: read metadata from the table on disk
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
+                table_path, storage_format
+            )
+
+        return self._create_table_record_from_metadata(
+            name=name,
+            table_path=table_path,
+            schema=schema_list,
+            row_count=row_count,
+            column_count=column_count,
+            size_bytes=size_bytes,
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+            source_registration_id=source_registration_id,
+            source_run_id=source_run_id,
+            storage_format=storage_format,
         )
 
     def register_table_from_parquet(
@@ -989,59 +1137,31 @@ class CatalogService:
         source_registration_id: int | None = None,
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
-        """Register an already-materialized Parquet file in the catalog.
-
-        Unlike ``register_table``, this does NOT copy the file — it records
-        the given ``parquet_path`` directly. Use this when the caller has
-        already written the Parquet file to the catalog tables directory
-        (e.g. the catalog writer node in a flow graph).
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If ``namespace_id`` is given but doesn't exist.
-        TableExistsError
-            If a table with this name already exists in the namespace.
-        """
-        import polars as pl
-
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(name=name, namespace_id=namespace_id)
-
-        dest_path = Path(parquet_path)
-        lf = pl.scan_parquet(dest_path)
-        schema = lf.collect_schema()
-        schema_list = [{"name": col_name, "dtype": str(col_dtype)} for col_name, col_dtype in schema.items()]
-        row_count = lf.select(pl.len()).collect().item()
-        size_bytes = dest_path.stat().st_size
-
-        return self._create_table_record_from_metadata(
+        """Backward-compatible alias for ``register_table_from_data``."""
+        return self.register_table_from_data(
             name=name,
-            parquet_path=str(dest_path),
-            schema=schema_list,
-            row_count=row_count,
-            column_count=len(schema),
-            size_bytes=size_bytes,
+            table_path=parquet_path,
             owner_id=owner_id,
             namespace_id=namespace_id,
             description=description,
             source_registration_id=source_registration_id,
             source_run_id=source_run_id,
+            storage_format="parquet",
         )
 
     def overwrite_table_data(
         self,
         table_id: int,
-        parquet_path: str,
+        table_path: str | None = None,
+        parquet_path: str | None = None,
         source_registration_id: int | None = None,
         source_run_id: int | None = None,
         description: str | None = None,
+        storage_format: str | None = None,
+        schema: list[dict[str, str]] | None = None,
+        row_count: int | None = None,
+        column_count: int | None = None,
+        size_bytes: int | None = None,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table **in-place**.
 
@@ -1049,37 +1169,49 @@ class CatalogService:
         references (schedules, read links, favourites, flow definitions)
         remain valid.
 
+        When *schema*, *row_count*, *column_count*, and *size_bytes* are all
+        provided the service records them directly without reading the table.
+        This is the preferred path.
+
         Raises
         ------
         TableNotFoundError
             If the table doesn't exist.
         """
-        import polars as pl
-
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
 
-        dest_path = Path(parquet_path)
-        lf = pl.scan_parquet(dest_path)
-        schema = lf.collect_schema()
-        schema_list = [{"name": col_name, "dtype": str(col_dtype)} for col_name, col_dtype in schema.items()]
-        row_count = lf.select(pl.len()).collect().item()
-        size_bytes = dest_path.stat().st_size
+        # Resolve path: prefer table_path, fall back to parquet_path
+        resolved_path_str = table_path or parquet_path
+        dest_path = Path(resolved_path_str)
 
-        # Remove old parquet file if it differs from the new one
+        if storage_format is None:
+            storage_format = "delta" if is_delta_table(dest_path) else "parquet"
+
+        if schema is not None and row_count is not None and size_bytes is not None:
+            schema_list = schema
+            if column_count is None:
+                column_count = len(schema_list)
+        else:
+            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(
+                str(dest_path), storage_format
+            )
+
+        # Remove old storage if it differs from the new one
         old_path = Path(table.file_path)
-        if old_path != dest_path and old_path.exists():
+        if old_path != dest_path and (old_path.exists() or old_path.is_dir()):
             try:
-                old_path.unlink()
+                delete_table_storage(old_path)
             except OSError:
-                logger.warning("Failed to delete old parquet file %s", old_path, exc_info=True)
+                logger.warning("Failed to delete old table storage %s", old_path, exc_info=True)
 
         # Update fields in-place
         table.file_path = str(dest_path)
+        table.storage_format = storage_format
         table.schema_json = json.dumps(schema_list)
         table.row_count = row_count
-        table.column_count = len(schema)
+        table.column_count = column_count
         table.size_bytes = size_bytes
         if source_registration_id is not None:
             table.source_registration_id = source_registration_id
@@ -1179,7 +1311,7 @@ class CatalogService:
     def _create_table_record_from_metadata(
         self,
         name: str,
-        parquet_path: str,
+        table_path: str,
         schema: list[dict[str, str]],
         row_count: int,
         column_count: int,
@@ -1189,13 +1321,15 @@ class CatalogService:
         description: str | None,
         source_registration_id: int | None,
         source_run_id: int | None,
+        storage_format: str = "delta",
     ) -> CatalogTableOut:
         table = CatalogTable(
             name=name,
             namespace_id=namespace_id,
             description=description,
             owner_id=owner_id,
-            file_path=parquet_path,
+            file_path=table_path,
+            storage_format=storage_format,
             schema_json=json.dumps(schema),
             row_count=row_count,
             column_count=column_count,
@@ -1205,6 +1339,66 @@ class CatalogService:
         )
         table = self.repo.create_table(table)
         return self._table_to_out(table)
+
+    def resolve_write_destination(
+        self,
+        table_name: str,
+        namespace_id: int | None,
+        write_mode: str,
+        catalog_dir: Path,
+    ) -> tuple[CatalogTable | None, Path, str]:
+        """Resolve the destination path and Delta write mode for a catalog write.
+
+        Returns ``(existing_table_or_None, dest_path, delta_mode)``.
+
+        Raises
+        ------
+        TableExistsError
+            If the table exists and *write_mode* is not ``"overwrite"``.
+        """
+        from flowfile_core.catalog.delta_utils import is_delta_table, is_legacy_parquet
+
+        existing = self.repo.get_table_by_name(table_name, namespace_id)
+
+        if existing is not None:
+            if write_mode != "overwrite":
+                raise TableExistsError(name=table_name, namespace_id=namespace_id)
+
+            old_path = Path(existing.file_path)
+            if is_delta_table(old_path):
+                return existing, old_path, "overwrite"
+
+            # Legacy parquet file — remove it, create new delta dir at same stem
+            new_dir = old_path.parent / old_path.stem
+            if is_legacy_parquet(old_path):
+                old_path.unlink()
+            return existing, new_dir, "overwrite"
+
+        from uuid import uuid4
+
+        dir_name = f"{table_name}_{uuid4().hex[:8]}"
+        return None, catalog_dir / dir_name, "error"
+
+    def resolve_table_file_path(
+        self,
+        table_id: int | None = None,
+        table_name: str | None = None,
+        namespace_id: int | None = None,
+    ) -> str | None:
+        """Resolve a catalog table's file path by ID or by name + namespace.
+
+        Returns ``None`` if the table cannot be found.
+        """
+        if table_id is not None:
+            table = self.repo.get_table(table_id)
+            if table is not None:
+                return table.file_path
+        elif table_name:
+            tables = self.repo.list_tables(namespace_id=namespace_id)
+            for t in tables:
+                if t.name == table_name:
+                    return t.file_path
+        return None
 
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
         """Get a catalog table by ID.
@@ -1253,7 +1447,7 @@ class CatalogService:
         return self._table_to_out(table)
 
     def delete_table(self, table_id: int) -> None:
-        """Delete a catalog table and its materialized Parquet file.
+        """Delete a catalog table and its materialized storage (Delta dir or Parquet file).
 
         Raises
         ------
@@ -1268,31 +1462,42 @@ class CatalogService:
         self.repo.delete_table(table_id)
 
         try:
-            parquet_path = Path(file_path)
-            if parquet_path.exists():
-                parquet_path.unlink()
+            storage_path = Path(file_path)
+            if storage_path.exists() or storage_path.is_dir():
+                delete_table_storage(storage_path)
         except OSError:
-            logger.warning("Failed to delete materialized file %s", file_path, exc_info=True)
+            logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
 
-    def get_table_preview(self, table_id: int, limit: int = 100) -> CatalogTablePreview:
-        """Read the first N rows from the materialized Parquet file.
+    def get_table_preview(self, table_id: int, limit: int = 100, version: int | None = None) -> CatalogTablePreview:
+        """Read the first N rows from the materialized table (Delta or Parquet).
+
+        When *version* is provided and the table is a Delta table, reads from
+        that specific historical version via the worker.
 
         Raises
         ------
         TableNotFoundError
             If the table doesn't exist.
         """
-        import polars as pl
-
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
 
-        parquet_path = Path(table.file_path)
-        if not parquet_path.exists():
+        data_path = Path(table.file_path)
+        if not table_exists(data_path):
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
-        df = pl.read_parquet(parquet_path, n_rows=limit)
+        # Version-specific preview for Delta tables
+        if version is not None and is_delta_table(data_path):
+            return self._get_delta_version_preview(data_path, version, limit)
+
+        import polars as pl
+
+        if is_delta_table(data_path):
+            df = read_delta_preview(data_path, n_rows=limit)
+        else:
+            df = pl.read_parquet(data_path, n_rows=limit)
+
         columns = df.columns
         dtypes = [str(df[col].dtype) for col in columns]
 
@@ -1309,6 +1514,79 @@ class CatalogService:
             rows=rows,
             total_rows=table.row_count or len(df),
         )
+
+    def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
+        """Read a Delta table preview at a specific version via the worker (or locally)."""
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        table_path = str(data_path)
+        if OFFLOAD_TO_WORKER:
+            try:
+                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+                    trigger_delta_version_preview,
+                )
+
+                return trigger_delta_version_preview(table_path, version, limit)
+            except Exception:
+                logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
+
+        # Local fallback using deltalake + PyArrow
+        from deltalake import DeltaTable
+
+        dt = DeltaTable(table_path, version=version)
+        dataset = dt.to_pyarrow_dataset()
+        pa_table = dataset.head(limit)
+        columns = pa_table.column_names
+        dtypes = [str(field.type) for field in pa_table.schema]
+        rows_data = pa_table.to_pylist()
+
+        def _make_json_safe(val: object) -> object:
+            if val is None or isinstance(val, (bool, int, float, str)):
+                return val
+            return str(val)
+
+        rows = [[_make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+        return CatalogTablePreview(columns=columns, dtypes=dtypes, rows=rows, total_rows=len(rows))
+
+    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
+        """Return the version history for a Delta catalog table.
+
+        Returns an empty history for non-Delta tables.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+
+        data_path = Path(table.file_path)
+        if not is_delta_table(data_path):
+            return DeltaTableHistory(current_version=0, history=[])
+
+        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+        table_path = str(data_path)
+        if OFFLOAD_TO_WORKER:
+            try:
+                from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+                    trigger_delta_history,
+                )
+
+                return trigger_delta_history(table_path, limit)
+            except Exception:
+                logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
+
+        # Local fallback
+        from deltalake import DeltaTable as DT
+
+        dt = DT(table_path)
+        raw_history = dt.history(limit)
+        current_version = dt.version()
+        history = _parse_delta_history(raw_history)
+        return DeltaTableHistory(current_version=current_version, history=history)
 
     # ------------------------------------------------------------------ #
     # Table Favorites

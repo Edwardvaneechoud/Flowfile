@@ -12,6 +12,7 @@ from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from flowfile_worker import models
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 
@@ -434,6 +435,54 @@ def write_parquet(
             progress.value = -1
 
 
+def write_delta(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    mode: str = "overwrite",
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and write it to a Delta table directory.
+
+    This offloads the collect() from core to the worker process, producing
+    a Delta table at *output_path*.  Metadata (schema, row_count, size_bytes)
+    is returned via the queue so the core never needs to read the table.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        os.makedirs(output_path, exist_ok=True)
+        df.write_delta(output_path, mode=mode)
+
+        size_bytes = _get_delta_size_bytes(output_path)
+        schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+
+        queue.put({
+            "table_path": output_path,
+            "storage_format": "delta",
+            "schema": schema,
+            "row_count": df.height,
+            "column_count": len(df.columns),
+            "size_bytes": size_bytes,
+        })
+        flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during write_delta operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
 def materialize_catalog_table_task(
     source_file_path: str,
     dest_path: str,
@@ -441,7 +490,7 @@ def materialize_catalog_table_task(
     error_message: Array,
     queue: Queue,
 ):
-    """Subprocess task: reads a source file and materializes it as parquet, returning metadata via queue."""
+    """Subprocess task: reads a source file and materializes it as a Delta table, returning metadata via queue."""
     try:
         ext = os.path.splitext(source_file_path)[1].lower()
         if ext in (".csv", ".txt", ".tsv"):
@@ -456,12 +505,15 @@ def materialize_catalog_table_task(
         if isinstance(df, pl.LazyFrame):
             df = df.collect()
 
-        df.write_parquet(dest_path)
-        size_bytes = os.path.getsize(dest_path)
+        os.makedirs(dest_path, exist_ok=True)
+        df.write_delta(dest_path, mode="overwrite")
+
+        size_bytes = _get_delta_size_bytes(dest_path)
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put({
-            "parquet_path": dest_path,
+            "table_path": dest_path,
+            "storage_format": "delta",
             "schema": schema,
             "row_count": df.height,
             "column_count": len(df.columns),
@@ -475,6 +527,126 @@ def materialize_catalog_table_task(
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+
+
+def read_table_metadata(table_path: str, storage_format: str = "delta") -> dict:
+    """Read schema, row_count, column_count, size_bytes from a table on disk.
+
+    Called by the worker endpoint so the core process never touches data files.
+    """
+    from pathlib import Path
+
+    p = Path(table_path)
+    if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
+        lf = pl.scan_delta(str(p))
+        schema = lf.collect_schema()
+        schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+        row_count = lf.select(pl.len()).collect().item()
+        size_bytes = _get_delta_size_bytes(str(p))
+    else:
+        lf = pl.scan_parquet(p)
+        schema = lf.collect_schema()
+        schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+        row_count = lf.select(pl.len()).collect().item()
+        size_bytes = p.stat().st_size
+    return {
+        "schema": schema_list,
+        "row_count": row_count,
+        "column_count": len(schema_list),
+        "size_bytes": size_bytes,
+    }
+
+
+def _get_delta_size_bytes(delta_dir: str) -> int:
+    """Sum the sizes of active data files from the Delta transaction log.
+
+    Falls back to filesystem scanning if the delta log can't be read.
+    """
+    from pathlib import Path
+
+    try:
+        from deltalake import DeltaTable
+
+        dt = DeltaTable(delta_dir)
+        add_actions = dt.get_add_actions(flatten=True)
+        size_col = add_actions.column("size_bytes")
+        return sum(v for v in size_col.to_pylist() if v is not None)
+    except Exception:
+        return sum(f.stat().st_size for f in Path(delta_dir).rglob("*.parquet"))
+
+
+def _format_delta_timestamp(ts: object) -> str | None:
+    """Convert a raw delta log timestamp to an ISO 8601 string."""
+    from datetime import datetime, timezone
+
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        return ts
+    if isinstance(ts, datetime):
+        return ts.isoformat()
+    if isinstance(ts, (int, float)):
+        return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+    return str(ts)
+
+
+def get_delta_history(table_path: str, limit: int | None = None) -> models.DeltaHistoryResponse:
+    """Read version history from a Delta table using the deltalake library."""
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(table_path)
+    history = dt.history(limit)
+    current_version = dt.version()
+    entries: list[models.DeltaVersionCommit] = []
+    for h in history:
+        entries.append(
+            models.DeltaVersionCommit(
+                version=h.get("version"),
+                timestamp=_format_delta_timestamp(h.get("timestamp")),
+                operation=h.get("operation"),
+                parameters=h.get("operationParameters"),
+            )
+        )
+    return models.DeltaHistoryResponse(current_version=current_version, history=entries)
+
+
+def read_delta_version_preview(table_path: str, version: int, n_rows: int = 100) -> models.DeltaVersionPreviewResponse:
+    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars)."""
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(table_path, version=version)
+    dataset = dt.to_pyarrow_dataset()
+    pa_table = dataset.head(n_rows)
+    columns = pa_table.column_names
+    dtypes = [str(field.type) for field in pa_table.schema]
+    rows = pa_table.to_pylist()
+
+    def _make_json_safe(val: object) -> object:
+        if val is None or isinstance(val, (bool, int, float, str)):
+            return val
+        return str(val)
+
+    row_list = [[_make_json_safe(row.get(c)) for c in columns] for row in rows]
+
+    # Estimate total rows from Delta metadata
+    try:
+        total_rows = sum(
+            action["num_records"]
+            for action in dt.get_add_actions(flatten=True).to_pydict().get("num_records", [])
+            if action is not None
+        )
+    except Exception:
+        total_rows = len(row_list)
+    if total_rows == 0:
+        total_rows = len(row_list)
+
+    return models.DeltaVersionPreviewResponse(
+        version=version,
+        columns=columns,
+        dtypes=dtypes,
+        rows=row_list,
+        total_rows=total_rows,
+    )
 
 
 def generic_task(

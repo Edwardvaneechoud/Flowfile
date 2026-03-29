@@ -33,6 +33,7 @@ OperationType = Literal[
     "write_to_database",
     "write_to_cloud_storage",
     "write_parquet",
+    "write_delta",
 ]
 ResultType = Literal["polars", "other"]
 
@@ -158,8 +159,53 @@ class CatalogMaterializeRequest(BaseModel):
 
 
 class CatalogMaterializeResponse(BaseModel):
-    parquet_path: str
+    parquet_path: str | None = None  # Legacy field for backward compat
+    table_path: str
+    storage_format: str = "delta"  # "delta" or "parquet"
     schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int
+
+
+class TableMetadataRequest(BaseModel):
+    table_path: str
+    storage_format: str = "delta"  # "delta" or "parquet"
+
+
+class TableMetadataResponse(BaseModel):
+    schema: list[ColumnSchema]
+    row_count: int
+    column_count: int
+    size_bytes: int
+
+
+class DeltaHistoryRequest(BaseModel):
+    table_path: str
+    limit: int | None = None
+
+
+class DeltaVersionCommit(BaseModel):
+    version: int
+    timestamp: str | None = None
+    operation: str | None = None
+    parameters: dict | None = None
+
+
+class DeltaHistoryResponse(BaseModel):
+    current_version: int
+    history: list[DeltaVersionCommit]
+
+
+class DeltaVersionPreviewRequest(BaseModel):
+    table_path: str
+    version: int
+    n_rows: int = 100
+
+
+class DeltaVersionPreviewResponse(BaseModel):
+    version: int
+    columns: list[str]
+    dtypes: list[str]
+    rows: list[list]
+    total_rows: int

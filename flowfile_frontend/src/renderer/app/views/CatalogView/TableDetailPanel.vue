@@ -71,6 +71,59 @@
           {{ table.read_by_flows.length }} flow{{ table.read_by_flows.length !== 1 ? "s" : "" }}
         </span>
       </div>
+      <div v-if="tableHistory" class="meta-card">
+        <span class="meta-label">Version</span>
+        <span class="meta-value">{{ tableHistory.current_version }}</span>
+      </div>
+    </div>
+
+    <!-- Version History -->
+    <div v-if="hasHistory" class="section">
+      <h3>Version History</h3>
+      <div class="version-table-wrapper">
+        <table class="styled-table version-table">
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Timestamp</th>
+              <th>Operation</th>
+              <th>Parameters</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="entry in tableHistory!.history"
+              :key="entry.version"
+              class="version-row"
+              :class="{
+                'version-row-active': selectedVersion === entry.version,
+                'version-row-current': entry.version === tableHistory!.current_version,
+              }"
+              @click="emit('selectVersion', entry.version)"
+            >
+              <td class="version-number">
+                {{ entry.version }}
+                <span
+                  v-if="entry.version === tableHistory!.current_version"
+                  class="version-badge"
+                  >current</span
+                >
+              </td>
+              <td>{{ formatTimestamp(entry.timestamp) }}</td>
+              <td class="version-operation">{{ entry.operation ?? "--" }}</td>
+              <td class="version-params">{{ formatParams(entry.parameters) }}</td>
+              <td class="version-action">
+                <span
+                  v-if="entry.version !== tableHistory!.current_version"
+                  class="version-view-link"
+                  >view</span
+                >
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Read by Flows Modal -->
@@ -121,6 +174,13 @@
 
     <!-- Data Preview -->
     <div class="section">
+      <div v-if="isViewingHistorical" class="version-banner">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        Viewing version {{ selectedVersion }}
+        <button class="version-banner-link" @click="emit('selectVersion', null)">
+          Back to latest
+        </button>
+      </div>
       <div class="section-header">
         <h3>Data Preview</h3>
         <span v-if="preview" class="preview-info">
@@ -153,23 +213,61 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import type { CatalogTable, CatalogTablePreview } from "../../types";
+import { ref, computed } from "vue";
+import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 
 const showReadByModal = ref(false);
 
-defineProps<{
+const props = defineProps<{
   table: CatalogTable;
   preview: CatalogTablePreview | null;
   loadingPreview: boolean;
+  tableHistory: DeltaTableHistory | null;
+  selectedVersion: number | null;
 }>();
 
-const emit = defineEmits(["close", "deleteTable", "toggleTableFavorite", "navigateToFlow"]);
+const emit = defineEmits([
+  "close",
+  "deleteTable",
+  "toggleTableFavorite",
+  "navigateToFlow",
+  "selectVersion",
+]);
+
+const hasHistory = computed(
+  () => props.tableHistory && props.tableHistory.history.length > 0,
+);
+
+const isViewingHistorical = computed(
+  () =>
+    props.selectedVersion !== null &&
+    props.tableHistory !== null &&
+    props.selectedVersion !== props.tableHistory.current_version,
+);
+
+function formatTimestamp(ts: string | null): string {
+  if (!ts) return "--";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function handleReadByClick(flowId: number) {
   emit("navigateToFlow", flowId);
   showReadByModal.value = false;
+}
+
+function formatParams(params: Record<string, any> | null): string {
+  if (!params || Object.keys(params).length === 0) return "--";
+  return Object.entries(params)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(", ");
 }
 
 function formatCell(value: any): string {
@@ -388,6 +486,148 @@ function formatCell(value: any): string {
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ========== Version History ========== */
+.version-table-wrapper {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+}
+
+/* Override the 3-column width distribution from .styled-table */
+.version-table th,
+.version-table td {
+  width: auto;
+}
+
+.version-table th:first-child,
+.version-table td:first-child {
+  width: 15%;
+}
+
+.version-table th:nth-child(2),
+.version-table td:nth-child(2) {
+  width: 25%;
+}
+
+.version-table th:nth-child(3),
+.version-table td:nth-child(3) {
+  width: 15%;
+}
+
+.version-table th:nth-child(4),
+.version-table td:nth-child(4) {
+  width: 35%;
+}
+
+.version-table th:last-child,
+.version-table td:last-child {
+  width: 10%;
+}
+
+.version-table th {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.version-row {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.version-row:hover {
+  background: var(--color-background-hover, rgba(0, 0, 0, 0.03));
+}
+
+.version-row-active {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.08));
+}
+
+.version-row-current td {
+  font-weight: var(--font-weight-medium);
+}
+
+.version-number {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-weight: var(--font-weight-medium);
+}
+
+.version-badge {
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-success, #16a34a);
+  background: var(--color-success-light, rgba(22, 163, 74, 0.1));
+  padding: 1px 6px;
+  border-radius: var(--border-radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.version-operation {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.version-params {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-action {
+  text-align: right;
+}
+
+.version-view-link {
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.version-view-link:hover {
+  text-decoration: underline;
+}
+
+/* ========== Version Banner ========== */
+.version-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  margin-bottom: var(--spacing-3);
+  background: var(--color-warning-light, rgba(234, 179, 8, 0.1));
+  border: 1px solid var(--color-warning, #eab308);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.version-banner i {
+  color: var(--color-warning, #eab308);
+}
+
+.version-banner-link {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.version-banner-link:hover {
+  color: var(--color-primary-dark, #1d4ed8);
 }
 
 /* ========== States ========== */

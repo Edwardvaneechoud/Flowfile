@@ -19,6 +19,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status,
 )
+from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     streaming_receive,
     streaming_start,
@@ -153,6 +154,46 @@ def trigger_catalog_materialize(
     }
     response = requests.post(f"{WORKER_URL}/catalog/materialize", json=payload)
     return response
+
+
+def trigger_read_table_metadata(
+    table_path: str,
+    storage_format: str = "delta",
+) -> dict:
+    """Ask the worker to read table metadata (schema, row_count, size_bytes).
+
+    Returns the parsed JSON dict on success, raises on failure.
+    """
+    payload = {"table_path": table_path, "storage_format": storage_format}
+    response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker table metadata read failed: {response.text}")
+    return response.json()
+
+
+def trigger_delta_history(
+    table_path: str,
+    limit: int | None = None,
+) -> DeltaTableHistory:
+    """Ask the worker to read Delta table version history."""
+    payload = {"table_path": table_path, "limit": limit}
+    response = requests.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta history read failed: {response.text}")
+    return DeltaTableHistory.model_validate(response.json())
+
+
+def trigger_delta_version_preview(
+    table_path: str,
+    version: int,
+    n_rows: int = 100,
+) -> CatalogTablePreview:
+    """Ask the worker to preview a Delta table at a specific version."""
+    payload = {"table_path": table_path, "version": version, "n_rows": n_rows}
+    response = requests.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker delta version preview failed: {response.text}")
+    return CatalogTablePreview.model_validate(response.json())
 
 
 def get_results(file_ref: str) -> Status | None:

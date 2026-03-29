@@ -50,6 +50,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableUpdate,
+    DeltaTableHistory,
     FavoriteOut,
     FlowRegistrationCreate,
     FlowRegistrationOut,
@@ -538,12 +539,31 @@ def delete_table(
 def get_table_preview(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
+    version: int | None = Query(None),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Preview the first N rows of a catalog table."""
+    """Preview the first N rows of a catalog table.
+
+    When ``version`` is provided and the table is a Delta table, returns
+    data from that specific historical version.
+    """
     try:
-        return service.get_table_preview(table_id, limit=limit)
+        return service.get_table_preview(table_id, limit=limit, version=version)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found") from None
+
+
+@router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)
+def get_table_history(
+    table_id: int,
+    limit: int | None = Query(None),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return version history for a Delta catalog table."""
+    try:
+        return service.get_table_history(table_id, limit=limit)
     except TableNotFoundError:
         raise HTTPException(404, "Catalog table not found") from None
 

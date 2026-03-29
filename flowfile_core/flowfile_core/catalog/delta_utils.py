@@ -33,8 +33,21 @@ def table_exists(path: str | Path) -> bool:
 
 
 def get_delta_table_size_bytes(path: str | Path) -> int:
-    """Sum the sizes of all ``.parquet`` data files in a Delta table directory."""
-    return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
+    """Sum the sizes of active data files from the Delta transaction log.
+
+    Uses the Delta log metadata rather than filesystem scanning, which
+    correctly excludes tombstoned files from previous versions.
+    """
+    from deltalake import DeltaTable
+
+    try:
+        dt = DeltaTable(str(path))
+        add_actions = dt.get_add_actions(flatten=True)
+        size_col = add_actions.column("size_bytes")
+        return sum(v for v in size_col.to_pylist() if v is not None)
+    except Exception:
+        logger.warning("Failed to read size from delta log, falling back to filesystem scan", exc_info=True)
+        return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
 
 
 def read_delta_preview(path: str | Path, n_rows: int = 100) -> pl.DataFrame:

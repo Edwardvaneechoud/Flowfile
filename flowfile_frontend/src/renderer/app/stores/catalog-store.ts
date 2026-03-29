@@ -7,6 +7,7 @@ import type {
   CatalogTab,
   CatalogTable,
   CatalogTablePreview,
+  DeltaTableHistory,
   FlowRegistration,
   FlowRun,
   FlowRunDetail,
@@ -41,6 +42,9 @@ interface CatalogState {
   selectedTable: CatalogTable | null;
   tablePreview: CatalogTablePreview | null;
   loadingTablePreview: boolean;
+  tableHistory: DeltaTableHistory | null;
+  loadingTableHistory: boolean;
+  selectedVersion: number | null;
   allTables: CatalogTable[];
   schedules: FlowSchedule[];
   flowSchedules: FlowSchedule[];
@@ -86,6 +90,9 @@ export const useCatalogStore = defineStore("catalog", {
     selectedTable: null,
     tablePreview: null,
     loadingTablePreview: false,
+    tableHistory: null,
+    loadingTableHistory: false,
+    selectedVersion: null,
     allTables: [],
     schedules: [],
     flowSchedules: [],
@@ -344,10 +351,13 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedArtifactId = null;
       this.selectedArtifact = null;
       this.tablePreview = null;
+      this.tableHistory = null;
+      this.selectedVersion = null;
 
       if (tableId !== null) {
         this.selectedTable = this.findTableInTree(tableId) ?? null;
         this.loadTablePreview(tableId);
+        this.loadTableHistory(tableId);
       } else {
         this.selectedTable = null;
       }
@@ -357,16 +367,40 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedTableId = null;
       this.selectedTable = null;
       this.tablePreview = null;
+      this.tableHistory = null;
+      this.selectedVersion = null;
     },
 
     async loadTablePreview(tableId: number, limit = 100) {
       this.loadingTablePreview = true;
       try {
-        this.tablePreview = await CatalogApi.getTablePreview(tableId, limit);
+        this.tablePreview = await CatalogApi.getTablePreview(
+          tableId,
+          limit,
+          this.selectedVersion,
+        );
       } catch {
         this.tablePreview = null;
       } finally {
         this.loadingTablePreview = false;
+      }
+    },
+
+    async loadTableHistory(tableId: number) {
+      this.loadingTableHistory = true;
+      try {
+        this.tableHistory = await CatalogApi.getTableHistory(tableId);
+      } catch {
+        this.tableHistory = null;
+      } finally {
+        this.loadingTableHistory = false;
+      }
+    },
+
+    selectVersion(version: number | null) {
+      this.selectedVersion = version;
+      if (this.selectedTableId !== null) {
+        this.loadTablePreview(this.selectedTableId);
       }
     },
 
