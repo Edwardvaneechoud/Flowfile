@@ -796,7 +796,6 @@ class TestPolarsParityWithColumns:
         assert_frame_equal(result, expected, check_dtypes=False)
 
     def test_floordiv_with_alias(self, pl_df, ff_df):
-        breakpoint()
         expected = pl_df.with_columns((pl.col("b") // pl.col("a")).alias("fd"))
         result = ff_df.with_columns((col("b") // col("a")).alias("fd")).collect()
         assert_frame_equal(result, expected, check_dtypes=False)
