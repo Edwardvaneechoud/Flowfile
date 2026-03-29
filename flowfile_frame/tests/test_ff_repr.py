@@ -129,11 +129,11 @@ class TestFfReprBinaryOps:
     def test_or(self):
         assert (col("x") | col("y"))._ff_repr == "([x] or [y])"
 
-    def test_floordiv_not_supported(self):
-        assert (col("x") // col("y"))._ff_repr is None
+    def test_floordiv(self):
+        assert (col("x") // col("y"))._ff_repr == "floor(([x] / [y]))"
 
-    def test_pow_not_supported(self):
-        assert (col("x") ** 2)._ff_repr is None
+    def test_pow(self):
+        assert (col("x") ** 2)._ff_repr == "power([x], 2)"
 
     def test_nested_ops(self):
         expr = (col("x") + col("y")) * col("z")
@@ -162,11 +162,11 @@ class TestFfReprReverseBinaryOps:
     def test_rmod(self):
         assert (100 % col("x"))._ff_repr == "(100 % [x])"
 
-    def test_rfloordiv_not_supported(self):
-        assert (10 // col("x"))._ff_repr is None
+    def test_rfloordiv(self):
+        assert (10 // col("x"))._ff_repr == "floor((10 / [x]))"
 
-    def test_rpow_not_supported(self):
-        assert (2 ** col("x"))._ff_repr is None
+    def test_rpow(self):
+        assert (2 ** col("x"))._ff_repr == "power(2, [x])"
 
 
 class TestFfReprAlias:
@@ -326,6 +326,12 @@ class TestFfReprMiscMethods:
     def test_round_default(self):
         assert col("x").round()._ff_repr == "round([x], 0)"
 
+    def test_ceil(self):
+        assert col("x").ceil()._ff_repr == "ceil([x])"
+
+    def test_floor(self):
+        assert col("x").floor()._ff_repr == "floor([x])"
+
 
 class TestFfReprNonConvertible:
     """Test that non-convertible operations set _ff_repr to None."""
@@ -341,14 +347,15 @@ class TestFfReprNonConvertible:
     def test_over(self):
         assert col("x").sum().over("group")._ff_repr is None
 
-    def test_floordiv_propagates_none(self):
-        """Once ff_repr is None, further ops keep it None."""
+    def test_floordiv_propagates(self):
+        """Floor division ff_repr composes with further operations."""
         expr = (col("x") // col("y")) + col("z")
-        assert expr._ff_repr is None
+        assert expr._ff_repr == "(floor(([x] / [y])) + [z])"
 
-    def test_pow_propagates_none(self):
+    def test_pow_propagates(self):
+        """Power ff_repr composes with further operations."""
         expr = (col("x") ** 2) + col("z")
-        assert expr._ff_repr is None
+        assert expr._ff_repr == "(power([x], 2) + [z])"
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +560,24 @@ class TestFormulaCorrectness:
         ff = FlowFrame({"x": [1.567, 2.345, 3.999]})
         result = ff.with_columns(col("x").round(1).alias("rounded")).collect()
         assert result["rounded"].to_list() == [1.6, 2.3, 4.0]
+
+    def test_floordiv_correctness(self, sample_ff):
+        result = sample_ff.with_columns((col("y") // col("x")).alias("fd")).collect()
+        assert result["fd"].to_list() == [10, 10, 10]
+
+    def test_pow_correctness(self, sample_ff):
+        result = sample_ff.with_columns((col("x") ** 2).alias("sq")).collect()
+        assert result["sq"].to_list() == [1, 4, 9]
+
+    def test_ceil_correctness(self):
+        ff = FlowFrame({"x": [1.1, 2.5, 3.9]})
+        result = ff.with_columns(col("x").ceil().alias("ceiled")).collect()
+        assert result["ceiled"].to_list() == [2, 3, 4]
+
+    def test_floor_correctness(self):
+        ff = FlowFrame({"x": [1.1, 2.5, 3.9]})
+        result = ff.with_columns(col("x").floor().alias("floored")).collect()
+        assert result["floored"].to_list() == [1, 2, 3]
 
     def test_reverse_add_correctness(self, sample_ff):
         result = sample_ff.with_columns((100 + col("x")).alias("plus100")).collect()
@@ -762,4 +787,46 @@ class TestPolarsParityWithColumns:
         """Named kwargs create new columns — should match polars."""
         expected = pl_df.with_columns(total=pl.col("a") + pl.col("b"))
         result = ff_df.with_columns(total=col("a") + col("b")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_floordiv_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("b") // pl.col("a"))
+        result = ff_df.with_columns(col("b") // col("a")).collect()
+        # floor(b/a) formula produces Float64; Polars // keeps Int64 for integers
+        assert_frame_equal(result, expected, check_dtypes=False)
+
+    def test_floordiv_with_alias(self, pl_df, ff_df):
+        breakpoint()
+        expected = pl_df.with_columns((pl.col("b") // pl.col("a")).alias("fd"))
+        result = ff_df.with_columns((col("b") // col("a")).alias("fd")).collect()
+        assert_frame_equal(result, expected, check_dtypes=False)
+
+    def test_pow_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("a") ** 2)
+        result = ff_df.with_columns(col("a") ** 2).collect()
+        assert_frame_equal(result, expected, check_dtypes=False)
+
+    def test_pow_with_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns((pl.col("a") ** 3).alias("cubed"))
+        result = ff_df.with_columns((col("a") ** 3).alias("cubed")).collect()
+        assert_frame_equal(result, expected, check_dtypes=False)
+
+    def test_ceil_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("c").ceil())
+        result = ff_df.with_columns(col("c").ceil()).collect()
+        assert_frame_equal(result, expected)
+
+    def test_ceil_with_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("c").ceil().alias("c_ceil"))
+        result = ff_df.with_columns(col("c").ceil().alias("c_ceil")).collect()
+        assert_frame_equal(result, expected)
+
+    def test_floor_no_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("c").floor())
+        result = ff_df.with_columns(col("c").floor()).collect()
+        assert_frame_equal(result, expected)
+
+    def test_floor_with_alias(self, pl_df, ff_df):
+        expected = pl_df.with_columns(pl.col("c").floor().alias("c_floor"))
+        result = ff_df.with_columns(col("c").floor().alias("c_floor")).collect()
         assert_frame_equal(result, expected)

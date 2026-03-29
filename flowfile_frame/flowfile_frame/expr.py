@@ -632,7 +632,7 @@ class Expr:
             self._name_namespace = ExprNameNameSpace(self, self._repr_str)
         return self._name_namespace
 
-    def _create_binary_op_expr(self, op_symbol: str, other: Any, result_expr: pl.Expr | None) -> Expr:
+    def _create_binary_op_expr(self, op_symbol: str, other: Any, result_expr: pl.Expr | None, ff_repr: str | None = ...) -> Expr:
         """Creates a new Expr for binary operations."""
         if self.expr is None:
             raise ValueError(
@@ -651,12 +651,15 @@ class Expr:
         new_repr = f"{self._repr_str} {op_symbol} {other_repr}"
 
         # Compute flowfile function representation
-        ff_op = FF_OPERATOR_MAP.get(op_symbol)
-        other_ff = _get_ff_repr(other)
-        if self._ff_repr is not None and other_ff is not None and ff_op is not None:
-            new_ff = f"({self._ff_repr} {ff_op} {other_ff})"
+        if ff_repr is not ...:
+            new_ff = ff_repr
         else:
-            new_ff = None
+            ff_op = FF_OPERATOR_MAP.get(op_symbol)
+            other_ff = _get_ff_repr(other)
+            if self._ff_repr is not None and other_ff is not None and ff_op is not None:
+                new_ff = f"({self._ff_repr} {ff_op} {other_ff})"
+            else:
+                new_ff = None
 
         # Derive output column name from the polars expression metadata
         output_column_name = None
@@ -834,12 +837,16 @@ class Expr:
     def __floordiv__(self, other):
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr // other_expr if self.expr is not None and other_expr is not None else None
-        return self._create_binary_op_expr("//", other, res_expr)
+        other_ff = _get_ff_repr(other)
+        ff = f"floor(({self._ff_repr} / {other_ff}))" if self._ff_repr is not None and other_ff is not None else None
+        return self._create_binary_op_expr("//", other, res_expr, ff_repr=ff)
 
     def __pow__(self, exponent):
         exp_expr, _ = _get_expr_and_repr(exponent)
         res_expr = self.expr.pow(exp_expr) if self.expr is not None and exp_expr is not None else None
-        return self._create_binary_op_expr("**", exponent, res_expr)
+        exp_ff = _get_ff_repr(exponent)
+        ff = f"power({self._ff_repr}, {exp_ff})" if self._ff_repr is not None and exp_ff is not None else None
+        return self._create_binary_op_expr("**", exponent, res_expr, ff_repr=ff)
 
     def __mod__(self, other):
         other_expr, _ = _get_expr_and_repr(other)
@@ -887,7 +894,9 @@ class Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} // {self._repr_str})"
         res_expr = other_expr // self.expr if other_expr is not None and self.expr is not None else None
-        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
+        other_ff = _get_ff_repr(other)
+        ff = f"floor(({other_ff} / {self._ff_repr}))" if other_ff is not None and self._ff_repr is not None else None
+        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True, ff_repr=ff)
 
     def __rmod__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
@@ -901,7 +910,9 @@ class Expr:
         new_repr = f"({other_repr} ** {self._repr_str})"
         base_expr = pl.lit(other) if not isinstance(other, Expr | pl.Expr) else other_expr
         res_expr = base_expr.pow(self.expr) if self.expr is not None and base_expr is not None else None
-        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
+        other_ff = _get_ff_repr(other)
+        ff = f"power({other_ff}, {self._ff_repr})" if other_ff is not None and self._ff_repr is not None else None
+        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True, ff_repr=ff)
 
     # --- Comparison operations ---
     def __eq__(self, other):
@@ -1084,6 +1095,16 @@ class Expr:
         res_expr = self.expr.round(decimals) if self.expr is not None else None
         ff = f"round({self._ff_repr}, {decimals})" if self._ff_repr is not None else None
         return self._create_next_expr(decimals, method_name="round", result_expr=res_expr, is_complex=True, ff_repr=ff)
+
+    def ceil(self):
+        res_expr = self.expr.ceil() if self.expr is not None else None
+        ff = f"ceil({self._ff_repr})" if self._ff_repr is not None else None
+        return self._create_next_expr(method_name="ceil", result_expr=res_expr, is_complex=True, ff_repr=ff)
+
+    def floor(self):
+        res_expr = self.expr.floor() if self.expr is not None else None
+        ff = f"floor({self._ff_repr})" if self._ff_repr is not None else None
+        return self._create_next_expr(method_name="floor", result_expr=res_expr, is_complex=True, ff_repr=ff)
 
     @staticmethod
     def _get_expr_repr(expr):
