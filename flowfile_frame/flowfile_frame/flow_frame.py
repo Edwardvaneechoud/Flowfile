@@ -2091,9 +2091,8 @@ class FlowFrame:
                 for e in actual_exprs_to_process
             ):
                 ff = self
-                for i, expr_obj in enumerate(actual_exprs_to_process):
-                    desc = f"{i}: {description}" if len(actual_exprs_to_process) > 1 and description else description
-                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, desc)
+                for expr_obj in actual_exprs_to_process:
+                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
                 return ff
 
             # Fall through to polars code path

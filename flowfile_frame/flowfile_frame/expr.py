@@ -84,9 +84,24 @@ def _get_ff_repr(value: Any) -> str | None:
     elif isinstance(value, (int, float)):
         return str(value)
     elif isinstance(value, str):
-        return f'"{value}"'
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
     else:
         return None
+
+
+def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type) -> str | None:
+    """Compute ff_repr for a cast operation. Shared by Expr.cast() and Column.cast()."""
+    if ff_repr is None:
+        return None
+    dtype_name = None
+    if isinstance(pl_dtype, pl.DataType):
+        dtype_name = type(pl_dtype).__name__
+    elif isinstance(pl_dtype, type) and issubclass(pl_dtype, pl.DataType):
+        dtype_name = pl_dtype.__name__
+    if dtype_name and dtype_name in CAST_FF_MAP:
+        return f"{CAST_FF_MAP[dtype_name]}({ff_repr})"
+    return None
 
 
 def _get_expr_and_repr(value: Any) -> tuple[pl.Expr | None, str]:
@@ -215,11 +230,17 @@ class StringMethods:
 
     def strip_chars_start(self, characters: str | None = None):
         res_expr = self.expr.strip_chars_start(characters) if self.expr is not None else None
-        return self._create_next_expr(method_name="strip_chars_start", result_expr=res_expr, is_complex=True)
+        result = self._create_next_expr(method_name="strip_chars_start", result_expr=res_expr, is_complex=True)
+        if characters is not None:
+            result._ff_repr = None  # left_trim formula only supports generic whitespace trim
+        return result
 
     def strip_chars_end(self, characters: str | None = None):
         res_expr = self.expr.strip_chars_end(characters) if self.expr is not None else None
-        return self._create_next_expr(method_name="strip_chars_end", result_expr=res_expr, is_complex=True)
+        result = self._create_next_expr(method_name="strip_chars_end", result_expr=res_expr, is_complex=True)
+        if characters is not None:
+            result._ff_repr = None  # right_trim formula only supports generic whitespace trim
+        return result
 
     def to_date(self, format: str, *, strict: bool = True, exact: bool = True, cache: bool = True):
         res_expr = self.expr.to_date(format, strict=strict, exact=exact, cache=cache) if self.expr is not None else None
@@ -1248,18 +1269,7 @@ class Expr:
             dtype_repr = f"pl.{dtype!s}"
 
         res_expr = self.expr.cast(pl_dtype, strict=strict) if self.expr is not None else None
-
-        # Compute ff_repr for cast
-        cast_ff = None
-        if self._ff_repr is not None:
-            # Get the dtype name for looking up in CAST_FF_MAP
-            dtype_name = None
-            if isinstance(pl_dtype, pl.DataType):
-                dtype_name = type(pl_dtype).__name__
-            elif isinstance(pl_dtype, type) and issubclass(pl_dtype, pl.DataType):
-                dtype_name = pl_dtype.__name__
-            if dtype_name and dtype_name in CAST_FF_MAP:
-                cast_ff = f"{CAST_FF_MAP[dtype_name]}({self._ff_repr})"
+        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype)
 
         # Cast preserves aggregation status (e.g., cast(col('a').sum()))
         new_expr = Expr(
@@ -1356,16 +1366,7 @@ class Column(Expr):
         new_repr = f"{self._repr_str}.cast({dtype_repr}, strict={strict})"
         display_name = self._select_input.new_name or self._select_input.old_name
 
-        # Compute ff_repr for Column.cast()
-        cast_ff = None
-        if self._ff_repr is not None:
-            dtype_name = None
-            if isinstance(pl_dtype, pl.DataType):
-                dtype_name = type(pl_dtype).__name__
-            elif isinstance(pl_dtype, type) and issubclass(pl_dtype, pl.DataType):
-                dtype_name = pl_dtype.__name__
-            if dtype_name and dtype_name in CAST_FF_MAP:
-                cast_ff = f"{CAST_FF_MAP[dtype_name]}({self._ff_repr})"
+        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype)
 
         new_column = Column(display_name, new_select)
         new_column.expr = new_pl_expr

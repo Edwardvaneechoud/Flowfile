@@ -74,6 +74,12 @@ class TestFfReprBasic:
     def test_lit_none_ff_repr(self):
         assert lit(None)._ff_repr is None
 
+    def test_lit_string_with_quotes(self):
+        assert lit('say "hello"')._ff_repr == '"say \\"hello\\""'
+
+    def test_lit_string_with_backslash(self):
+        assert lit("back\\slash")._ff_repr == '"back\\\\slash"'
+
 
 class TestFfReprBinaryOps:
     """Test _ff_repr for binary operations."""
@@ -209,6 +215,14 @@ class TestFfReprStringMethods:
     def test_strip_chars_end(self):
         assert col("x").str.strip_chars_end()._ff_repr == "right_trim([x])"
 
+    def test_strip_chars_start_with_characters_not_supported(self):
+        """strip_chars_start with specific characters should not produce ff_repr."""
+        assert col("x").str.strip_chars_start("0")._ff_repr is None
+
+    def test_strip_chars_end_with_characters_not_supported(self):
+        """strip_chars_end with specific characters should not produce ff_repr."""
+        assert col("x").str.strip_chars_end("0")._ff_repr is None
+
     def test_contains_not_mapped(self):
         """contains is not in STRING_METHOD_FF_MAP, so ff_repr should be None."""
         assert col("x").str.contains("pattern")._ff_repr is None
@@ -246,6 +260,12 @@ class TestFfReprDateTimeMethods:
 
     def test_second(self):
         assert col("x").dt.second()._ff_repr == "second([x])"
+
+    def test_quarter(self):
+        assert col("x").dt.quarter()._ff_repr == "quarter([x])"
+
+    def test_week(self):
+        assert col("x").dt.week()._ff_repr == "week([x])"
 
 
 class TestFfReprCast:
