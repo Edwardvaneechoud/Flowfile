@@ -26,7 +26,12 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
 
     Returns the child PID on success, or ``None`` on failure.
     """
-    cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
+    frozen = getattr(sys, "frozen", False)
+    logger.debug("Frozen mode: %s, sys.executable: %s", frozen, sys.executable)
+    if frozen:
+        cmd = [sys.executable, "--run-flow", flow_path, "--run-id", str(run_id)]
+    else:
+        cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
     logger.info("Spawning: %s", " ".join(cmd))
     try:
         log_dir = Path.home() / ".flowfile" / "logs"
@@ -45,5 +50,5 @@ def spawn_flow_subprocess(flow_path: str, run_id: int) -> int | None:
         logger.info("Subprocess log: %s (pid=%s)", log_file, proc.pid)
         return proc.pid
     except Exception:
-        logger.exception("Failed to spawn flow subprocess: %s", flow_path)
+        logger.exception("Failed to spawn flow subprocess for flow_path=%s, run_id=%s", flow_path, run_id)
         return None

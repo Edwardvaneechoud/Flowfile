@@ -36,6 +36,7 @@ import {
 } from "./backendInterface";
 import { FlowApi } from "../../api";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
+import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import DataPreview from "../../features/designer/dataPreview.vue";
@@ -762,6 +763,20 @@ defineExpose({
       :prevent-overlap="false"
     >
       <CodeGenerator />
+    </draggable-item>
+    <draggable-item
+      v-if="editorStore.showParametersPanel"
+      id="flowParameters"
+      :show-right="true"
+      initial-position="right"
+      :initial-width="520"
+      title="Flow Parameters"
+      :on-minize="() => editorStore.setParametersPanelVisibility(false)"
+      :allow-full-screen="true"
+      :prevent-overlap="false"
+      group="rightPanels"
+    >
+      <FlowParametersPanel />
     </draggable-item>
     <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>

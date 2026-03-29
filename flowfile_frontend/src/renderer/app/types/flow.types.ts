@@ -12,6 +12,16 @@ export type ExecutionMode = "Development" | "Performance";
 export type ExecutionLocation = "local" | "remote";
 
 // ============================================================================
+// Flow Parameters
+// ============================================================================
+
+export interface FlowParameter {
+  name: string;
+  default_value: string;
+  description: string;
+}
+
+// ============================================================================
 // Flow Settings
 // ============================================================================
 
@@ -29,6 +39,7 @@ export interface FlowSettings {
   show_edge_labels: boolean;
   is_running: boolean;
   max_parallel_workers: number;
+  parameters?: FlowParameter[];
 }
 
 // ============================================================================
