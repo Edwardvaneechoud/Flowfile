@@ -331,7 +331,7 @@
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
       </div>
-      <table v-else class="artifacts-table">
+      <table v-else class="styled-table artifacts-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -613,6 +613,23 @@ async function handleDeleteSchedule(id: number) {
   width: 100%;
 }
 
+.btn-danger-outline {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-danger-outline:hover {
+  background: var(--color-danger-light);
+}
+
 /* ========== Grid column templates ========== */
 .schedules-grid .table-header,
 .schedules-grid .table-row {
@@ -626,28 +643,20 @@ async function handleDeleteSchedule(id: number) {
   white-space: nowrap;
 }
 
-/* ========== Artifacts Table ========== */
-.artifacts-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--font-size-sm);
+.action-btn-primary:hover {
+  opacity: 0.9;
 }
 
+/* ========== Meta Grid (override breakpoint) ========== */
+.meta-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+/* ========== Artifacts Table (extends .styled-table) ========== */
 .artifacts-table th {
-  text-align: left;
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-muted);
-  border-bottom: 1px solid var(--color-border-primary);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.artifacts-table td {
-  padding: var(--spacing-2) var(--spacing-3);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text-primary);
 }
 
 .artifact-row td {
