@@ -1167,7 +1167,6 @@ def test_formula_node_cast():
     # Verify formula code
     verify_code_contains(code,
                          "with_columns",
-                         "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr",
                          "df_2 = df_1.with_columns(",
                          'alias("total")',
                          'cast(pl.Int64)'
@@ -1177,6 +1176,35 @@ def test_formula_node_cast():
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
+
+def test_non_convertable_formula_node_cast():
+    # test to validate that if code can not be converted to polars code it still works by falling back on
+    # to the original code
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    flow.get_node(1).get_resulting_data().collect()
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Double"),
+            function="string_similarity([region], 'Noorden')"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code,
+                         "with_columns",
+                         "df_2 = df_1.with_columns(",
+                         'alias("total")',
+                         "simple_function_to_expr"
+                         )
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df)
 
 def test_formula_node():
     """Test formula/expression node"""
@@ -1200,7 +1228,6 @@ def test_formula_node():
     # Verify formula code
     verify_code_contains(code,
                          "with_columns",
-                         "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr",
                          "df_2 = df_1.with_columns(",
                          'alias("total")',
                          )
