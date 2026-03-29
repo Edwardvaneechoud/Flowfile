@@ -294,27 +294,27 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 }
 
 .kernel-card__memory-fill.memory-level--normal {
-  background-color: var(--color-success, #67c23a);
+  background-color: var(--color-success);
 }
 
 .kernel-card__memory-fill.memory-level--warning {
-  background-color: var(--color-warning, #e6a23c);
+  background-color: var(--color-warning);
 }
 
 .kernel-card__memory-fill.memory-level--critical {
-  background-color: var(--color-danger, #f56c6c);
+  background-color: var(--color-danger);
 }
 
 .memory-level--normal {
-  color: var(--color-success-hover, #529b2e);
+  color: var(--color-success-hover);
 }
 
 .memory-level--warning {
-  color: var(--color-warning-dark, #b88230);
+  color: var(--color-warning-dark);
 }
 
 .memory-level--critical {
-  color: var(--color-danger, #f56c6c);
+  color: var(--color-danger);
 }
 
 .kernel-card__error {
