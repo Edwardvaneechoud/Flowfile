@@ -24,10 +24,22 @@ def _validate_catalog_path(table_path: str) -> Path:
 
     Raises ValueError if the path escapes the allowed directory.
     """
+    if "\x00" in table_path:
+        raise ValueError("table_path contains null bytes")
+
     allowed_dir = storage.catalog_tables_directory.resolve()
-    resolved = Path(table_path).resolve()
-    if not (resolved == allowed_dir or str(resolved).startswith(str(allowed_dir) + os.sep)):
+    candidate = Path(table_path)
+
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (allowed_dir / candidate).resolve()
+
+    try:
+        resolved.relative_to(allowed_dir)
+    except ValueError:
         raise ValueError(f"table_path must be within the catalog tables directory: {allowed_dir}")
+
     return resolved
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
@@ -474,7 +486,7 @@ def write_delta(
         os.makedirs(output_path, exist_ok=True)
         df.write_delta(output_path, mode=mode)
 
-        size_bytes = _get_delta_size_bytes(output_path)
+        size_bytes = _get_delta_size_bytes(Path(output_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put({
@@ -522,7 +534,7 @@ def materialize_catalog_table_task(
         os.makedirs(dest_path, exist_ok=True)
         df.write_delta(dest_path, mode="overwrite")
 
-        size_bytes = _get_delta_size_bytes(dest_path)
+        size_bytes = _get_delta_size_bytes(Path(dest_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put({
@@ -554,7 +566,7 @@ def read_table_metadata(table_path: str, storage_format: str = "delta") -> dict:
         schema = lf.collect_schema()
         schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
         row_count = lf.select(pl.len()).collect().item()
-        size_bytes = _get_delta_size_bytes(str(p))
+        size_bytes = _get_delta_size_bytes(p)
     else:
         lf = pl.scan_parquet(p)
         schema = lf.collect_schema()
@@ -569,22 +581,20 @@ def read_table_metadata(table_path: str, storage_format: str = "delta") -> dict:
     }
 
 
-def _get_delta_size_bytes(delta_dir: str) -> int:
+def _get_delta_size_bytes(delta_dir: Path) -> int:
     """Sum the sizes of active data files from the Delta transaction log.
 
     Falls back to filesystem scanning if the delta log can't be read.
     """
-    from pathlib import Path
-
     try:
         from deltalake import DeltaTable
 
-        dt = DeltaTable(delta_dir)
+        dt = DeltaTable(str(delta_dir))
         add_actions = dt.get_add_actions(flatten=True)
         size_col = add_actions.column("size_bytes")
         return sum(v for v in size_col.to_pylist() if v is not None)
     except Exception:
-        return sum(f.stat().st_size for f in Path(delta_dir).rglob("*.parquet"))
+        return sum(f.stat().st_size for f in delta_dir.rglob("*.parquet"))
 
 
 def _format_delta_timestamp(ts: object) -> str | None:

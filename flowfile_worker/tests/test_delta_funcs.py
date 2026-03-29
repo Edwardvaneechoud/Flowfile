@@ -89,12 +89,12 @@ def worker_client(tmp_path) -> TestClient:
 
 class TestGetDeltaSizeBytes:
     def test_returns_positive(self, delta_path):
-        size = _get_delta_size_bytes(str(delta_path))
+        size = _get_delta_size_bytes(delta_path)
         assert size > 0
 
     def test_matches_parquet_file_sizes(self, delta_path):
         fs_size = sum(f.stat().st_size for f in delta_path.rglob("*.parquet"))
-        assert _get_delta_size_bytes(str(delta_path)) == fs_size
+        assert _get_delta_size_bytes(delta_path) == fs_size
 
 
 # ---------------------------------------------------------------------------
