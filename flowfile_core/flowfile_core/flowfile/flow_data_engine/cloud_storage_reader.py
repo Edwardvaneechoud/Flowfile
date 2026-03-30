@@ -112,14 +112,12 @@ class CloudStorageReader:
         storage_options = {}
 
         if connection.auth_method == "access_key":
-            # Account key authentication
             if connection.azure_account_name:
                 storage_options["account_name"] = connection.azure_account_name
             if connection.azure_account_key:
                 storage_options["account_key"] = connection.azure_account_key.get_secret_value()
 
         elif connection.auth_method == "service_principal":
-            # Service principal authentication
             if connection.azure_tenant_id:
                 storage_options["tenant_id"] = connection.azure_tenant_id
             if connection.azure_client_id:
@@ -128,18 +126,36 @@ class CloudStorageReader:
                 storage_options["client_secret"] = connection.azure_client_secret.get_secret_value()
 
         elif connection.auth_method == "sas_token":
-            # SAS token authentication
+            if connection.azure_account_name:
+                storage_options["account_name"] = connection.azure_account_name
             if connection.azure_sas_token:
                 storage_options["sas_token"] = connection.azure_sas_token.get_secret_value()
+
+        elif connection.auth_method == "managed_identity":
+            if connection.azure_account_name:
+                storage_options["account_name"] = connection.azure_account_name
+            storage_options["use_azure_cli"] = "true"
+
+        if connection.endpoint_url:
+            storage_options["azure_storage_endpoint"] = connection.endpoint_url
 
         return storage_options
 
     @staticmethod
     def _get_gcs_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
         """Build GCS-specific storage options."""
-        # GCS typically uses service account authentication
-        # Implementation would depend on how credentials are stored
-        return {}
+        storage_options = {}
+
+        if connection.auth_method == "service_account" and connection.gcs_service_account_key:
+            storage_options["service_account_key"] = connection.gcs_service_account_key.get_secret_value()
+
+        if connection.gcs_project_id:
+            storage_options["project_id"] = connection.gcs_project_id
+
+        if connection.endpoint_url:
+            storage_options["google_service_account_endpoint"] = connection.endpoint_url
+
+        return storage_options
 
     @staticmethod
     def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:

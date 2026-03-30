@@ -9,7 +9,14 @@ from flowfile_worker.secrets import decrypt_secret
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal[
-    "access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "env_vars"
+    "access_key",
+    "iam_role",
+    "service_principal",
+    "managed_identity",
+    "sas_token",
+    "aws-cli",
+    "env_vars",
+    "service_account",
 ]
 
 
@@ -70,6 +77,11 @@ class FullCloudStorageConnection(BaseModel):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: SecretStr | None = None
+    azure_sas_token: SecretStr | None = None
+
+    # Google Cloud Storage
+    gcs_service_account_key: SecretStr | None = None
+    gcs_project_id: str | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -84,6 +96,12 @@ class FullCloudStorageConnection(BaseModel):
         """
         if self.storage_type == "s3":
             return self._get_s3_storage_options()
+        elif self.storage_type == "adls":
+            return self._get_adls_storage_options()
+        elif self.storage_type == "gcs":
+            return self._get_gcs_storage_options()
+        else:
+            raise ValueError(f"Unsupported storage type: {self.storage_type}")
 
     def _get_s3_storage_options(self) -> dict[str, Any]:
         """Build S3-specific storage options."""
@@ -124,6 +142,63 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["aws_access_key_id"] = credentials["AccessKeyId"]
             storage_options["aws_secret_access_key"] = decrypt_secret(credentials["SecretAccessKey"]).get_secret_value()
             storage_options["aws_session_token"] = decrypt_secret(credentials["SessionToken"]).get_secret_value()
+
+        return storage_options
+
+    def _get_adls_storage_options(self) -> dict[str, Any]:
+        """Build Azure ADLS-specific storage options."""
+        storage_options = {}
+
+        if self.auth_method == "access_key":
+            if self.azure_account_name:
+                storage_options["account_name"] = self.azure_account_name
+            if self.azure_account_key:
+                storage_options["account_key"] = decrypt_secret(
+                    self.azure_account_key.get_secret_value()
+                ).get_secret_value()
+
+        elif self.auth_method == "service_principal":
+            if self.azure_tenant_id:
+                storage_options["tenant_id"] = self.azure_tenant_id
+            if self.azure_client_id:
+                storage_options["client_id"] = self.azure_client_id
+            if self.azure_client_secret:
+                storage_options["client_secret"] = decrypt_secret(
+                    self.azure_client_secret.get_secret_value()
+                ).get_secret_value()
+
+        elif self.auth_method == "sas_token":
+            if self.azure_account_name:
+                storage_options["account_name"] = self.azure_account_name
+            if self.azure_sas_token:
+                storage_options["sas_token"] = decrypt_secret(
+                    self.azure_sas_token.get_secret_value()
+                ).get_secret_value()
+
+        elif self.auth_method == "managed_identity":
+            if self.azure_account_name:
+                storage_options["account_name"] = self.azure_account_name
+            storage_options["use_azure_cli"] = "true"
+
+        if self.endpoint_url:
+            storage_options["azure_storage_endpoint"] = self.endpoint_url
+
+        return storage_options
+
+    def _get_gcs_storage_options(self) -> dict[str, Any]:
+        """Build GCS-specific storage options."""
+        storage_options = {}
+
+        if self.auth_method == "service_account" and self.gcs_service_account_key:
+            storage_options["service_account_key"] = decrypt_secret(
+                self.gcs_service_account_key.get_secret_value()
+            ).get_secret_value()
+
+        if self.gcs_project_id:
+            storage_options["project_id"] = self.gcs_project_id
+
+        if self.endpoint_url:
+            storage_options["google_service_account_endpoint"] = self.endpoint_url
 
         return storage_options
 

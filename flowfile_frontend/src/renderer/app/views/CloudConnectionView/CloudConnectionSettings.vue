@@ -20,7 +20,8 @@
         <label for="storage-type" class="form-label">Storage Type</label>
         <select id="storage-type" v-model="connection.storageType" class="form-input" required>
           <option value="s3">AWS S3</option>
-          <!-- <option value="adls">Azure Data Lake Storage</option> -->
+          <option value="adls">Azure Data Lake Storage</option>
+          <option value="gcs">Google Cloud Storage</option>
         </select>
       </div>
 
@@ -205,6 +206,63 @@
             </div>
           </div>
         </template>
+
+        <!-- Azure SAS Token (for sas_token auth) -->
+        <div v-if="connection.authMethod === 'sas_token'" class="form-field">
+          <label for="azure-sas-token" class="form-label">Azure SAS Token</label>
+          <div class="password-field">
+            <input
+              id="azure-sas-token"
+              v-model="connection.azureSasToken"
+              :type="showAzureSasToken ? 'text' : 'password'"
+              class="form-input"
+              :placeholder="props.isEditing ? 'Leave blank to keep existing' : 'SAS token'"
+              :required="connection.authMethod === 'sas_token'"
+            />
+            <button
+              type="button"
+              class="toggle-visibility"
+              aria-label="Toggle SAS token visibility"
+              @click="showAzureSasToken = !showAzureSasToken"
+            >
+              <i :class="showAzureSasToken ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Google Cloud Storage Fields -->
+      <template v-if="connection.storageType === 'gcs'">
+        <!-- GCS Project ID -->
+        <div class="form-field">
+          <label for="gcs-project-id" class="form-label">Project ID</label>
+          <input
+            id="gcs-project-id"
+            v-model="connection.gcsProjectId"
+            type="text"
+            class="form-input"
+            placeholder="my-gcp-project"
+          />
+        </div>
+
+        <!-- GCS Service Account Key (for service_account auth) -->
+        <div v-if="connection.authMethod === 'service_account'" class="form-field">
+          <label for="gcs-service-account-key" class="form-label">Service Account Key (JSON)</label>
+          <div class="password-field">
+            <textarea
+              id="gcs-service-account-key"
+              v-model="connection.gcsServiceAccountKey"
+              class="form-input"
+              :placeholder="
+                props.isEditing
+                  ? 'Leave blank to keep existing'
+                  : 'Paste your service account JSON key here'
+              "
+              :required="connection.authMethod === 'service_account'"
+              rows="4"
+            />
+          </div>
+        </div>
       </template>
 
       <!-- Common Fields -->
@@ -275,6 +333,11 @@ const authMethodsByStorageType = {
     { value: "sas_token", label: "SAS Token" },
     { value: "auto", label: "Auto" },
   ],
+  gcs: [
+    { value: "service_account", label: "Service Account" },
+    { value: "env_vars", label: "Application Default Credentials" },
+    { value: "auto", label: "Auto" },
+  ],
 };
 
 // Create a default connection object
@@ -305,6 +368,7 @@ watch(
 const showAwsSecret = ref(false);
 const showAzureKey = ref(false);
 const showAzureSecret = ref(false);
+const showAzureSasToken = ref(false);
 
 // Computed property for available auth methods based on storage type
 const availableAuthMethods = computed(() => {
@@ -362,6 +426,15 @@ const isValid = computed(() => {
         !!connection.value.azureClientId &&
         (props.isEditing || !!connection.value.azureClientSecret)
       );
+    } else if (connection.value.authMethod === "sas_token") {
+      return props.isEditing || !!connection.value.azureSasToken;
+    }
+  }
+
+  // Google Cloud Storage validation
+  if (connection.value.storageType === "gcs") {
+    if (connection.value.authMethod === "service_account") {
+      return props.isEditing || !!connection.value.gcsServiceAccountKey;
     }
   }
 
