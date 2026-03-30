@@ -182,6 +182,8 @@ class FullCloudStorageConnection(BaseModel):
 
         if self.endpoint_url:
             storage_options["azure_storage_endpoint"] = self.endpoint_url
+            if self.endpoint_url.startswith("http://"):
+                storage_options["azure_storage_allow_http"] = "true"
 
         return storage_options
 
@@ -198,7 +200,7 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["project_id"] = self.gcs_project_id
 
         if self.endpoint_url:
-            storage_options["google_service_account_endpoint"] = self.endpoint_url
+            storage_options["endpoint"] = self.endpoint_url
 
         return storage_options
 

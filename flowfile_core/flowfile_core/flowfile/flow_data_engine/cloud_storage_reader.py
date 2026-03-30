@@ -138,6 +138,8 @@ class CloudStorageReader:
 
         if connection.endpoint_url:
             storage_options["azure_storage_endpoint"] = connection.endpoint_url
+            if connection.endpoint_url.startswith("http://"):
+                storage_options["azure_storage_allow_http"] = "true"
 
         return storage_options
 
@@ -153,7 +155,7 @@ class CloudStorageReader:
             storage_options["project_id"] = connection.gcs_project_id
 
         if connection.endpoint_url:
-            storage_options["google_service_account_endpoint"] = connection.endpoint_url
+            storage_options["endpoint"] = connection.endpoint_url
 
         return storage_options
 
