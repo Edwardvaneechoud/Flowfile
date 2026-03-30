@@ -38,7 +38,11 @@ def find_parent_directory(target_dir_name,):
 
 try:
     from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
-    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
+    from tests.utils import (
+        ensure_adls_cloud_storage_connection_is_available_and_get_connection,
+        ensure_cloud_storage_connection_is_available_and_get_connection,
+        ensure_gcs_cloud_storage_connection_is_available_and_get_connection,
+    )
 except ModuleNotFoundError:
     import os
     import sys
@@ -47,7 +51,11 @@ except ModuleNotFoundError:
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 
-    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
+    from tests.utils import (
+        ensure_adls_cloud_storage_connection_is_available_and_get_connection,
+        ensure_cloud_storage_connection_is_available_and_get_connection,
+        ensure_gcs_cloud_storage_connection_is_available_and_get_connection,
+    )
 
 
 @pytest.fixture
@@ -1288,6 +1296,54 @@ def test_schema_callback_cloud_read(flow_logger):
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
     read_settings = cloud_ss.CloudStorageReadSettings(
         resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    node.get_table_example(True)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_schema_callback_cloud_read_adls(flow_logger):
+    # Validate schema callback with ADLS (Azurite) cloud storage reader
+    conn = ensure_adls_cloud_storage_connection_is_available_and_get_connection()
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="az://test-container/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    node.get_table_example(True)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_schema_callback_cloud_read_gcs(flow_logger):
+    # Validate schema callback with GCS (fake-gcs-server) cloud storage reader
+    conn = ensure_gcs_cloud_storage_connection_is_available_and_get_connection()
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="gs://test-bucket/single-file-parquet/data.parquet",
         file_format="parquet",
         scan_mode="single_file",
         connection_name=conn.connection_name
