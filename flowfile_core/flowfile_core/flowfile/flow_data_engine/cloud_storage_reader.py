@@ -137,9 +137,17 @@ class CloudStorageReader:
             storage_options["use_azure_cli"] = "true"
 
         if connection.endpoint_url:
-            storage_options["azure_storage_endpoint"] = connection.endpoint_url
             if connection.endpoint_url.startswith("http://"):
+                # Emulator mode (e.g. Azurite): use path-style URLs and allow HTTP
+                storage_options["azure_storage_use_emulator"] = "true"
                 storage_options["azure_storage_allow_http"] = "true"
+                # Build emulator endpoint with account name in path
+                account = connection.azure_account_name or "devstoreaccount1"
+                storage_options["azure_storage_endpoint"] = (
+                    f"{connection.endpoint_url.rstrip('/')}/{account}"
+                )
+            else:
+                storage_options["azure_storage_endpoint"] = connection.endpoint_url
 
         return storage_options
 
@@ -150,6 +158,10 @@ class CloudStorageReader:
 
         if connection.auth_method == "service_account" and connection.gcs_service_account_key:
             storage_options["service_account_key"] = connection.gcs_service_account_key.get_secret_value()
+        elif connection.auth_method == "env_vars" and connection.endpoint_url:
+            # For emulators (e.g. fake-gcs-server) that don't require auth,
+            # provide a static empty token to skip the OAuth/metadata flow.
+            storage_options["token"] = ""
 
         if connection.gcs_project_id:
             storage_options["project_id"] = connection.gcs_project_id

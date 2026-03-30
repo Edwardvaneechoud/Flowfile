@@ -181,9 +181,15 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["use_azure_cli"] = "true"
 
         if self.endpoint_url:
-            storage_options["azure_storage_endpoint"] = self.endpoint_url
             if self.endpoint_url.startswith("http://"):
+                storage_options["azure_storage_use_emulator"] = "true"
                 storage_options["azure_storage_allow_http"] = "true"
+                account = self.azure_account_name or "devstoreaccount1"
+                storage_options["azure_storage_endpoint"] = (
+                    f"{self.endpoint_url.rstrip('/')}/{account}"
+                )
+            else:
+                storage_options["azure_storage_endpoint"] = self.endpoint_url
 
         return storage_options
 
@@ -195,6 +201,8 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["service_account_key"] = decrypt_secret(
                 self.gcs_service_account_key.get_secret_value()
             ).get_secret_value()
+        elif self.auth_method == "env_vars" and self.endpoint_url:
+            storage_options["token"] = ""
 
         if self.gcs_project_id:
             storage_options["project_id"] = self.gcs_project_id
