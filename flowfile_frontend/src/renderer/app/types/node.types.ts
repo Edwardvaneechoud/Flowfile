@@ -602,16 +602,26 @@ export interface ReceivedTable {
 // Database Types
 // ============================================================================
 
-export interface DatabaseConnection {
-  database_type: "postgresql" | "mysql" | "sqlite";
-  username: string;
-  password_ref: string;
+interface BaseConnection {
   host?: string;
   port?: number;
   database?: string;
   url?: string;
 }
 
+export interface RemoteConnection extends BaseConnection {
+  database_type: "postgresql" | "mysql";
+  username: string;
+  password_ref: string; // Strictly required for remote DBs
+}
+
+export interface SqliteConnection extends BaseConnection {
+  database_type: "sqlite";
+  username?: string; // Optional or completely remove if SQLite doesn't need it
+  password_ref?: never; // Ensures password_ref cannot be used with SQLite
+}
+
+export type DatabaseConnection = RemoteConnection | SqliteConnection;
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";
 

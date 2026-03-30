@@ -5,7 +5,7 @@ from time import sleep
 from typing import Literal
 
 import pytest
-
+from sqlalchemy import Boolean, Column, Float, Integer, String, Text, create_engine
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
@@ -21,6 +21,9 @@ from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.types import DataType
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
+
+Base = declarative_base()
 
 
 def find_parent_directory(target_dir_name,):
@@ -48,6 +51,53 @@ except ModuleNotFoundError:
     from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
+
+
+class Movie(Base):
+    __tablename__ = "movies"
+    id = Column(Integer, primary_key=True)
+    title = Column(String(255), nullable=False)
+    rating = Column(Float)
+    votes = Column(Integer)
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+
+
+class Actor(Base):
+    __tablename__ = "actors"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    birth_year = Column(Integer)
+
+
+@pytest.fixture
+def sqlite_db(tmp_path):
+    """Create a temporary SQLite database with sample data."""
+    db_path = str(tmp_path / "test.db")
+    connection_string = f"sqlite:///{db_path}"
+    engine = create_engine(connection_string)
+    Base.metadata.create_all(engine)
+
+    session_factory = sessionmaker(bind=engine)
+    session: Session = session_factory()
+
+    movies = [
+        Movie(id=1, title="The Matrix", rating=8.7, votes=1800000, description="A sci-fi classic", is_active=True),
+        Movie(id=2, title="Inception", rating=8.8, votes=2200000, description="Mind-bending thriller", is_active=True),
+        Movie(id=3, title="The Shawshank Redemption", rating=9.3, votes=2500000, description="Drama", is_active=True),
+    ]
+    actors = [
+        Actor(id=1, name="Keanu Reeves", birth_year=1964),
+        Actor(id=2, name="Leonardo DiCaprio", birth_year=1974),
+        Actor(id=3, name="Morgan Freeman", birth_year=1937),
+    ]
+
+    session.add_all(movies + actors)
+    session.commit()
+    session.close()
+    engine.dispose()
+
+    yield db_path
 
 
 @pytest.fixture
@@ -1102,6 +1152,32 @@ def test_add_database_reader():
                                                           host='localhost',
                                                           port=5433,
                                                           database='testdb')
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_reader(node_database_reader)
+    node = graph.get_node(1)
+    assert node.name == 'database_reader', 'Node name should be database_reader'
+    predicted_schema = node.get_predicted_schema()
+    assert len(predicted_schema) == 20, 'Expected 20 columns in the schema'
+    predicted_lf = node.get_predicted_resulting_data()
+    assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+def test_add_database_reader_sqllite(sqlite_db):
+    breakpoint()
+    graph = create_graph()
+    add_node_promise_on_type(graph, 'database_reader', 1)
+    conn_str = f"sqlite:///{sqlite_db}"
+    database_connection = input_schema.DatabaseConnection(database_type='sqlite',
+                                                          host=conn_str,
+                                                          password_ref="")
     database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
                                                       schema_name='public', table_name='movies')
     node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
