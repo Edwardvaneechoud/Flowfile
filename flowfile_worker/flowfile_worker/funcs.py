@@ -473,7 +473,13 @@ def write_delta(
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
         os.makedirs(output_path, exist_ok=True)
-        df.write_delta(output_path, mode=mode)
+        delta_write_options = {}
+        if mode == "overwrite":
+            delta_write_options["schema_mode"] = "overwrite"
+        elif mode == "append":
+            # Allow schema evolution: new columns in the source are added to the table
+            delta_write_options["schema_mode"] = "merge"
+        df.write_delta(output_path, mode=mode, delta_write_options=delta_write_options)
 
         size_bytes = _get_delta_size_bytes(Path(output_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
@@ -494,6 +500,110 @@ def write_delta(
     except Exception as e:
         error_msg = str(e).encode()[:1024]
         flowfile_logger.error(f"Error during write_delta operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def merge_delta(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    merge_mode: str = "upsert",
+    merge_keys: list[str] | None = None,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and merge it into a Delta table.
+
+    Supports three merge modes:
+    - upsert: update matched rows + insert unmatched
+    - update: update only matched rows (no inserts)
+    - delete: remove matched rows from target
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+
+        table_exists = os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
+
+        if not table_exists:
+            os.makedirs(output_path, exist_ok=True)
+            if merge_mode == "delete":
+                flowfile_logger.warning("Delete on non-existent table %s; creating empty table", output_path)
+                empty = df.clear()
+                empty.write_delta(output_path, mode="error")
+            elif merge_mode == "update":
+                # "update" means only update existing rows — no rows exist, so write empty table
+                empty = df.clear()
+                empty.write_delta(output_path, mode="error")
+            else:
+                # upsert on non-existent table: write all rows as the initial table
+                df.write_delta(output_path, mode="error")
+        else:
+            if not merge_keys:
+                raise ValueError("merge_keys is required for merge operations on existing tables")
+
+            dt = DeltaTable(output_path)
+
+            # Schema evolution: add new source columns to the target before merging
+            if merge_mode in ("upsert", "update"):
+                target_col_names = {field.name for field in dt.schema().fields}
+                new_cols = [c for c in df.columns if c not in target_col_names]
+                if new_cols:
+                    df.clear().write_delta(
+                        output_path, mode="append", delta_write_options={"schema_mode": "merge"}
+                    )
+                    dt = DeltaTable(output_path)
+
+            # Build merge predicate
+            predicate = " AND ".join(f'target."{k}" = source."{k}"' for k in merge_keys)
+            source_arrow = df.to_arrow()
+
+            merger = dt.merge(
+                source=source_arrow,
+                predicate=predicate,
+                source_alias="source",
+                target_alias="target",
+            )
+            if merge_mode == "upsert":
+                merger.when_matched_update_all().when_not_matched_insert_all().execute()
+            elif merge_mode == "update":
+                merger.when_matched_update_all().execute()
+            elif merge_mode == "delete":
+                merger.when_matched_delete().execute()
+            else:
+                raise ValueError(f"Unknown merge_mode: {merge_mode}")
+
+        # Read back metadata from the resulting table
+        result_df = pl.scan_delta(output_path)
+        result_schema = result_df.collect_schema()
+        schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
+        row_count = result_df.select(pl.len()).collect().item()
+        size_bytes = _get_delta_size_bytes(Path(output_path))
+
+        queue.put(
+            {
+                "table_path": output_path,
+                "storage_format": "delta",
+                "schema": schema,
+                "row_count": row_count,
+                "column_count": len(schema),
+                "size_bytes": size_bytes,
+            }
+        )
+        flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during merge_delta operation: {str(e)}")
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
