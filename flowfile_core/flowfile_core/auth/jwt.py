@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.models import TokenData, User
 from flowfile_core.auth.secrets import get_password, set_password
+from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 
@@ -18,7 +19,7 @@ router = APIRouter()
 
 # Constants for JWT
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
@@ -84,6 +85,9 @@ def get_current_user_sync(token: str, db: Session):
     try:
         # Decode token in all modes (Electron and Docker)
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        # Reject refresh tokens used as access tokens
+        if payload.get("type") == "refresh":
+            raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -132,6 +136,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     try:
         # Decode token in all modes (Electron and Docker)
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        # Reject refresh tokens used as access tokens
+        if payload.get("type") == "refresh":
+            raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -180,9 +187,38 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def create_refresh_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh"})
+    return jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> str:
+    """Decode a refresh token and return the username.
+
+    Raises HTTPException(401) if the token is invalid, expired, or not a refresh token.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise credentials_exception
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        return username
+    except JWTError:
+        raise credentials_exception from None
 
 
 async def get_current_user_from_query(
