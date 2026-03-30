@@ -1,4 +1,5 @@
 import polars as pl
+import polars.selectors as cs
 import pytest
 from polars.testing import assert_frame_equal
 
@@ -109,11 +110,14 @@ class TestGroupByFrame:
         # Group by region and sum all numeric columns
         result = sales_data.group_by("region").sum().collect()
 
-        # Check columns - all numeric columns should be summed
+        # Check columns - group key + numeric columns should be present
         assert "region" in result.columns
         assert "sales" in result.columns
         assert "units" in result.columns
         assert "returns" in result.columns
+        # String columns should not be in the result
+        assert "category" not in result.columns
+        assert "product" not in result.columns
 
         # Verify sums for a specific region
         north_row = result.filter(pl.col("region") == "North")
@@ -360,7 +364,7 @@ class TestGroupByFrame:
         # Group by promotion status
         flow_frame = sales_data.group_by("is_promoted").sum()
         result = flow_frame.collect()
-        expected_data = sales_data.data.group_by("is_promoted").sum().collect()
+        expected_data = sales_data.data.group_by("is_promoted").agg(cs.numeric().sum()).collect()
         assert_frame_equal(expected_data, result, check_row_order=False)
 
     def test_group_by_maintain_order(self, sales_data):

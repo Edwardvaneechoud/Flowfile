@@ -60,7 +60,7 @@ def _to_string_val(v) -> str:
         return v
 
 
-def _extract_expr_parts(expr_obj) -> tuple[str, str]:
+def _extract_expr_parts(expr_obj: Expr | Any) -> tuple[str, str]:
     """
     Extract the pure expression string and any raw definitions (including function sources) from an Expr object.
 
@@ -334,9 +334,17 @@ class FlowFrame:
         )
         add_connection(self.flow_graph, connection)
 
-    def _create_child_frame(self, new_node_id):
+    def _create_child_frame(self, new_node_id, *, precomputed_result=None):
         """Helper method to create a new FlowFrame that's a child of this one"""
         self._add_connection(self.node_id, new_node_id)
+        # If a precomputed result was provided (e.g. serialization fallback),
+        # inject it into the node AFTER the connection is added (which resets the node).
+        if precomputed_result is not None:
+            from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+            node = self.flow_graph.get_node(new_node_id)
+            if node is not None:
+                node.results.resulting_data = FlowDataEngine(precomputed_result)
         try:
             return FlowFrame(
                 data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
@@ -484,7 +492,7 @@ class FlowFrame:
                 "maintain_order": maintain_order,
             }
 
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -494,6 +502,7 @@ class FlowFrame:
                 kwargs_expr=kwargs_for_fallback,
             )
         else:
+            precomputed = None
             sort_inputs_for_node = []
             for i, col_name_for_native in enumerate(column_names_for_native_node):
                 sort_inputs_for_node.append(
@@ -512,7 +521,7 @@ class FlowFrame:
             )
             self.flow_graph.add_sort(sort_settings)
 
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def _add_polars_code(
         self,
@@ -526,8 +535,10 @@ class FlowFrame:
         group_expr: Expr | list[Expr] | None = None,
         kwargs_expr: dict | None = None,
         group_kwargs: dict | None = None,
-    ):
+    ) -> Any | None:
+        """Returns a precomputed result if serialization fell back, otherwise None."""
         polars_code_for_node: str
+        precomputed = None
         if not convertable_to_code or _contains_lambda_pattern(code):
             effective_method_name = (
                 get_method_name_from_code(code) if method_name is None and "input_df." in code else method_name
@@ -565,17 +576,20 @@ class FlowFrame:
                 )
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
-                    serialized_value_for_code = result_lazyframe_or_expr.serialize(format="json")
+                    import base64
+
+                    serialized_bytes = result_lazyframe_or_expr.serialize()
+                    b64_str = base64.b64encode(serialized_bytes).decode("ascii")
                     polars_code_for_node = "\n".join(
                         [
-                            f"serialized_value = r'''{serialized_value_for_code}'''",
-                            "buffer = BytesIO(serialized_value.encode('utf-8'))",
-                            "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
+                            f"serialized_value = base64.b64decode('{b64_str}')",
+                            "buffer = BytesIO(serialized_value)",
+                            "output_df = pl.LazyFrame.deserialize(buffer)",
                         ]
                     )
                     logger.warning(
                         f"Transformation '{effective_method_name}' uses non-serializable elements. "
-                        "Falling back to serializing the resulting Polars LazyFrame object."
+                        "Falling back to serializing the resulting Polars LazyFrame object. "
                         "This will result in a breaking graph when using the the ui."
                     )
                 else:
@@ -584,14 +598,16 @@ class FlowFrame:
                         f"resulted in a '{type(result_lazyframe_or_expr).__name__}' instead of a Polars LazyFrame. "
                         "This type cannot be persisted as a LazyFrame node via this fallback."
                     )
-                    return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                    polars_code_for_node = "output_df = input_df"
+                    precomputed = result_lazyframe_or_expr
             except Exception as e:
                 logger.warning(
                     f"Critical error: Could not serialize the result of operation '{effective_method_name}' "
-                    f"during fallback for non-convertible code. Error: {e}."
+                    f"during fallback for non-convertible code. Error: {e}. "
                     "When using a lambda function, consider defining the function first"
                 )
-                return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+                polars_code_for_node = "output_df = input_df"
+                precomputed = result_lazyframe_or_expr
         else:
             polars_code_for_node = code
         polars_code_settings = input_schema.NodePolarsCode(
@@ -603,6 +619,7 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_polars_code(polars_code_settings)
+        return precomputed
 
     def join(
         self,
@@ -1024,6 +1041,7 @@ class FlowFrame:
                 selected_col_names_for_native = [
                     lookup_selection.get(_col) for _col in existing_cols if _col in lookup_selection
                 ]
+            precomputed = None
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1053,7 +1071,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -1062,7 +1080,7 @@ class FlowFrame:
                 polars_expr=pl_expressions_for_fallback,
             )
 
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def filter(
         self,
@@ -1138,7 +1156,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -1147,6 +1165,7 @@ class FlowFrame:
                 polars_expr=pl_expressions_for_fallback,
             )
         elif flowfile_formula:
+            precomputed = None
             filter_settings = input_schema.NodeFilter(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -1160,9 +1179,11 @@ class FlowFrame:
             self.flow_graph.add_filter(filter_settings)
         else:
             logger.info("Filter called with no arguments; creating a pass-through Polars code node.")
-            self._add_polars_code(new_node_id, "output_df = input_df", description or "No-op filter", method_name=None)
+            precomputed = self._add_polars_code(
+                new_node_id, "output_df = input_df", description or "No-op filter", method_name=None
+            )
 
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
         """
@@ -2063,6 +2084,17 @@ class FlowFrame:
             if len(actual_exprs_to_process) == 1 and isinstance(actual_exprs_to_process[0], Expr):
                 pass
 
+            # Try flowfile formula conversion (all-or-nothing)
+            if all(
+                isinstance(e, Expr) and e._ff_repr is not None and e.column_name is not None
+                for e in actual_exprs_to_process
+            ):
+                ff = self
+                for expr_obj in actual_exprs_to_process:
+                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
+                return ff
+
+            # Fall through to polars code path
             for current_expr_obj in actual_exprs_to_process:
                 all_input_expr_objects.append(current_expr_obj)
                 pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
@@ -2087,7 +2119,7 @@ class FlowFrame:
                 for e in all_input_expr_objects
                 if isinstance(e, Expr) and hasattr(e, "expr") and e.expr is not None
             ]
-            self._add_polars_code(
+            precomputed = self._add_polars_code(
                 new_node_id,
                 final_code_for_node,
                 description,
@@ -2095,7 +2127,7 @@ class FlowFrame:
                 convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
                 polars_expr=pl_expressions_for_fallback,
             )
-            return self._create_child_frame(new_node_id)
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
         elif flowfile_formulas is not None and output_column_names is not None:
             if len(output_column_names) != len(flowfile_formulas):

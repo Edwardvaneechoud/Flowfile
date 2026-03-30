@@ -6,15 +6,26 @@
       @request-save="saveSettings"
     >
       <div class="listbox-wrapper">
-        <div class="file-upload-container">
-          <div class="file-upload-wrapper" @click="modalVisibleForOpen = true">
-            <label for="file-upload" class="file-upload-label">
-              <i class="fas fa-table file-icon"></i>
-              <span class="file-label-text">
-                {{ getDisplayFileName }}
-              </span>
-            </label>
-          </div>
+        <div class="file-path-row">
+          <el-input
+            v-model="pathInput"
+            placeholder="Path or ${param_name}/file.csv"
+            clearable
+            class="file-path-input"
+            @change="
+              (val: string) => {
+                handleManualPathChange(val);
+                saveSettings();
+              }
+            "
+          >
+            <template #prefix>
+              <i class="fas fa-table" style="font-size: 14px" />
+            </template>
+          </el-input>
+          <el-button title="Browse files" @click="modalVisibleForOpen = true">
+            <span class="material-icons" style="font-size: 16px; line-height: 1">folder_open</span>
+          </el-button>
         </div>
       </div>
       <div v-if="receivedTable">
@@ -52,7 +63,7 @@
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref, computed } from "vue";
+import { ref, watch } from "vue";
 import ExcelTableConfig from "./readExcel.vue";
 import CsvTableConfig from "./readCsv.vue";
 import ParquetTableConfig from "./readParquet.vue";
@@ -73,7 +84,6 @@ import { FileInfo } from "../../../../common/FileBrowser/types";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
-const selectedFile = ref<FileInfo | null>(null);
 const nodeRead = ref<null | NodeRead>(null);
 const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
@@ -92,15 +102,64 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   },
 });
 
-const getDisplayFileName = computed(() => {
-  if (selectedFile.value?.name) {
-    return selectedFile.value.name;
+// ---------------------------------------------------------------------------
+// Manual path input
+// ---------------------------------------------------------------------------
+
+// Use a plain ref so the input is always editable (writable computed resets
+// on every keystroke when receivedTable is null, making the field unusable)
+const pathInput = ref<string>("");
+
+// Keep pathInput in sync when receivedTable changes externally (e.g. file browser)
+watch(
+  () => receivedTable.value?.path,
+  (newPath) => {
+    if (newPath !== undefined && newPath !== pathInput.value) {
+      pathInput.value = newPath;
+    }
+  },
+);
+
+function detectFileType(path: string): "csv" | "excel" | "parquet" | null {
+  // Strip ${...} references so we can read the real extension
+  const cleaned = path.replace(/\$\{[^}]*\}/g, "");
+  const ext = cleaned.split(".").pop()?.toLowerCase();
+  if (ext === "xlsx") return "excel";
+  if (ext === "csv" || ext === "txt") return "csv";
+  if (ext === "parquet") return "parquet";
+  return null;
+}
+
+function createDefaultSettings(
+  fileType: "csv" | "excel" | "parquet",
+): InputCsvTable | InputExcelTable | InputParquetTable {
+  if (fileType === "excel") return createDefaultExcelSettings();
+  if (fileType === "parquet") return createDefaultParquetSettings();
+  return createDefaultCsvSettings();
+}
+
+function handleManualPathChange(path: string) {
+  const detectedType = detectFileType(path);
+  const fileName = path.split(/[/\\]/).pop() || path;
+
+  if (receivedTable.value) {
+    receivedTable.value.path = path;
+    receivedTable.value.name = fileName;
+    // Swap settings when file type changes (e.g. user edits .csv → .parquet)
+    if (detectedType && detectedType !== receivedTable.value.file_type) {
+      receivedTable.value.file_type = detectedType;
+      receivedTable.value.table_settings = createDefaultSettings(detectedType);
+    }
+  } else if (detectedType) {
+    // Bootstrap a new receivedTable from a typed path
+    receivedTable.value = {
+      name: fileName,
+      path,
+      file_type: detectedType,
+      table_settings: createDefaultSettings(detectedType),
+    };
   }
-  if (receivedTable.value?.name) {
-    return receivedTable.value.name;
-  }
-  return "Choose a file...";
-});
+}
 
 // Default table settings factories
 function createDefaultCsvSettings(): InputCsvTable {
@@ -180,7 +239,6 @@ const handleFileChange = (fileInfo: FileInfo) => {
       table_settings: tableSettings,
     };
 
-    selectedFile.value = fileInfo;
     modalVisibleForOpen.value = false;
   } catch (error) {
     console.error("Error handling file change:", error);
@@ -201,6 +259,7 @@ const loadNodeData = async (nodeId: number) => {
 
     if (nodeResult.setting_input?.is_setup && nodeResult.setting_input.received_file) {
       receivedTable.value = nodeResult.setting_input.received_file;
+      pathInput.value = nodeResult.setting_input.received_file.path;
     }
 
     dataLoaded.value = true;
@@ -218,36 +277,15 @@ defineExpose({
 </script>
 
 <style scoped>
-.file-upload-wrapper {
-  position: relative;
+.file-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
 }
 
-.file-upload-label {
-  display: flex;
-  align-items: center;
-  background-color: var(--color-background-secondary);
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 10px 15px;
-  color: var(--color-text-primary);
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.file-upload-label:hover {
-  background-color: var(--color-background-primary);
-}
-
-.file-icon {
-  margin-right: 10px;
-  font-size: 20px;
-}
-
-.file-label-text {
-  flex-grow: 1;
-  margin-left: 10px;
+.file-path-input {
+  flex: 1;
+  min-width: 0;
 }
 </style>

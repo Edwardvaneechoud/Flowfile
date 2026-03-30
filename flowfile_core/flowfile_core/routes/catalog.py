@@ -11,6 +11,7 @@ This module is a thin HTTP adapter: it delegates all business logic to
 """
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -49,6 +50,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableUpdate,
+    DeltaTableHistory,
     FavoriteOut,
     FlowRegistrationCreate,
     FlowRegistrationOut,
@@ -537,12 +539,31 @@ def delete_table(
 def get_table_preview(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
+    version: int | None = Query(None),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Preview the first N rows of a catalog table."""
+    """Preview the first N rows of a catalog table.
+
+    When ``version`` is provided and the table is a Delta table, returns
+    data from that specific historical version.
+    """
     try:
-        return service.get_table_preview(table_id, limit=limit)
+        return service.get_table_preview(table_id, limit=limit, version=version)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found") from None
+
+
+@router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)
+def get_table_history(
+    table_id: int,
+    limit: int | None = Query(None),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return version history for a Delta catalog table."""
+    try:
+        return service.get_table_history(table_id, limit=limit)
     except TableNotFoundError:
         raise HTTPException(404, "Catalog table not found") from None
 
@@ -749,15 +770,58 @@ def scheduler_status(
     current_user=Depends(get_current_active_user),
 ):
     """Return the current scheduler lock status."""
+    import logging
+
+    from flowfile_scheduler.engine import STALE_THRESHOLD
+
+    logger = logging.getLogger("flowfile.scheduler.status")
+
     lock = db.get(SchedulerLock, 1)
     if lock is None:
+        logger.debug("No scheduler lock row found — reporting inactive")
         return SchedulerStatusOut(active=False)
 
     embedded = get_scheduler()
     is_embedded = embedded is not None and getattr(embedded, "_holder_id", None) == lock.holder_id
 
+    # Detect stale heartbeat — scheduler may have died without releasing the lock
+    active = True
+    if lock.heartbeat_at is not None:
+        heartbeat = lock.heartbeat_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+        if elapsed > STALE_THRESHOLD:
+            active = False
+            logger.warning(
+                "Scheduler heartbeat is STALE: last heartbeat %.1fs ago (threshold=%ds), "
+                "holder_id=%s, heartbeat_at=%s — marking inactive",
+                elapsed,
+                STALE_THRESHOLD,
+                lock.holder_id,
+                lock.heartbeat_at,
+            )
+        else:
+            logger.debug(
+                "Scheduler heartbeat OK: %.1fs ago (threshold=%ds), holder_id=%s",
+                elapsed,
+                STALE_THRESHOLD,
+                lock.holder_id,
+            )
+    else:
+        logger.warning("Scheduler lock exists but heartbeat_at is None — holder_id=%s", lock.holder_id)
+
+    logger.debug(
+        "Scheduler status response: active=%s, holder_id=%s, is_embedded=%s, started_at=%s, heartbeat_at=%s",
+        active,
+        lock.holder_id,
+        is_embedded,
+        lock.started_at,
+        lock.heartbeat_at,
+    )
+
     return SchedulerStatusOut(
-        active=True,
+        active=active,
         holder_id=lock.holder_id,
         started_at=lock.started_at,
         heartbeat_at=lock.heartbeat_at,

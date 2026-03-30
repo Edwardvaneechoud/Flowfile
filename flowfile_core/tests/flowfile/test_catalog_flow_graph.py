@@ -139,7 +139,6 @@ class TestCatalogWriter:
         """Running a flow with a catalog_writer should create a CatalogTable row."""
         ns_id = _create_namespace()
         graph = _create_graph()
-
         # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
@@ -174,7 +173,8 @@ class TestCatalogWriter:
             assert table.name == "written_table"
             assert table.row_count == 3
             assert table.column_count == 3
-            assert os.path.isfile(table.file_path)
+            assert os.path.isdir(table.file_path)
+            assert "_delta_log" in os.listdir(table.file_path)
 
     def test_writer_stores_source_registration_id(self):
         """When a flow has source_registration_id, the produced table should reference it."""

@@ -266,7 +266,7 @@ class TestCatalogTableMaterialization:
                 return FakeResponse()
 
             monkeypatch.setattr(
-                "flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations.trigger_catalog_materialize",
+                "flowfile_core.catalog.service.trigger_catalog_materialize",
                 fake_trigger,
             )
 

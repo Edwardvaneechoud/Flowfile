@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+
 # ==================== Namespace Schemas ====================
 
 
@@ -241,6 +243,13 @@ class CatalogTablePreview(BaseModel):
     dtypes: list[str]
     rows: list[list] = Field(default_factory=list)
     total_rows: int = 0
+
+
+class DeltaTableHistory(BaseModel):
+    """Version history of a Delta table."""
+
+    current_version: int
+    history: list[DeltaVersionCommit] = Field(default_factory=list)
 
 
 # ==================== Catalog Overview ====================

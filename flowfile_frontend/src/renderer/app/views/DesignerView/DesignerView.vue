@@ -1,57 +1,59 @@
 <template>
-  <div v-if="!isLoading" class="header">
-    <div class="header-top">
-      <div class="left-section">
-        <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+  <div class="designer-view">
+    <div v-if="!isLoading" class="header">
+      <div class="header-top">
+        <div class="left-section">
+          <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+        </div>
+      </div>
+      <div class="header-bottom">
+        <div class="middle-section">
+          <flow-selector
+            ref="flowSelector"
+            @flow-changed="handleFlowChange"
+            @close-tab="handleCloseFlow"
+          />
+        </div>
+        <div class="right-section">
+          <Status />
+        </div>
       </div>
     </div>
-    <div class="header-bottom">
-      <div class="middle-section">
-        <flow-selector
-          ref="flowSelector"
-          @flow-changed="handleFlowChange"
-          @close-tab="handleCloseFlow"
-        />
-      </div>
-      <div class="right-section">
-        <Status />
+    <!-- Show loading state while fetching flows -->
+    <div v-if="isLoading" class="loading-state">
+      <div class="loading-state-content">
+        <p>Loading flows...</p>
       </div>
     </div>
-  </div>
-  <!-- Show loading state while fetching flows -->
-  <div v-if="isLoading" class="loading-state">
-    <div class="loading-state-content">
-      <p>Loading flows...</p>
+    <!-- Show empty state only when loading is complete and no flows are found -->
+    <div v-else-if="!isLoading && flowsActive.length === 0" class="empty-state">
+      <div class="empty-state-content">
+        <span class="material-icons empty-icon">account_tree</span>
+        <h2>No Active Flows</h2>
+        <p>There are currently no active flows in the system.</p>
+        <el-button type="primary" class="action-button" @click="createFlowDialog">
+          <span class="material-icons">add_circle</span>
+          Create new flow
+        </el-button>
+        <el-button type="primary" class="action-button" @click="openFlowDialog">
+          <span class="material-icons">folder_open</span>
+          Open existing flow
+        </el-button>
+        <el-button type="primary" class="action-button" @click="openQuickCreateDialog">
+          <span class="material-icons">folder_open</span>
+          Quick create
+        </el-button>
+      </div>
     </div>
+    <canvas-flow
+      v-else
+      ref="canvasFlow"
+      class="canvas"
+      @save="headerButtons?.openSaveModal()"
+      @run="headerButtons?.runFlow()"
+      @new="headerButtons?.handleQuickCreateAction()"
+    />
   </div>
-  <!-- Show empty state only when loading is complete and no flows are found -->
-  <div v-else-if="!isLoading && flowsActive.length === 0" class="empty-state">
-    <div class="empty-state-content">
-      <span class="material-icons empty-icon">account_tree</span>
-      <h2>No Active Flows</h2>
-      <p>There are currently no active flows in the system.</p>
-      <el-button type="primary" class="action-button" @click="createFlowDialog">
-        <span class="material-icons">add_circle</span>
-        Create new flow
-      </el-button>
-      <el-button type="primary" class="action-button" @click="openFlowDialog">
-        <span class="material-icons">folder_open</span>
-        Open existing flow
-      </el-button>
-      <el-button type="primary" class="action-button" @click="openQuickCreateDialog">
-        <span class="material-icons">folder_open</span>
-        Quick create
-      </el-button>
-    </div>
-  </div>
-  <canvas-flow
-    v-else
-    ref="canvasFlow"
-    class="canvas"
-    @save="headerButtons?.openSaveModal()"
-    @run="headerButtons?.runFlow()"
-    @new="headerButtons?.handleQuickCreateAction()"
-  />
 </template>
 
 <script setup lang="ts">
@@ -265,6 +267,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.designer-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .canvas {
   height: calc(100vh - 100px);
 }

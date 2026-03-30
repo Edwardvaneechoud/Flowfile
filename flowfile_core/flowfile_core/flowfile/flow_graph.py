@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
-from uuid import uuid1, uuid4
+from uuid import uuid1
 
 import fastexcel
 import polars as pl
@@ -19,7 +19,8 @@ import yaml
 from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
-from flowfile_core.catalog import CatalogService, TableExistsError
+from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.delta_utils import delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -59,6 +60,11 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     group_nodes_by_depth,
 )
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+from flowfile_core.flowfile.parameter_resolver import (
+    apply_parameters_in_place,
+    find_unresolved_in_model,
+    restore_parameters,
+)
 from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
@@ -83,6 +89,7 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared.storage_config import storage
 
 try:
     __version__ = version("Flowfile")
@@ -391,6 +398,13 @@ class FlowGraph:
             self._flow_settings.execution_mode != flow_settings.execution_mode
         ):
             self.reset()
+        else:
+            old_params = {p.name: p.default_value for p in self._flow_settings.parameters}
+            new_params = {p.name: p.default_value for p in flow_settings.parameters}
+            if old_params != new_params:
+                for node in self.nodes:
+                    if node.setting_input is not None and find_unresolved_in_model(node.setting_input):
+                        node.reset(deep=True)
         self._flow_settings = flow_settings
 
     # ==================== History Management Methods ====================
@@ -1941,6 +1955,17 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        # Give the node a callable that returns the current flow parameters so
+        # that lazy schema prediction (_predicted_data_getter) can substitute
+        # ${...} refs.  Using a callable (rather than a copy of the dict) means
+        # the node always reads the LATEST parameters, whether they were set via
+        # the flow_settings.setter or mutated directly on flow_settings.parameters.
+        _graph = self
+
+        def _get_params() -> dict[str, str]:
+            return {p.name: p.default_value for p in (_graph.flow_settings.parameters or [])}
+
+        node._params_getter = _get_params
         return node
 
     def add_include_cols(self, include_columns: list[str]):
@@ -2003,24 +2028,23 @@ class FlowGraph:
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
-                if node_catalog_reader.catalog_table_id is not None:
-                    table = repo.get_table(node_catalog_reader.catalog_table_id)
-                    if table is not None:
-                        file_path = table.file_path
-                elif node_catalog_reader.catalog_table_name:
-                    tables = repo.list_tables(namespace_id=node_catalog_reader.catalog_namespace_id)
-                    for t in tables:
-                        if t.name == node_catalog_reader.catalog_table_name:
-                            file_path = t.file_path
-                            break
+                svc = CatalogService(repo)
+                file_path = svc.resolve_table_file_path(
+                    table_id=node_catalog_reader.catalog_table_id,
+                    table_name=node_catalog_reader.catalog_table_name,
+                    namespace_id=node_catalog_reader.catalog_namespace_id,
+                )
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
         resolved_path = file_path
 
         def _func() -> FlowDataEngine:
+
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
+            if is_delta_table(resolved_path):
+                return FlowDataEngine(pl.scan_delta(resolved_path))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
@@ -2035,54 +2059,81 @@ class FlowGraph:
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
-        """Adds a node that writes its input to the catalog as a Parquet table."""
+        """Adds a node that writes its input to the catalog as a Delta table."""
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
-            from shared.storage_config import storage
-
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
 
-            # Materialize the dataframe to a temporary parquet, then register via the catalog service.
-            dest_dir = storage.catalog_tables_directory
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            parquet_filename = f"{settings.table_name}_{uuid4().hex[:8]}.parquet"
-            dest_path = dest_dir / parquet_filename
+            catalog_dir = storage.catalog_tables_directory
+            catalog_dir.mkdir(parents=True, exist_ok=True)
 
-            collected = df.collect()
-            collected.write_parquet(dest_path)
+            # Resolve destination path and check for existing table
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                svc = CatalogService(repo)
+                existing, dest_path, delta_mode = svc.resolve_write_destination(
+                    table_name=settings.table_name,
+                    namespace_id=settings.namespace_id,
+                    write_mode=settings.write_mode,
+                    catalog_dir=catalog_dir,
+                )
 
+            # Offload collect + write to the worker
+            fetcher = ExternalDfFetcher(
+                flow_id=self.flow_id,
+                node_id=node_catalog_writer.node_id,
+                lf=df.data_frame,
+                wait_on_completion=True,
+                operation_type="write_delta",
+                kwargs={"output_path": str(dest_path), "mode": delta_mode},
+            )
+            if fetcher.has_error:
+                raise RuntimeError(
+                    f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
+                )
+
+            # Extract metadata computed by the worker
+            meta_kwargs = {}
+            if isinstance(fetcher.result, dict):
+                meta_kwargs = {
+                    k: fetcher.result.get(k)
+                    for k in ("schema", "row_count", "column_count", "size_bytes")
+                }
+
+            # Register / update in catalog
             try:
                 with get_db_context() as db:
                     repo = SQLAlchemyCatalogRepository(db)
                     svc = CatalogService(repo)
-                    existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
                     if existing is not None:
-                        if settings.write_mode != "overwrite":
-                            raise TableExistsError(name=settings.table_name, namespace_id=settings.namespace_id)
                         svc.overwrite_table_data(
                             table_id=existing.id,
-                            parquet_path=str(dest_path),
+                            table_path=str(dest_path),
                             source_registration_id=self._flow_settings.source_registration_id,
                             description=settings.description,
+                            storage_format="delta",
+                            **meta_kwargs,
                         )
                     else:
-                        svc.register_table_from_parquet(
+                        svc.register_table_from_data(
                             name=settings.table_name,
-                            parquet_path=str(dest_path),
+                            table_path=str(dest_path),
                             owner_id=node_catalog_writer.user_id or 1,
                             namespace_id=settings.namespace_id,
                             description=settings.description,
                             source_registration_id=self._flow_settings.source_registration_id,
+                            storage_format="delta",
+                            **meta_kwargs,
                         )
             except Exception:
-                logger.error("Failed to register catalog table '%s'", settings.table_name, exc_info=True)
-                if dest_path.exists():
+                # Only clean up if this was a new table (not an overwrite of existing)
+                if existing is None and dest_path.exists():
                     try:
-                        dest_path.unlink()
+                        delete_table_storage(dest_path)
                     except OSError:
-                        logger.warning("Failed to clean up orphan parquet %s", dest_path, exc_info=True)
+                        logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
                 raise
 
             return df
@@ -2819,6 +2870,7 @@ class FlowGraph:
         node: FlowNode,
         performance_mode: bool,
         run_info_lock: threading.Lock,
+        params: dict[str, str] | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -2828,6 +2880,7 @@ class FlowGraph:
             node: The node to execute.
             performance_mode: Whether to run in performance mode.
             run_info_lock: Lock protecting shared RunInformation state.
+            params: Optional parameter dict for ${name} substitution in node settings.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -2838,12 +2891,43 @@ class FlowGraph:
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
 
+        # Temporarily substitute parameters into node settings (in-place so closures see the values)
+        restorations = []
+        # Save the node's hash before substitution.  executor.execute() calls node.reset()
+        # while setting_input is mutated, which recomputes _hash from the resolved path.
+        # After restore_parameters the path returns to the original ${...} form but _hash
+        # still holds the resolved-path hash → needs_reset() returns True on the next
+        # setting_input write → clears example_data_generator / has_completed_last_run.
+        # Restoring _hash after restore_parameters keeps the hash consistent with the
+        # restored setting_input and prevents that spurious reset.
+        saved_hash = node._hash
+        if params:
+            try:
+                restorations = apply_parameters_in_place(node.setting_input, params)
+            except ValueError as e:
+                node_result.error = str(e)
+                node_result.success = False
+                node_result.end_timestamp = time()
+                node_result.run_time = 0
+                node_result.is_running = False
+                node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
+                return node_result, node
+
         logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-        node.execute_node(
-            run_location=self.flow_settings.execution_location,
-            performance_mode=performance_mode,
-            node_logger=node_logger,
-        )
+        try:
+            node.execute_node(
+                run_location=self.flow_settings.execution_location,
+                performance_mode=performance_mode,
+                node_logger=node_logger,
+            )
+        finally:
+            # Restore original ${...} refs so the saved flow is unchanged
+            if restorations:
+                restore_parameters(restorations)
+            # Restore the hash to match the restored setting_input so that
+            # subsequent get_node_data / setting_input writes don't trigger
+            # a spurious reset (and lose example_data_generator / has_completed_last_run).
+            node._hash = saved_hash
         try:
             node_result.error = str(node.results.errors)
             if self.flow_settings.is_canceled:
@@ -2949,6 +3033,9 @@ class FlowGraph:
             execution_order_message(self.flow_logger, execution_plan.stages)
             performance_mode = self.flow_settings.execution_mode == "Performance"
 
+            # Build parameter lookup dict once for the entire run
+            params: dict[str, str] = {p.name: p.default_value for p in self.flow_settings.parameters}
+
             run_info_lock = threading.Lock()
             skip_node_ids: set[str | int] = plan_skip_ids
 
@@ -2972,7 +3059,8 @@ class FlowGraph:
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     # Single node or parallelism disabled — run sequentially
                     stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run
+                        self._execute_single_node(node, performance_mode, run_info_lock, params or None)
+                        for node in nodes_to_run
                     ]
                 else:
                     # Multiple independent nodes — run in parallel
@@ -2980,7 +3068,9 @@ class FlowGraph:
                     workers = min(max_workers, len(nodes_to_run))
                     with ThreadPoolExecutor(max_workers=workers) as executor:
                         futures = {
-                            executor.submit(self._execute_single_node, node, performance_mode, run_info_lock): node
+                            executor.submit(
+                                self._execute_single_node, node, performance_mode, run_info_lock, params or None
+                            ): node
                             for node in nodes_to_run
                         }
                         for future in as_completed(futures):
@@ -3084,6 +3174,7 @@ class FlowGraph:
             show_detailed_progress=self.flow_settings.show_detailed_progress,
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
+            parameters=self.flow_settings.parameters,
         )
         return schemas.FlowfileData(
             flowfile_version=__version__,

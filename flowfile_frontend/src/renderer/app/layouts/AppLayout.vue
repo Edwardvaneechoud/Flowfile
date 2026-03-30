@@ -6,7 +6,11 @@
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
       </div>
       <div class="app-layout__page">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <Transition name="page-fade" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </router-view>
       </div>
     </div>
 
