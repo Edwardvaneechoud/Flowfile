@@ -143,9 +143,7 @@ class CloudStorageReader:
                 storage_options["azure_storage_allow_http"] = "true"
                 # Build emulator endpoint with account name in path
                 account = connection.azure_account_name or "devstoreaccount1"
-                storage_options["azure_storage_endpoint"] = (
-                    f"{connection.endpoint_url.rstrip('/')}/{account}"
-                )
+                storage_options["azure_storage_endpoint"] = f"{connection.endpoint_url.rstrip('/')}/{account}"
             else:
                 storage_options["azure_storage_endpoint"] = connection.endpoint_url
 
@@ -158,16 +156,12 @@ class CloudStorageReader:
 
         if connection.auth_method == "service_account" and connection.gcs_service_account_key:
             storage_options["service_account_key"] = connection.gcs_service_account_key.get_secret_value()
-        elif connection.auth_method == "env_vars" and connection.endpoint_url:
-            # For emulators (e.g. fake-gcs-server) that don't require auth,
-            # provide a static empty token to skip the OAuth/metadata flow.
-            storage_options["token"] = ""
 
         if connection.gcs_project_id:
             storage_options["project_id"] = connection.gcs_project_id
 
         if connection.endpoint_url:
-            storage_options["endpoint"] = connection.endpoint_url
+            storage_options["base_url"] = connection.endpoint_url
 
         return storage_options
 
@@ -194,6 +188,15 @@ class CloudStorageReader:
                 }, None  # expiry
 
             return aws_credential_provider
+
+        if connection.storage_type == "gcs" and connection.auth_method == "env_vars" and connection.endpoint_url:
+            # For GCS emulators (e.g. fake-gcs-server) that don't require auth,
+            # provide a static bearer token via credential_provider.
+            def gcs_emulator_credential_provider():
+                return {"bearer_token": "emulator"}, None
+
+            return gcs_emulator_credential_provider
+
         return None
 
 

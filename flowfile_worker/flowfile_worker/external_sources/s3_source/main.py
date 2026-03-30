@@ -4,6 +4,7 @@ This module provides functionality to write Polars LazyFrames to various cloud s
 services (S3, Azure ADLS, Google Cloud Storage) in different file formats.
 """
 
+from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
@@ -14,20 +15,14 @@ from flowfile_worker.utils import collect_lazy_frame
 
 
 def _write_parquet_to_cloud(
-    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
+    df: pl.LazyFrame,
+    resource_path: str,
+    storage_options: dict[str, Any],
+    write_settings: WriteSettings,
+    logger: Logger,
+    credential_provider: Callable | None = None,
 ) -> None:
-    """Write LazyFrame to a Parquet file in cloud storage.
-
-    Args:
-        df: Polars LazyFrame to write.
-        resource_path: Cloud storage path where the file will be written.
-        storage_options: Storage-specific options for authentication and configuration.
-        write_settings: Write configuration including compression settings.
-        logger: Logger instance for logging operations.
-
-    Raises:
-        Exception: If writing fails, wrapped with a descriptive error message.
-    """
+    """Write LazyFrame to a Parquet file in cloud storage."""
     try:
         sink_kwargs = {
             "path": resource_path,
@@ -35,15 +30,16 @@ def _write_parquet_to_cloud(
         }
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            sink_kwargs["credential_provider"] = credential_provider
 
         try:
-            # Try to use sink_parquet for lazy execution
             df.sink_parquet(**sink_kwargs)
         except Exception as e:
-            # Fall back to collecting and writing if sink fails
             logger.warning(f"Failed to use sink_parquet, falling back to collect and write: {str(e)}")
             pl_df = collect_lazy_frame(df)
             sink_kwargs["file"] = sink_kwargs.pop("path")
+            sink_kwargs.pop("credential_provider", None)
             pl_df.write_parquet(**sink_kwargs)
 
     except Exception as e:
@@ -52,17 +48,14 @@ def _write_parquet_to_cloud(
 
 
 def _write_delta_to_cloud(
-    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
+    df: pl.LazyFrame,
+    resource_path: str,
+    storage_options: dict[str, Any],
+    write_settings: WriteSettings,
+    logger: Logger,
+    credential_provider: Callable | None = None,
 ) -> None:
-    """Write LazyFrame to Delta Lake format in cloud storage.
-
-    Args:
-        df: Polars LazyFrame to write.
-        resource_path: Cloud storage path where the Delta table will be written.
-        storage_options: Storage-specific options for authentication and configuration.
-        write_settings: Write configuration including write mode.
-        logger: Logger instance for logging operations.
-    """
+    """Write LazyFrame to Delta Lake format in cloud storage."""
     sink_kwargs = {
         "target": resource_path,
         "mode": write_settings.write_mode,
@@ -75,20 +68,14 @@ def _write_delta_to_cloud(
 
 
 def _write_csv_to_cloud(
-    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
+    df: pl.LazyFrame,
+    resource_path: str,
+    storage_options: dict[str, Any],
+    write_settings: WriteSettings,
+    logger: Logger,
+    credential_provider: Callable | None = None,
 ) -> None:
-    """Write LazyFrame to a CSV file in cloud storage.
-
-    Args:
-        df: Polars LazyFrame to write.
-        resource_path: Cloud storage path where the CSV file will be written.
-        storage_options: Storage-specific options for authentication and configuration.
-        write_settings: Write configuration including delimiter settings.
-        logger: Logger instance for logging operations.
-
-    Raises:
-        Exception: If writing fails, wrapped with a descriptive error message.
-    """
+    """Write LazyFrame to a CSV file in cloud storage."""
     try:
         sink_kwargs = {
             "path": resource_path,
@@ -96,8 +83,9 @@ def _write_csv_to_cloud(
         }
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            sink_kwargs["credential_provider"] = credential_provider
 
-        # sink_csv executes the lazy query and writes the result
         df.sink_csv(**sink_kwargs)
 
     except Exception as e:
@@ -106,32 +94,27 @@ def _write_csv_to_cloud(
 
 
 def _write_json_to_cloud(
-    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
+    df: pl.LazyFrame,
+    resource_path: str,
+    storage_options: dict[str, Any],
+    write_settings: WriteSettings,
+    logger: Logger,
+    credential_provider: Callable | None = None,
 ) -> None:
-    """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage.
-
-    Args:
-        df: Polars LazyFrame to write.
-        resource_path: Cloud storage path where the NDJSON file will be written.
-        storage_options: Storage-specific options for authentication and configuration.
-        write_settings: Write configuration settings.
-        logger: Logger instance for logging operations.
-
-    Raises:
-        Exception: If writing fails, wrapped with a descriptive error message.
-    """
+    """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage."""
     try:
         sink_kwargs = {"path": resource_path}
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            sink_kwargs["credential_provider"] = credential_provider
 
         try:
-            # Try to use sink_ndjson for lazy execution
             df.sink_ndjson(**sink_kwargs)
         except Exception as e:
-            # Fall back to collecting and writing if sink fails
             pl_df = collect_lazy_frame(df)
             sink_kwargs["file"] = sink_kwargs.pop("path")
+            sink_kwargs.pop("credential_provider", None)
             pl_df.write_ndjson(**sink_kwargs)
             logger.error(f"Failed to use sink_ndjson, falling back to collect and write: {str(e)}")
 
@@ -172,12 +155,13 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
         raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
     storage_options = connection.get_storage_options()
+    credential_provider = connection.get_credential_provider()
 
     # Dispatch to the appropriate writer
     writer_func = writers.get(write_settings.file_format)
     if not writer_func:
         raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
 
-    writer_func(df, write_settings.resource_path, storage_options, write_settings, logger)
+    writer_func(df, write_settings.resource_path, storage_options, write_settings, logger, credential_provider)
 
     logger.info(f"Successfully wrote data to {write_settings.resource_path}")

@@ -1,5 +1,6 @@
 """Cloud storage connection schemas for S3, ADLS, and other cloud providers."""
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 import boto3
@@ -185,9 +186,7 @@ class FullCloudStorageConnection(BaseModel):
                 storage_options["azure_storage_use_emulator"] = "true"
                 storage_options["azure_storage_allow_http"] = "true"
                 account = self.azure_account_name or "devstoreaccount1"
-                storage_options["azure_storage_endpoint"] = (
-                    f"{self.endpoint_url.rstrip('/')}/{account}"
-                )
+                storage_options["azure_storage_endpoint"] = f"{self.endpoint_url.rstrip('/')}/{account}"
             else:
                 storage_options["azure_storage_endpoint"] = self.endpoint_url
 
@@ -201,16 +200,24 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["service_account_key"] = decrypt_secret(
                 self.gcs_service_account_key.get_secret_value()
             ).get_secret_value()
-        elif self.auth_method == "env_vars" and self.endpoint_url:
-            storage_options["token"] = ""
 
         if self.gcs_project_id:
             storage_options["project_id"] = self.gcs_project_id
 
         if self.endpoint_url:
-            storage_options["endpoint"] = self.endpoint_url
+            storage_options["base_url"] = self.endpoint_url
 
         return storage_options
+
+    def get_credential_provider(self) -> Callable | None:
+        """Get a credential provider function if needed."""
+        if self.storage_type == "gcs" and self.auth_method == "env_vars" and self.endpoint_url:
+
+            def gcs_emulator_credential_provider():
+                return {"bearer_token": "emulator"}, None
+
+            return gcs_emulator_credential_provider
+        return None
 
 
 class WriteSettings(BaseModel):
