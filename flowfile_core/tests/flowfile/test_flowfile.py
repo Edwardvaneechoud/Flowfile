@@ -1176,10 +1176,10 @@ def test_add_database_reader_sqllite(sqlite_db):
     add_node_promise_on_type(graph, 'database_reader', 1)
     conn_str = f"sqlite:///{sqlite_db}"
     database_connection = input_schema.DatabaseConnection(database_type='sqlite',
-                                                          host=conn_str,
-                                                          password_ref="")
+                                                          password_ref="",
+                                                          database=conn_str)
     database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
-                                                      schema_name='public', table_name='movies')
+                                                      table_name='movies')
     node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
                                                            flow_id=1,
                                                            user_id=1)
