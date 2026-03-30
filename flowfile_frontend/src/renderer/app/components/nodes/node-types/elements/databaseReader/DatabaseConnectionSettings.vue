@@ -17,10 +17,11 @@
           class="form-control"
           @change="
             (e: Event) =>
-              updateField('database_type', (e.target as HTMLSelectElement).value as 'postgresql')
+              updateField('database_type', (e.target as HTMLSelectElement).value as 'postgresql' | 'mysql')
           "
         >
           <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
         </select>
       </div>
 

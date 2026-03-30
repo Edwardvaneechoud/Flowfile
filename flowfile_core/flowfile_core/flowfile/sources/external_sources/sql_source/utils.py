@@ -425,3 +425,31 @@ def construct_sql_uri(
         base_uri += f"?{params}"
 
     return base_uri
+
+
+# Mapping from base database URI schemes to SQLAlchemy-compatible schemes with driver suffixes.
+# connectorx uses base schemes (e.g. mysql://) while SQLAlchemy needs driver-specific schemes.
+SQLALCHEMY_DRIVER_MAP = {
+    "mysql": "mysql+pymysql",
+}
+
+
+def get_sqlalchemy_uri(uri: str) -> str:
+    """Convert a base database URI to SQLAlchemy-compatible format with driver suffix.
+
+    connectorx (used by pl.read_database_uri) accepts base URI schemes like mysql://,
+    but SQLAlchemy requires driver-specific schemes like mysql+pymysql://.
+    This function converts base URIs to the SQLAlchemy-compatible format.
+
+    URIs that don't need conversion (e.g. postgresql://, sqlite:///) are returned unchanged.
+
+    Args:
+        uri: A database URI string (e.g. "mysql://user:pass@host:3306/db")
+
+    Returns:
+        The URI with the appropriate SQLAlchemy driver suffix applied.
+    """
+    for base_scheme, sa_scheme in SQLALCHEMY_DRIVER_MAP.items():
+        if uri.startswith(f"{base_scheme}://"):
+            return uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)
+    return uri

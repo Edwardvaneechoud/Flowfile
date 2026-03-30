@@ -20,6 +20,7 @@
         <label for="database-type" class="form-label">Database Type</label>
         <select id="database-type" v-model="connection.databaseType" class="form-input" required>
           <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
         </select>
       </div>
 
@@ -42,7 +43,7 @@
           v-model="connection.port"
           type="number"
           class="form-input"
-          placeholder="5432"
+          :placeholder="String(defaultPorts[connection.databaseType as DatabaseType] || 5432)"
         />
       </div>
 
@@ -116,6 +117,8 @@
 <script lang="ts" setup>
 import { ref, computed, defineProps, defineEmits, watch } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
+import { defaultPorts } from "./databaseConnectionTypes";
+import type { DatabaseType } from "./databaseConnectionTypes";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
@@ -152,6 +155,20 @@ watch(
   (newVal) => {
     if (newVal) {
       connection.value = { ...newVal };
+    }
+  },
+);
+
+// Update default port when database type changes
+watch(
+  () => connection.value.databaseType,
+  (newType, oldType) => {
+    if (newType !== oldType) {
+      const oldDefault = defaultPorts[oldType as DatabaseType];
+      // Only update port if it was the previous default (user hasn't customized it)
+      if (!connection.value.port || connection.value.port === oldDefault) {
+        connection.value.port = defaultPorts[newType as DatabaseType];
+      }
     }
   },
 );

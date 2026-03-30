@@ -26,6 +26,7 @@ os.environ['TESTING'] = 'True'
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
@@ -263,6 +264,28 @@ def postgres_db():
     with pg_fixtures.managed_postgres() as db_info:
         if not db_info:
             pytest.fail("PostgreSQL container could not be started")
+        yield db_info
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mysql_db():
+    """
+    Pytest fixture that ensures MySQL container is running for the test session.
+    Automatically starts and stops a MySQL container with sample data.
+    """
+    if is_port_in_use(3307) or mysql_fixtures.can_connect_to_db():
+        print("MySQL is already running on port 3307, skipping container creation")
+        yield
+        return
+
+    elif not is_docker_available():
+        print("Docker is not available, skipping MySQL container creation")
+        yield
+        return
+
+    with mysql_fixtures.managed_mysql() as db_info:
+        if not db_info:
+            pytest.fail("MySQL container could not be started")
         yield db_info
 
 
