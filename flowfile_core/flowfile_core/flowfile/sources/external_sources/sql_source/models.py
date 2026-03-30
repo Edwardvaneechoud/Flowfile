@@ -31,7 +31,7 @@ Base64Bytes = Annotated[
 class ExtDatabaseConnection(DatabaseConnection):
     """Database connection configuration with password handling."""
 
-    password: str = None
+    password: str | None = None
 
 
 class DatabaseExternalWriteSettings(BaseModel):
