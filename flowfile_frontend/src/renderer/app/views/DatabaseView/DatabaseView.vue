@@ -142,7 +142,8 @@ import {
   updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
-import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
+import { FullDatabaseConnectionInterface, FullDatabaseConnection, defaultPorts } from "./databaseConnectionTypes";
+import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 
 // State
@@ -185,7 +186,7 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     username: connection.username,
     password: "", // Password is not returned from the API
     host: connection.host || "",
-    port: connection.port || 5432,
+    port: connection.port || defaultPorts[connection.databaseType as DatabaseType],
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",

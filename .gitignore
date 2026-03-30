@@ -1,5 +1,5 @@
-mysql
-mysql/*
+/mysql
+/mysql/*
 .idea
 files/*
 .env

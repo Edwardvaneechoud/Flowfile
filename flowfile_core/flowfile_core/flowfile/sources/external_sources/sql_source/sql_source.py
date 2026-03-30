@@ -9,7 +9,11 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
-from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri, get_polars_type
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
+    construct_sql_uri,
+    get_polars_type,
+    get_sqlalchemy_uri,
+)
 from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 
@@ -314,7 +318,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def validate(self) -> None:
         try:
-            engine = create_engine(self.connection_string)
+            engine = create_engine(get_sqlalchemy_uri(self.connection_string))
             if self.query_mode == "table":
                 try:
                     if self.schema_name is not None:
@@ -374,7 +378,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         Returns:
             List of FlowfileColumn objects representing the columns in the SQL source
         """
-        engine = create_engine(self.connection_string)
+        engine = create_engine(get_sqlalchemy_uri(self.connection_string))
 
         if self.query_mode == "table":
             try:

@@ -26,11 +26,19 @@ class DataBaseConnection(BaseModel):
         Otherwise, it constructs a URI from the individual components.
 
         Returns:
-            str: The database URI
+            str: The database URI (base scheme, suitable for connectorx)
         """
         # If URL is already provided, use it
         if self.url:
             return self.url
+
+        # SQLite uses a file path instead of host-based connection
+        if self.database_type.lower() == "sqlite":
+            path = self.database or self.host or "./database.db"
+            # Strip sqlite:/// prefix if the full URI was passed as the path
+            if path.startswith("sqlite:///"):
+                path = path[len("sqlite:///"):]
+            return f"sqlite:///{path}"
 
         # Validate that required fields are present
         if not all([self.host, self.database_type]):
@@ -55,6 +63,23 @@ class DataBaseConnection(BaseModel):
         else:
             base_uri = f"{self.database_type}://{credentials}{self.host}{port_section}"
         return base_uri
+
+    def create_sqlalchemy_uri(self) -> str:
+        """
+        Creates a SQLAlchemy-compatible database URI with driver suffix.
+
+        connectorx uses base URI schemes (e.g. mysql://) while SQLAlchemy
+        requires driver-specific schemes (e.g. mysql+pymysql://).
+
+        Returns:
+            str: The database URI with appropriate driver suffix for SQLAlchemy.
+        """
+        uri = self.create_uri()
+        driver_map = {"mysql://": "mysql+pymysql://"}
+        for base_scheme, sa_scheme in driver_map.items():
+            if uri.startswith(base_scheme):
+                return uri.replace(base_scheme, sa_scheme, 1)
+        return uri
 
 
 class DatabaseReadSettings(BaseModel):

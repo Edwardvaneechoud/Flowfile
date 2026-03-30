@@ -17,15 +17,20 @@
           class="form-control"
           @change="
             (e: Event) =>
-              updateField('database_type', (e.target as HTMLSelectElement).value as 'postgresql')
+              updateField(
+                'database_type',
+                (e.target as HTMLSelectElement).value as 'postgresql' | 'mysql' | 'sqlite',
+              )
           "
         >
           <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="sqlite">SQLite</option>
         </select>
       </div>
 
-      <!-- Connection Details -->
-      <div class="form-group">
+      <!-- Connection Details (hidden for SQLite) -->
+      <div v-if="!isSqlite" class="form-group">
         <label for="username">Username</label>
         <input
           id="username"
@@ -37,7 +42,7 @@
         />
       </div>
 
-      <div class="form-group">
+      <div v-if="!isSqlite" class="form-group">
         <label for="password-ref">Password Reference</label>
         <select
           id="password-ref"
@@ -52,7 +57,7 @@
         </select>
       </div>
 
-      <div class="form-group">
+      <div v-if="!isSqlite" class="form-group">
         <label for="host">Host</label>
         <input
           id="host"
@@ -64,7 +69,7 @@
         />
       </div>
 
-      <div class="form-row">
+      <div v-if="!isSqlite" class="form-row">
         <div class="form-group half">
           <label for="port">Port</label>
           <input
@@ -89,12 +94,24 @@
           />
         </div>
       </div>
+
+      <div v-if="isSqlite" class="form-group">
+        <label for="database">File Path</label>
+        <input
+          id="database"
+          :value="modelValue.database"
+          type="text"
+          class="form-control"
+          placeholder="/path/to/database.db"
+          @input="(e: Event) => updateField('database', (e.target as HTMLInputElement).value)"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { DatabaseConnection } from "../../../baseNode/nodeInput";
 import { SecretsApi } from "../../../../../api";
 import type { Secret } from "../../../../../types";
@@ -105,6 +122,8 @@ const fetchSecretsApi = SecretsApi.getAll;
 const props = defineProps<{
   modelValue: DatabaseConnection;
 }>();
+
+const isSqlite = computed(() => props.modelValue.database_type === "sqlite");
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: DatabaseConnection): void;

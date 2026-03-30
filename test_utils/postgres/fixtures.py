@@ -334,6 +334,7 @@ def print_connection_info(
         print("=" * 50 + "\n")
         return
 
+    masked_password = password[0] + "***" + password[-1] if len(password) > 2 else "***"
     print("\n" + "=" * 50)
     print("PostgreSQL Connection Information:")
     print("=" * 50)
@@ -341,8 +342,8 @@ def print_connection_info(
     print(f"Port:     {port}")
     print(f"Database: {db}")
     print(f"User:     {user}")
-    print(f"Password: {password}")
-    print(f"Connection string: postgresql://{user}:{password}@{host}:{port}/{db}")
+    print(f"Password: {masked_password}")
+    print(f"Connection string: postgresql://{user}:***@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")
     print("poetry run stop_postgres")
