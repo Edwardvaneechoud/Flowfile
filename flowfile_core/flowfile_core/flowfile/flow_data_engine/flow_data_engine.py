@@ -395,6 +395,13 @@ class FlowDataEngine:
 
         if write_settings.write_mode == "append" and write_settings.file_format != "delta":
             raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
+
+        # For GCS with custom endpoint (emulator), use google-cloud-storage SDK
+        gcs_client = CloudStorageReader.get_gcs_client(connection)
+        if gcs_client is not None:
+            self._write_to_gcs_client(gcs_client, write_settings)
+            return
+
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         # Dispatch to the correct writer based on file format
@@ -523,6 +530,41 @@ class FlowDataEngine:
             logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
             raise Exception(f"Failed to write JSON to cloud storage: {str(e)}") from e
 
+    def _write_to_gcs_client(
+        self,
+        gcs_client,
+        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
+    ):
+        """Write to GCS using the google-cloud-storage SDK (for custom endpoints / emulators)."""
+        import io
+
+        resource_path = write_settings.resource_path
+        path = resource_path.replace("gs://", "")
+        bucket_name, _, blob_name = path.partition("/")
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        file_format = write_settings.file_format
+
+        df = self.data_frame.collect()
+        buf = io.BytesIO()
+
+        try:
+            if file_format == "parquet":
+                df.write_parquet(buf, compression=write_settings.parquet_compression)
+            elif file_format == "csv":
+                df.write_csv(buf, separator=write_settings.csv_delimiter)
+            elif file_format == "json":
+                df.write_ndjson(buf)
+            elif file_format == "delta":
+                raise NotImplementedError("Delta format is not supported for GCS with custom endpoints")
+            else:
+                raise ValueError(f"Unsupported file format for GCS client write: {file_format}")
+
+            buf.seek(0)
+            blob.upload_from_file(buf, content_type="application/octet-stream")
+        except Exception as e:
+            raise Exception(f"Failed to write {file_format} to GCS: {e}") from e
+
     @classmethod
     def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
@@ -548,6 +590,12 @@ class FlowDataEngine:
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
+
+        # For GCS with custom endpoint (emulator), use google-cloud-storage SDK
+        gcs_client = CloudStorageReader.get_gcs_client(connection)
+        if gcs_client is not None:
+            return cls._read_from_gcs_client(gcs_client, read_settings)
+
         # Get storage options based on connection type
         storage_options = CloudStorageReader.get_storage_options(connection)
         # Get credential provider if needed
@@ -584,6 +632,69 @@ class FlowDataEngine:
             raise NotImplementedError(f"File format {read_settings.file_format} not yet implemented")
         else:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
+
+    @classmethod
+    def _read_from_gcs_client(
+        cls,
+        gcs_client,
+        read_settings: cloud_storage_schemas.CloudStorageReadSettings,
+    ) -> FlowDataEngine:
+        """Read from GCS using the google-cloud-storage SDK (for custom endpoints / emulators).
+
+        Polars' native object_store does not support GCS endpoint overrides,
+        so we download blobs to temp files and use pl.scan_* for lazy evaluation.
+        """
+        import tempfile
+
+        resource_path = read_settings.resource_path
+        path = resource_path.replace("gs://", "")
+        bucket_name, _, blob_prefix = path.partition("/")
+        bucket = gcs_client.bucket(bucket_name)
+        file_format = read_settings.file_format
+
+        if file_format == "delta":
+            raise NotImplementedError("Delta format is not supported for GCS with custom endpoints")
+
+        def _download_blob_to_temp(blob_name: str, suffix: str) -> str:
+            blob = bucket.blob(blob_name)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            blob.download_to_file(tmp)
+            tmp.close()
+            return tmp.name
+
+        def _list_blobs(prefix: str, extension: str) -> list[str]:
+            blobs = gcs_client.list_blobs(bucket_name, prefix=prefix)
+            return [b.name for b in blobs if b.name.endswith(f".{extension}")]
+
+        is_directory = read_settings.scan_mode == "directory"
+
+        try:
+            if is_directory:
+                blob_names = _list_blobs(blob_prefix, file_format)
+                if not blob_names:
+                    raise ValueError(f"No {file_format} files found in gs://{bucket_name}/{blob_prefix}")
+                source = [_download_blob_to_temp(name, f".{file_format}") for name in blob_names]
+            else:
+                source = _download_blob_to_temp(blob_prefix, f".{file_format}")
+
+            if file_format == "parquet":
+                lf = pl.scan_parquet(source)
+            elif file_format == "csv":
+                lf = pl.scan_csv(
+                    source,
+                    has_header=read_settings.csv_has_header,
+                    separator=read_settings.csv_delimiter or ",",
+                    encoding=read_settings.csv_encoding or "utf8",
+                )
+            elif file_format == "json":
+                lf = pl.scan_ndjson(source)
+            else:
+                raise ValueError(f"Unsupported file format for GCS client read: {file_format}")
+
+            return cls(lf, number_of_records=6_666_666, optimize_memory=True, streamable=True)
+
+        except Exception as e:
+            raise Exception(f"Failed to read {file_format} from GCS: {e}") from e
 
     @staticmethod
     def _get_schema_from_first_file_in_dir(

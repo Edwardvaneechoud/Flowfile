@@ -211,13 +211,25 @@ class FullCloudStorageConnection(BaseModel):
 
     def get_credential_provider(self) -> Callable | None:
         """Get a credential provider function if needed."""
-        if self.storage_type == "gcs" and self.auth_method == "env_vars" and self.endpoint_url:
-
-            def gcs_emulator_credential_provider():
-                return {"bearer_token": "emulator"}, None
-
-            return gcs_emulator_credential_provider
         return None
+
+    def get_gcs_client(self):
+        """Get a google.cloud.storage.Client for GCS connections with custom endpoints.
+
+        Returns None if the connection doesn't use a custom endpoint.
+        """
+        if self.storage_type != "gcs" or not self.endpoint_url:
+            return None
+
+        from google.auth.credentials import AnonymousCredentials
+        from google.cloud import storage
+
+        client = storage.Client(
+            credentials=AnonymousCredentials(),
+            project=self.gcs_project_id or "test-project",
+        )
+        client._connection.API_BASE_URL = self.endpoint_url
+        return client
 
 
 class WriteSettings(BaseModel):

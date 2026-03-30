@@ -131,6 +131,36 @@ writers = {
 }
 
 
+def _write_to_gcs_client(df: pl.LazyFrame, gcs_client, write_settings: WriteSettings, logger: Logger) -> None:
+    """Write to GCS using the google-cloud-storage SDK (for custom endpoints / emulators)."""
+    import io
+
+    resource_path = write_settings.resource_path
+    path = resource_path.replace("gs://", "")
+    bucket_name, _, blob_name = path.partition("/")
+    bucket = gcs_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    file_format = write_settings.file_format
+
+    collected = collect_lazy_frame(df)
+    buf = io.BytesIO()
+
+    if file_format == "parquet":
+        collected.write_parquet(buf, compression=write_settings.parquet_compression)
+    elif file_format == "csv":
+        collected.write_csv(buf, separator=write_settings.csv_delimiter)
+    elif file_format == "json":
+        collected.write_ndjson(buf)
+    elif file_format == "delta":
+        raise NotImplementedError("Delta format is not supported for GCS with custom endpoints")
+    else:
+        raise ValueError(f"Unsupported file format for GCS client write: {file_format}")
+
+    buf.seek(0)
+    blob.upload_from_file(buf, content_type="application/octet-stream")
+    logger.info(f"Successfully wrote data to {write_settings.resource_path} via GCS client")
+
+
 def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, logger: Logger) -> None:
     """Write a Polars LazyFrame to an object in cloud storage.
 
@@ -153,6 +183,12 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
     # Validate write mode
     if write_settings.write_mode == "append" and write_settings.file_format != "delta":
         raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
+
+    # For GCS with custom endpoint (emulator), use google-cloud-storage SDK
+    gcs_client = connection.get_gcs_client()
+    if gcs_client is not None:
+        _write_to_gcs_client(df, gcs_client, write_settings, logger)
+        return
 
     storage_options = connection.get_storage_options()
     credential_provider = connection.get_credential_provider()

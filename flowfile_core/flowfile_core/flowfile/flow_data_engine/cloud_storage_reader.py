@@ -151,19 +151,40 @@ class CloudStorageReader:
 
     @staticmethod
     def _get_gcs_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
-        """Build GCS-specific storage options."""
+        """Build GCS-specific storage options.
+
+        For GCS with a custom endpoint_url (e.g. fake-gcs-server), returns an empty dict
+        because Polars' native object_store doesn't support GCS endpoint overrides.
+        In that case, reads/writes should use get_gcs_client() with BytesIO instead.
+        """
         storage_options = {}
 
         if connection.auth_method == "service_account" and connection.gcs_service_account_key:
             storage_options["service_account_key"] = connection.gcs_service_account_key.get_secret_value()
 
-        if connection.gcs_project_id:
+        if connection.gcs_project_id and not connection.endpoint_url:
             storage_options["project_id"] = connection.gcs_project_id
 
-        if connection.endpoint_url:
-            storage_options["base_url"] = connection.endpoint_url
-
         return storage_options
+
+    @staticmethod
+    def get_gcs_client(connection: "FullCloudStorageConnection"):
+        """Get a google.cloud.storage.Client for GCS connections with custom endpoints.
+
+        Returns None if the connection doesn't use a custom endpoint (use Polars native instead).
+        """
+        if connection.storage_type != "gcs" or not connection.endpoint_url:
+            return None
+
+        from google.auth.credentials import AnonymousCredentials
+        from google.cloud import storage
+
+        client = storage.Client(
+            credentials=AnonymousCredentials(),
+            project=connection.gcs_project_id or "test-project",
+        )
+        client._connection.API_BASE_URL = connection.endpoint_url
+        return client
 
     @staticmethod
     def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:
@@ -188,14 +209,6 @@ class CloudStorageReader:
                 }, None  # expiry
 
             return aws_credential_provider
-
-        if connection.storage_type == "gcs" and connection.auth_method == "env_vars" and connection.endpoint_url:
-            # For GCS emulators (e.g. fake-gcs-server) that don't require auth,
-            # provide a static bearer token via credential_provider.
-            def gcs_emulator_credential_provider():
-                return {"bearer_token": "emulator"}, None
-
-            return gcs_emulator_credential_provider
 
         return None
 
