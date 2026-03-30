@@ -55,6 +55,7 @@
       </div>
 
       <div v-if="selectedTableMeta" class="table-meta">
+        Latest stats:
         <div class="meta-row">
           <span class="meta-label">Rows</span>
           <span class="meta-value">{{ formatNumber(selectedTableMeta.row_count) }}</span>
