@@ -37,6 +37,23 @@
         </el-select>
       </div>
 
+      <div v-if="versionOptions.length > 0" class="catalog-field">
+        <label class="catalog-label">Version</label>
+        <el-select
+          v-model="nodeData.delta_version"
+          size="small"
+          placeholder="Latest"
+          clearable
+        >
+          <el-option
+            v-for="v in versionOptions"
+            :key="v.version"
+            :label="v.label"
+            :value="v.version"
+          />
+        </el-select>
+      </div>
+
       <div v-if="selectedTableMeta" class="table-meta">
         <div class="meta-row">
           <span class="meta-label">Rows</span>
@@ -65,7 +82,7 @@ import { ref, computed, onMounted } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import type { CatalogTable, NamespaceTree } from "../../../../../types";
+import type { CatalogTable, NamespaceTree, DeltaVersionCommit } from "../../../../../types";
 import type { NodeCatalogReader } from "../../../../../types/node.types";
 
 const nodeStore = useNodeStore();
@@ -79,36 +96,58 @@ const { saveSettings, pushNodeData } = useNodeSettings({
 const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
 const allTables = ref<CatalogTable[]>([]);
 const selectedTableMeta = ref<CatalogTable | null>(null);
+const deltaVersions = ref<DeltaVersionCommit[]>([]);
 
 const filteredTables = computed(() => {
   if (nodeData.value?.catalog_namespace_id == null) return allTables.value;
   return allTables.value.filter((t) => t.namespace_id === nodeData.value?.catalog_namespace_id);
 });
 
+const versionOptions = computed(() => {
+  return deltaVersions.value.map((v) => ({
+    version: v.version,
+    label: `v${v.version}${v.operation ? ` (${v.operation})` : ""}${v.timestamp ? ` - ${v.timestamp}` : ""}`,
+  }));
+});
+
 function formatNumber(n: number | null): string {
-  if (n === null) return "—";
+  if (n === null) return "\u2014";
   return n.toLocaleString();
 }
 
 function handleNamespaceChange() {
-  // Reset table selection when namespace changes
   if (nodeData.value) {
     nodeData.value.catalog_table_id = null;
     nodeData.value.catalog_table_name = null;
+    nodeData.value.delta_version = null;
   }
   selectedTableMeta.value = null;
+  deltaVersions.value = [];
 }
 
-function handleTableChange(tableId: number | null) {
+async function handleTableChange(tableId: number | null) {
   if (!nodeData.value) return;
+  nodeData.value.delta_version = null;
+  deltaVersions.value = [];
+
   const table = allTables.value.find((t) => t.id === tableId);
   if (table) {
     nodeData.value.catalog_table_name = table.name;
     nodeData.value.catalog_namespace_id = table.namespace_id;
     selectedTableMeta.value = table;
+    await loadTableHistory(table.id);
   } else {
     nodeData.value.catalog_table_name = null;
     selectedTableMeta.value = null;
+  }
+}
+
+async function loadTableHistory(tableId: number) {
+  try {
+    const history = await CatalogApi.getTableHistory(tableId);
+    deltaVersions.value = history.history;
+  } catch {
+    deltaVersions.value = [];
   }
 }
 
@@ -150,11 +189,16 @@ async function loadNodeData(nodeId: number) {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeData.value = nodeResult.setting_input;
+    // Backward compatibility
+    if (nodeData.value!.delta_version === undefined) {
+      nodeData.value!.delta_version = null;
+    }
   } else {
     nodeData.value = {
       catalog_table_id: null,
       catalog_table_name: null,
       catalog_namespace_id: null,
+      delta_version: null,
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
       cache_results: false,
@@ -173,6 +217,7 @@ async function loadNodeData(nodeId: number) {
     const table = allTables.value.find((t) => t.id === nodeData.value?.catalog_table_id);
     if (table) {
       selectedTableMeta.value = table;
+      await loadTableHistory(table.id);
     }
   }
 }
