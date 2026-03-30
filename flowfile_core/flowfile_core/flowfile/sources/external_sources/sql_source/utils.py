@@ -392,7 +392,10 @@ def construct_sql_uri(
     # For SQLite, we handle differently since it uses a file path
     if database_type.lower() == "sqlite":
         # For SQLite, database is the path to the file
-        path = database or "./database.db"
+        path = database or host or "./database.db"
+        # Strip sqlite:/// prefix if the full URI was passed as the path
+        if path.startswith("sqlite:///"):
+            path = path[len("sqlite:///"):]
         return f"sqlite:///{path}"
 
     # Validate that minimum required fields are present for other databases

@@ -34,7 +34,10 @@ class DataBaseConnection(BaseModel):
 
         # SQLite uses a file path instead of host-based connection
         if self.database_type.lower() == "sqlite":
-            path = self.database or "./database.db"
+            path = self.database or self.host or "./database.db"
+            # Strip sqlite:/// prefix if the full URI was passed as the path
+            if path.startswith("sqlite:///"):
+                path = path[len("sqlite:///"):]
             return f"sqlite:///{path}"
 
         # Validate that required fields are present
