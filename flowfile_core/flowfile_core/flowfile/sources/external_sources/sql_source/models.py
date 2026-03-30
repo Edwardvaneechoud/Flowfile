@@ -65,7 +65,7 @@ class DatabaseExternalWriteSettings(BaseModel):
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
         if node_database_writer.database_write_settings.connection_mode == "inline":
-            database_connection = node_database_writer.database_settings.database_connection.model_dump()
+            database_connection = node_database_writer.database_write_settings.database_connection.model_dump()
         else:
             database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
 
