@@ -216,6 +216,23 @@ def start_mysql_container(
         logger.info(f"Container {container_name} is already running")
         return None, True
 
+    # Pull the image first (may take a while on first run)
+    try:
+        logger.info(f"Pulling Docker image {image}...")
+        subprocess.run(
+            ["docker", "pull", image],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            check=True,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error(f"Timed out pulling Docker image {image}")
+        return None, False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to pull Docker image {image}: {e}")
+        return None, False
+
     # Run the container in the background
     try:
         proc = subprocess.Popen(
@@ -240,8 +257,8 @@ def start_mysql_container(
             ]
         )
 
-        # Wait for the process to complete (should be quick as it just starts the container)
-        proc.wait(timeout=10)
+        # Image is already pulled, so docker run -d should return quickly
+        proc.wait(timeout=30)
 
         if proc.returncode != 0:
             logger.error(f"Failed to start container with return code {proc.returncode}")
