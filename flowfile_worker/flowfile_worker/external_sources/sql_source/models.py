@@ -32,6 +32,11 @@ class DataBaseConnection(BaseModel):
         if self.url:
             return self.url
 
+        # SQLite uses a file path instead of host-based connection
+        if self.database_type.lower() == "sqlite":
+            path = self.database or "./database.db"
+            return f"sqlite:///{path}"
+
         # Validate that required fields are present
         if not all([self.host, self.database_type]):
             raise ValueError("Host and database type are required to create a URI")

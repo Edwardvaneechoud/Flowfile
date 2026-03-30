@@ -1,11 +1,13 @@
 //flowfile_frontend/src/renderer/app/pages/databaseManager/databaseConnectionTypes.ts
 
-export type DatabaseType = "postgresql" | "mysql";
+export type DatabaseType = "postgresql" | "mysql" | "sqlite";
 
-export const defaultPorts: Record<DatabaseType, number> = {
+export const defaultPorts: Partial<Record<DatabaseType, number>> = {
   postgresql: 5432,
   mysql: 3306,
 };
+
+export const isFileBased = (dbType: DatabaseType): boolean => dbType === "sqlite";
 
 export interface PythonFullDatabaseConnection {
   connection_name: string;

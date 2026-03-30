@@ -603,7 +603,7 @@ export interface ReceivedTable {
 // ============================================================================
 
 export interface DatabaseConnection {
-  database_type: "postgresql" | "mysql";
+  database_type: "postgresql" | "mysql" | "sqlite";
   username: string;
   password_ref: string;
   host?: string;
