@@ -74,6 +74,8 @@ flowfile = "flowfile.__main__:main"
 flowfile_scheduler = "flowfile_scheduler.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
+start_redpanda = "test_utils.kafka.commands:start_redpanda"
+stop_redpanda = "test_utils.kafka.commands:stop_redpanda"
 flowfile-migrate = "tools.migrate.__main__:main"
 
 [tool.poetry.group.build]
@@ -106,7 +108,8 @@ markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package",
     "kernel: Integration tests requiring Docker kernel containers",
-    "docker_integration: Full Docker-based E2E tests (require Docker, slow)"
+    "docker_integration: Full Docker-based E2E tests (require Docker, slow)",
+    "kafka: Integration tests requiring a Kafka/Redpanda broker (Docker)",
 ]
 
 [tool.coverage.run]

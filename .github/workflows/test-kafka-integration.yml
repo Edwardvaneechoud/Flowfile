@@ -1,0 +1,80 @@
+name: Kafka Integration Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'shared/kafka/**'
+      - 'flowfile_core/flowfile_core/kafka/**'
+      - 'flowfile_worker/flowfile_worker/external_sources/kafka_source/**'
+      - 'tests/kafka/**'
+      - 'test_utils/kafka/**'
+      - '.github/workflows/test-kafka-integration.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'shared/kafka/**'
+      - 'flowfile_core/flowfile_core/kafka/**'
+      - 'flowfile_worker/flowfile_worker/external_sources/kafka_source/**'
+      - 'tests/kafka/**'
+      - 'test_utils/kafka/**'
+      - '.github/workflows/test-kafka-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  kafka-tests:
+    name: Kafka Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-kafka-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-kafka-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction --no-ansi
+
+      - name: Start Redpanda container
+        run: poetry run start_redpanda
+
+      - name: Run Kafka unit tests (mocked)
+        run: |
+          poetry run pytest shared/tests/kafka/ -v --tb=short
+
+      - name: Run Kafka integration tests (real broker)
+        run: |
+          poetry run pytest tests/kafka -m kafka -vv --tb=long --log-cli-level=INFO
+        timeout-minutes: 10
+
+      - name: Stop Redpanda container
+        if: always()
+        run: poetry run stop_redpanda
+
+      - name: Show Redpanda logs on failure
+        if: failure()
+        run: |
+          echo "=== Redpanda container logs ==="
+          docker logs test-redpanda-kafka 2>&1 || echo "No logs available"
