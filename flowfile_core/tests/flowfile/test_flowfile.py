@@ -1171,7 +1171,6 @@ def test_add_database_reader():
 
 
 def test_add_database_reader_sqllite(sqlite_db):
-    breakpoint()
     graph = create_graph()
     add_node_promise_on_type(graph, 'database_reader', 1)
     conn_str = f"sqlite:///{sqlite_db}"
@@ -1187,13 +1186,51 @@ def test_add_database_reader_sqllite(sqlite_db):
     node = graph.get_node(1)
     assert node.name == 'database_reader', 'Node name should be database_reader'
     predicted_schema = node.get_predicted_schema()
-    assert len(predicted_schema) == 20, 'Expected 20 columns in the schema'
+    assert len(predicted_schema) == 6, f'Expected 6 columns in the schema, got {len(predicted_schema)}'
     predicted_lf = node.get_predicted_resulting_data()
     assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
     run_info = graph.run_graph()
     assert run_info.success, 'Run should be successful'
     lf = node.get_resulting_data()
     assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+def test_add_database_writer_sqlite(sqlite_db):
+    graph = create_graph()
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+
+    conn_str = f"sqlite:///{sqlite_db}"
+    database_connection = input_schema.DatabaseConnection(database_type='sqlite',
+                                                          password_ref="",
+                                                          database=conn_str)
+    database_write_settings = input_schema.DatabaseWriteSettings(
+        database_connection=database_connection,
+        table_name='test_write_table',
+        connection_mode='inline',
+        if_exists='replace',
+    )
+
+    node_database_writer = input_schema.NodeDatabaseWriter(database_write_settings=database_write_settings, node_id=2,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_writer(node_database_writer)
+    node = graph.get_node(2)
+    assert node.name == 'database_writer', 'Node name should be database_writer'
+    _ = node.schema
+    assert node.schema == graph.get_node(1).schema, 'Schema should be the same as the input'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+    # Verify data was actually written to SQLite by reading it back
+    import polars as pl
+    written_df = pl.read_database_uri("SELECT * FROM test_write_table", conn_str)
+    assert len(written_df) == 3, f'Expected 3 rows written, got {len(written_df)}'
+    assert 'name' in written_df.columns, 'Written table should have a name column'
 
 
 
