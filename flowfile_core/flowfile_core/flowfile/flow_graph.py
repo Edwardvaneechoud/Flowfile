@@ -46,6 +46,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
+    ExternalKafkaFetcher,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -2306,6 +2307,98 @@ class FlowGraph:
             self._node_db[node_database_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
+
+    def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
+        """Adds a node to read data from a Kafka or Redpanda topic.
+
+        Follows the same pattern as add_database_reader: offloads consumption
+        to the worker, which writes an IPC temp file and returns a serialized
+        LazyFrame reference.
+
+        Args:
+            node_kafka_source: The settings for the Kafka source node.
+        """
+        from flowfile_core.database.connection import get_db_context
+        from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection, get_sync_offsets
+        from shared.kafka.models import KafkaReadSettings
+
+        logger.info("Adding kafka source")
+        node_type = "kafka_source"
+        kafka_settings = node_kafka_source.kafka_settings
+
+        # Resolve connection and build consumer config
+        with get_db_context() as db:
+            db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
+            if db_conn is None:
+                if kafka_settings.kafka_connection_name:
+                    from flowfile_core.kafka.connection_manager import get_kafka_connection_by_name
+
+                    db_conn = get_kafka_connection_by_name(
+                        db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
+                    )
+                if db_conn is None:
+                    raise HTTPException(status_code=400, detail="Kafka connection not found")
+
+            consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+            stored_offsets = get_sync_offsets(db, kafka_settings.sync_name, kafka_settings.topic_name)
+
+        kafka_read_settings = KafkaReadSettings(
+            bootstrap_servers=consumer_config.get("bootstrap.servers", ""),
+            topic=kafka_settings.topic_name,
+            value_format=kafka_settings.value_format,
+            offsets=stored_offsets,
+            start_offset=kafka_settings.start_offset,
+            max_messages=kafka_settings.max_messages,
+            poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
+            security_protocol=consumer_config.get("security.protocol", "PLAINTEXT"),
+            sasl_mechanism=consumer_config.get("sasl.mechanism"),
+            sasl_username=consumer_config.get("sasl.username"),
+            sasl_password=consumer_config.get("sasl.password"),
+            ssl_ca_location=consumer_config.get("ssl.ca.location"),
+            ssl_cert_location=consumer_config.get("ssl.certificate.location"),
+            ssl_key_pem=consumer_config.get("ssl.key.pem"),
+        )
+
+        def _func():
+            external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_kafka_fetcher
+            fl = FlowDataEngine(external_kafka_fetcher.get_result())
+            node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def schema_callback():
+            # Return expected metadata columns as schema hint
+            from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+            return [
+                FlowfileColumn(column_name="_kafka_key", data_type="String"),
+                FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
+                FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
+                FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
+            ]
+
+        node = self.get_node(node_kafka_source.node_id)
+        if node:
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_kafka_source
+            node.node_settings.cache_results = node_kafka_source.cache_results
+            self.add_node_to_starting_list(node)
+            node.schema_callback = schema_callback
+        else:
+            node = FlowNode(
+                node_kafka_source.node_id,
+                function=_func,
+                setting_input=node_kafka_source,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[node_kafka_source.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_kafka_source.node_id)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node that reads data from a SQL source.

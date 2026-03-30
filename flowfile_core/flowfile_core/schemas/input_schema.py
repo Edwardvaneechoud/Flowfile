@@ -1116,6 +1116,33 @@ class NodeCatalogReader(NodeBase):
         return "Read from Catalog"
 
 
+class KafkaSourceSettings(BaseModel):
+    """Configuration for reading from a Kafka/Redpanda topic."""
+
+    kafka_connection_id: int | None = None
+    kafka_connection_name: str | None = None
+    connection_mode: Literal["inline", "reference"] = "reference"
+    topic_name: str = ""
+    value_format: Literal["json"] = "json"
+    sync_name: str = ""  # unique key for offset tracking between runs
+    start_offset: Literal["earliest", "latest"] = "latest"
+    max_messages: int = 100_000
+    poll_timeout_seconds: float = 30.0
+
+
+class NodeKafkaSource(NodeBase):
+    """Settings for a node that reads from a Kafka or Redpanda topic."""
+
+    kafka_settings: KafkaSourceSettings = KafkaSourceSettings()
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        ks = self.kafka_settings
+        if ks.topic_name:
+            return f"Kafka: {ks.topic_name}"
+        return "Kafka Source"
+
+
 class NodeOutputConnection(BaseModel):
     """Represents the output side of a connection between two nodes."""
 

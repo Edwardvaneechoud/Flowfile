@@ -126,6 +126,18 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
     return Status(**f.json())
 
 
+def trigger_kafka_read(kafka_read_settings) -> Status:
+    """Send a Kafka read request to the worker service."""
+    from shared.kafka.models import KafkaReadSettings
+
+    if not isinstance(kafka_read_settings, KafkaReadSettings):
+        raise TypeError(f"Expected KafkaReadSettings, got {type(kafka_read_settings)}")
+    f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
+    return Status(**f.json())
+
+
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
@@ -746,6 +758,17 @@ class ExternalCreateFetcher(BaseFetcher):
 class ExternalDatabaseFetcher(BaseFetcher):
     def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
         r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalKafkaFetcher(BaseFetcher):
+    """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher."""
+
+    def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
+        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == "Processing"
         if wait_on_completion:

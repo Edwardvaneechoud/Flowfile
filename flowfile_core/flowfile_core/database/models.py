@@ -373,3 +373,41 @@ class SchedulerLock(Base):
     holder_id = Column(String, nullable=False)
     started_at = Column(DateTime, default=func.now(), nullable=False)
     heartbeat_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class KafkaConnection(Base):
+    __tablename__ = "kafka_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    bootstrap_servers = Column(String, nullable=False)
+    security_protocol = Column(String, nullable=False, default="PLAINTEXT")
+    sasl_mechanism = Column(String, nullable=True)
+    sasl_username = Column(String, nullable=True)
+    sasl_password_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    ssl_ca_location = Column(String, nullable=True)
+    ssl_cert_location = Column(String, nullable=True)
+    ssl_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    schema_registry_url = Column(String, nullable=True)
+    extra_config = Column(Text, nullable=True)  # JSON string
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    sasl_password = relationship("Secret", foreign_keys=[sasl_password_id], lazy="joined")
+    ssl_key = relationship("Secret", foreign_keys=[ssl_key_id], lazy="joined")
+
+
+class KafkaSyncOffset(Base):
+    __tablename__ = "kafka_sync_offsets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sync_name = Column(String, nullable=False, index=True)
+    topic = Column(String, nullable=False)
+    partition = Column(Integer, nullable=False)
+    committed_offset = Column(Integer, nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("sync_name", "topic", "partition", name="uq_kafka_sync_offset"),
+    )
