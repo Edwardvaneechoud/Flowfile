@@ -76,7 +76,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CatalogApi } from "../../../../../api/catalog.api";
@@ -114,6 +114,15 @@ const modeDescription = computed(() => {
   const mode = nodeData.value?.catalog_write_settings.write_mode;
   return mode ? descriptions[mode] : null;
 });
+
+watch(
+  () => nodeData.value?.catalog_write_settings.write_mode,
+  (newMode) => {
+    if (nodeData.value && !["upsert", "update", "delete"].includes(newMode as string)) {
+      nodeData.value.catalog_write_settings.merge_keys = [];
+    }
+  },
+);
 
 onMounted(async () => {
   try {

@@ -2047,7 +2047,7 @@ class FlowGraph:
             if is_delta_table(resolved_path):
                 scan_kwargs = {}
                 if delta_version is not None:
-                    scan_kwargs["delta_table_options"] = {"version": delta_version}
+                    scan_kwargs["version"] = delta_version
                 return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 

@@ -477,6 +477,7 @@ def write_delta(
         if mode == "overwrite":
             delta_write_options["schema_mode"] = "overwrite"
         elif mode == "append":
+            # Allow schema evolution: new columns in the source are added to the table
             delta_write_options["schema_mode"] = "merge"
         df.write_delta(output_path, mode=mode, delta_write_options=delta_write_options)
 
@@ -535,16 +536,34 @@ def merge_delta(
         if not table_exists:
             os.makedirs(output_path, exist_ok=True)
             if merge_mode == "delete":
-                # Create empty table with the incoming schema
+                flowfile_logger.warning("Delete on non-existent table %s; creating empty table", output_path)
+                empty = df.clear()
+                empty.write_delta(output_path, mode="error")
+            elif merge_mode == "update":
+                # "update" means only update existing rows — no rows exist, so write empty table
                 empty = df.clear()
                 empty.write_delta(output_path, mode="error")
             else:
-                # upsert / update on non-existent table: write all rows
+                # upsert on non-existent table: write all rows as the initial table
                 df.write_delta(output_path, mode="error")
         else:
+            if not merge_keys:
+                raise ValueError("merge_keys is required for merge operations on existing tables")
+
+            dt = DeltaTable(output_path)
+
+            # Schema evolution: add new source columns to the target before merging
+            if merge_mode in ("upsert", "update"):
+                target_col_names = {field.name for field in dt.schema().fields}
+                new_cols = [c for c in df.columns if c not in target_col_names]
+                if new_cols:
+                    df.clear().write_delta(
+                        output_path, mode="append", delta_write_options={"schema_mode": "merge"}
+                    )
+                    dt = DeltaTable(output_path)
+
             # Build merge predicate
             predicate = " AND ".join(f'target."{k}" = source."{k}"' for k in merge_keys)
-            dt = DeltaTable(output_path)
             source_arrow = df.to_arrow()
 
             merger = dt.merge(
