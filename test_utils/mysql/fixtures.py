@@ -101,8 +101,7 @@ def is_docker_available() -> bool:
     try:
         result = subprocess.run(
             ["docker", "info"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=5,
             check=False,
         )
@@ -216,13 +215,20 @@ def start_mysql_container(
         logger.info(f"Container {container_name} is already running")
         return None, True
 
+    # Remove any leftover stopped container with the same name
+    # (docker run --name fails if a stopped container with the same name exists)
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
+        capture_output=True,
+        check=False,
+    )
+
     # Pull the image first (may take a while on first run)
     try:
         logger.info(f"Pulling Docker image {image}...")
         subprocess.run(
             ["docker", "pull", image],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=300,
             check=True,
         )
@@ -235,7 +241,7 @@ def start_mysql_container(
 
     # Run the container in the background
     try:
-        proc = subprocess.Popen(
+        result = subprocess.run(
             [
                 "docker",
                 "run",
@@ -254,15 +260,18 @@ def start_mysql_container(
                 "--rm",
                 "-d",
                 image,
-            ]
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
-        # Image is already pulled, so docker run -d should return quickly
-        proc.wait(timeout=30)
-
-        if proc.returncode != 0:
-            logger.error(f"Failed to start container with return code {proc.returncode}")
-            return proc, False
+        if result.returncode != 0:
+            logger.error(f"Failed to start container (rc={result.returncode}): {result.stderr.strip()}")
+            return None, False
+    except subprocess.TimeoutExpired:
+        logger.error("Timed out starting MySQL container")
+        return None, False
     except Exception as e:
         logger.error(f"Error starting container: {e}")
         return None, False
@@ -271,7 +280,7 @@ def start_mysql_container(
     start_time = time.time()
     max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
 
-    for i in range(max_retries):
+    for _i in range(max_retries):
         if can_connect_to_db():
             elapsed = time.time() - start_time
             logger.info(f"MySQL container started successfully in {elapsed:.2f} seconds")
