@@ -35,6 +35,7 @@ OperationType = Literal[
     "write_to_cloud_storage",
     "write_parquet",
     "write_delta",
+    "merge_delta",
 ]
 ResultType = Literal["polars", "other"]
 

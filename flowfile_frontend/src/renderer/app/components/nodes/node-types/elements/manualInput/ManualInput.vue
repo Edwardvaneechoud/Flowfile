@@ -58,7 +58,7 @@
                         v-model="col.dataType"
                         size="small"
                         class="type-select"
-                        :teleported="false"
+                        :teleported="true"
                       >
                         <el-option
                           v-for="dtype in dataTypes"

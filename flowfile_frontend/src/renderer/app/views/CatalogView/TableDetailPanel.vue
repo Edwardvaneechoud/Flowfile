@@ -112,7 +112,14 @@
               </td>
               <td>{{ formatTimestamp(entry.timestamp) }}</td>
               <td class="version-operation">{{ entry.operation ?? "--" }}</td>
-              <td class="version-params">{{ formatParams(entry.parameters) }}</td>
+              <td class="version-params">
+                <span class="version-params-cell">
+                  {{ truncateParams(formatParams(entry.parameters)) }}
+                  <span v-if="formatParams(entry.parameters).length > 60" class="version-params-full">
+                    {{ formatParams(entry.parameters) }}
+                  </span>
+                </span>
+              </td>
               <td class="version-action">
                 <span
                   v-if="entry.version !== tableHistory!.current_version"
@@ -268,6 +275,11 @@ function formatParams(params: Record<string, any> | null): string {
   return Object.entries(params)
     .map(([k, v]) => `${k}: ${v}`)
     .join(", ");
+}
+
+function truncateParams(value: string): string {
+  if (value.length <= 60) return value;
+  return value.slice(0, 60) + "...";
 }
 
 function formatCell(value: any): string {
@@ -578,9 +590,36 @@ function formatCell(value: any): string {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+  position: relative;
+  max-width: 0;
+}
+
+.version-params-cell {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: default;
+}
+
+.version-params-full {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  background: var(--color-background-primary, #fff);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-2) var(--spacing-3);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-width: 400px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.version-params-cell:hover .version-params-full {
+  display: block;
 }
 
 .version-action {

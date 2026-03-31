@@ -2038,13 +2038,17 @@ class FlowGraph:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
         resolved_path = file_path
+        delta_version = node_catalog_reader.delta_version
 
         def _func() -> FlowDataEngine:
 
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
             if is_delta_table(resolved_path):
-                return FlowDataEngine(pl.scan_delta(resolved_path))
+                scan_kwargs = {}
+                if delta_version is not None:
+                    scan_kwargs["version"] = delta_version
+                return FlowDataEngine(pl.scan_delta(resolved_path, **scan_kwargs))
             return FlowDataEngine(pl.scan_parquet(resolved_path))
 
         self.add_node_step(
@@ -2081,13 +2085,24 @@ class FlowGraph:
                 )
 
             # Offload collect + write to the worker
+            if delta_mode in ("upsert", "update", "delete"):
+                op_type = "merge_delta"
+                op_kwargs = {
+                    "output_path": str(dest_path),
+                    "merge_mode": delta_mode,
+                    "merge_keys": settings.merge_keys,
+                }
+            else:
+                op_type = "write_delta"
+                op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
+
             fetcher = ExternalDfFetcher(
                 flow_id=self.flow_id,
                 node_id=node_catalog_writer.node_id,
                 lf=df.data_frame,
                 wait_on_completion=True,
-                operation_type="write_delta",
-                kwargs={"output_path": str(dest_path), "mode": delta_mode},
+                operation_type=op_type,
+                kwargs=op_kwargs,
             )
             if fetcher.has_error:
                 raise RuntimeError(

@@ -32,7 +32,33 @@
         <el-select v-model="nodeData.catalog_write_settings.write_mode" size="small">
           <el-option label="Overwrite" value="overwrite" />
           <el-option label="Error if exists" value="error" />
+          <el-option label="Append" value="append" />
+          <el-option label="Upsert" value="upsert" />
+          <el-option label="Update" value="update" />
+          <el-option label="Delete" value="delete" />
         </el-select>
+      </div>
+
+      <div v-if="needsMergeKeys" class="catalog-field">
+        <label class="catalog-label">Key columns</label>
+        <el-select
+          v-model="nodeData.catalog_write_settings.merge_keys"
+          size="small"
+          multiple
+          filterable
+          placeholder="Select key columns"
+        >
+          <el-option
+            v-for="col in availableColumns"
+            :key="col"
+            :label="col"
+            :value="col"
+          />
+        </el-select>
+      </div>
+
+      <div v-if="modeDescription" class="mode-description">
+        {{ modeDescription }}
       </div>
 
       <div class="catalog-field">
@@ -50,14 +76,15 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import type { NodeCatalogWriter } from "../../../../../types/node.types";
+import type { NodeCatalogWriter, NodeData } from "../../../../../types/node.types";
 
 const nodeStore = useNodeStore();
 const nodeData = ref<NodeCatalogWriter | null>(null);
+const fullNodeData = ref<NodeData | null>(null);
 const dataLoaded = ref(false);
 
 const { saveSettings, pushNodeData } = useNodeSettings({
@@ -65,6 +92,37 @@ const { saveSettings, pushNodeData } = useNodeSettings({
 });
 
 const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
+
+const needsMergeKeys = computed(() => {
+  const mode = nodeData.value?.catalog_write_settings.write_mode;
+  return mode === "upsert" || mode === "update" || mode === "delete";
+});
+
+const availableColumns = computed(() => {
+  return fullNodeData.value?.main_input?.columns ?? [];
+});
+
+const modeDescription = computed(() => {
+  const descriptions: Record<string, string> = {
+    overwrite: "Replace all existing data in the table.",
+    error: "Fail if the table already exists.",
+    append: "Add rows to the existing table without modifying existing data.",
+    upsert: "Update rows that match the key columns, insert rows that don't match.",
+    update: "Update only rows that match the key columns. No new rows are inserted.",
+    delete: "Remove rows from the target table that match the key columns in the source data.",
+  };
+  const mode = nodeData.value?.catalog_write_settings.write_mode;
+  return mode ? descriptions[mode] : null;
+});
+
+watch(
+  () => nodeData.value?.catalog_write_settings.write_mode,
+  (newMode) => {
+    if (nodeData.value && !["upsert", "update", "delete"].includes(newMode as string)) {
+      nodeData.value.catalog_write_settings.merge_keys = [];
+    }
+  },
+);
 
 onMounted(async () => {
   try {
@@ -84,8 +142,13 @@ onMounted(async () => {
 
 async function loadNodeData(nodeId: number) {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
+  fullNodeData.value = nodeResult;
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeData.value = nodeResult.setting_input;
+    // Ensure merge_keys exists for backward compatibility
+    if (!nodeData.value!.catalog_write_settings.merge_keys) {
+      nodeData.value!.catalog_write_settings.merge_keys = [];
+    }
   } else {
     nodeData.value = {
       catalog_write_settings: {
@@ -93,6 +156,7 @@ async function loadNodeData(nodeId: number) {
         namespace_id: null,
         description: null,
         write_mode: "overwrite",
+        merge_keys: [],
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
@@ -135,5 +199,13 @@ defineExpose({
   font-size: 12px;
   font-weight: 500;
   color: var(--color-text-secondary);
+}
+
+.mode-description {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 6px 8px;
+  background-color: var(--color-background-secondary);
+  border-radius: 4px;
 }
 </style>

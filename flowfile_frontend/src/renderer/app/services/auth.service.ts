@@ -4,6 +4,7 @@ import { ref } from "vue";
 
 interface AuthResponse {
   access_token: string;
+  refresh_token?: string;
   token_type: string;
   expires_at?: number;
   user?: {
@@ -120,6 +121,9 @@ class AuthService {
       if (response.data?.access_token) {
         const expirationTime = response.data.expires_at || this.calculateExpiration();
         this.setToken(response.data.access_token, expirationTime, username);
+        if (response.data.refresh_token) {
+          localStorage.setItem("auth_refresh_token", response.data.refresh_token);
+        }
         return true;
       }
       return false;
@@ -180,12 +184,22 @@ class AuthService {
     }
 
     if (this.hasValidToken()) {
+      // Proactively refresh if token expires within 5 minutes (Docker mode only)
+      if (!this.isElectronMode.value && this.isTokenExpiringSoon() && !this.refreshPromise) {
+        this.refreshPromise = this.refreshAccessToken();
+        this.refreshPromise.finally(() => {
+          this.refreshPromise = null;
+        });
+      }
       return this.token.value;
     }
 
-    // In Docker mode, don't auto-refresh - require manual login
+    // In Docker mode, try refresh token before requiring manual login
     if (!this.isElectronMode.value) {
-      return null;
+      this.refreshPromise = this.refreshAccessToken();
+      const newToken = await this.refreshPromise;
+      this.refreshPromise = null;
+      return newToken;
     }
 
     // In Electron mode, refresh the token automatically
@@ -193,6 +207,43 @@ class AuthService {
     const newToken = await this.refreshPromise;
     this.refreshPromise = null;
     return newToken;
+  }
+
+  private isTokenExpiringSoon(): boolean {
+    if (!this.tokenExpiration.value) return false;
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    return this.tokenExpiration.value - Date.now() < FIVE_MINUTES;
+  }
+
+  async refreshAccessToken(): Promise<string | null> {
+    const refreshToken = localStorage.getItem("auth_refresh_token");
+    if (!refreshToken) return null;
+
+    try {
+      const formData = new FormData();
+      formData.append("refresh_token", refreshToken);
+
+      const response = await axios.post<AuthResponse>("/auth/refresh", formData, {
+        headers: {
+          "X-Skip-Auth-Header": "true",
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      if (response.data?.access_token) {
+        const expirationTime = response.data.expires_at || this.calculateExpiration();
+        this.setToken(response.data.access_token, expirationTime);
+        if (response.data.refresh_token) {
+          localStorage.setItem("auth_refresh_token", response.data.refresh_token);
+        }
+        return response.data.access_token;
+      }
+      return null;
+    } catch {
+      // Refresh token expired or invalid — must re-login
+      this.logout();
+      return null;
+    }
   }
 
   private async refreshToken(): Promise<string | null> {
@@ -241,6 +292,7 @@ class AuthService {
     this.currentUsername.value = null;
     localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_token_expiration");
+    localStorage.removeItem("auth_refresh_token");
     localStorage.removeItem("auth_username");
   }
 }
@@ -255,7 +307,8 @@ axios.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     const requestUrl = originalRequest?.url || "";
-    const isAuthRequest = requestUrl.includes("/auth/token") || requestUrl.includes("/auth/");
+    const isAuthRequest =
+      requestUrl.includes("/auth/token") || requestUrl.includes("/auth/refresh");
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
       originalRequest._retry = true;
@@ -273,9 +326,17 @@ axios.interceptors.response.use(
           return axios(originalRequest);
         }
       } else {
-        // In Docker mode, redirect to login
+        // In Docker mode, try refresh token before redirecting to login
+        const newToken = await authService.refreshAccessToken();
+        if (newToken) {
+          originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
+          return axios(originalRequest);
+        }
+
+        // Refresh failed — redirect to login
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_token_expiration");
+        localStorage.removeItem("auth_refresh_token");
         localStorage.removeItem("auth_username");
 
         if (!window.location.hash.includes("login")) {
