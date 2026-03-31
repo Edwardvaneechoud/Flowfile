@@ -1,6 +1,9 @@
+import polars as pl
+
 from collections.abc import Callable
 from typing import Any, Literal
-
+from urllib.parse import urlparse
+import gcsfs
 import boto3
 from botocore.exceptions import ClientError
 
@@ -203,6 +206,21 @@ class CloudStorageReader:
         return None
 
 
+def get_first_file_from_cloud_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from a cloud storage directory.
+
+    Routes to the appropriate provider-specific implementation based on the URI scheme.
+    """
+    if source.startswith("s3://"):
+        return get_first_file_from_s3_dir(source, storage_options=storage_options)
+    elif source.startswith(("az://", "abfss://")):
+        return get_first_file_from_adls_dir(source, storage_options=storage_options)
+    elif source.startswith("gs://"):
+        return get_first_file_from_gcs_dir(source, storage_options=storage_options)
+    raise ValueError(f"Unsupported cloud storage scheme in: {source}")
+
+
 def get_first_file_from_s3_dir(source: str, storage_options: dict[str, Any] = None) -> str:
     """
     Get the first parquet file from an S3 directory path.
@@ -238,6 +256,72 @@ def get_first_file_from_s3_dir(source: str, storage_options: dict[str, Any] = No
 
     # Return first file URI
     return f"s3://{bucket_name}/{first_file['Key']}"
+
+
+def get_first_file_from_adls_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from an ADLS directory path.
+
+    Parameters
+    ----------
+    source : str
+        ADLS path with wildcards (e.g., 'az://container/prefix/**/*.parquet')
+    storage_options : dict, optional
+        Azure storage options (account_name, account_key, etc.)
+
+    Returns
+    -------
+    str
+        ADLS URI of the first matching file found.
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    file_extension = _get_file_extension(source)
+    scheme, path = source.split("://", 1)
+    container_name, *prefix_parts = path.split("*")[0].rstrip("/").split("/", 1)
+    base_prefix = prefix_parts[0] if prefix_parts else ""
+
+    opts = storage_options or {}
+    account_name = opts.get("account_name", "devstoreaccount1")
+    account_key = opts.get("account_key")
+    endpoint = opts.get("azure_storage_endpoint", f"https://{account_name}.blob.core.windows.net")
+
+    client = BlobServiceClient(account_url=endpoint, credential=account_key)
+    container_client = client.get_container_client(container_name)
+
+    for blob in container_client.list_blobs(name_starts_with=base_prefix):
+        if blob.name.endswith(f".{file_extension}"):
+            return f"{scheme}://{container_name}/{blob.name}"
+
+    raise ValueError(f"No .{file_extension} files found in {scheme}://{container_name}/{base_prefix}")
+
+
+def get_first_file_from_gcs_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from a GCS directory path.
+
+    Parameters
+    ----------
+    source : str
+        GCS path with wildcards (e.g., 'gs://bucket/prefix/**/*.parquet')
+    storage_options : dict, optional
+        GCS storage options passed to gcsfs.
+
+    Returns
+    -------
+    str
+        GCS URI of the first matching file found.
+    """
+    import gcsfs
+
+    file_extension = _get_file_extension(source)
+    path = source.replace("gs://", "").split("*")[0].rstrip("/")
+
+    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
+    matches = fs.glob(f"{path}/**/*.{file_extension}")
+    if not matches:
+        raise ValueError(f"No .{file_extension} files found in gs://{path}")
+    return f"gs://{matches[0]}"
 
 
 def _get_file_extension(source: str) -> str:
@@ -294,3 +378,112 @@ def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["c
     if not resource_path.endswith(f"*.{file_format}"):
         resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path
+
+
+def get_path_without_scheme(path_str: str) -> str:
+    """Strip the URI scheme from a cloud storage path.
+
+    Parameters
+    ----------
+    path_str
+        Cloud storage URI, e.g. 'gs://bucket/prefix/file.parquet'.
+
+    Returns
+    -------
+    str
+        Path without scheme, e.g. 'bucket/prefix/file.parquet'.
+    """
+    parsed = urlparse(path_str)
+    return parsed.netloc + parsed.path
+
+
+def strip_wildcard_pattern_from_dir(path_str: str) -> str:
+    """Strip the URI scheme and any glob/wildcard patterns from a cloud storage path.
+
+    Parses the URI and removes everything from the first '*' onward,
+    returning a clean path suitable for pyarrow.dataset discovery.
+
+    Parameters
+    ----------
+    path_str
+        Cloud storage URI, e.g. 'gs://bucket/prefix/**/*.parquet'.
+
+    Returns
+    -------
+    str
+        Clean path without scheme or wildcards, e.g. 'bucket/prefix'.
+    """
+    parsed = urlparse(path_str)
+    return parsed.netloc + parsed.path.split("*")[0].rstrip("/")
+
+
+def get_lazy_frame_from_gcs_pyarrow_dataset(
+        resource_path: str,
+        storage_options: dict[str, Any] | None = None,
+        is_directory: bool = False,
+) -> pl.LazyFrame:
+    """Create a Polars LazyFrame from a GCS path via PyArrow dataset.
+
+    Uses gcsfs for filesystem access and pyarrow.dataset for lazy reading.
+    Only the Parquet metadata (footer) is read upfront; row data is deferred
+    until the LazyFrame is collected.
+
+    Parameters
+    ----------
+    resource_path
+        GCS URI, e.g. 'gs://bucket/dir/**/*.parquet' or 'gs://bucket/file.parquet'.
+    storage_options
+        GCS storage options passed to gcsfs (token, project, endpoint_url, etc.).
+    is_directory
+        If True, glob/wildcard patterns are stripped to get the base directory path.
+    """
+    import pyarrow.dataset as ds
+
+    clean_path = (strip_wildcard_pattern_from_dir(resource_path)
+                  if is_directory else get_path_without_scheme(resource_path))
+
+    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
+    return pl.scan_pyarrow_dataset(ds.dataset(clean_path, format="parquet", filesystem=fs))
+
+
+def sink_to_gcs(
+    lf: pl.LazyFrame,
+    path: str,
+    storage_options: dict[str, Any],
+    file_format: Literal["parquet", "csv", "json"] = "parquet",
+    **kwargs: Any,
+) -> None:
+    """Write a Polars LazyFrame to GCS via gcsfs.
+
+    Bypasses Polars' native sink which doesn't support combining
+    token with endpoint_url in storage_options.
+
+    Parameters
+    ----------
+    lf
+        The LazyFrame to write.
+    path
+        GCS URI, e.g. 'gs://bucket/output.parquet'.
+    storage_options
+        GCS storage options passed to gcsfs.
+    file_format
+        Output format: 'parquet', 'csv', or 'json'.
+    **kwargs
+        Additional arguments passed to the underlying writer
+        (e.g. compression='snappy' for parquet).
+    """
+    import pyarrow.parquet as pq
+    fs = gcsfs.GCSFileSystem(**storage_options)
+    clean_path = get_path_without_scheme(path)
+    df = lf.collect()
+
+    if file_format == "parquet":
+        pq.write_table(df.to_arrow(), clean_path, filesystem=fs, **kwargs)
+    elif file_format == "csv":
+        with fs.open(clean_path, "w") as f:
+            lf.sink_csv(f, **kwargs)
+    elif file_format == "json":
+        with fs.open(clean_path, "w") as f:
+            df.write_ndjson(f, **kwargs)
+    else:
+        raise ValueError(f"Unsupported file format: {file_format}")

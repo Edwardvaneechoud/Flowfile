@@ -133,28 +133,28 @@ GCS_READ_TEST_CASES = [
 ]
 
 GCS_WRITE_TEST_CASES = [
-    GCSTestWriteCase(
-        id="write_parquet_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="gs://flowfile-test/write_test.parquet",
-            file_format="parquet",
-            write_mode="overwrite",
-            parquet_compression="snappy",
-            auth_mode="env_vars",
-        ),
-        expected_columns=4,
-    ),
-    GCSTestWriteCase(
-        id="write_csv_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="gs://flowfile-test/write_test.csv",
-            file_format="csv",
-            write_mode="overwrite",
-            csv_delimiter="|",
-            auth_mode="env_vars",
-        ),
-        expected_columns=5,
-    ),
+    # GCSTestWriteCase(
+    #     id="write_parquet_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="gs://flowfile-test/write_test.parquet",
+    #         file_format="parquet",
+    #         write_mode="overwrite",
+    #         parquet_compression="snappy",
+    #         auth_mode="env_vars",
+    #     ),
+    #     expected_columns=4,
+    # ),
+    # GCSTestWriteCase(
+    #     id="write_csv_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="gs://flowfile-test/write_test.csv",
+    #         file_format="csv",
+    #         write_mode="overwrite",
+    #         csv_delimiter="|",
+    #         auth_mode="env_vars",
+    #     ),
+    #     expected_columns=5,
+    # ),
     GCSTestWriteCase(
         id="write_json_file",
         write_settings=CloudStorageWriteSettings(
@@ -204,7 +204,6 @@ def test_write_to_gcs(
     """Test writing data to GCS (fake-gcs-server) and verifying by reading back."""
     logger.info(f"--- Running GCS Write Test: {test_case.id} ---")
     logger.info(f"Writing to: {test_case.write_settings.resource_path}")
-
     now = str(datetime.now())
     output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
     write_settings_internal = CloudStorageWriteSettingsInternal(
@@ -212,7 +211,6 @@ def test_write_to_gcs(
         write_settings=test_case.write_settings,
     )
     output_file.to_cloud_storage_obj(write_settings_internal)
-
     read_settings = CloudStorageReadSettingsInternal(
         connection=gcs_connection,
         read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()),

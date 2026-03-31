@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from math import ceil
 from typing import Any, Literal, TypeVar
 
+from copy import copy
+import gcsfs
 import polars as pl
 
 # Third-party imports
@@ -29,7 +31,9 @@ from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
-    get_first_file_from_s3_dir,
+    get_first_file_from_cloud_dir,
+    get_lazy_frame_from_gcs_pyarrow_dataset,
+    sink_to_gcs
 )
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
@@ -390,28 +394,29 @@ class FlowDataEngine:
         """
         connection = settings.connection
         write_settings = settings.write_settings
-
         logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
-
         if write_settings.write_mode == "append" and write_settings.file_format != "delta":
             raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
+        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
+
         # Dispatch to the correct writer based on file format
         if write_settings.file_format == "parquet":
             self._write_parquet_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
+                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
             )
         elif write_settings.file_format == "delta":
             self._write_delta_to_cloud(
                 write_settings.resource_path, storage_options, credential_provider, write_settings
             )
         elif write_settings.file_format == "csv":
-            self._write_csv_to_cloud(write_settings.resource_path, storage_options, credential_provider, write_settings)
+            self._write_csv_to_cloud(write_settings.resource_path, storage_options, credential_provider, write_settings,
+                                     use_pyarrow)
         elif write_settings.file_format == "json":
             self._write_json_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
+                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
             )
         else:
             raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
@@ -424,6 +429,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
+            use_pyarrow: bool = False
     ):
         """(Internal) Writes the DataFrame to a Parquet file in cloud storage.
 
@@ -440,7 +446,10 @@ class FlowDataEngine:
             if credential_provider:
                 sink_kwargs["credential_provider"] = credential_provider
             try:
-                self.data_frame.sink_parquet(**sink_kwargs)
+                if use_pyarrow:
+                    sink_to_gcs(self.data_frame, path=resource_path, storage_options=storage_options, file_format="parquet")
+                else:
+                    self.data_frame.sink_parquet(**sink_kwargs)
             except Exception as e:
                 logger.warning(f"Failed to sink the data, falling back to collecing and writing. \n {e}")
                 pl_df = self.collect()
@@ -450,6 +459,18 @@ class FlowDataEngine:
         except Exception as e:
             logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
             raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
+
+    @staticmethod
+    def _normalize_delta_path(resource_path: str) -> str:
+        """Normalize az:// paths to abfss:// for delta-rs compatibility.
+
+        The delta-rs library (>= 1.1.0) does not handle the az:// scheme correctly,
+        so we convert to abfss:// which is functionally equivalent.
+        See: https://github.com/delta-io/delta-rs/issues/3716
+        """
+        if resource_path.startswith("az://"):
+            return "abfss://" + resource_path[len("az://"):]
+        return resource_path
 
     def _write_delta_to_cloud(
         self,
@@ -464,7 +485,7 @@ class FlowDataEngine:
         on an eager DataFrame.
         """
         sink_kwargs = {
-            "target": resource_path,
+            "target": self._normalize_delta_path(resource_path),
             "mode": write_settings.write_mode,
         }
         if storage_options:
@@ -479,6 +500,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
+        use_pyarrow: bool = False
     ):
         """(Internal) Writes the DataFrame to a CSV file in cloud storage.
 
@@ -493,9 +515,11 @@ class FlowDataEngine:
                 sink_kwargs["storage_options"] = storage_options
             if credential_provider:
                 sink_kwargs["credential_provider"] = credential_provider
-
-            # sink_csv executes the lazy query and writes the result
-            self.data_frame.sink_csv(**sink_kwargs)
+            if use_pyarrow:
+                sink_to_gcs(self.data_frame, resource_path, storage_options, file_format="csv",
+                            separator=write_settings.csv_delimiter)
+            else:
+                self.data_frame.sink_csv(**sink_kwargs)
 
         except Exception as e:
             logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
@@ -507,6 +531,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
+            use_pyarrow: bool = False,
     ):
         """(Internal) Writes the DataFrame to a line-delimited JSON (NDJSON) file.
 
@@ -518,7 +543,10 @@ class FlowDataEngine:
                 sink_kwargs["storage_options"] = storage_options
             if credential_provider:
                 sink_kwargs["credential_provider"] = credential_provider
-            self.data_frame.sink_ndjson(**sink_kwargs)
+            if use_pyarrow:
+                sink_to_gcs(self.data_frame, resource_path, storage_options, file_format="json",)
+            else:
+                self.data_frame.sink_ndjson(**sink_kwargs)
 
         except Exception as e:
             logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
@@ -549,12 +577,8 @@ class FlowDataEngine:
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-
-        # Get storage options based on connection type
         storage_options = CloudStorageReader.get_storage_options(connection)
-        # Get credential provider if needed
         credential_provider = CloudStorageReader.get_credential_provider(connection)
-        # GCS with custom endpoint uses gcsfs via PyArrow backend
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
@@ -601,7 +625,6 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings | None = None,
     ) -> FlowDataEngine:
         """Read multiple files from a GCS directory using gcsfs glob + open."""
-        import gcsfs
 
         fs = gcsfs.GCSFileSystem(**storage_options)
         path = resource_path.replace("gs://", "").rstrip("/")
@@ -630,17 +653,30 @@ class FlowDataEngine:
 
     @staticmethod
     def _get_schema_from_first_file_in_dir(
-        source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"]
+            source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"],
+            use_pyarrow: bool = False,
     ) -> list[FlowfileColumn] | None:
         """Infers the schema by scanning the first file in a cloud directory."""
+        from pyarrow import parquet as pq
         try:
-            scan_func = getattr(pl, "scan_" + file_format)
-            first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
-            return convert_stats_to_column_info(
-                FlowDataEngine._create_schema_stats_from_pl_schema(
-                    scan_func(first_file_ref, storage_options=storage_options).collect_schema()
+            first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
+
+            if use_pyarrow:
+                fs = gcsfs.GCSFileSystem(**storage_options)
+                return convert_stats_to_column_info(
+                    FlowDataEngine._create_schema_stats_from_pl_schema(
+                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table())
+                        .collect_schema()
+                    )
                 )
-            )
+            else:
+                read_func = getattr(pl, "scan_" + file_format)
+
+                return convert_stats_to_column_info(
+                    FlowDataEngine._create_schema_stats_from_pl_schema(
+                        read_func(first_file_ref, storage_options=storage_options).collect_schema()
+                    )
+                )
         except Exception as e:
             logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
 
@@ -670,25 +706,22 @@ class FlowDataEngine:
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
-
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
 
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
             if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet")
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet",
+                                                                use_pyarrow=use_pyarrow)
             else:
                 schema = None
-
             if use_pyarrow:
-                scan_kwargs.pop("credential_provider", None)
-                scan_kwargs["use_pyarrow"] = True
-                df = pl.read_parquet(**scan_kwargs)
-                lf = df.lazy()
+                lf = get_lazy_frame_from_gcs_pyarrow_dataset(resource_path=resource_path,
+                                                             storage_options=storage_options,
+                                                             is_directory=is_directory)
             else:
                 lf = pl.scan_parquet(**scan_kwargs)
-
             return cls(
                 lf,
                 number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
@@ -713,7 +746,7 @@ class FlowDataEngine:
         try:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
-            scan_kwargs = {"source": resource_path}
+            scan_kwargs = {"source": cls._normalize_delta_path(resource_path)}
             if read_settings.delta_version:
                 scan_kwargs["version"] = read_settings.delta_version
             if storage_options:
@@ -808,8 +841,6 @@ class FlowDataEngine:
 
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
-                import gcsfs
-
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:

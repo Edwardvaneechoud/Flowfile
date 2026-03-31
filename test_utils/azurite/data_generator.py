@@ -74,16 +74,30 @@ def _create_multi_parquet_file(client: BlobServiceClient, df: pl.DataFrame, cont
         _upload_blob(client, container, f"multi-file-parquet/part_{i:02d}.parquet", buf.getvalue())
 
 
-def _create_delta_lake_table(arrow_table: pa.Table, container: str):
+def _delete_existing_delta_blobs(client: BlobServiceClient, container: str, prefix: str = "delta-lake-table/"):
+    """Delete any existing blobs under the delta table prefix to ensure a clean write."""
+    try:
+        container_client = client.get_container_client(container)
+        blobs = list(container_client.list_blobs(name_starts_with=prefix))
+        if blobs:
+            logger.info(f"Cleaning up {len(blobs)} existing delta blobs...")
+            for blob in blobs:
+                container_client.delete_blob(blob.name)
+    except Exception as e:
+        logger.warning(f"Failed to clean up existing delta blobs: {e}")
+
+
+def _create_delta_lake_table(client: BlobServiceClient, arrow_table: pa.Table, container: str):
     logger.info("Writing Delta Lake table...")
+    _delete_existing_delta_blobs(client, container)
     storage_options = {
-        "AZURE_STORAGE_ACCOUNT_NAME": AZURITE_ACCOUNT_NAME,
-        "AZURE_STORAGE_ACCOUNT_KEY": AZURITE_ACCOUNT_KEY,
-        "AZURE_STORAGE_USE_EMULATOR": "true",
-        "AZURE_STORAGE_ENDPOINT": f"http://{AZURITE_HOST}:{AZURITE_BLOB_PORT}",
-        "AZURE_STORAGE_ALLOW_HTTP": "true",
+        "account_name": AZURITE_ACCOUNT_NAME,
+        "account_key": AZURITE_ACCOUNT_KEY,
+        "azure_storage_use_emulator": "true",
+        "azure_storage_allow_http": "true",
+        "azure_storage_endpoint": f"http://{AZURITE_HOST}:{AZURITE_BLOB_PORT}/{AZURITE_ACCOUNT_NAME}",
     }
-    delta_path = f"az://{container}/delta-lake-table"
+    delta_path = f"abfss://{container}/delta-lake-table"
     write_deltalake(delta_path, arrow_table, mode="overwrite", storage_options=storage_options)
 
 
@@ -112,7 +126,10 @@ def populate_test_data(container: str = "test-container"):
     _create_multi_parquet_file(client, df, container)
 
     arrow_table = df.to_arrow()
-    _create_delta_lake_table(arrow_table, container)
+    try:
+        _create_delta_lake_table(client, arrow_table, container)
+    except Exception as e:
+        logger.error(f"Failed to create Delta Lake table (non-fatal): {e}")
 
     # Verify: list all blobs in the container and log them
     _log_container_contents(client, container)

@@ -176,6 +176,7 @@ def start_azurite_container() -> bool:
                 "-p", f"{AZURITE_BLOB_PORT}:10000",
                 "mcr.microsoft.com/azure-storage/azurite",
                 "azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000",
+                "--skipApiVersionCheck",
             ],
             check=True,
         )
