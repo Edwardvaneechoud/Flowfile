@@ -4,7 +4,6 @@ This module provides functionality to write Polars LazyFrames to various cloud s
 services (S3, Azure ADLS, Google Cloud Storage) in different file formats.
 """
 
-from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
@@ -15,12 +14,7 @@ from flowfile_worker.utils import collect_lazy_frame
 
 
 def _write_parquet_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger,
-    credential_provider: Callable | None = None,
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a Parquet file in cloud storage."""
     try:
@@ -30,8 +24,6 @@ def _write_parquet_to_cloud(
         }
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
-        if credential_provider:
-            sink_kwargs["credential_provider"] = credential_provider
 
         try:
             df.sink_parquet(**sink_kwargs)
@@ -39,7 +31,6 @@ def _write_parquet_to_cloud(
             logger.warning(f"Failed to use sink_parquet, falling back to collect and write: {str(e)}")
             pl_df = collect_lazy_frame(df)
             sink_kwargs["file"] = sink_kwargs.pop("path")
-            sink_kwargs.pop("credential_provider", None)
             pl_df.write_parquet(**sink_kwargs)
 
     except Exception as e:
@@ -48,12 +39,7 @@ def _write_parquet_to_cloud(
 
 
 def _write_delta_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger,
-    credential_provider: Callable | None = None,
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to Delta Lake format in cloud storage."""
     sink_kwargs = {
@@ -63,17 +49,11 @@ def _write_delta_to_cloud(
     if storage_options:
         sink_kwargs["storage_options"] = storage_options
 
-    # Delta format requires collecting the LazyFrame first
     collect_lazy_frame(df).write_delta(**sink_kwargs)
 
 
 def _write_csv_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger,
-    credential_provider: Callable | None = None,
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a CSV file in cloud storage."""
     try:
@@ -83,8 +63,6 @@ def _write_csv_to_cloud(
         }
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
-        if credential_provider:
-            sink_kwargs["credential_provider"] = credential_provider
 
         df.sink_csv(**sink_kwargs)
 
@@ -94,27 +72,19 @@ def _write_csv_to_cloud(
 
 
 def _write_json_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger,
-    credential_provider: Callable | None = None,
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage."""
     try:
         sink_kwargs = {"path": resource_path}
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
-        if credential_provider:
-            sink_kwargs["credential_provider"] = credential_provider
 
         try:
             df.sink_ndjson(**sink_kwargs)
         except Exception as e:
             pl_df = collect_lazy_frame(df)
             sink_kwargs["file"] = sink_kwargs.pop("path")
-            sink_kwargs.pop("credential_provider", None)
             pl_df.write_ndjson(**sink_kwargs)
             logger.error(f"Failed to use sink_ndjson, falling back to collect and write: {str(e)}")
 
@@ -129,36 +99,6 @@ writers = {
     "csv": _write_csv_to_cloud,
     "json": _write_json_to_cloud,
 }
-
-
-def _write_to_gcs_client(df: pl.LazyFrame, gcs_client, write_settings: WriteSettings, logger: Logger) -> None:
-    """Write to GCS using the google-cloud-storage SDK (for custom endpoints / emulators)."""
-    import io
-
-    resource_path = write_settings.resource_path
-    path = resource_path.replace("gs://", "")
-    bucket_name, _, blob_name = path.partition("/")
-    bucket = gcs_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    file_format = write_settings.file_format
-
-    collected = collect_lazy_frame(df)
-    buf = io.BytesIO()
-
-    if file_format == "parquet":
-        collected.write_parquet(buf, compression=write_settings.parquet_compression)
-    elif file_format == "csv":
-        collected.write_csv(buf, separator=write_settings.csv_delimiter)
-    elif file_format == "json":
-        collected.write_ndjson(buf)
-    elif file_format == "delta":
-        raise NotImplementedError("Delta format is not supported for GCS with custom endpoints")
-    else:
-        raise ValueError(f"Unsupported file format for GCS client write: {file_format}")
-
-    buf.seek(0)
-    blob.upload_from_file(buf, content_type="application/octet-stream")
-    logger.info(f"Successfully wrote data to {write_settings.resource_path} via GCS client")
 
 
 def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, logger: Logger) -> None:
@@ -184,20 +124,13 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
     if write_settings.write_mode == "append" and write_settings.file_format != "delta":
         raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
-    # For GCS with custom endpoint (emulator), use google-cloud-storage SDK
-    gcs_client = connection.get_gcs_client()
-    if gcs_client is not None:
-        _write_to_gcs_client(df, gcs_client, write_settings, logger)
-        return
-
     storage_options = connection.get_storage_options()
-    credential_provider = connection.get_credential_provider()
 
     # Dispatch to the appropriate writer
     writer_func = writers.get(write_settings.file_format)
     if not writer_func:
         raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
 
-    writer_func(df, write_settings.resource_path, storage_options, write_settings, logger, credential_provider)
+    writer_func(df, write_settings.resource_path, storage_options, write_settings, logger)
 
     logger.info(f"Successfully wrote data to {write_settings.resource_path}")

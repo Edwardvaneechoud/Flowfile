@@ -1,6 +1,5 @@
 """Cloud storage connection schemas for S3, ADLS, and other cloud providers."""
 
-from collections.abc import Callable
 from typing import Any, Literal
 
 import boto3
@@ -193,43 +192,23 @@ class FullCloudStorageConnection(BaseModel):
         return storage_options
 
     def _get_gcs_storage_options(self) -> dict[str, Any]:
-        """Build GCS-specific storage options."""
+        """Build GCS-specific storage options (fsspec/gcsfs-compatible)."""
         storage_options = {}
 
         if self.auth_method == "service_account" and self.gcs_service_account_key:
-            storage_options["service_account_key"] = decrypt_secret(
+            storage_options["token"] = decrypt_secret(
                 self.gcs_service_account_key.get_secret_value()
             ).get_secret_value()
+        elif self.endpoint_url:
+            storage_options["token"] = "anon"
 
         if self.gcs_project_id:
-            storage_options["project_id"] = self.gcs_project_id
+            storage_options["project"] = self.gcs_project_id
 
         if self.endpoint_url:
-            storage_options["base_url"] = self.endpoint_url
+            storage_options["endpoint_url"] = self.endpoint_url
 
         return storage_options
-
-    def get_credential_provider(self) -> Callable | None:
-        """Get a credential provider function if needed."""
-        return None
-
-    def get_gcs_client(self):
-        """Get a google.cloud.storage.Client for GCS connections with custom endpoints.
-
-        Returns None if the connection doesn't use a custom endpoint.
-        """
-        if self.storage_type != "gcs" or not self.endpoint_url:
-            return None
-
-        from google.auth.credentials import AnonymousCredentials
-        from google.cloud import storage
-
-        client = storage.Client(
-            credentials=AnonymousCredentials(),
-            project=self.gcs_project_id or "test-project",
-        )
-        client._connection.API_BASE_URL = self.endpoint_url
-        return client
 
 
 class WriteSettings(BaseModel):

@@ -153,38 +153,28 @@ class CloudStorageReader:
     def _get_gcs_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
         """Build GCS-specific storage options.
 
-        For GCS with a custom endpoint_url (e.g. fake-gcs-server), returns an empty dict
-        because Polars' native object_store doesn't support GCS endpoint overrides.
-        In that case, reads/writes should use get_gcs_client() with BytesIO instead.
+        Uses fsspec/gcsfs-compatible keys so Polars reads via PyArrow + gcsfs.
         """
         storage_options = {}
 
         if connection.auth_method == "service_account" and connection.gcs_service_account_key:
-            storage_options["service_account_key"] = connection.gcs_service_account_key.get_secret_value()
+            storage_options["token"] = connection.gcs_service_account_key.get_secret_value()
+        elif connection.endpoint_url:
+            # Emulator (e.g. fake-gcs-server): anonymous auth via gcsfs
+            storage_options["token"] = "anon"
 
-        if connection.gcs_project_id and not connection.endpoint_url:
-            storage_options["project_id"] = connection.gcs_project_id
+        if connection.gcs_project_id:
+            storage_options["project"] = connection.gcs_project_id
+
+        if connection.endpoint_url:
+            storage_options["endpoint_url"] = connection.endpoint_url
 
         return storage_options
 
     @staticmethod
-    def get_gcs_client(connection: "FullCloudStorageConnection"):
-        """Get a google.cloud.storage.Client for GCS connections with custom endpoints.
-
-        Returns None if the connection doesn't use a custom endpoint (use Polars native instead).
-        """
-        if connection.storage_type != "gcs" or not connection.endpoint_url:
-            return None
-
-        from google.auth.credentials import AnonymousCredentials
-        from google.cloud import storage
-
-        client = storage.Client(
-            credentials=AnonymousCredentials(),
-            project=connection.gcs_project_id or "test-project",
-        )
-        client._connection.API_BASE_URL = connection.endpoint_url
-        return client
+    def use_pyarrow_for_gcs(connection: "FullCloudStorageConnection") -> bool:
+        """Whether to use PyArrow backend for GCS reads (required for gcsfs/fsspec)."""
+        return connection.storage_type == "gcs" and connection.endpoint_url is not None
 
     @staticmethod
     def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:

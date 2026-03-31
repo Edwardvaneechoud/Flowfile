@@ -22,21 +22,7 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     from utils import is_docker_available
 
-import os
-
-from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, GCS_HOST, GCS_PORT, get_gcs_client
-
-
-@pytest.fixture(autouse=True)
-def gcs_emulator_env():
-    """Set STORAGE_EMULATOR_HOST so Polars' object_store uses the emulator with anonymous auth."""
-    original = os.environ.get("STORAGE_EMULATOR_HOST")
-    os.environ["STORAGE_EMULATOR_HOST"] = f"{GCS_HOST}:{GCS_PORT}"
-    yield
-    if original is None:
-        os.environ.pop("STORAGE_EMULATOR_HOST", None)
-    else:
-        os.environ["STORAGE_EMULATOR_HOST"] = original
+from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, get_gcs_client
 
 
 @pytest.fixture
