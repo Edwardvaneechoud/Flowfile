@@ -22,7 +22,7 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     from utils import is_docker_available
 
-from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, get_gcs_client
+from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, get_gcs_client, is_gcs_available
 
 
 @pytest.fixture
@@ -80,8 +80,8 @@ GCS_WRITE_TEST_CASES = [
 
 
 @pytest.mark.skipif(
-    not is_docker_available(),
-    reason="Docker is not available or not running",
+    not is_gcs_available(),
+    reason="fake-gcs-server is not running or has no test data",
 )
 @pytest.mark.parametrize("test_case", GCS_WRITE_TEST_CASES, ids=lambda tc: tc.id)
 def test_write_df_to_gcs(test_case: GCSWorkerWriteCase, gcs_connection_settings):

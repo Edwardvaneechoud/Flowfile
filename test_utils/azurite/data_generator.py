@@ -114,4 +114,22 @@ def populate_test_data(container: str = "test-container"):
     arrow_table = df.to_arrow()
     _create_delta_lake_table(arrow_table, container)
 
+    # Verify: list all blobs in the container and log them
+    _log_container_contents(client, container)
     logger.info("All Azurite test data populated successfully.")
+
+
+def _log_container_contents(client: BlobServiceClient, container: str):
+    """List and log all blobs in an Azurite container for verification."""
+    logger.info(f"--- Contents of az://{container} ---")
+    container_client = client.get_container_client(container)
+    blobs = list(container_client.list_blobs())
+    if not blobs:
+        logger.warning(f"  EMPTY - no blobs found in az://{container}")
+        return
+    total_size = 0
+    for blob in blobs:
+        size = blob.size or 0
+        total_size += size
+        logger.info(f"  az://{container}/{blob.name}  ({size:,} bytes)")
+    logger.info(f"--- Total: {len(blobs)} blobs, {total_size:,} bytes ---")

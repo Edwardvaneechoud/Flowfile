@@ -98,4 +98,21 @@ def populate_test_data(bucket_name: str = "test-bucket"):
     _create_single_parquet_file(client, df, bucket_name)
     _create_multi_parquet_file(client, df, bucket_name)
 
+    # Verify: list all blobs in the bucket and log them
+    _log_bucket_contents(client, bucket_name)
     logger.info("All GCS test data populated successfully.")
+
+
+def _log_bucket_contents(client, bucket_name: str):
+    """List and log all blobs in a bucket for verification."""
+    logger.info(f"--- Contents of gs://{bucket_name} ---")
+    blobs = list(client.list_blobs(bucket_name))
+    if not blobs:
+        logger.warning(f"  EMPTY - no blobs found in gs://{bucket_name}")
+        return
+    total_size = 0
+    for blob in blobs:
+        size = blob.size or 0
+        total_size += size
+        logger.info(f"  gs://{bucket_name}/{blob.name}  ({size:,} bytes)")
+    logger.info(f"--- Total: {len(blobs)} blobs, {total_size:,} bytes ---")

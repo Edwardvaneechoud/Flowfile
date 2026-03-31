@@ -31,6 +31,7 @@ from test_utils.azurite.fixtures import (
     AZURITE_ACCOUNT_NAME,
     AZURITE_BLOB_PORT,
     AZURITE_HOST,
+    is_azurite_available,
 )
 
 
@@ -196,8 +197,8 @@ ADLS_WRITE_TEST_CASES = [
 
 
 @pytest.mark.skipif(
-    not is_docker_available(),
-    reason="Docker is not available or not running",
+    not is_azurite_available(),
+    reason="Azurite emulator is not running or has no test data",
 )
 @pytest.mark.parametrize("test_case", ADLS_READ_TEST_CASES, ids=lambda tc: tc.id)
 def test_read_from_adls_with_access_key(test_case: ADLSTestReadCase, adls_access_key_connection):
@@ -219,8 +220,8 @@ def test_read_from_adls_with_access_key(test_case: ADLSTestReadCase, adls_access
 
 
 @pytest.mark.skipif(
-    not is_docker_available(),
-    reason="Docker is not available or not running",
+    not is_azurite_available(),
+    reason="Azurite emulator is not running or has no test data",
 )
 @pytest.mark.parametrize("test_case", ADLS_WRITE_TEST_CASES, ids=lambda tc: tc.id)
 def test_write_to_adls_with_access_key(

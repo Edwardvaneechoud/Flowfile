@@ -34,8 +34,41 @@ def get_gcs_client():
     return client
 
 
+def is_gcs_reachable() -> bool:
+    """Check if fake-gcs-server is reachable and responding."""
+    try:
+        resp = requests.get(f"{GCS_ENDPOINT_URL}/storage/v1/b", timeout=2)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def is_gcs_available() -> bool:
+    """Check if fake-gcs-server is running and has test data.
+
+    Use this in @pytest.mark.skipif to skip tests when the emulator isn't ready.
+    """
+    if not is_gcs_reachable():
+        logger.info(f"fake-gcs-server is not reachable at {GCS_ENDPOINT_URL}")
+        return False
+    # Verify test data exists
+    try:
+        client = get_gcs_client()
+        bucket = client.bucket("test-bucket")
+        blob = bucket.blob("single-file-parquet/data.parquet")
+        if not blob.exists():
+            logger.warning("fake-gcs-server is running but test data is missing (single-file-parquet/data.parquet)")
+            return False
+        logger.info("fake-gcs-server is available with test data")
+        return True
+    except Exception as e:
+        logger.warning(f"fake-gcs-server health check failed: {e}")
+        return False
+
+
 def wait_for_gcs(max_retries=30, interval=1):
     """Wait for fake-gcs-server to be ready."""
+    logger.info(f"Waiting for fake-gcs-server at {GCS_ENDPOINT_URL}...")
     for i in range(max_retries):
         try:
             resp = requests.get(f"{GCS_ENDPOINT_URL}/storage/v1/b", timeout=2)
@@ -46,6 +79,7 @@ def wait_for_gcs(max_retries=30, interval=1):
             if i < max_retries - 1:
                 time.sleep(interval)
             continue
+    logger.error(f"fake-gcs-server did not become ready after {max_retries} retries")
     return False
 
 
@@ -100,6 +134,7 @@ def stop_fake_gcs_container() -> bool:
 
 def create_test_buckets():
     """Create test buckets in fake-gcs-server."""
+    logger.info("Creating test buckets in fake-gcs-server...")
     client = get_gcs_client()
     buckets = ["test-bucket", "flowfile-test", "sample-data", "worker-test-bucket"]
     for bucket_name in buckets:
@@ -111,14 +146,24 @@ def create_test_buckets():
                 logger.info(f"Bucket already exists: {bucket_name}")
             else:
                 logger.warning(f"Failed to create bucket {bucket_name}: {e}")
+    logger.info("Bucket creation complete")
 
 
 def start_fake_gcs_container() -> bool:
-    """Start fake-gcs-server container."""
+    """Start fake-gcs-server container and populate test data."""
     if is_container_running(GCS_CONTAINER_NAME):
         logger.info(f"Container {GCS_CONTAINER_NAME} is already running")
+        # Container exists but may not have data — check and populate if needed
+        if not is_gcs_available():
+            logger.info("Container running but test data missing, populating...")
+            create_test_buckets()
+            from test_utils.gcs.data_generator import populate_test_data
+
+            populate_test_data()
+            logger.info("Test data populated in existing container")
         return True
 
+    logger.info(f"Starting fake-gcs-server container '{GCS_CONTAINER_NAME}'...")
     try:
         subprocess.run(
             [
@@ -135,10 +180,13 @@ def start_fake_gcs_container() -> bool:
 
         if wait_for_gcs():
             create_test_buckets()
+            logger.info("Populating test data in fake-gcs-server...")
             from test_utils.gcs.data_generator import populate_test_data
 
             populate_test_data()
+            logger.info("fake-gcs-server is fully ready with test data")
             return True
+        logger.error("fake-gcs-server container started but did not become ready")
         return False
     except Exception as e:
         logger.error(f"Failed to start fake-gcs-server: {e}")
