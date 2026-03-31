@@ -8,6 +8,8 @@ from contextlib import contextmanager
 
 import requests
 
+from test_utils.azurite.data_generator import populate_test_data
+
 logger = logging.getLogger("azurite_fixture")
 
 AZURITE_HOST = os.environ.get("TEST_AZURITE_HOST", "localhost")
@@ -136,6 +138,7 @@ def start_azurite_container() -> bool:
 
         if wait_for_azurite():
             create_test_containers()
+            populate_test_data()
             return True
         return False
     except Exception as e:

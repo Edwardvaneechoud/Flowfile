@@ -8,6 +8,8 @@ from contextlib import contextmanager
 
 import requests
 
+from test_utils.gcs.data_generator import populate_test_data
+
 logger = logging.getLogger("gcs_fixture")
 
 GCS_HOST = os.environ.get("TEST_GCS_HOST", "localhost")
@@ -135,6 +137,7 @@ def start_fake_gcs_container() -> bool:
 
         if wait_for_gcs():
             create_test_buckets()
+            populate_test_data()
             return True
         return False
     except Exception as e:
