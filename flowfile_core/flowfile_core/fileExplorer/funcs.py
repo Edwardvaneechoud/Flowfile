@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from flowfile_core.configs.settings import is_electron_mode
+from flowfile_core.configs import settings
 from shared.storage_config import storage
 
 
@@ -431,7 +431,7 @@ def validate_path_under_cwd(user_path: str) -> str:
     """
     # In Electron mode, allow access to any local file path
     # This is safe because Electron runs locally on the user's machine
-    if is_electron_mode():
+    if settings.is_electron_mode():
         # Normalize and resolve the path
         normalized_path = os.path.normpath(os.path.expanduser(user_path))
         # Block path traversal patterns even in Electron mode
