@@ -37,6 +37,8 @@ class KafkaReadSettings(BaseModel):
             "auto.offset.reset": self.start_offset,
             "session.timeout.ms": "6000",
             "heartbeat.interval.ms": "2000",
+            "fetch.wait.max.ms": "500",
+            "enable.partition.eof": "true",
         }
 
         if self.security_protocol != "PLAINTEXT":

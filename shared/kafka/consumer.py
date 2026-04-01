@@ -21,6 +21,9 @@ from shared.kafka.models import KafkaReadResult, KafkaReadSettings
 
 logger = logging.getLogger(__name__)
 
+# How many messages to fetch per consume() call (batch size for the C layer)
+_CONSUME_BATCH_SIZE = 500
+
 
 def read_kafka_source(
     settings: KafkaReadSettings,
@@ -46,12 +49,20 @@ def read_kafka_source(
     consumer = Consumer(consumer_config)
 
     try:
-        consumer.subscribe([settings.topic])
+        # Track assigned partitions via on_assign callback
+        assigned_partitions: set[int] = set()
+
+        def _on_assign(consumer, partitions):
+            assigned_partitions.update(tp.partition for tp in partitions)
+
+        consumer.subscribe([settings.topic], on_assign=_on_assign)
 
         # Consume messages
         rows: list[dict] = []
         high_watermarks: dict[int, int] = {}
+        eof_partitions: set[int] = set()
         messages_consumed = 0
+        empty_polls = 0
         first_poll = True
         poll_deadline = time.monotonic() + settings.poll_timeout_seconds
 
@@ -59,39 +70,62 @@ def read_kafka_source(
             remaining = max(0.1, poll_deadline - time.monotonic())
             # First poll needs longer timeout for consumer group join/rebalance
             timeout = min(remaining, 10.0) if first_poll else min(remaining, 1.0)
-            msg = consumer.poll(timeout=timeout)
             first_poll = False
 
-            if msg is None:
+            # Batch consume — fewer Python↔C boundary crossings
+            batch_size = min(_CONSUME_BATCH_SIZE, settings.max_messages - messages_consumed)
+            batch = consumer.consume(num_messages=batch_size, timeout=timeout)
+
+            if not batch:
+                empty_polls += 1
+                # After consuming messages, 2 consecutive empty polls means we're done
+                if messages_consumed > 0 and empty_polls >= 2:
+                    break
                 continue
 
-            if msg.error():
-                if msg.error().code() == KafkaError._PARTITION_EOF:
+            empty_polls = 0
+
+            for msg in batch:
+                if msg is None:
                     continue
-                logger.error("Kafka consumer error: %s", msg.error())
-                continue
 
-            # Deserialize value
-            record = deserializer.deserialize(msg.value())
-            if record is None:
-                # Failed deserialization — skip message but still track offset
+                if msg.error():
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        eof_partitions.add(msg.partition())
+                        # If all assigned partitions hit EOF, we're done
+                        if assigned_partitions and eof_partitions >= assigned_partitions:
+                            break
+                        continue
+                    logger.error("Kafka consumer error: %s", msg.error())
+                    continue
+
+                # Deserialize value
+                record = deserializer.deserialize(msg.value())
+                if record is None:
+                    high_watermarks[msg.partition()] = msg.offset() + 1
+                    continue
+
+                # Add Kafka metadata columns
+                record["_kafka_key"] = msg.key().decode("utf-8", errors="replace") if msg.key() else None
+                record["_kafka_partition"] = msg.partition()
+                record["_kafka_offset"] = msg.offset()
+                record["_kafka_timestamp"] = _extract_timestamp(msg)
+
+                rows.append(record)
                 high_watermarks[msg.partition()] = msg.offset() + 1
+                messages_consumed += 1
+
+                if messages_consumed >= settings.max_messages:
+                    break
+            else:
+                # Inner loop completed without break — continue outer loop
                 continue
-
-            # Add Kafka metadata columns
-            record["_kafka_key"] = msg.key().decode("utf-8", errors="replace") if msg.key() else None
-            record["_kafka_partition"] = msg.partition()
-            record["_kafka_offset"] = msg.offset()
-            record["_kafka_timestamp"] = _extract_timestamp(msg)
-
-            rows.append(record)
-            high_watermarks[msg.partition()] = msg.offset() + 1
-            messages_consumed += 1
+            # Inner loop broke (EOF all partitions or max_messages) — break outer too
+            break
 
         # Build DataFrame
         if rows:
             df = pl.DataFrame(rows)
-            # Ensure _kafka_key is always String (not Null when all keys are None)
             if "_kafka_key" in df.columns and df["_kafka_key"].dtype == pl.Null:
                 df = df.with_columns(pl.col("_kafka_key").cast(pl.String))
         else:
