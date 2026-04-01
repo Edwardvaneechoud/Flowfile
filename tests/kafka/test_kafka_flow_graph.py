@@ -312,7 +312,6 @@ class TestKafkaSourceWithDownstream:
         assert len(after_insert_df) > len(update_df_after_no_message)
 
 
-
 def _create_namespace() -> int:
     """Create a two-level namespace hierarchy and return the schema-level id."""
     with get_db_context() as db:

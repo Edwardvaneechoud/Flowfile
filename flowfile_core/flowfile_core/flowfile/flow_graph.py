@@ -13,6 +13,10 @@ from time import time
 from typing import Any, Literal, Union
 from uuid import uuid1
 from shared.kafka.consumer import infer_topic_schema
+from functools import lru_cache
+
+from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
+from shared.kafka.models import KafkaReadSettings
 
 import fastexcel
 import polars as pl
@@ -2334,9 +2338,6 @@ class FlowGraph:
         Args:
             node_kafka_source: The settings for the Kafka source node.
         """
-        from flowfile_core.database.connection import get_db_context
-        from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
-        from shared.kafka.models import KafkaReadSettings
 
         logger.info("Adding kafka source")
         node_type = "kafka_source"
@@ -2381,18 +2382,21 @@ class FlowGraph:
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
+        @lru_cache(maxsize=1)
         def schema_callback():
 
             schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
-
+            # Since the schema callback takes quite some time, we only run the function ones.
             if not schema_pairs:
-                return [
+                result = [
                     FlowfileColumn.from_input(column_name="_kafka_key", data_type="String"),
                     FlowfileColumn.from_input(column_name="_kafka_partition", data_type="Int64"),
                     FlowfileColumn.from_input(column_name="_kafka_offset", data_type="Int64"),
                     FlowfileColumn.from_input(column_name="_kafka_timestamp", data_type="Datetime"),
                 ]
-            return [FlowfileColumn.create_from_polars_dtype(column_name=n, data_type=t) for n, t in schema_pairs]
+            else:
+                result = [FlowfileColumn.create_from_polars_dtype(column_name=n, data_type=t) for n, t in schema_pairs]
+            return result
 
         node = self.get_node(node_kafka_source.node_id)
         if node:
@@ -3086,6 +3090,7 @@ class FlowGraph:
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
+
             # Selectively clear artifacts only for nodes that will re-run.
             # Nodes that are up-to-date keep their artifacts in both the
             # metadata tracker AND the kernel's in-memory store so that
