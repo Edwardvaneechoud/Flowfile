@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import polars as pl
 import pytest
 
 from shared.kafka.consumer import read_kafka_source
@@ -29,6 +28,24 @@ def _make_mock_message(key, value, partition, offset, timestamp_ms=1700000000000
     msg.offset.return_value = offset
     msg.timestamp.return_value = (1, timestamp_ms)  # CREATE_TIME
     return msg
+
+
+def _setup_position_mock(consumer, topic, partition_offsets):
+    """Set up consumer.position() and get_watermark_offsets() mocks.
+
+    partition_offsets: dict of {partition_id: offset} for position results.
+    """
+
+    def position_fn(tps):
+        result = []
+        for tp in tps:
+            mock_tp = MagicMock()
+            mock_tp.offset = partition_offsets.get(tp.partition, -1001)
+            result.append(mock_tp)
+        return result
+
+    consumer.position.side_effect = position_fn
+    consumer.get_watermark_offsets.return_value = (0, 0)
 
 
 class TestReadKafkaSource:
@@ -93,6 +110,7 @@ class TestReadKafkaSource:
         consumer.list_topics.return_value = cluster_meta
 
         consumer.poll.return_value = None
+        _setup_position_mock(consumer, "empty-topic", {0: -1001})
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
@@ -121,6 +139,7 @@ class TestReadKafkaSource:
         cluster_meta.topics = {"test-topic": topic_meta}
         consumer.list_topics.return_value = cluster_meta
         consumer.poll.return_value = None
+        _setup_position_mock(consumer, "test-topic", {0: 100, 1: 200})
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",

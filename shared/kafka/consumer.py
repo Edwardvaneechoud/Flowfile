@@ -98,6 +98,9 @@ def read_kafka_source(
         # Build DataFrame
         if rows:
             df = pl.DataFrame(rows)
+            # Ensure _kafka_key is always String (not Null when all keys are None)
+            if "_kafka_key" in df.columns and df["_kafka_key"].dtype == pl.Null:
+                df = df.with_columns(pl.col("_kafka_key").cast(pl.String))
         else:
             # Empty DataFrame with expected metadata columns
             df = pl.DataFrame(
@@ -109,9 +112,25 @@ def read_kafka_source(
                 }
             )
 
-        # Merge stored offsets with new high watermarks
+        # Build offsets for ALL partitions (not just those that received messages).
+        # For partitions without new messages, query the consumer's current position
+        # so that subsequent runs don't re-read or skip messages.
         new_offsets = dict(settings.offsets) if settings.offsets else {}
         new_offsets.update(high_watermarks)
+        for pid in partition_ids:
+            if pid not in new_offsets:
+                try:
+                    tp = consumer.position([TopicPartition(settings.topic, pid)])
+                    if tp and tp[0].offset >= 0:
+                        new_offsets[pid] = tp[0].offset
+                    else:
+                        # Consumer never read from this partition (e.g. it was empty)
+                        # Query the high watermark so we start from the right place next time
+                        lo, hi = consumer.get_watermark_offsets(TopicPartition(settings.topic, pid), timeout=5.0)
+                        new_offsets[pid] = hi
+                except Exception:
+                    logger.debug("Could not query position for partition %d", pid)
+                    pass
 
         result = KafkaReadResult(
             new_offsets=new_offsets,
