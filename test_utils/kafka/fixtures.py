@@ -19,7 +19,7 @@ logger = logging.getLogger("kafka_fixture")
 REDPANDA_HOST = os.environ.get("TEST_REDPANDA_HOST", "localhost")
 REDPANDA_PORT = int(os.environ.get("TEST_REDPANDA_PORT", 19092))
 REDPANDA_CONTAINER_NAME = os.environ.get("TEST_REDPANDA_CONTAINER", "test-redpanda-kafka")
-REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:latest")
+REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:v24.3.1")
 
 BOOTSTRAP_SERVERS = f"{REDPANDA_HOST}:{REDPANDA_PORT}"
 
@@ -114,14 +114,17 @@ def start_redpanda_container() -> bool:
                 "--smp",
                 "1",
                 "--memory",
-                "256M",
+                "512M",
+                "--reserve-memory",
+                "0M",
                 "--overprovisioned",
                 "--kafka-addr",
-                "internal://0.0.0.0:29092,external://0.0.0.0:9092",
+                "PLAINTEXT://0.0.0.0:9092",
                 "--advertise-kafka-addr",
-                f"internal://redpanda:29092,external://{REDPANDA_HOST}:{REDPANDA_PORT}",
+                f"PLAINTEXT://{REDPANDA_HOST}:{REDPANDA_PORT}",
                 "--mode",
                 "dev-container",
+                "--default-log-level=warn",
             ],
             check=True,
             capture_output=True,
