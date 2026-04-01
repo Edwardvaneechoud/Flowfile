@@ -12,7 +12,7 @@ import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     FuzzyJoinInput,
     OperationType,
@@ -212,8 +212,6 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     # Skip worker check if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False
@@ -240,8 +238,6 @@ def clear_task_from_worker(file_ref: str) -> bool:
     Returns:
         bool: True if the task was successfully cleared, False otherwise.
     """
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     # Skip worker call if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False

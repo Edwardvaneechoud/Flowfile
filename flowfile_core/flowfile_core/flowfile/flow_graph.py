@@ -72,7 +72,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source import models as
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
-from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
@@ -2967,6 +2967,116 @@ class FlowGraph:
 
         return node_result, node
 
+    def _prepare_rerun_artifacts(self, plan_skip_ids: set[str | int]) -> None:
+        """Prepare artifact state for nodes that will re-run.
+
+        Computes which python_script nodes need re-execution, expands the set
+        to include producer nodes whose artifacts were deleted, marks them
+        stale, and clears both metadata and kernel-side artifacts.
+        """
+        rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
+
+        # Expand re-run set: if a re-running node previously deleted
+        # artifacts, the original producer nodes must also re-run so
+        # those artifacts are available again in the kernel store.
+        while True:
+            deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
+                rerun_node_ids,
+            )
+            new_ids = deleted_producers - rerun_node_ids
+            if not new_ids:
+                break
+            rerun_node_ids |= new_ids
+
+        # Force producer nodes (added due to artifact deletions) to
+        # actually re-execute by marking their execution state stale.
+        for nid in rerun_node_ids:
+            node = self.get_node(nid)
+            if node is not None and node._execution_state.has_run_with_current_setup:
+                node._execution_state.has_run_with_current_setup = False
+
+        # Also purge stale metadata for nodes not in this graph
+        # (e.g. injected externally or left over from removed nodes).
+        graph_node_ids = set(self._node_db.keys())
+        stale_node_ids = {nid for nid in self.artifact_context._node_states if nid not in graph_node_ids}
+        nodes_to_clear = rerun_node_ids | stale_node_ids
+        if nodes_to_clear:
+            self.artifact_context.clear_nodes(nodes_to_clear)
+
+        if rerun_node_ids:
+            # Clear the actual kernel-side artifacts for re-running nodes
+            kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
+            for kid, node_ids_for_kernel in kernel_node_map.items():
+                try:
+                    manager = get_kernel_manager()
+                    manager.clear_node_artifacts_sync(
+                        kid, list(node_ids_for_kernel), flow_id=self.flow_id, flow_logger=self.flow_logger
+                    )
+                except Exception:
+                    logger.debug(
+                        "Could not clear node artifacts for kernel '%s', nodes %s",
+                        kid,
+                        sorted(node_ids_for_kernel),
+                    )
+
+    def _execute_stages(
+        self,
+        execution_plan: ExecutionPlan,
+        performance_mode: bool,
+        params: dict[str, str],
+        skip_node_ids: set[str | int],
+    ) -> None:
+        """Execute all stages in the plan, running independent nodes in parallel.
+
+        Iterates through stages sequentially. Within each stage, independent
+        nodes are executed in parallel (or sequentially if parallelism is
+        disabled). Failed nodes cause their dependents to be skipped.
+        """
+        run_info_lock = threading.Lock()
+
+        for stage in execution_plan.stages:
+            if self.flow_settings.is_canceled:
+                self.flow_logger.info("Flow canceled")
+                break
+
+            nodes_to_run = [n for n in stage.nodes if n.node_id not in skip_node_ids]
+
+            for skipped in stage.nodes:
+                if skipped.node_id in skip_node_ids:
+                    node_logger = self.flow_logger.get_node_logger(skipped.node_id)
+                    node_logger.info(f"Skipping node {skipped.node_id}")
+
+            if not nodes_to_run:
+                continue
+
+            is_local = self.flow_settings.execution_location == "local"
+            max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
+            if len(nodes_to_run) == 1 or max_workers == 1:
+                # Single node or parallelism disabled — run sequentially
+                stage_results = [
+                    self._execute_single_node(node, performance_mode, run_info_lock, params or None)
+                    for node in nodes_to_run
+                ]
+            else:
+                # Multiple independent nodes — run in parallel
+                stage_results: list[tuple[NodeResult, FlowNode]] = []
+                workers = min(max_workers, len(nodes_to_run))
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(
+                            self._execute_single_node, node, performance_mode, run_info_lock, params or None
+                        ): node
+                        for node in nodes_to_run
+                    }
+                    for future in as_completed(futures):
+                        stage_results.append(future.result())
+
+            # After the stage completes, propagate failures to downstream nodes
+            for node_result, node in stage_results:
+                if not node_result.success:
+                    for dep in node.get_all_dependent_nodes():
+                        skip_node_ids.add(dep.node_id)
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -2992,110 +3102,17 @@ class FlowGraph:
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
 
-            # Selectively clear artifacts only for nodes that will re-run.
-            # Nodes that are up-to-date keep their artifacts in both the
-            # metadata tracker AND the kernel's in-memory store so that
-            # downstream nodes can still read them.
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
-            rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
-
-            # Expand re-run set: if a re-running node previously deleted
-            # artifacts, the original producer nodes must also re-run so
-            # those artifacts are available again in the kernel store.
-            while True:
-                deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
-                    rerun_node_ids,
-                )
-                new_ids = deleted_producers - rerun_node_ids
-                if not new_ids:
-                    break
-                rerun_node_ids |= new_ids
-
-            # Force producer nodes (added due to artifact deletions) to
-            # actually re-execute by marking their execution state stale.
-            for nid in rerun_node_ids:
-                node = self.get_node(nid)
-                if node is not None and node._execution_state.has_run_with_current_setup:
-                    node._execution_state.has_run_with_current_setup = False
-
-            # Also purge stale metadata for nodes not in this graph
-            # (e.g. injected externally or left over from removed nodes).
-            graph_node_ids = set(self._node_db.keys())
-            stale_node_ids = {nid for nid in self.artifact_context._node_states if nid not in graph_node_ids}
-            nodes_to_clear = rerun_node_ids | stale_node_ids
-            if nodes_to_clear:
-                self.artifact_context.clear_nodes(nodes_to_clear)
-
-            if rerun_node_ids:
-                # Clear the actual kernel-side artifacts for re-running nodes
-                kernel_node_map = self._group_rerun_nodes_by_kernel(rerun_node_ids)
-                for kid, node_ids_for_kernel in kernel_node_map.items():
-                    try:
-                        manager = get_kernel_manager()
-                        manager.clear_node_artifacts_sync(
-                            kid, list(node_ids_for_kernel), flow_id=self.flow_id, flow_logger=self.flow_logger
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Could not clear node artifacts for kernel '%s', nodes %s",
-                            kid,
-                            sorted(node_ids_for_kernel),
-                        )
+            self._prepare_rerun_artifacts(plan_skip_ids)
 
             self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
-
             skip_node_message(self.flow_logger, execution_plan.skip_nodes)
             execution_order_message(self.flow_logger, execution_plan.stages)
-            performance_mode = self.flow_settings.execution_mode == "Performance"
 
-            # Build parameter lookup dict once for the entire run
+            performance_mode = self.flow_settings.execution_mode == "Performance"
             params: dict[str, str] = {p.name: p.default_value for p in self.flow_settings.parameters}
 
-            run_info_lock = threading.Lock()
-            skip_node_ids: set[str | int] = plan_skip_ids
-
-            for stage in execution_plan.stages:
-                if self.flow_settings.is_canceled:
-                    self.flow_logger.info("Flow canceled")
-                    break
-
-                nodes_to_run = [n for n in stage.nodes if n.node_id not in skip_node_ids]
-
-                for skipped in stage.nodes:
-                    if skipped.node_id in skip_node_ids:
-                        node_logger = self.flow_logger.get_node_logger(skipped.node_id)
-                        node_logger.info(f"Skipping node {skipped.node_id}")
-
-                if not nodes_to_run:
-                    continue
-
-                is_local = self.flow_settings.execution_location == "local"
-                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
-                if len(nodes_to_run) == 1 or max_workers == 1:
-                    # Single node or parallelism disabled — run sequentially
-                    stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock, params or None)
-                        for node in nodes_to_run
-                    ]
-                else:
-                    # Multiple independent nodes — run in parallel
-                    stage_results: list[tuple[NodeResult, FlowNode]] = []
-                    workers = min(max_workers, len(nodes_to_run))
-                    with ThreadPoolExecutor(max_workers=workers) as executor:
-                        futures = {
-                            executor.submit(
-                                self._execute_single_node, node, performance_mode, run_info_lock, params or None
-                            ): node
-                            for node in nodes_to_run
-                        }
-                        for future in as_completed(futures):
-                            stage_results.append(future.result())
-
-                # After the stage completes, propagate failures to downstream nodes
-                for node_result, node in stage_results:
-                    if not node_result.success:
-                        for dep in node.get_all_dependent_nodes():
-                            skip_node_ids.add(dep.node_id)
+            self._execute_stages(execution_plan, performance_mode, params, plan_skip_ids)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")

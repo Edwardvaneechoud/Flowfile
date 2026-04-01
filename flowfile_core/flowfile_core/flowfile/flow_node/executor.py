@@ -97,8 +97,8 @@ class NodeExecutor:
         """
         Main execution entry point.
 
-        This method is called when the fast-path in FlowNode.execute_node()
-        determines that full execution logic is needed.
+        Called by FlowNode.execute_node(). Uses _decide_execution() as the
+        single source of truth for whether and how the node should run.
 
         Args:
             run_location: Where to execute ('local' or 'remote')

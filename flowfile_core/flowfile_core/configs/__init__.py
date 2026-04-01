@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from tempfile import gettempdir
 
 if "FLOWFILE_MODE" not in os.environ:
     os.environ["FLOWFILE_MODE"] = "electron"
@@ -37,8 +38,6 @@ logger.addHandler(console_handler)
 
 # Create logs directory in temp at startup
 try:
-    from tempfile import gettempdir
-
     log_dir = Path(gettempdir()) / "flowfile_logs"
     log_dir.mkdir(exist_ok=True)
 except Exception as e:

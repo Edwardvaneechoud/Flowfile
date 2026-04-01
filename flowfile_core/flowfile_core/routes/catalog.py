@@ -70,6 +70,7 @@ from flowfile_core.schemas.catalog_schema import (
     SchedulerStatusOut,
     TableFavoriteOut,
 )
+from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import storage
 
 router = APIRouter(
@@ -310,8 +311,6 @@ def get_run_log(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Return the log content for a scheduled run."""
-    from pathlib import Path
-
     try:
         run = service.get_run_detail(run_id)
     except RunNotFoundError:
@@ -771,8 +770,6 @@ def scheduler_status(
 ):
     """Return the current scheduler lock status."""
     import logging
-
-    from flowfile_scheduler.engine import STALE_THRESHOLD
 
     logger = logging.getLogger("flowfile.scheduler.status")
 

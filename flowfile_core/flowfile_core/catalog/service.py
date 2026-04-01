@@ -44,6 +44,7 @@ from flowfile_core.catalog.exceptions import (
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
@@ -131,9 +132,6 @@ class CatalogService:
         Offloads the work to the worker process when available.  Only falls
         back to local I/O when the worker is not running.
         """
-        # Lazy import to avoid circular dependency with configs at module load time
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
         if OFFLOAD_TO_WORKER:
             try:
                 data = trigger_read_table_metadata(Path(table_path).name, storage_format)
@@ -1498,9 +1496,6 @@ class CatalogService:
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
-        # Lazy import to avoid circular dependency with configs at module load time
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:
             try:
@@ -1534,9 +1529,6 @@ class CatalogService:
         data_path = Path(table.file_path)
         if not is_delta_table(data_path):
             return DeltaTableHistory(current_version=0, history=[])
-
-        # Lazy import to avoid circular dependency with configs at module load time
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         table_path = str(data_path)
         if OFFLOAD_TO_WORKER:

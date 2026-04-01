@@ -15,12 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
+    OFFLOAD_TO_WORKER,
     SERVER_HOST,
     SERVER_PORT,
     WORKER_HOST,
     WORKER_PORT,
     WORKER_URL,
 )
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
@@ -226,11 +228,7 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     _cli_logger.debug("_run_flow_cli started: flow_path=%s, run_id=%s", flow_path, run_id)
     _cli_logger.debug("sys.executable=%s, frozen=%s", sys.executable, getattr(sys, "frozen", False))
 
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     OFFLOAD_TO_WORKER.set(False)
-
-    from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     path = Path(flow_path)
     if not path.exists():
