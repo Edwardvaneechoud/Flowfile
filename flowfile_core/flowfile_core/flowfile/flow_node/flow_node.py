@@ -221,18 +221,16 @@ class FlowNode:
         """
         if f is None:
             return
-
         # Wrap callback with output_field_config support if present and enabled
+        self.user_provided_schema_callback = f
         output_field_config = getattr(self._setting_input, "output_field_config", None)
         if output_field_config and output_field_config.enabled:
             f = create_schema_callback_with_output_config(f, output_field_config)
 
         def error_callback(e: Exception) -> list:
             logger.warning(e)
-
             self.node_settings.setup_errors = True
             return []
-
         self._schema_callback = SingleExecutionFuture(f, error_callback)
 
     @property
@@ -958,7 +956,7 @@ class FlowNode:
         Returns False if full execution logic is needed.
         """
         # Can't skip if forced refresh
-        if reset_cache:
+        if reset_cache or performance_mode:
             return False
 
         # Output nodes always run
@@ -1205,7 +1203,6 @@ class FlowNode:
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
-
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
@@ -1272,7 +1269,6 @@ class FlowNode:
             self._execution_state.predicted_schema = None
             self._execution_state.execution_hash = None
             # Note: source_file_info NOT reset - needed for change detection
-
             if self.is_correct:
                 self._schema_callback = None  # Ensure the schema callback is reset
                 if self.schema_callback:

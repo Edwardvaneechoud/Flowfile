@@ -12,6 +12,7 @@ from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
 from uuid import uuid1
+from shared.kafka.consumer import infer_topic_schema
 
 import fastexcel
 import polars as pl
@@ -2381,29 +2382,27 @@ class FlowGraph:
             return fl
 
         def schema_callback():
-            from shared.kafka.consumer import infer_topic_schema
-
-            from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
             schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
+
             if not schema_pairs:
                 return [
-                    FlowfileColumn(column_name="_kafka_key", data_type="String"),
-                    FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
-                    FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
-                    FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
+                    FlowfileColumn.from_input(column_name="_kafka_key", data_type="String"),
+                    FlowfileColumn.from_input(column_name="_kafka_partition", data_type="Int64"),
+                    FlowfileColumn.from_input(column_name="_kafka_offset", data_type="Int64"),
+                    FlowfileColumn.from_input(column_name="_kafka_timestamp", data_type="Datetime"),
                 ]
-            return [FlowfileColumn(column_name=name, data_type=str(dtype)) for name, dtype in schema_pairs]
+            return [FlowfileColumn.create_from_polars_dtype(column_name=n, data_type=t) for n, t in schema_pairs]
 
         node = self.get_node(node_kafka_source.node_id)
         if node:
+            node.schema_callback = schema_callback
             node.node_type = node_type
             node.name = node_type
             node.function = _func
             node.setting_input = node_kafka_source
             node.node_settings.cache_results = node_kafka_source.cache_results
             self.add_node_to_starting_list(node)
-            node.schema_callback = schema_callback
         else:
             node = FlowNode(
                 node_kafka_source.node_id,
@@ -3087,7 +3086,6 @@ class FlowGraph:
             execution_plan = compute_execution_plan(
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
-
             # Selectively clear artifacts only for nodes that will re-run.
             # Nodes that are up-to-date keep their artifacts in both the
             # metadata tracker AND the kernel's in-memory store so that

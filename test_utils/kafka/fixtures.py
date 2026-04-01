@@ -13,6 +13,7 @@ import subprocess
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from confluent_kafka import KafkaException, KafkaError
 
 logger = logging.getLogger("kafka_fixture")
 
@@ -194,12 +195,17 @@ def managed_redpanda() -> Generator[dict[str, str | int], None, None]:
 def create_topic(topic_name: str, num_partitions: int = 1) -> None:
     """Create a Kafka topic via the admin API."""
     from confluent_kafka.admin import AdminClient, NewTopic
-
     admin = AdminClient({"bootstrap.servers": BOOTSTRAP_SERVERS})
     futures = admin.create_topics([NewTopic(topic_name, num_partitions=num_partitions, replication_factor=1)])
     for topic, future in futures.items():
-        future.result()  # raises on failure
-        logger.info("Created topic: %s (%d partitions)", topic, num_partitions)
+        try:
+            r = future.result()  # raises on failure
+            logger.info("Created topic: %s (%d partitions)", topic, num_partitions)
+        except KafkaException as e:
+            if e.args[0].code() == KafkaError.TOPIC_ALREADY_EXISTS:
+                print("Topic already exists, skipping.")
+            else:
+                raise
 
 
 def produce_json_messages(topic_name: str, messages: list[dict], key_field: str | None = None) -> int:

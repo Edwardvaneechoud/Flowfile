@@ -9,6 +9,8 @@ All tests are marked with @pytest.mark.kafka and require:
 
 Run with:  poetry run pytest tests/kafka/test_kafka_flow_graph.py -m kafka -v
 """
+import polars as pl
+from polars.testing import assert_frame_equal
 
 import pytest
 
@@ -116,7 +118,7 @@ def _create_graph(flow_id: int = 1) -> FlowGraph:
         flow_id=flow_id,
         name="kafka_test_flow",
         path=".",
-        execution_mode="Development",
+        execution_mode="Performance",
         execution_location="remote",  # Uses worker for ExternalKafkaFetcher
     )
     handler.register_flow(settings)
@@ -166,11 +168,6 @@ def _add_kafka_source(
         user_id=1,
     )
     graph.add_kafka_source(node_kafka)
-
-
-# ---------------------------------------------------------------------------
-# Tests: Kafka source node in flow graph
-# ---------------------------------------------------------------------------
 
 
 class TestKafkaSourceFlowGraph:
@@ -268,15 +265,16 @@ class TestKafkaSourceWithDownstream:
 
         # Node 1: kafka source
         _add_kafka_source(graph, kafka_connection_id, kafka_topic, node_id=1)
-
         # Node 2: catalog writer
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
-
         writer_settings = input_schema.CatalogWriteSettings(
             table_name="kafka_output",
             namespace_id=ns_id,
+            write_mode="append"
         )
+
+
         writer = input_schema.NodeCatalogWriter(
             flow_id=graph.flow_id,
             node_id=2,
@@ -288,24 +286,31 @@ class TestKafkaSourceWithDownstream:
 
         connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
         add_connection(graph, connection)
-
         _run_graph(graph)
-
-        # Verify the table was created in the catalog
         with get_db_context() as db:
             from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
             assert len(tables) == 1
             table = tables[0]
-            assert table.name == "kafka_output"
-            assert table.row_count == 2
+            table_path = table.file_path
 
+        initial_df = pl.read_delta(table_path)
 
-# ---------------------------------------------------------------------------
-# Helpers (additional)
-# ---------------------------------------------------------------------------
+        # check if a new run does not add any records:
+        _run_graph(graph)
+        update_df_after_no_message = pl.read_delta(table_path)
+        assert_frame_equal(update_df_after_no_message, initial_df)
+
+        more_messages = [
+            {"name": "Jan", "age": 30},
+            {"name": "Erin", "age": 25},
+        ]
+        produce_json_messages(kafka_topic, more_messages)
+        _run_graph(graph)
+        after_insert_df = pl.read_delta(table_path)
+        assert len(after_insert_df) > len(update_df_after_no_message)
+
 
 
 def _create_namespace() -> int:
