@@ -1211,8 +1211,6 @@ class FlowNode:
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
-        if self.node_id == 3:
-            breakpoint()
         # Fast-path: check if we can skip without creating executor
         if self._can_skip_execution_fast(run_location, performance_mode, reset_cache):
             node_logger.info("Node is up-to-date, skipping execution")

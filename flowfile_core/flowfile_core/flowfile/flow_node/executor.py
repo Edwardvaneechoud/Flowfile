@@ -130,8 +130,6 @@ class NodeExecutor:
             and run_location != "local"
         ):
             decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
-        if self.node.node_id == 3:
-            breakpoint()
         if not decision.should_run:
             return
 
