@@ -2381,19 +2381,14 @@ class FlowGraph:
             return fl
 
         def schema_callback():
-            from shared.kafka.consumer import infer_topic_schema
-
             from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
-            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
-            if not schema_pairs:
-                return [
-                    FlowfileColumn(column_name="_kafka_key", data_type="String"),
-                    FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
-                    FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
-                    FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
-                ]
-            return [FlowfileColumn(column_name=name, data_type=str(dtype)) for name, dtype in schema_pairs]
+            return [
+                FlowfileColumn(column_name="_kafka_key", data_type="String"),
+                FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
+                FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
+                FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
+            ]
 
         node = self.get_node(node_kafka_source.node_id)
         if node:
