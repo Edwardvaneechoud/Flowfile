@@ -730,11 +730,14 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
+export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete";
+
 export interface CatalogWriteSettings {
   table_name: string;
   namespace_id: number | null;
   description: string | null;
-  write_mode: "overwrite" | "error";
+  write_mode: CatalogWriteMode;
+  merge_keys: string[];
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -745,6 +748,7 @@ export interface NodeCatalogReader extends NodeBase {
   catalog_table_id: number | null;
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
+  delta_version: number | null;
 }
 
 export interface NodeInputData extends NodeBase {

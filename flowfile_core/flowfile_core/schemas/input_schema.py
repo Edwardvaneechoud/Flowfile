@@ -1085,12 +1085,19 @@ class NodeOutput(NodeSingleInput):
 
 
 class CatalogWriteSettings(BaseModel):
-    """Settings for writing data to the catalog as a Parquet table."""
+    """Settings for writing data to the catalog."""
 
     table_name: str = ""
     namespace_id: int | None = None
     description: str | None = None
-    write_mode: str = "overwrite"  # "overwrite" or "error"
+    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite"
+    merge_keys: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_merge_keys(self) -> "CatalogWriteSettings":
+        if self.write_mode in ("upsert", "update", "delete") and not self.merge_keys:
+            raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
+        return self
 
 
 class NodeCatalogWriter(NodeSingleInput):
@@ -1109,10 +1116,12 @@ class NodeCatalogReader(NodeBase):
     catalog_table_id: int | None = None
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
+    delta_version: int | None = None
 
     def get_default_description(self) -> str:
         if self.catalog_table_name:
-            return f"Catalog: {self.catalog_table_name}"
+            suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
+            return f"Catalog: {self.catalog_table_name}{suffix}"
         return "Read from Catalog"
 
 
