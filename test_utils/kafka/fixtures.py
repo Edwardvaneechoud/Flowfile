@@ -19,7 +19,7 @@ logger = logging.getLogger("kafka_fixture")
 REDPANDA_HOST = os.environ.get("TEST_REDPANDA_HOST", "localhost")
 REDPANDA_PORT = int(os.environ.get("TEST_REDPANDA_PORT", 19092))
 REDPANDA_CONTAINER_NAME = os.environ.get("TEST_REDPANDA_CONTAINER", "test-redpanda-kafka")
-REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:v24.3.1")
+REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:latest")
 
 BOOTSTRAP_SERVERS = f"{REDPANDA_HOST}:{REDPANDA_PORT}"
 
@@ -114,27 +114,21 @@ def start_redpanda_container() -> bool:
                 "--smp",
                 "1",
                 "--memory",
-                "512M",
-                "--reserve-memory",
-                "0M",
+                "256M",
                 "--overprovisioned",
                 "--kafka-addr",
-                "PLAINTEXT://0.0.0.0:9092",
+                "0.0.0.0:9092",
                 "--advertise-kafka-addr",
-                f"PLAINTEXT://{REDPANDA_HOST}:{REDPANDA_PORT}",
+                f"{REDPANDA_HOST}:{REDPANDA_PORT}",
                 "--mode",
                 "dev-container",
-                "--default-log-level=warn",
             ],
             check=True,
             capture_output=True,
         )
         logger.info("Redpanda container started, waiting for readiness...")
 
-        # Give the container a moment to initialize before polling
-        time.sleep(2)
-
-        if wait_for_redpanda(max_retries=40):
+        if wait_for_redpanda():
             logger.info("Redpanda is ready at %s", BOOTSTRAP_SERVERS)
             return True
 
