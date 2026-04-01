@@ -262,7 +262,7 @@ class TestKafkaSourceWithDownstream:
         ns_id = _create_namespace()
 
         graph = _create_graph()
-
+        breakpoint()
         # Node 1: kafka source
         _add_kafka_source(graph, kafka_connection_id, kafka_topic, node_id=1)
         # Node 2: catalog writer
@@ -273,7 +273,6 @@ class TestKafkaSourceWithDownstream:
             namespace_id=ns_id,
             write_mode="append"
         )
-
 
         writer = input_schema.NodeCatalogWriter(
             flow_id=graph.flow_id,
@@ -296,7 +295,7 @@ class TestKafkaSourceWithDownstream:
             table_path = table.file_path
 
         initial_df = pl.read_delta(table_path)
-
+        assert len(initial_df) == 2
         # check if a new run does not add any records:
         _run_graph(graph)
         update_df_after_no_message = pl.read_delta(table_path)
