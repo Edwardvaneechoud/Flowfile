@@ -222,8 +222,6 @@ class FlowNode:
         if f is None:
             return
 
-        self.user_provided_schema_callback = f
-
         # Wrap callback with output_field_config support if present and enabled
         output_field_config = getattr(self._setting_input, "output_field_config", None)
         if output_field_config and output_field_config.enabled:

@@ -2400,6 +2400,11 @@ class FlowGraph:
 
         node = self.get_node(node_kafka_source.node_id)
         if node:
+            # Set user_provided_schema_callback BEFORE setting_input, because
+            # setting_input triggers reset() which looks up the schema_callback.
+            # Without this, reset() falls back to create_schema_callback_from_function(_func)
+            # which actually executes the Kafka consumer.
+            node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
             node.node_type = node_type
             node.name = node_type
