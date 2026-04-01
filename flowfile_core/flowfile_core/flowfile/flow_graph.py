@@ -2307,13 +2307,13 @@ class FlowGraph:
 
         node = self.get_node(node_database_reader.node_id)
         if node:
+            node.schema_callback = schema_callback
             node.node_type = node_type
             node.name = node_type
             node.function = _func
             node.setting_input = node_database_reader
             node.node_settings.cache_results = node_database_reader.cache_results
             self.add_node_to_starting_list(node)
-            node.schema_callback = schema_callback
         else:
             node = FlowNode(
                 node_database_reader.node_id,
