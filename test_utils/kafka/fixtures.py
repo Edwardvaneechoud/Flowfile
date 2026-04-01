@@ -41,8 +41,7 @@ def is_docker_available() -> bool:
     try:
         result = subprocess.run(
             ["docker", "info"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=5,
             check=False,
         )
@@ -92,6 +91,13 @@ def start_redpanda_container() -> bool:
         logger.info("Container %s is already running", REDPANDA_CONTAINER_NAME)
         return True
 
+    # Remove any stopped container with the same name
+    subprocess.run(
+        ["docker", "rm", "-f", REDPANDA_CONTAINER_NAME],
+        capture_output=True,
+        check=False,
+    )
+
     try:
         subprocess.run(
             [
@@ -111,9 +117,9 @@ def start_redpanda_container() -> bool:
                 "256M",
                 "--overprovisioned",
                 "--kafka-addr",
-                "0.0.0.0:9092",
+                "internal://0.0.0.0:29092,external://0.0.0.0:9092",
                 "--advertise-kafka-addr",
-                f"{REDPANDA_HOST}:{REDPANDA_PORT}",
+                f"internal://redpanda:29092,external://{REDPANDA_HOST}:{REDPANDA_PORT}",
                 "--mode",
                 "dev-container",
             ],
@@ -122,9 +128,24 @@ def start_redpanda_container() -> bool:
         )
         logger.info("Redpanda container started, waiting for readiness...")
 
-        if wait_for_redpanda():
+        # Give the container a moment to initialize before polling
+        time.sleep(2)
+
+        if wait_for_redpanda(max_retries=40):
             logger.info("Redpanda is ready at %s", BOOTSTRAP_SERVERS)
             return True
+
+        # Log container status for debugging
+        logs_result = subprocess.run(
+            ["docker", "logs", "--tail", "30", REDPANDA_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if logs_result.stdout:
+            logger.error("Redpanda container logs:\n%s", logs_result.stdout)
+        if logs_result.stderr:
+            logger.error("Redpanda container stderr:\n%s", logs_result.stderr)
         return False
 
     except Exception as e:
