@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 from urllib.parse import urlparse
-
+from deltalake import DeltaTable, write_deltalake
 import polars as pl
+import os
+import tempfile
 
+import gcsfs
 
 def use_pyarrow_for_gcs(storage_type: str, endpoint_url: str | None) -> bool:
     """Whether to use PyArrow/gcsfs backend for GCS operations.
@@ -156,11 +159,6 @@ def write_delta_to_gcs(
     mode
         Write mode: 'overwrite' or 'append'.
     """
-    from deltalake import write_deltalake
-
-    import gcsfs
-    import tempfile
-    import os
 
     clean_path = get_path_without_scheme(path)
 
@@ -202,10 +200,7 @@ def scan_delta_from_gcs(
     pl.LazyFrame
         A lazy frame backed by the Delta table's PyArrow dataset.
     """
-    import gcsfs
-    import tempfile
-    import os
-    from deltalake import DeltaTable
+
 
     fs = gcsfs.GCSFileSystem(**storage_options)
     clean_path = get_path_without_scheme(resource_path)
