@@ -108,6 +108,50 @@ def list_kafka_topics(
         raise HTTPException(status_code=404, detail=str(e)) from None
 
 
+@router.get("/connections/{connection_id}/topics/{topic_name}/schema")
+def infer_kafka_topic_schema(
+    connection_id: int,
+    topic_name: str,
+    sample_size: int = 10,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Infer the schema of a Kafka topic by sampling messages.
+
+    This is an explicit action — it connects to the broker, consumes a small
+    sample, and returns the inferred column names and types. Not called
+    automatically during flow setup.
+    """
+    from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
+    from shared.kafka.consumer import infer_topic_schema
+    from shared.kafka.models import KafkaReadSettings
+
+    db_conn = get_kafka_connection(db, connection_id, current_user.id)
+    if db_conn is None:
+        raise HTTPException(status_code=404, detail="Kafka connection not found")
+
+    consumer_config = build_consumer_config(db, db_conn, current_user.id)
+    settings = KafkaReadSettings(
+        bootstrap_servers=consumer_config.get("bootstrap.servers", ""),
+        topic=topic_name,
+        group_id=f"flowfile-schema-probe-{topic_name}",
+        start_offset="earliest",
+        security_protocol=consumer_config.get("security.protocol", "PLAINTEXT"),
+        sasl_mechanism=consumer_config.get("sasl.mechanism"),
+        sasl_username=consumer_config.get("sasl.username"),
+        sasl_password=consumer_config.get("sasl.password"),
+        ssl_ca_location=consumer_config.get("ssl.ca.location"),
+        ssl_cert_location=consumer_config.get("ssl.certificate.location"),
+        ssl_key_pem=consumer_config.get("ssl.key.pem"),
+    )
+
+    try:
+        schema_pairs = infer_topic_schema(settings, sample_size=sample_size)
+        return [{"name": name, "dtype": str(dtype)} for name, dtype in schema_pairs]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Schema inference failed: {e}") from None
+
+
 # ---------------------------------------------------------------------------
 # Consumer group management (offsets tracked by broker)
 # ---------------------------------------------------------------------------
