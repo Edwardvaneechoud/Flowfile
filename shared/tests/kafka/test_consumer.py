@@ -30,24 +30,6 @@ def _make_mock_message(key, value, partition, offset, timestamp_ms=1700000000000
     return msg
 
 
-def _setup_position_mock(consumer, topic, partition_offsets):
-    """Set up consumer.position() and get_watermark_offsets() mocks.
-
-    partition_offsets: dict of {partition_id: offset} for position results.
-    """
-
-    def position_fn(tps):
-        result = []
-        for tp in tps:
-            mock_tp = MagicMock()
-            mock_tp.offset = partition_offsets.get(tp.partition, -1001)
-            result.append(mock_tp)
-        return result
-
-    consumer.position.side_effect = position_fn
-    consumer.get_watermark_offsets.return_value = (0, 0)
-
-
 class TestReadKafkaSource:
     @patch("shared.kafka.consumer.Consumer")
     def test_consume_json_messages(self, mock_consumer_cls):
@@ -55,28 +37,17 @@ class TestReadKafkaSource:
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
 
-        # Mock topic metadata
-        partition_meta = {0: MagicMock()}
-        topic_meta = MagicMock()
-        topic_meta.error = None
-        topic_meta.partitions = partition_meta
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {"test-topic": topic_meta}
-        consumer.list_topics.return_value = cluster_meta
-
-        # Return 3 messages then None (end of poll)
         messages = [
             _make_mock_message("k1", '{"name": "Alice", "age": 30}', 0, 0),
             _make_mock_message("k2", '{"name": "Bob", "age": 25}', 0, 1),
             _make_mock_message(None, '{"name": "Charlie", "age": 35}', 0, 2),
-            None,  # No more messages
-            None,
         ]
         consumer.poll.side_effect = _make_poll_fn(messages)
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
             topic="test-topic",
+            group_id="test-group",
             poll_timeout_seconds=0.1,
         )
 
@@ -92,7 +63,8 @@ class TestReadKafkaSource:
 
         assert result.messages_consumed == 3
         assert result.new_offsets == {0: 3}
-        assert result.partitions_read == 1
+        consumer.subscribe.assert_called_once_with(["test-topic"])
+        consumer.commit.assert_called_once()
         consumer.close.assert_called_once()
 
     @patch("shared.kafka.consumer.Consumer")
@@ -101,20 +73,12 @@ class TestReadKafkaSource:
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
 
-        partition_meta = {0: MagicMock()}
-        topic_meta = MagicMock()
-        topic_meta.error = None
-        topic_meta.partitions = partition_meta
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {"empty-topic": topic_meta}
-        consumer.list_topics.return_value = cluster_meta
-
         consumer.poll.return_value = None
-        _setup_position_mock(consumer, "empty-topic", {0: -1001})
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
             topic="empty-topic",
+            group_id="test-group",
             poll_timeout_seconds=0.1,
         )
 
@@ -123,39 +87,29 @@ class TestReadKafkaSource:
         assert df.height == 0
         assert "_kafka_key" in df.columns
         assert result.messages_consumed == 0
+        consumer.subscribe.assert_called_once_with(["empty-topic"])
+        consumer.commit.assert_not_called()  # No messages, no commit
         consumer.close.assert_called_once()
 
     @patch("shared.kafka.consumer.Consumer")
-    def test_consume_with_offsets(self, mock_consumer_cls):
-        """Test that provided offsets are used for partition assignment."""
+    def test_subscribe_uses_group_id(self, mock_consumer_cls):
+        """Test that the consumer group ID from settings is used."""
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
-
-        partition_meta = {0: MagicMock(), 1: MagicMock()}
-        topic_meta = MagicMock()
-        topic_meta.error = None
-        topic_meta.partitions = partition_meta
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {"test-topic": topic_meta}
-        consumer.list_topics.return_value = cluster_meta
         consumer.poll.return_value = None
-        _setup_position_mock(consumer, "test-topic", {0: 100, 1: 200})
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
             topic="test-topic",
-            offsets={0: 100, 1: 200},
+            group_id="my-custom-group",
             poll_timeout_seconds=0.1,
         )
 
-        df, result = read_kafka_source(settings)
+        read_kafka_source(settings)
 
-        # Verify assign was called with correct partitions
-        consumer.assign.assert_called_once()
-        assigned = consumer.assign.call_args[0][0]
-        assert len(assigned) == 2
-        assert assigned[0].offset == 100
-        assert assigned[1].offset == 200
+        # Verify group.id was passed to Consumer constructor
+        config = mock_consumer_cls.call_args[0][0]
+        assert config["group.id"] == "my-custom-group"
 
     @patch("shared.kafka.consumer.Consumer")
     def test_consume_respects_max_messages(self, mock_consumer_cls):
@@ -163,21 +117,13 @@ class TestReadKafkaSource:
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
 
-        partition_meta = {0: MagicMock()}
-        topic_meta = MagicMock()
-        topic_meta.error = None
-        topic_meta.partitions = partition_meta
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {"test-topic": topic_meta}
-        consumer.list_topics.return_value = cluster_meta
-
-        # Return unlimited messages
         msg = _make_mock_message("k", '{"x": 1}', 0, 0)
         consumer.poll.return_value = msg
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
             topic="test-topic",
+            group_id="test-group",
             max_messages=5,
             poll_timeout_seconds=10.0,
         )
@@ -186,6 +132,7 @@ class TestReadKafkaSource:
 
         assert result.messages_consumed == 5
         assert df.height == 5
+        consumer.commit.assert_called_once()
 
     @patch("shared.kafka.consumer.Consumer")
     def test_consume_skips_deserialization_errors(self, mock_consumer_cls):
@@ -193,53 +140,68 @@ class TestReadKafkaSource:
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
 
-        partition_meta = {0: MagicMock()}
-        topic_meta = MagicMock()
-        topic_meta.error = None
-        topic_meta.partitions = partition_meta
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {"test-topic": topic_meta}
-        consumer.list_topics.return_value = cluster_meta
-
         messages = [
             _make_mock_message("k1", '{"valid": true}', 0, 0),
             _make_mock_message("k2", "not json", 0, 1),  # will fail
             _make_mock_message("k3", '{"valid": true}', 0, 2),
-            None,
-            None,
         ]
         consumer.poll.side_effect = _make_poll_fn(messages)
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
             topic="test-topic",
+            group_id="test-group",
             poll_timeout_seconds=0.1,
         )
 
         df, result = read_kafka_source(settings)
 
-        # Only 2 valid messages, but offset advances past the failed one too
         assert df.height == 2
         assert result.messages_consumed == 2
         assert result.new_offsets[0] == 3  # past offset 2
 
     @patch("shared.kafka.consumer.Consumer")
-    def test_topic_not_found(self, mock_consumer_cls):
-        """Test that missing topic raises ValueError."""
+    def test_no_commit_when_commit_false(self, mock_consumer_cls):
+        """Test that commit=False skips committing (used for schema probes)."""
         consumer = MagicMock()
         mock_consumer_cls.return_value = consumer
 
-        cluster_meta = MagicMock()
-        cluster_meta.topics = {}
-        consumer.list_topics.return_value = cluster_meta
+        messages = [_make_mock_message("k", '{"x": 1}', 0, 0)]
+        consumer.poll.side_effect = _make_poll_fn(messages)
 
         settings = KafkaReadSettings(
             bootstrap_servers="localhost:9092",
-            topic="nonexistent",
+            topic="test-topic",
+            group_id="probe-group",
             poll_timeout_seconds=0.1,
         )
 
-        with pytest.raises(ValueError, match="not found"):
-            read_kafka_source(settings)
+        df, result = read_kafka_source(settings, commit=False)
 
-        consumer.close.assert_called_once()
+        assert result.messages_consumed == 1
+        consumer.commit.assert_not_called()
+
+    @patch("shared.kafka.consumer.Consumer")
+    def test_null_kafka_key_cast_to_string(self, mock_consumer_cls):
+        """Test that _kafka_key is String type even when all keys are None."""
+        consumer = MagicMock()
+        mock_consumer_cls.return_value = consumer
+
+        messages = [
+            _make_mock_message(None, '{"a": 1}', 0, 0),
+            _make_mock_message(None, '{"a": 2}', 0, 1),
+        ]
+        consumer.poll.side_effect = _make_poll_fn(messages)
+
+        settings = KafkaReadSettings(
+            bootstrap_servers="localhost:9092",
+            topic="test-topic",
+            group_id="test-group",
+            poll_timeout_seconds=0.1,
+        )
+
+        df, _ = read_kafka_source(settings)
+
+        import polars as pl
+
+        assert df["_kafka_key"].dtype == pl.String

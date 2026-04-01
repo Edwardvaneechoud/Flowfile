@@ -398,16 +398,3 @@ class KafkaConnection(Base):
     ssl_key = relationship("Secret", foreign_keys=[ssl_key_id], lazy="joined")
 
 
-class KafkaSyncOffset(Base):
-    __tablename__ = "kafka_sync_offsets"
-
-    id = Column(Integer, primary_key=True, index=True)
-    sync_name = Column(String, nullable=False, index=True)
-    topic = Column(String, nullable=False)
-    partition = Column(Integer, nullable=False)
-    committed_offset = Column(Integer, nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("sync_name", "topic", "partition", name="uq_kafka_sync_offset"),
-    )

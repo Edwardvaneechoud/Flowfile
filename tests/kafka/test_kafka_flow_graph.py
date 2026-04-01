@@ -20,7 +20,6 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowSchedule,
     KafkaConnection,
-    KafkaSyncOffset,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -101,7 +100,6 @@ def kafka_topic(request):
 def _cleanup():
     """Remove test rows so each test starts clean."""
     with get_db_context() as db:
-        db.query(KafkaSyncOffset).delete()
         db.query(CatalogTableReadLink).delete()
         db.query(FlowSchedule).delete()
         db.query(CatalogTable).delete()

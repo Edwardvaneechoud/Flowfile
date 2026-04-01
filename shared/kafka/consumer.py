@@ -1,8 +1,10 @@
 """Shared Kafka consumer logic.
 
 Pure function that consumes from a Kafka topic and returns a Polars DataFrame
-plus new offsets. No DB access, no side effects. Callable from any context
-(worker subprocess, core CLI mode, tests).
+plus new offsets. Uses Kafka consumer group offset management — the broker
+tracks committed offsets internally via the ``__consumer_offsets`` topic.
+
+Callable from any context (worker subprocess, core CLI mode, tests).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import time
 from datetime import datetime, timezone
 
 import polars as pl
-from confluent_kafka import Consumer, KafkaError, TopicPartition
+from confluent_kafka import Consumer, KafkaError
 
 from shared.kafka.deserializers import get_deserializer
 from shared.kafka.models import KafkaReadResult, KafkaReadSettings
@@ -22,58 +24,49 @@ logger = logging.getLogger(__name__)
 
 def read_kafka_source(
     settings: KafkaReadSettings,
+    *,
+    commit: bool = True,
 ) -> tuple[pl.DataFrame, KafkaReadResult]:
     """Consume messages from a Kafka topic and return as a Polars DataFrame.
 
+    Uses ``subscribe()`` with Kafka consumer groups. Offsets are committed
+    broker-side after a successful batch (unless ``commit=False``).
+
     Args:
         settings: Kafka connection and read configuration.
+        commit: Whether to commit offsets after consuming. Set to False
+            for schema probes or dry runs.
 
     Returns:
-        Tuple of (DataFrame with message data + metadata columns, KafkaReadResult with new offsets).
-        If no messages are available, returns an empty DataFrame with the metadata columns.
+        Tuple of (DataFrame with message data + metadata columns,
+        KafkaReadResult with informational offsets).
     """
     deserializer = get_deserializer(settings.value_format)
     consumer_config = settings.to_consumer_config()
     consumer = Consumer(consumer_config)
 
     try:
-        # Discover partitions for the topic
-        metadata = consumer.list_topics(settings.topic, timeout=10.0)
-        topic_metadata = metadata.topics.get(settings.topic)
-        if topic_metadata is None or topic_metadata.error is not None:
-            raise ValueError(f"Topic {settings.topic!r} not found or inaccessible")
-
-        partition_ids = sorted(topic_metadata.partitions.keys())
-
-        # Assign partitions at specified offsets or use auto.offset.reset
-        partitions = []
-        for pid in partition_ids:
-            if settings.offsets and pid in settings.offsets:
-                offset = settings.offsets[pid]
-            else:
-                # -1 = OFFSET_STORED, -2 = OFFSET_BEGINNING, -1001 = OFFSET_END
-                # Use -2 for earliest, -1001 for latest (matching auto.offset.reset)
-                offset = -2 if settings.start_offset == "earliest" else -1001
-            partitions.append(TopicPartition(settings.topic, pid, offset))
-
-        consumer.assign(partitions)
+        consumer.subscribe([settings.topic])
 
         # Consume messages
         rows: list[dict] = []
         high_watermarks: dict[int, int] = {}
         messages_consumed = 0
+        first_poll = True
         poll_deadline = time.monotonic() + settings.poll_timeout_seconds
 
         while messages_consumed < settings.max_messages and time.monotonic() < poll_deadline:
             remaining = max(0.1, poll_deadline - time.monotonic())
-            msg = consumer.poll(timeout=min(remaining, 1.0))
+            # First poll needs longer timeout for consumer group join/rebalance
+            timeout = min(remaining, 10.0) if first_poll else min(remaining, 1.0)
+            msg = consumer.poll(timeout=timeout)
+            first_poll = False
 
             if msg is None:
                 continue
 
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
-                    # Reached end of partition — track which partitions are done
                     continue
                 logger.error("Kafka consumer error: %s", msg.error())
                 continue
@@ -102,7 +95,6 @@ def read_kafka_source(
             if "_kafka_key" in df.columns and df["_kafka_key"].dtype == pl.Null:
                 df = df.with_columns(pl.col("_kafka_key").cast(pl.String))
         else:
-            # Empty DataFrame with expected metadata columns
             df = pl.DataFrame(
                 schema={
                     "_kafka_key": pl.String,
@@ -112,37 +104,21 @@ def read_kafka_source(
                 }
             )
 
-        # Build offsets for ALL partitions (not just those that received messages).
-        # For partitions without new messages, query the consumer's current position
-        # so that subsequent runs don't re-read or skip messages.
-        new_offsets = dict(settings.offsets) if settings.offsets else {}
-        new_offsets.update(high_watermarks)
-        for pid in partition_ids:
-            if pid not in new_offsets:
-                try:
-                    tp = consumer.position([TopicPartition(settings.topic, pid)])
-                    if tp and tp[0].offset >= 0:
-                        new_offsets[pid] = tp[0].offset
-                    else:
-                        # Consumer never read from this partition (e.g. it was empty)
-                        # Query the high watermark so we start from the right place next time
-                        lo, hi = consumer.get_watermark_offsets(TopicPartition(settings.topic, pid), timeout=5.0)
-                        new_offsets[pid] = hi
-                except Exception:
-                    logger.debug("Could not query position for partition %d", pid)
-                    pass
+        # Commit offsets broker-side after successful batch
+        if commit and messages_consumed > 0:
+            consumer.commit(asynchronous=False)
 
         result = KafkaReadResult(
-            new_offsets=new_offsets,
+            new_offsets=high_watermarks,
             messages_consumed=messages_consumed,
-            partitions_read=len(partition_ids),
+            partitions_read=len(high_watermarks),
         )
 
         logger.info(
-            "Consumed %d messages from topic %r (%d partitions)",
+            "Consumed %d messages from topic %r (group=%s)",
             messages_consumed,
             settings.topic,
-            len(partition_ids),
+            settings.group_id,
         )
 
         return df, result
@@ -151,10 +127,48 @@ def read_kafka_source(
         consumer.close()
 
 
+def infer_topic_schema(
+    settings: KafkaReadSettings,
+    sample_size: int = 10,
+) -> list[tuple[str, pl.DataType]]:
+    """Consume a small sample to infer the topic's schema.
+
+    Uses a dedicated consumer group (``group_id + "__schema_probe"``) so it
+    doesn't interfere with the actual sync's committed offsets.
+    Does NOT commit offsets — the probe group is disposable.
+
+    Args:
+        settings: Base settings (connection, topic, auth). The ``group_id``
+            will be suffixed with ``__schema_probe``.
+        sample_size: Number of messages to sample.
+
+    Returns:
+        List of (column_name, polars_dtype) pairs, or empty list if
+        the topic has no messages.
+    """
+    probe_settings = KafkaReadSettings(
+        bootstrap_servers=settings.bootstrap_servers,
+        topic=settings.topic,
+        group_id=f"{settings.group_id}__schema_probe",
+        value_format=settings.value_format,
+        start_offset="earliest",
+        max_messages=sample_size,
+        poll_timeout_seconds=10.0,
+        security_protocol=settings.security_protocol,
+        sasl_mechanism=settings.sasl_mechanism,
+        sasl_username=settings.sasl_username,
+        sasl_password=settings.sasl_password,
+        ssl_ca_location=settings.ssl_ca_location,
+        ssl_cert_location=settings.ssl_cert_location,
+        ssl_key_pem=settings.ssl_key_pem,
+    )
+    df, _ = read_kafka_source(probe_settings, commit=False)
+    return list(df.schema.items())
+
+
 def _extract_timestamp(msg) -> datetime | None:
     """Extract message timestamp as a datetime."""
     ts_type, ts_value = msg.timestamp()
     if ts_type == 0:  # TIMESTAMP_NOT_AVAILABLE
         return None
-    # Kafka timestamps are in milliseconds since epoch
     return datetime.fromtimestamp(ts_value / 1000.0, tz=timezone.utc)

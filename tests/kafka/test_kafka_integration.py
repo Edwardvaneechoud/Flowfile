@@ -4,13 +4,20 @@ All tests are marked with @pytest.mark.kafka and require Docker.
 Run with:  poetry run pytest tests/kafka -m kafka -v
 """
 
+import uuid
+
 import pytest
 
-from shared.kafka.consumer import read_kafka_source
+from shared.kafka.consumer import infer_topic_schema, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from test_utils.kafka.fixtures import BOOTSTRAP_SERVERS, produce_json_messages
 
 pytestmark = pytest.mark.kafka
+
+
+def _unique_group() -> str:
+    """Generate a unique consumer group ID per test invocation."""
+    return f"test-{uuid.uuid4().hex[:12]}"
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +40,7 @@ class TestKafkaConsumerIntegration:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
@@ -46,13 +54,13 @@ class TestKafkaConsumerIntegration:
         assert "_kafka_offset" in df.columns
         assert "_kafka_timestamp" in df.columns
         assert result.messages_consumed == 3
-        assert result.partitions_read == 2
 
     def test_consume_empty_topic(self, kafka_topic):
         """Consuming from an empty topic returns an empty DataFrame."""
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             poll_timeout_seconds=3.0,
         )
@@ -73,6 +81,7 @@ class TestKafkaConsumerIntegration:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
@@ -92,6 +101,7 @@ class TestKafkaConsumerIntegration:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             max_messages=5,
             poll_timeout_seconds=10.0,
@@ -104,15 +114,17 @@ class TestKafkaConsumerIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Offset tracking integration tests
+# Offset tracking via consumer groups
 # ---------------------------------------------------------------------------
 
 
 class TestKafkaOffsetTracking:
-    """Tests verifying offset tracking across multiple consume calls."""
+    """Tests verifying Kafka consumer group offset tracking across calls."""
 
     def test_incremental_consume(self, kafka_topic, produce_messages):
-        """Two sequential consumes should not re-read the same messages."""
+        """Two sequential consumes with the same group_id should not re-read messages."""
+        group = _unique_group()
+
         # Produce first batch
         batch1 = [{"batch": 1, "i": i} for i in range(5)]
         produce_messages(kafka_topic, batch1)
@@ -121,6 +133,7 @@ class TestKafkaOffsetTracking:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=group,
             start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
@@ -131,22 +144,24 @@ class TestKafkaOffsetTracking:
         batch2 = [{"batch": 2, "i": i} for i in range(3)]
         produce_messages(kafka_topic, batch2)
 
-        # Second consume — use offsets from first run
+        # Second consume — same group_id, should auto-resume from committed offsets
         settings2 = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
-            offsets=result1.new_offsets,
+            group_id=group,
+            start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
         df2, result2 = read_kafka_source(settings2)
 
         assert result2.messages_consumed == 3
         assert df2.height == 3
-        # All messages in second batch should have batch=2
         assert all(v == 2 for v in df2["batch"].to_list())
 
     def test_offsets_survive_reconnect(self, kafka_topic, produce_messages):
-        """Offsets from a previous consume should work after reconnecting."""
+        """Offsets committed by first consume should persist for the second."""
+        group = _unique_group()
+
         messages = [{"seq": i} for i in range(10)]
         produce_messages(kafka_topic, messages)
 
@@ -154,6 +169,7 @@ class TestKafkaOffsetTracking:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=group,
             start_offset="earliest",
             max_messages=5,
             poll_timeout_seconds=10.0,
@@ -161,11 +177,12 @@ class TestKafkaOffsetTracking:
         df1, result1 = read_kafka_source(settings)
         assert result1.messages_consumed == 5
 
-        # Second consume — resume from saved offsets, should get remaining 5
+        # Second consume — same group, should get remaining 5
         settings2 = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
-            offsets=result1.new_offsets,
+            group_id=group,
+            start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
         df2, result2 = read_kafka_source(settings2)
@@ -190,7 +207,7 @@ class TestKafkaMultiPartition:
         """Messages spread across partitions should all be consumed."""
         from test_utils.kafka.fixtures import create_topic
 
-        topic = "test_multi_partition"
+        topic = f"test_multi_{uuid.uuid4().hex[:8]}"
         create_topic(topic, num_partitions=4)
 
         messages = [{"partition_test": i} for i in range(50)]
@@ -199,6 +216,7 @@ class TestKafkaMultiPartition:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
@@ -206,36 +224,75 @@ class TestKafkaMultiPartition:
         df, result = read_kafka_source(settings)
 
         assert result.messages_consumed == 50
-        assert result.partitions_read == 4
         assert df.height == 50
 
-        # Verify offsets cover all 4 partitions
-        assert len(result.new_offsets) == 4
 
-    def test_offsets_per_partition(self, produce_messages):
-        """Offset tracking should be per-partition."""
-        from test_utils.kafka.fixtures import create_topic
+# ---------------------------------------------------------------------------
+# Schema inference tests
+# ---------------------------------------------------------------------------
 
-        topic = "test_per_partition_offsets"
-        create_topic(topic, num_partitions=2)
 
-        messages = [{"val": i} for i in range(20)]
-        produce_messages(topic, messages)
+class TestSchemaInference:
+    """Tests for sample-based schema inference."""
+
+    def test_infer_schema_from_json_messages(self, kafka_topic, produce_messages):
+        """Schema inference should detect column names and types from samples."""
+        messages = [
+            {"name": "Alice", "age": 30, "score": 95.5},
+            {"name": "Bob", "age": 25, "score": 88.0},
+        ]
+        produce_messages(kafka_topic, messages)
 
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
-            topic=topic,
+            topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
-            poll_timeout_seconds=10.0,
         )
 
-        df, result = read_kafka_source(settings)
+        schema = infer_topic_schema(settings, sample_size=5)
 
-        # Each partition should have its own offset
-        assert 0 in result.new_offsets
-        assert 1 in result.new_offsets
-        # Sum of offsets should equal total messages
-        assert sum(result.new_offsets.values()) == 20
+        column_names = [name for name, _ in schema]
+        assert "name" in column_names
+        assert "age" in column_names
+        assert "score" in column_names
+        assert "_kafka_key" in column_names
+        assert "_kafka_partition" in column_names
+
+    def test_infer_schema_empty_topic(self, kafka_topic):
+        """Schema inference on empty topic returns metadata columns only."""
+        settings = KafkaReadSettings(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            topic=kafka_topic,
+            group_id=_unique_group(),
+            start_offset="earliest",
+        )
+
+        schema = infer_topic_schema(settings, sample_size=5)
+
+        column_names = [name for name, _ in schema]
+        assert "_kafka_key" in column_names
+        assert "_kafka_partition" in column_names
+
+    def test_infer_schema_does_not_commit(self, kafka_topic, produce_messages):
+        """Schema inference should not commit offsets (uses separate probe group)."""
+        messages = [{"x": i} for i in range(5)]
+        produce_messages(kafka_topic, messages)
+
+        group = _unique_group()
+        settings = KafkaReadSettings(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            topic=kafka_topic,
+            group_id=group,
+            start_offset="earliest",
+        )
+
+        # Probe schema — should NOT commit to the main group
+        infer_topic_schema(settings, sample_size=3)
+
+        # Now consume with the actual group — should get all 5 messages
+        df, result = read_kafka_source(settings)
+        assert result.messages_consumed == 5
 
 
 # ---------------------------------------------------------------------------
@@ -245,23 +302,6 @@ class TestKafkaMultiPartition:
 
 class TestKafkaErrorHandling:
     """Tests for error conditions with a real broker."""
-
-    def test_nonexistent_topic(self):
-        """Consuming from a nonexistent topic should raise ValueError."""
-        settings = KafkaReadSettings(
-            bootstrap_servers=BOOTSTRAP_SERVERS,
-            topic="this_topic_does_not_exist_xyz",
-            start_offset="earliest",
-            poll_timeout_seconds=3.0,
-        )
-
-        # Redpanda auto-creates topics by default, so this may not raise.
-        # The test verifies it doesn't crash — either empty df or error is fine.
-        try:
-            df, result = read_kafka_source(settings)
-            assert df.height == 0 or result.messages_consumed == 0
-        except ValueError:
-            pass  # Also acceptable
 
     def test_mixed_valid_invalid_json(self, kafka_topic):
         """Invalid JSON messages should be skipped, valid ones consumed."""
@@ -276,12 +316,12 @@ class TestKafkaErrorHandling:
         settings = KafkaReadSettings(
             bootstrap_servers=BOOTSTRAP_SERVERS,
             topic=kafka_topic,
+            group_id=_unique_group(),
             start_offset="earliest",
             poll_timeout_seconds=10.0,
         )
 
         df, result = read_kafka_source(settings)
 
-        # Only the 2 valid messages should appear in the DataFrame
         assert df.height == 2
         assert sorted(df["seq"].to_list()) == [1, 2]

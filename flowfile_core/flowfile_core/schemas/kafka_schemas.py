@@ -103,10 +103,3 @@ class KafkaSyncOut(BaseModel):
     schedule_id: int
 
 
-class KafkaSyncOffsetOut(BaseModel):
-    """Current offset state for a sync."""
-
-    sync_name: str
-    topic: str
-    offsets: dict[int, int]  # {partition: committed_offset}
-    updated_at: datetime | None = None

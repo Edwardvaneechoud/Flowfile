@@ -2328,13 +2328,13 @@ class FlowGraph:
 
         Follows the same pattern as add_database_reader: offloads consumption
         to the worker, which writes an IPC temp file and returns a serialized
-        LazyFrame reference.
+        LazyFrame reference. Offset tracking is handled by Kafka consumer groups.
 
         Args:
             node_kafka_source: The settings for the Kafka source node.
         """
         from flowfile_core.database.connection import get_db_context
-        from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection, get_sync_offsets
+        from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
         from shared.kafka.models import KafkaReadSettings
 
         logger.info("Adding kafka source")
@@ -2355,13 +2355,12 @@ class FlowGraph:
                     raise HTTPException(status_code=400, detail="Kafka connection not found")
 
             consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
-            stored_offsets = get_sync_offsets(db, kafka_settings.sync_name, kafka_settings.topic_name)
 
         kafka_read_settings = KafkaReadSettings(
             bootstrap_servers=consumer_config.get("bootstrap.servers", ""),
             topic=kafka_settings.topic_name,
             value_format=kafka_settings.value_format,
-            offsets=stored_offsets,
+            group_id=kafka_settings.sync_name or "flowfile-kafka-source",
             start_offset=kafka_settings.start_offset,
             max_messages=kafka_settings.max_messages,
             poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
@@ -2382,15 +2381,19 @@ class FlowGraph:
             return fl
 
         def schema_callback():
-            # Return expected metadata columns as schema hint
+            from shared.kafka.consumer import infer_topic_schema
+
             from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
-            return [
-                FlowfileColumn(column_name="_kafka_key", data_type="String"),
-                FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
-                FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
-                FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
-            ]
+            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
+            if not schema_pairs:
+                return [
+                    FlowfileColumn(column_name="_kafka_key", data_type="String"),
+                    FlowfileColumn(column_name="_kafka_partition", data_type="Int64"),
+                    FlowfileColumn(column_name="_kafka_offset", data_type="Int64"),
+                    FlowfileColumn(column_name="_kafka_timestamp", data_type="Datetime"),
+                ]
+            return [FlowfileColumn(column_name=name, data_type=str(dtype)) for name, dtype in schema_pairs]
 
         node = self.get_node(node_kafka_source.node_id)
         if node:

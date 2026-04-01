@@ -1,4 +1,4 @@
-"""CRUD operations for Kafka connections and sync offset tracking."""
+"""CRUD operations for Kafka connections and consumer group management."""
 
 from __future__ import annotations
 
@@ -7,13 +7,12 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from flowfile_core.database.models import KafkaConnection, KafkaSyncOffset, Secret
+from flowfile_core.database.models import KafkaConnection, Secret
 from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionCreate,
     KafkaConnectionOut,
     KafkaConnectionTestResult,
     KafkaConnectionUpdate,
-    KafkaSyncOffsetOut,
     KafkaTopicInfo,
 )
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, store_secret
@@ -257,61 +256,57 @@ def list_topics(db: Session, connection_id: int, user_id: int) -> list[KafkaTopi
 
 
 # ---------------------------------------------------------------------------
-# Offset tracking
+# Consumer group management (offset tracking is handled by Kafka broker)
 # ---------------------------------------------------------------------------
 
 
-def get_sync_offsets(db: Session, sync_name: str, topic: str) -> dict[int, int]:
-    """Get stored offsets for a sync. Returns {partition: offset} dict."""
-    rows = (
-        db.query(KafkaSyncOffset).filter(KafkaSyncOffset.sync_name == sync_name, KafkaSyncOffset.topic == topic).all()
-    )
-    return {row.partition: row.committed_offset for row in rows}
+def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id: int) -> None:
+    """Delete a consumer group, forcing the next consume to use auto.offset.reset.
+
+    The consumer group must not have active members (i.e., no flow currently running).
+    """
+    db_conn = get_kafka_connection(db, connection_id, user_id)
+    if db_conn is None:
+        raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
+
+    from confluent_kafka.admin import AdminClient
+
+    config = build_consumer_config(db, db_conn, user_id)
+    admin = AdminClient(config)
+    futures = admin.delete_consumer_groups([group_id])
+    for gid, future in futures.items():
+        try:
+            future.result()
+            logger.info("Deleted consumer group: %s", gid)
+        except Exception as e:
+            logger.warning("Could not delete consumer group %s: %s", gid, e)
+            raise ValueError(f"Could not reset consumer group '{gid}': {e}") from e
 
 
-def update_sync_offsets(db: Session, sync_name: str, topic: str, offsets: dict[int, int]) -> None:
-    """Update stored offsets after a successful consume."""
-    for partition, offset in offsets.items():
-        existing = (
-            db.query(KafkaSyncOffset)
-            .filter(
-                KafkaSyncOffset.sync_name == sync_name,
-                KafkaSyncOffset.topic == topic,
-                KafkaSyncOffset.partition == partition,
-            )
-            .first()
-        )
-        if existing:
-            existing.committed_offset = offset
-        else:
-            db.add(
-                KafkaSyncOffset(
-                    sync_name=sync_name,
-                    topic=topic,
-                    partition=partition,
-                    committed_offset=offset,
-                )
-            )
-    db.commit()
+def get_consumer_group_offsets(
+    db: Session, group_id: str, connection_id: int, user_id: int
+) -> dict[int, int]:
+    """Query committed offsets for a consumer group from the broker.
 
+    Returns {partition: offset} dict, or empty dict if the group has no commits.
+    """
+    db_conn = get_kafka_connection(db, connection_id, user_id)
+    if db_conn is None:
+        raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-def reset_sync_offsets(db: Session, sync_name: str) -> None:
-    """Delete all stored offsets for a sync (forces re-read from start_offset)."""
-    db.query(KafkaSyncOffset).filter(KafkaSyncOffset.sync_name == sync_name).delete()
-    db.commit()
+    from confluent_kafka.admin import AdminClient
 
+    config = build_consumer_config(db, db_conn, user_id)
+    admin = AdminClient(config)
 
-def get_sync_offset_info(db: Session, sync_name: str) -> KafkaSyncOffsetOut | None:
-    """Get offset info for display in the API."""
-    rows = db.query(KafkaSyncOffset).filter(KafkaSyncOffset.sync_name == sync_name).all()
-    if not rows:
-        return None
-    return KafkaSyncOffsetOut(
-        sync_name=sync_name,
-        topic=rows[0].topic,
-        offsets={row.partition: row.committed_offset for row in rows},
-        updated_at=max(row.updated_at for row in rows),
-    )
+    try:
+        futures = admin.list_consumer_group_offsets([{"group.id": group_id}])
+        for _gid, future in futures.items():
+            result = future.result()
+            return {tp.partition: tp.offset for tp in result if tp.offset >= 0}
+    except Exception as e:
+        logger.warning("Could not query offsets for group %s: %s", group_id, e)
+    return {}
 
 
 # ---------------------------------------------------------------------------

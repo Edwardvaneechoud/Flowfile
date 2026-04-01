@@ -1,8 +1,8 @@
-"""API routes for Kafka connection management and sync setup."""
+"""API routes for Kafka connection management and consumer group operations."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
@@ -10,10 +10,10 @@ from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.kafka.connection_manager import (
     delete_kafka_connection,
-    get_sync_offset_info,
+    get_consumer_group_offsets,
     list_kafka_connections,
     list_topics,
-    reset_sync_offsets,
+    reset_consumer_group,
     store_kafka_connection,
     test_kafka_connection,
     update_kafka_connection,
@@ -23,7 +23,6 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionOut,
     KafkaConnectionTestResult,
     KafkaConnectionUpdate,
-    KafkaSyncOffsetOut,
     KafkaTopicInfo,
 )
 
@@ -110,26 +109,34 @@ def list_kafka_topics(
 
 
 # ---------------------------------------------------------------------------
-# Sync offset management
+# Consumer group management (offsets tracked by broker)
 # ---------------------------------------------------------------------------
 
 
-@router.get("/sync/{sync_name}/offsets", response_model=KafkaSyncOffsetOut | None)
+@router.get("/sync/{sync_name}/offsets", response_model=dict[int, int])
 def get_sync_offsets_route(
     sync_name: str,
+    connection_id: int = Query(..., description="Kafka connection ID to query the broker"),
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """View current committed offsets for a sync."""
-    return get_sync_offset_info(db, sync_name)
+    """View committed offsets for a consumer group from the broker."""
+    try:
+        return get_consumer_group_offsets(db, sync_name, connection_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
 
 
 @router.post("/sync/{sync_name}/reset")
 def reset_sync_offsets_route(
     sync_name: str,
+    connection_id: int = Query(..., description="Kafka connection ID to access the broker"),
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Reset offsets for a sync (forces re-read from start_offset on next run)."""
-    reset_sync_offsets(db, sync_name)
-    return {"message": f"Offsets reset for sync '{sync_name}'"}
+    """Reset offsets by deleting the consumer group (re-reads from start_offset)."""
+    try:
+        reset_consumer_group(db, sync_name, connection_id, current_user.id)
+        return {"message": f"Consumer group '{sync_name}' deleted. Next run will use auto.offset.reset."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None

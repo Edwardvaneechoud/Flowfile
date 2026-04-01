@@ -11,8 +11,8 @@ class KafkaReadSettings(BaseModel):
     bootstrap_servers: str
     topic: str
     value_format: str = "json"
-    offsets: dict[int, int] = {}  # {partition: start_offset}
-    start_offset: str = "latest"  # "earliest" or "latest" — used when no offsets exist
+    group_id: str = "flowfile-kafka-source"
+    start_offset: str = "latest"  # "earliest" or "latest" — used on first-ever consume
     max_messages: int = 100_000
     poll_timeout_seconds: float = 30.0
 
@@ -28,13 +28,15 @@ class KafkaReadSettings(BaseModel):
     # Extra confluent-kafka config overrides
     extra_config: dict[str, str] | None = None
 
-    def to_consumer_config(self, group_id: str = "flowfile-kafka-source") -> dict:
+    def to_consumer_config(self) -> dict:
         """Build a confluent-kafka Consumer config dict."""
         config: dict[str, str | int] = {
             "bootstrap.servers": self.bootstrap_servers,
-            "group.id": group_id,
+            "group.id": self.group_id,
             "enable.auto.commit": "false",
             "auto.offset.reset": self.start_offset,
+            "session.timeout.ms": "6000",
+            "heartbeat.interval.ms": "2000",
         }
 
         if self.security_protocol != "PLAINTEXT":
@@ -61,8 +63,12 @@ class KafkaReadSettings(BaseModel):
 
 
 class KafkaReadResult(BaseModel):
-    """Metadata returned after a Kafka consume operation."""
+    """Metadata returned after a Kafka consume operation.
 
-    new_offsets: dict[int, int]  # {partition: next_offset_to_read}
+    The ``new_offsets`` field is informational only — offsets are committed
+    broker-side via consumer groups, not tracked in a DB.
+    """
+
+    new_offsets: dict[int, int]  # {partition: reached_offset} for logging
     messages_consumed: int
     partitions_read: int
