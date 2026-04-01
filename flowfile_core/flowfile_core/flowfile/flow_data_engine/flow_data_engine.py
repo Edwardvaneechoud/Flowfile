@@ -1767,12 +1767,13 @@ class FlowDataEngine:
             Exception: If `verify_integrity` is True and the join would result in
                 an excessively large number of records.
         """
-        self.lazy = True
-        other.lazy = True
+        self.lazy = False
+        other.lazy = False
         cross_join_input_manager = transform_schemas.CrossJoinInputManager(cross_join_input)
         verify_join_select_integrity(
             cross_join_input_manager.input, left_columns=self.columns, right_columns=other.columns
         )
+        breakpoint()
         right_select = [
             v.old_name
             for v in cross_join_input_manager.right_select.renames

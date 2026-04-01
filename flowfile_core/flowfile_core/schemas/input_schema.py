@@ -1130,7 +1130,6 @@ class KafkaSourceSettings(BaseModel):
 
     kafka_connection_id: int | None = None
     kafka_connection_name: str | None = None
-    connection_mode: Literal["inline", "reference"] = "reference"
     topic_name: str = ""
     value_format: Literal["json"] = "json"
     sync_name: str = ""  # unique key for offset tracking between runs

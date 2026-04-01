@@ -12,11 +12,6 @@ from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
 from uuid import uuid1
-from shared.kafka.consumer import infer_topic_schema
-from functools import lru_cache
-
-from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
-from shared.kafka.models import KafkaReadSettings
 
 import fastexcel
 import polars as pl
@@ -80,6 +75,11 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.kafka.connection_manager import (
+    build_consumer_config,
+    get_kafka_connection,
+    get_kafka_connection_by_name,
+)
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -95,6 +95,8 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared.kafka.consumer import infer_topic_schema
+from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
 try:
@@ -1553,6 +1555,7 @@ class FlowGraph:
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            breakpoint()
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in cross_join_settings.cross_join_input.right_select.renames:
@@ -2348,8 +2351,6 @@ class FlowGraph:
             db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
             if db_conn is None:
                 if kafka_settings.kafka_connection_name:
-                    from flowfile_core.kafka.connection_manager import get_kafka_connection_by_name
-
                     db_conn = get_kafka_connection_by_name(
                         db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
                     )
@@ -2373,6 +2374,8 @@ class FlowGraph:
             ssl_ca_location=consumer_config.get("ssl.ca.location"),
             ssl_cert_location=consumer_config.get("ssl.certificate.location"),
             ssl_key_pem=consumer_config.get("ssl.key.pem"),
+            flowfile_flow_id=node_kafka_source.flow_id,
+            flowfile_node_id=node_kafka_source.node_id,
         )
 
         def _func():
@@ -2382,11 +2385,9 @@ class FlowGraph:
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
-        @lru_cache(maxsize=1)
         def schema_callback():
-
             schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
-            # Since the schema callback takes quite some time, we only run the function ones.
+            # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
                 result = [
                     FlowfileColumn.from_input(column_name="_kafka_key", data_type="String"),

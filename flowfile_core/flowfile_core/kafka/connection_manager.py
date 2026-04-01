@@ -199,7 +199,10 @@ def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -
         if secret:
             config["ssl.key.pem"] = decrypt_secret(secret.encrypted_value, user_id).get_secret_value()
     if db_conn.extra_config:
-        config.update(json.loads(db_conn.extra_config))
+        extra = json.loads(db_conn.extra_config)
+        blocked_prefixes = ("sasl.", "ssl.", "security.protocol")
+        extra = {k: v for k, v in extra.items() if not k.startswith(blocked_prefixes)}
+        config.update(extra)
     return config
 
 
@@ -294,13 +297,14 @@ def get_consumer_group_offsets(
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
+    from confluent_kafka import ConsumerGroupTopicPartitions
     from confluent_kafka.admin import AdminClient
 
     config = build_consumer_config(db, db_conn, user_id)
     admin = AdminClient(config)
 
     try:
-        futures = admin.list_consumer_group_offsets([{"group.id": group_id}])
+        futures = admin.list_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id)])
         for _gid, future in futures.items():
             result = future.result()
             return {tp.partition: tp.offset for tp in result if tp.offset >= 0}

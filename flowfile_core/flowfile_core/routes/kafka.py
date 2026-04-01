@@ -112,7 +112,7 @@ def list_kafka_topics(
 def infer_kafka_topic_schema(
     connection_id: int,
     topic_name: str,
-    sample_size: int = 10,
+    sample_size: int = Query(default=10, ge=1, le=1000),
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -149,7 +149,8 @@ def infer_kafka_topic_schema(
         schema_pairs = infer_topic_schema(settings, sample_size=sample_size)
         return [{"name": name, "dtype": str(dtype)} for name, dtype in schema_pairs]
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Schema inference failed: {e}") from None
+        logger.error("Schema inference failed for topic %s on connection %d: %s", topic_name, connection_id, e)
+        raise HTTPException(status_code=400, detail="Schema inference failed. Check server logs for details.") from None
 
 
 # ---------------------------------------------------------------------------
