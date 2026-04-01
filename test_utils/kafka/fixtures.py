@@ -19,7 +19,7 @@ logger = logging.getLogger("kafka_fixture")
 REDPANDA_HOST = os.environ.get("TEST_REDPANDA_HOST", "localhost")
 REDPANDA_PORT = int(os.environ.get("TEST_REDPANDA_PORT", 19092))
 REDPANDA_CONTAINER_NAME = os.environ.get("TEST_REDPANDA_CONTAINER", "test-redpanda-kafka")
-REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:latest")
+REDPANDA_IMAGE = os.environ.get("TEST_REDPANDA_IMAGE", "docker.redpanda.com/redpandadata/redpanda:v25.3.11")
 
 BOOTSTRAP_SERVERS = f"{REDPANDA_HOST}:{REDPANDA_PORT}"
 
