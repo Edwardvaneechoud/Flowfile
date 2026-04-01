@@ -130,36 +130,54 @@ GCS_READ_TEST_CASES = [
         ),
         expected_sample_size=10,
     ),
+    GCSTestReadCase(
+        id="delta_scan",
+        read_settings=CloudStorageReadSettings(
+            resource_path="gs://test-bucket/delta-lake-table",
+            file_format="delta",
+        ),
+        expected_sample_size=10,
+    ),
 ]
 
 GCS_WRITE_TEST_CASES = [
-    # GCSTestWriteCase(
-    #     id="write_parquet_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="gs://flowfile-test/write_test.parquet",
-    #         file_format="parquet",
-    #         write_mode="overwrite",
-    #         parquet_compression="snappy",
-    #         auth_mode="env_vars",
-    #     ),
-    #     expected_columns=4,
-    # ),
-    # GCSTestWriteCase(
-    #     id="write_csv_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="gs://flowfile-test/write_test.csv",
-    #         file_format="csv",
-    #         write_mode="overwrite",
-    #         csv_delimiter="|",
-    #         auth_mode="env_vars",
-    #     ),
-    #     expected_columns=5,
-    # ),
+    GCSTestWriteCase(
+        id="write_parquet_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="gs://flowfile-test/write_test.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+            parquet_compression="snappy",
+            auth_mode="env_vars",
+        ),
+        expected_columns=4,
+    ),
+    GCSTestWriteCase(
+        id="write_csv_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="gs://flowfile-test/write_test.csv",
+            file_format="csv",
+            write_mode="overwrite",
+            csv_delimiter="|",
+            auth_mode="env_vars",
+        ),
+        expected_columns=5,
+    ),
     GCSTestWriteCase(
         id="write_json_file",
         write_settings=CloudStorageWriteSettings(
             resource_path="gs://flowfile-test/write_test.json",
             file_format="json",
+            write_mode="overwrite",
+            auth_mode="env_vars",
+        ),
+        expected_columns=5,
+    ),
+    GCSTestWriteCase(
+        id="overwrite_delta",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="gs://flowfile-test/write_test_delta",
+            file_format="delta",
             write_mode="overwrite",
             auth_mode="env_vars",
         ),

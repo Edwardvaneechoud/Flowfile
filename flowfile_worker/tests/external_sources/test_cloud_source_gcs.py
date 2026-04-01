@@ -76,6 +76,15 @@ GCS_WRITE_TEST_CASES = [
         ),
         object_name="write_test.json",
     ),
+    GCSWorkerWriteCase(
+        id="write_delta_table",
+        write_settings=WriteSettings(
+            resource_path="gs://worker-test-bucket/write_test_delta",
+            file_format="delta",
+            write_mode="overwrite",
+        ),
+        object_name="write_test_delta",
+    ),
 ]
 
 
@@ -104,9 +113,16 @@ def test_write_df_to_gcs(test_case: GCSWorkerWriteCase, gcs_connection_settings)
         # Verify the object exists in fake-gcs-server
         client = get_gcs_client()
         bucket = client.bucket("worker-test-bucket")
-        blob = bucket.blob(test_case.object_name)
-        assert blob.exists(), f"Object '{test_case.object_name}' should exist"
-        logger.info(f"Verification successful: Object '{test_case.object_name}' found in fake-gcs-server.")
+
+        if test_case.write_settings.file_format == "delta":
+            # Delta tables consist of a _delta_log/ directory with JSON commits
+            blobs = list(bucket.list_blobs(prefix=f"{test_case.object_name}/_delta_log/"))
+            assert len(blobs) > 0, f"Delta log should exist under '{test_case.object_name}/_delta_log/'"
+            logger.info(f"Verification successful: Delta table '{test_case.object_name}' found with {len(blobs)} log entries.")
+        else:
+            blob = bucket.blob(test_case.object_name)
+            assert blob.exists(), f"Object '{test_case.object_name}' should exist"
+            logger.info(f"Verification successful: Object '{test_case.object_name}' found in fake-gcs-server.")
     except Exception as e:
         logger.error(f"Verification failed: {e!s}")
         raise

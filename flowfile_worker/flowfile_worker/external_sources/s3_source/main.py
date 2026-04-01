@@ -11,6 +11,7 @@ import polars as pl
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, WriteSettings
 from flowfile_worker.utils import collect_lazy_frame
+from shared.cloud_storage import sink_to_gcs, write_delta_to_gcs
 
 
 def _write_parquet_to_cloud(
@@ -125,6 +126,19 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
         raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
     storage_options = connection.get_storage_options()
+
+    if connection.should_use_pyarrow_for_gcs():
+        if write_settings.file_format == "delta":
+            write_delta_to_gcs(
+                df, write_settings.resource_path, storage_options,
+                mode=write_settings.write_mode,
+            )
+        elif write_settings.file_format in ("parquet", "csv", "json"):
+            sink_to_gcs(df, write_settings.resource_path, storage_options, file_format=write_settings.file_format)
+        else:
+            raise ValueError(f"Unsupported file format for GCS writing: {write_settings.file_format}")
+        logger.info(f"Successfully wrote data to {write_settings.resource_path} (via gcsfs)")
+        return
 
     # Dispatch to the appropriate writer
     writer_func = writers.get(write_settings.file_format)

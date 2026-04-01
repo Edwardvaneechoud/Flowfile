@@ -1,13 +1,11 @@
-import polars as pl
-
 from collections.abc import Callable
 from typing import Any, Literal
-from urllib.parse import urlparse
-import gcsfs
+
 import boto3
 from botocore.exceptions import ClientError
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+from shared.cloud_storage import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
 
 
 def create_storage_options_from_boto_credentials(
@@ -177,7 +175,7 @@ class CloudStorageReader:
     @staticmethod
     def use_pyarrow_for_gcs(connection: "FullCloudStorageConnection") -> bool:
         """Whether to use PyArrow backend for GCS reads (required for gcsfs/fsspec)."""
-        return connection.storage_type == "gcs" and connection.endpoint_url is not None
+        return _use_pyarrow_for_gcs(connection.storage_type, connection.endpoint_url)
 
     @staticmethod
     def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:
@@ -379,111 +377,3 @@ def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["c
         resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path
 
-
-def get_path_without_scheme(path_str: str) -> str:
-    """Strip the URI scheme from a cloud storage path.
-
-    Parameters
-    ----------
-    path_str
-        Cloud storage URI, e.g. 'gs://bucket/prefix/file.parquet'.
-
-    Returns
-    -------
-    str
-        Path without scheme, e.g. 'bucket/prefix/file.parquet'.
-    """
-    parsed = urlparse(path_str)
-    return parsed.netloc + parsed.path
-
-
-def strip_wildcard_pattern_from_dir(path_str: str) -> str:
-    """Strip the URI scheme and any glob/wildcard patterns from a cloud storage path.
-
-    Parses the URI and removes everything from the first '*' onward,
-    returning a clean path suitable for pyarrow.dataset discovery.
-
-    Parameters
-    ----------
-    path_str
-        Cloud storage URI, e.g. 'gs://bucket/prefix/**/*.parquet'.
-
-    Returns
-    -------
-    str
-        Clean path without scheme or wildcards, e.g. 'bucket/prefix'.
-    """
-    parsed = urlparse(path_str)
-    return parsed.netloc + parsed.path.split("*")[0].rstrip("/")
-
-
-def get_lazy_frame_from_gcs_pyarrow_dataset(
-        resource_path: str,
-        storage_options: dict[str, Any] | None = None,
-        is_directory: bool = False,
-) -> pl.LazyFrame:
-    """Create a Polars LazyFrame from a GCS path via PyArrow dataset.
-
-    Uses gcsfs for filesystem access and pyarrow.dataset for lazy reading.
-    Only the Parquet metadata (footer) is read upfront; row data is deferred
-    until the LazyFrame is collected.
-
-    Parameters
-    ----------
-    resource_path
-        GCS URI, e.g. 'gs://bucket/dir/**/*.parquet' or 'gs://bucket/file.parquet'.
-    storage_options
-        GCS storage options passed to gcsfs (token, project, endpoint_url, etc.).
-    is_directory
-        If True, glob/wildcard patterns are stripped to get the base directory path.
-    """
-    import pyarrow.dataset as ds
-
-    clean_path = (strip_wildcard_pattern_from_dir(resource_path)
-                  if is_directory else get_path_without_scheme(resource_path))
-
-    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
-    return pl.scan_pyarrow_dataset(ds.dataset(clean_path, format="parquet", filesystem=fs))
-
-
-def sink_to_gcs(
-    lf: pl.LazyFrame,
-    path: str,
-    storage_options: dict[str, Any],
-    file_format: Literal["parquet", "csv", "json"] = "parquet",
-    **kwargs: Any,
-) -> None:
-    """Write a Polars LazyFrame to GCS via gcsfs.
-
-    Bypasses Polars' native sink which doesn't support combining
-    token with endpoint_url in storage_options.
-
-    Parameters
-    ----------
-    lf
-        The LazyFrame to write.
-    path
-        GCS URI, e.g. 'gs://bucket/output.parquet'.
-    storage_options
-        GCS storage options passed to gcsfs.
-    file_format
-        Output format: 'parquet', 'csv', or 'json'.
-    **kwargs
-        Additional arguments passed to the underlying writer
-        (e.g. compression='snappy' for parquet).
-    """
-    import pyarrow.parquet as pq
-    fs = gcsfs.GCSFileSystem(**storage_options)
-    clean_path = get_path_without_scheme(path)
-    df = lf.collect()
-
-    if file_format == "parquet":
-        pq.write_table(df.to_arrow(), clean_path, filesystem=fs, **kwargs)
-    elif file_format == "csv":
-        with fs.open(clean_path, "w") as f:
-            lf.sink_csv(f, **kwargs)
-    elif file_format == "json":
-        with fs.open(clean_path, "w") as f:
-            df.write_ndjson(f, **kwargs)
-    else:
-        raise ValueError(f"Unsupported file format: {file_format}")

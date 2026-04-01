@@ -6,6 +6,7 @@ import boto3
 from pydantic import BaseModel, SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
+from shared.cloud_storage import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal[
@@ -209,6 +210,10 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["endpoint_url"] = self.endpoint_url
 
         return storage_options
+
+    def should_use_pyarrow_for_gcs(self) -> bool:
+        """Whether to use PyArrow/gcsfs backend for GCS writes."""
+        return _use_pyarrow_for_gcs(self.storage_type, self.endpoint_url)
 
 
 class WriteSettings(BaseModel):

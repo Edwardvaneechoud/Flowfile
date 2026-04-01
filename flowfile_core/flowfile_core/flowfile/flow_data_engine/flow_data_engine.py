@@ -4,12 +4,11 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Generator, Iterable
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from math import ceil
 from typing import Any, Literal, TypeVar
 
-from copy import copy
 import gcsfs
 import polars as pl
 
@@ -32,8 +31,6 @@ from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
     get_first_file_from_cloud_dir,
-    get_lazy_frame_from_gcs_pyarrow_dataset,
-    sink_to_gcs
 )
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
@@ -68,6 +65,12 @@ from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
 from flowfile_core.schemas.schemas import ExecutionLocationsLiteral, get_global_execution_location
 from flowfile_core.utils.utils import ensure_similarity_dicts
+from shared.cloud_storage import (
+    get_lazy_frame_from_gcs_pyarrow_dataset,
+    scan_delta_from_gcs,
+    sink_to_gcs,
+    write_delta_to_gcs,
+)
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -409,7 +412,7 @@ class FlowDataEngine:
             )
         elif write_settings.file_format == "delta":
             self._write_delta_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
+                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
             )
         elif write_settings.file_format == "csv":
             self._write_csv_to_cloud(write_settings.resource_path, storage_options, credential_provider, write_settings,
@@ -478,12 +481,19 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
+        use_pyarrow: bool = False,
     ):
         """(Internal) Writes the DataFrame to a Delta Lake table in cloud storage.
 
         This operation requires collecting the data first, as `write_delta` operates
         on an eager DataFrame.
         """
+        if use_pyarrow:
+            write_delta_to_gcs(
+                self.data_frame, resource_path, storage_options, mode=write_settings.write_mode
+            )
+            return
+
         sink_kwargs = {
             "target": self._normalize_delta_path(resource_path),
             "mode": write_settings.write_mode,
@@ -492,7 +502,7 @@ class FlowDataEngine:
             sink_kwargs["storage_options"] = storage_options
         if credential_provider:
             sink_kwargs["credential_provider"] = credential_provider
-        self.collect().write_delta(**sink_kwargs)
+        self.data_frame.sink_delta(**sink_kwargs)
 
     def _write_csv_to_cloud(
         self,
@@ -590,7 +600,8 @@ class FlowDataEngine:
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings
+                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
@@ -741,19 +752,25 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
+        use_pyarrow: bool = False,
     ) -> FlowDataEngine:
         """Reads a Delta Lake table from cloud storage."""
         try:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
-            scan_kwargs = {"source": cls._normalize_delta_path(resource_path)}
-            if read_settings.delta_version:
-                scan_kwargs["version"] = read_settings.delta_version
-            if storage_options:
-                scan_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                scan_kwargs["credential_provider"] = credential_provider
-            lf = pl.scan_delta(**scan_kwargs)
+            if use_pyarrow:
+                lf = scan_delta_from_gcs(
+                    resource_path, storage_options, delta_version=read_settings.delta_version
+                )
+            else:
+                scan_kwargs = {"source": cls._normalize_delta_path(resource_path)}
+                if read_settings.delta_version:
+                    scan_kwargs["version"] = read_settings.delta_version
+                if storage_options:
+                    scan_kwargs["storage_options"] = storage_options
+                if credential_provider:
+                    scan_kwargs["credential_provider"] = credential_provider
+                lf = pl.scan_delta(**scan_kwargs)
 
             return cls(
                 lf,
