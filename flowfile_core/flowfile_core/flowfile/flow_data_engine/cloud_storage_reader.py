@@ -5,6 +5,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+from shared.cloud_storage import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
 
 
 def create_storage_options_from_boto_credentials(
@@ -112,14 +113,12 @@ class CloudStorageReader:
         storage_options = {}
 
         if connection.auth_method == "access_key":
-            # Account key authentication
             if connection.azure_account_name:
                 storage_options["account_name"] = connection.azure_account_name
             if connection.azure_account_key:
                 storage_options["account_key"] = connection.azure_account_key.get_secret_value()
 
         elif connection.auth_method == "service_principal":
-            # Service principal authentication
             if connection.azure_tenant_id:
                 storage_options["tenant_id"] = connection.azure_tenant_id
             if connection.azure_client_id:
@@ -128,18 +127,55 @@ class CloudStorageReader:
                 storage_options["client_secret"] = connection.azure_client_secret.get_secret_value()
 
         elif connection.auth_method == "sas_token":
-            # SAS token authentication
+            if connection.azure_account_name:
+                storage_options["account_name"] = connection.azure_account_name
             if connection.azure_sas_token:
                 storage_options["sas_token"] = connection.azure_sas_token.get_secret_value()
+
+        elif connection.auth_method == "managed_identity":
+            if connection.azure_account_name:
+                storage_options["account_name"] = connection.azure_account_name
+            storage_options["use_azure_cli"] = "true"
+
+        if connection.endpoint_url:
+            if connection.endpoint_url.startswith("http://"):
+                # Emulator mode (e.g. Azurite): use path-style URLs and allow HTTP
+                storage_options["azure_storage_use_emulator"] = "true"
+                storage_options["azure_storage_allow_http"] = "true"
+                # Build emulator endpoint with account name in path
+                account = connection.azure_account_name or "devstoreaccount1"
+                storage_options["azure_storage_endpoint"] = f"{connection.endpoint_url.rstrip('/')}/{account}"
+            else:
+                storage_options["azure_storage_endpoint"] = connection.endpoint_url
 
         return storage_options
 
     @staticmethod
     def _get_gcs_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
-        """Build GCS-specific storage options."""
-        # GCS typically uses service account authentication
-        # Implementation would depend on how credentials are stored
-        return {}
+        """Build GCS-specific storage options.
+
+        Uses fsspec/gcsfs-compatible keys so Polars reads via PyArrow + gcsfs.
+        """
+        storage_options = {}
+
+        if connection.auth_method == "service_account" and connection.gcs_service_account_key:
+            storage_options["token"] = connection.gcs_service_account_key.get_secret_value()
+        elif connection.endpoint_url:
+            # Emulator (e.g. fake-gcs-server): anonymous auth via gcsfs
+            storage_options["token"] = "anon"
+
+        if connection.gcs_project_id:
+            storage_options["project"] = connection.gcs_project_id
+
+        if connection.endpoint_url:
+            storage_options["endpoint_url"] = connection.endpoint_url
+
+        return storage_options
+
+    @staticmethod
+    def use_pyarrow_for_gcs(connection: "FullCloudStorageConnection") -> bool:
+        """Whether to use PyArrow backend for GCS reads (required for gcsfs/fsspec)."""
+        return _use_pyarrow_for_gcs(connection.storage_type, connection.endpoint_url)
 
     @staticmethod
     def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:
@@ -164,7 +200,23 @@ class CloudStorageReader:
                 }, None  # expiry
 
             return aws_credential_provider
+
         return None
+
+
+def get_first_file_from_cloud_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from a cloud storage directory.
+
+    Routes to the appropriate provider-specific implementation based on the URI scheme.
+    """
+    if source.startswith("s3://"):
+        return get_first_file_from_s3_dir(source, storage_options=storage_options)
+    elif source.startswith(("az://", "abfss://")):
+        return get_first_file_from_adls_dir(source, storage_options=storage_options)
+    elif source.startswith("gs://"):
+        return get_first_file_from_gcs_dir(source, storage_options=storage_options)
+    raise ValueError(f"Unsupported cloud storage scheme in: {source}")
 
 
 def get_first_file_from_s3_dir(source: str, storage_options: dict[str, Any] = None) -> str:
@@ -202,6 +254,72 @@ def get_first_file_from_s3_dir(source: str, storage_options: dict[str, Any] = No
 
     # Return first file URI
     return f"s3://{bucket_name}/{first_file['Key']}"
+
+
+def get_first_file_from_adls_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from an ADLS directory path.
+
+    Parameters
+    ----------
+    source : str
+        ADLS path with wildcards (e.g., 'az://container/prefix/**/*.parquet')
+    storage_options : dict, optional
+        Azure storage options (account_name, account_key, etc.)
+
+    Returns
+    -------
+    str
+        ADLS URI of the first matching file found.
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    file_extension = _get_file_extension(source)
+    scheme, path = source.split("://", 1)
+    container_name, *prefix_parts = path.split("*")[0].rstrip("/").split("/", 1)
+    base_prefix = prefix_parts[0] if prefix_parts else ""
+
+    opts = storage_options or {}
+    account_name = opts.get("account_name", "devstoreaccount1")
+    account_key = opts.get("account_key")
+    endpoint = opts.get("azure_storage_endpoint", f"https://{account_name}.blob.core.windows.net")
+
+    client = BlobServiceClient(account_url=endpoint, credential=account_key)
+    container_client = client.get_container_client(container_name)
+
+    for blob in container_client.list_blobs(name_starts_with=base_prefix):
+        if blob.name.endswith(f".{file_extension}"):
+            return f"{scheme}://{container_name}/{blob.name}"
+
+    raise ValueError(f"No .{file_extension} files found in {scheme}://{container_name}/{base_prefix}")
+
+
+def get_first_file_from_gcs_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
+    """
+    Get the first file matching the extension from a GCS directory path.
+
+    Parameters
+    ----------
+    source : str
+        GCS path with wildcards (e.g., 'gs://bucket/prefix/**/*.parquet')
+    storage_options : dict, optional
+        GCS storage options passed to gcsfs.
+
+    Returns
+    -------
+    str
+        GCS URI of the first matching file found.
+    """
+    import gcsfs
+
+    file_extension = _get_file_extension(source)
+    path = source.replace("gs://", "").split("*")[0].rstrip("/")
+
+    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
+    matches = fs.glob(f"{path}/**/*.{file_extension}")
+    if not matches:
+        raise ValueError(f"No .{file_extension} files found in gs://{path}")
+    return f"gs://{matches[0]}"
 
 
 def _get_file_extension(source: str) -> str:
@@ -258,3 +376,4 @@ def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["c
     if not resource_path.endswith(f"*.{file_format}"):
         resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path
+
