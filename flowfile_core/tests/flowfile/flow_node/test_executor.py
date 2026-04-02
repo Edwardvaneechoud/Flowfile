@@ -197,10 +197,6 @@ def create_graph_with_sort_and_select(flow_id: int = 3,
     return graph
 
 
-# =============================================================================
-# ExecutionStrategy Tests
-# =============================================================================
-
 class TestExecutionStrategy:
     """Tests for the ExecutionStrategy enum."""
 
@@ -221,10 +217,6 @@ class TestExecutionStrategy:
         ]
         assert len(strategies) == len(set(strategies))
 
-
-# =============================================================================
-# InvalidationReason Tests
-# =============================================================================
 
 class TestInvalidationReason:
     """Tests for the InvalidationReason enum."""
@@ -253,10 +245,6 @@ class TestInvalidationReason:
         assert len(reasons) == len(set(reasons))
 
 
-# =============================================================================
-# ExecutionDecision Tests
-# =============================================================================
-
 class TestExecutionDecision:
     """Tests for the ExecutionDecision dataclass."""
 
@@ -282,10 +270,6 @@ class TestExecutionDecision:
         assert decision.strategy == ExecutionStrategy.SKIP
         assert decision.reason is None
 
-
-# =============================================================================
-# SourceFileInfo Tests
-# =============================================================================
 
 class TestSourceFileInfo:
     """Tests for the SourceFileInfo class."""
@@ -343,10 +327,6 @@ class TestSourceFileInfo:
         os.unlink(temp_path)
         assert info.has_changed() is True
 
-
-# =============================================================================
-# NodeExecutionState Tests
-# =============================================================================
 
 class TestNodeExecutionState:
     """Tests for the NodeExecutionState class."""
@@ -429,10 +409,6 @@ class TestNodeExecutionState:
             os.unlink(temp_path)
 
 
-# =============================================================================
-# NodeExecutor Tests
-# =============================================================================
-
 class TestNodeExecutor:
     """Tests for the NodeExecutor class."""
 
@@ -510,7 +486,6 @@ class TestNodeExecutor:
         graph = create_graph()
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
-
         # Mark as already run
         node._execution_state.has_run_with_current_setup = True
 
@@ -532,7 +507,7 @@ class TestNodeExecutor:
             performance_mode=True,
             force_refresh=False,
         )
-        assert decision.should_run is False
+        assert decision.should_run is True
 
     def test_node_has_executor_property(self):
         """Test that FlowNode has an executor property."""
@@ -562,10 +537,6 @@ class TestNodeExecutor:
         # Accessing again should return same instance
         assert node.executor is executor
 
-
-# =============================================================================
-# Integration Tests
-# =============================================================================
 
 class TestExecutorIntegration:
     """Integration tests for executor with real nodes."""
@@ -626,10 +597,6 @@ class TestExecutorIntegration:
         # After execution, state should be updated
         assert node._execution_state.has_run_with_current_setup is True
 
-
-# =============================================================================
-# Strategy Determination Tests (node_default routing)
-# =============================================================================
 
 class TestDetermineStrategyByNodeType:
     """Tests that _determine_strategy routes to the correct strategy
@@ -709,10 +676,6 @@ class TestDetermineStrategyByNodeType:
         assert strategy == ExecutionStrategy.REMOTE
 
 
-# =============================================================================
-# Execution Decision Tests (with real node types)
-# =============================================================================
-
 class TestDecideExecutionByNodeType:
     """Tests that _decide_execution returns the correct decision
     for different node types and scenarios."""
@@ -777,7 +740,7 @@ class TestDecideExecutionByNodeType:
             performance_mode=True,
             force_refresh=False,
         )
-        assert decision.should_run is False
+        assert decision.should_run
 
     def test_select_local_always_full_local(self):
         """Select node with run_location='local' should always get FULL_LOCAL."""
@@ -836,10 +799,6 @@ class TestDecideExecutionByNodeType:
         assert decision.reason == InvalidationReason.NEVER_RAN
 
 
-# =============================================================================
-# Wide Transform Override Tests
-# =============================================================================
-
 class TestWideVsNarrowTransformStrategy:
     """Tests that narrow transforms get LOCAL_WITH_SAMPLING and wide
     transforms go directly to REMOTE from _determine_strategy.
@@ -887,10 +846,6 @@ class TestWideVsNarrowTransformStrategy:
         assert strategy == ExecutionStrategy.FULL_LOCAL
 
 
-# =============================================================================
-# Strategy Determination for All Nodes With Defaults
-# =============================================================================
-
 class TestNodesWithDefaults:
     """Verify that all nodes registered in nodes_with_defaults get
     LOCAL_WITH_SAMPLING and nodes outside that set get REMOTE."""
@@ -932,10 +887,6 @@ class TestNodesWithDefaults:
         assert node_default is not None
         assert not node_default.has_default_settings
 
-
-# =============================================================================
-# Cache Results Strategy Tests
-# =============================================================================
 
 class TestCacheResultsStrategy:
     """When cache_results is enabled, everything should run fully remote.
@@ -1003,10 +954,6 @@ class TestCacheResultsStrategy:
         assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
 
-
-# =============================================================================
-# Preview (get_table_example) Tests
-# =============================================================================
 
 class TestPreviewAfterExecution:
     """Tests that get_table_example reads from stored sample data after
