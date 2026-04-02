@@ -52,7 +52,7 @@ pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
 deltalake = "^1.1.0"
 pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
 boto3 = ">=1.38.40,<1.38.47"
-cryptography = "^45.0.5"
+cryptography = ">=45.0.5,<47.0.0"
 httpx = "^0.28.1"
 docker = ">=7.0.0"
 tqdm = "^4.67.1"
