@@ -958,6 +958,7 @@ class FlowNode:
         Returns False if full execution logic is needed.
         """
         # Can't skip if forced refresh
+
         if reset_cache or performance_mode:
             return False
 
@@ -1205,7 +1206,6 @@ class FlowNode:
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
-
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return

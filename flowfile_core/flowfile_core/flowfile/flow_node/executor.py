@@ -177,6 +177,11 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
 
+        # In performance mode we always evaluate all objects
+        if performance_mode:
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
+
         # Never ran before
         if not state.has_run_with_current_setup:
             strategy = self._determine_strategy(run_location)
