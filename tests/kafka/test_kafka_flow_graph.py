@@ -262,7 +262,7 @@ class TestKafkaSourceWithDownstream:
         ns_id = _create_namespace()
 
         graph = _create_graph()
-        breakpoint()
+
         # Node 1: kafka source
         _add_kafka_source(graph, kafka_connection_id, kafka_topic, node_id=1)
         # Node 2: catalog writer
