@@ -130,7 +130,6 @@ class NodeExecutor:
             and run_location != "local"
         ):
             decision = ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
-
         if not decision.should_run:
             return
 
@@ -174,9 +173,14 @@ class NodeExecutor:
             return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
 
         # Forced refresh (reset_cache=True)
-        if force_refresh or performance_mode:
+        if force_refresh:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
+
+        # In performance mode we always evaluate all objects
+        if performance_mode:
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
 
         # Never ran before
         if not state.has_run_with_current_setup:

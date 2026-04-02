@@ -25,6 +25,10 @@ class KafkaReadSettings(BaseModel):
     ssl_cert_location: str | None = None
     ssl_key_pem: str | None = None  # decrypted, never stored
 
+    # Flow context (for cache directory isolation)
+    flowfile_flow_id: int = 1
+    flowfile_node_id: int = -1
+
     # Extra confluent-kafka config overrides
     extra_config: dict[str, str] | None = None
 

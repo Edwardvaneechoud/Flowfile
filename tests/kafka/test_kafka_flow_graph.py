@@ -299,8 +299,8 @@ class TestKafkaSourceWithDownstream:
         # check if a new run does not add any records:
         _run_graph(graph)
         update_df_after_no_message = pl.read_delta(table_path)
-        assert_frame_equal(update_df_after_no_message, initial_df)
 
+        assert_frame_equal(update_df_after_no_message, initial_df)
         more_messages = [
             {"name": "Jan", "age": 30},
             {"name": "Erin", "age": 25},

@@ -73,33 +73,3 @@ class KafkaConnectionTestResult(BaseModel):
     topics_found: int = 0
 
 
-# ---------------------------------------------------------------------------
-# Kafka Sync schemas (one-click flow generation)
-# ---------------------------------------------------------------------------
-
-
-class KafkaSyncCreate(BaseModel):
-    """One-click setup: specify source + target, auto-generates a flow."""
-
-    name: str
-    kafka_connection_id: int
-    topic_name: str
-    target_namespace_id: int
-    target_table_name: str
-    value_format: Literal["json"] = "json"
-    schedule_interval_seconds: int = 300  # default: every 5 minutes
-    start_offset: Literal["earliest", "latest"] = "latest"
-    max_messages: int = 100_000
-
-
-class KafkaSyncOut(BaseModel):
-    """Response model for a Kafka sync configuration."""
-
-    name: str
-    kafka_connection_id: int
-    topic_name: str
-    target_table_name: str
-    flow_registration_id: int
-    schedule_id: int
-
-
