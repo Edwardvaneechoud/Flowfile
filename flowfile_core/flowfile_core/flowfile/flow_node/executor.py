@@ -173,7 +173,7 @@ class NodeExecutor:
             return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
 
         # Forced refresh (reset_cache=True)
-        if force_refresh or performance_mode:
+        if force_refresh:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
 
