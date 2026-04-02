@@ -31,7 +31,11 @@ class JsonDeserializer(KafkaDeserializer):
         if value is None:
             return None
         try:
-            return json.loads(value)
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict):
+                logger.warning("JSON message is not an object (got %s), wrapping", type(parsed).__name__)
+                return {"value": parsed}
+            return parsed
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning("Failed to deserialize JSON message: %s", e)
             return None

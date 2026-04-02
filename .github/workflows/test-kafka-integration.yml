@@ -100,10 +100,12 @@ jobs:
           for i in $(seq 1 30); do
             if curl -s http://localhost:63579/health > /dev/null 2>&1 || curl -s http://localhost:63579/ > /dev/null 2>&1; then
               echo "Worker is ready"
-              break
+              exit 0
             fi
             sleep 1
           done
+          echo "Worker failed to start within 30 seconds"
+          exit 1
 
       - name: Run Kafka integration tests
         run: |

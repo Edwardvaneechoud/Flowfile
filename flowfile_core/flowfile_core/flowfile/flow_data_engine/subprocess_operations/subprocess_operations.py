@@ -12,7 +12,7 @@ import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     FuzzyJoinInput,
     OperationType,
@@ -128,10 +128,6 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 def trigger_kafka_read(kafka_read_settings) -> Status:
     """Send a Kafka read request to the worker service."""
-    from shared.kafka.models import KafkaReadSettings
-
-    if not isinstance(kafka_read_settings, KafkaReadSettings):
-        raise TypeError(f"Expected KafkaReadSettings, got {type(kafka_read_settings)}")
     f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
     if not f.ok:
         raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
@@ -224,8 +220,6 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     # Skip worker check if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False

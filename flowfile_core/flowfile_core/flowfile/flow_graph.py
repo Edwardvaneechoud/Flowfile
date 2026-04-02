@@ -2330,6 +2330,7 @@ class FlowGraph:
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
         """Adds a node to read data from a Kafka or Redpanda topic.
 
@@ -2358,21 +2359,14 @@ class FlowGraph:
 
             consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
 
-        kafka_read_settings = KafkaReadSettings(
-            bootstrap_servers=consumer_config.get("bootstrap.servers", ""),
+        kafka_read_settings = KafkaReadSettings.from_consumer_config(
+            consumer_config,
             topic=kafka_settings.topic_name,
             value_format=kafka_settings.value_format,
-            group_id=kafka_settings.sync_name or "flowfile-kafka-source",
+            group_id=kafka_settings.sync_name or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
             start_offset=kafka_settings.start_offset,
             max_messages=kafka_settings.max_messages,
             poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
-            security_protocol=consumer_config.get("security.protocol", "PLAINTEXT"),
-            sasl_mechanism=consumer_config.get("sasl.mechanism"),
-            sasl_username=consumer_config.get("sasl.username"),
-            sasl_password=consumer_config.get("sasl.password"),
-            ssl_ca_location=consumer_config.get("ssl.ca.location"),
-            ssl_cert_location=consumer_config.get("ssl.certificate.location"),
-            ssl_key_pem=consumer_config.get("ssl.key.pem"),
             flowfile_flow_id=node_kafka_source.flow_id,
             flowfile_node_id=node_kafka_source.node_id,
         )
@@ -2384,8 +2378,11 @@ class FlowGraph:
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
+        def _decrypt_fn(encrypted: str) -> str:
+            return decrypt_secret(encrypted).get_secret_value()
+
         def schema_callback():
-            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10)
+            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10, decrypt_fn=_decrypt_fn)
             # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
                 result = [

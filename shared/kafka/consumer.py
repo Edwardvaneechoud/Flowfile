@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import polars as pl
@@ -29,6 +30,7 @@ def read_kafka_source(
     settings: KafkaReadSettings,
     *,
     commit: bool = True,
+    decrypt_fn: Callable[[str], str] | None = None,
 ) -> tuple[pl.DataFrame, KafkaReadResult]:
     """Consume messages from a Kafka topic and return as a Polars DataFrame.
 
@@ -39,13 +41,15 @@ def read_kafka_source(
         settings: Kafka connection and read configuration.
         commit: Whether to commit offsets after consuming. Set to False
             for schema probes or dry runs.
+        decrypt_fn: Callable that decrypts an encrypted secret string to
+            plaintext.  Required when settings contain encrypted credentials.
 
     Returns:
         Tuple of (DataFrame with message data + metadata columns,
         KafkaReadResult with informational offsets).
     """
     deserializer = get_deserializer(settings.value_format)
-    consumer_config = settings.to_consumer_config()
+    consumer_config = settings.to_consumer_config(decrypt_fn=decrypt_fn)
     consumer = Consumer(consumer_config)
 
     try:
@@ -128,13 +132,15 @@ def read_kafka_source(
             df = pl.DataFrame(rows)
             if "_kafka_key" in df.columns and df["_kafka_key"].dtype == pl.Null:
                 df = df.with_columns(pl.col("_kafka_key").cast(pl.String))
+            if "_kafka_timestamp" in df.columns:
+                df = df.with_columns(pl.col("_kafka_timestamp").cast(pl.Datetime("us")))
         else:
             df = pl.DataFrame(
                 schema={
                     "_kafka_key": pl.String,
                     "_kafka_partition": pl.Int64,
                     "_kafka_offset": pl.Int64,
-                    "_kafka_timestamp": pl.Datetime("ms"),
+                    "_kafka_timestamp": pl.Datetime("us"),
                 }
             )
 
@@ -164,6 +170,7 @@ def read_kafka_source(
 def infer_topic_schema(
     settings: KafkaReadSettings,
     sample_size: int = 10,
+    decrypt_fn: Callable[[str], str] | None = None,
 ) -> list[tuple[str, pl.DataType]]:
     """Consume a small sample to infer the topic's schema.
 
@@ -175,6 +182,8 @@ def infer_topic_schema(
         settings: Base settings (connection, topic, auth). The ``group_id``
             will be suffixed with ``__schema_probe``.
         sample_size: Number of messages to sample.
+        decrypt_fn: Callable that decrypts an encrypted secret string to
+            plaintext.  Required when settings contain encrypted credentials.
 
     Returns:
         List of (column_name, polars_dtype) pairs, or empty list if
@@ -196,7 +205,7 @@ def infer_topic_schema(
         ssl_cert_location=settings.ssl_cert_location,
         ssl_key_pem=settings.ssl_key_pem,
     )
-    df, _ = read_kafka_source(probe_settings, commit=False)
+    df, _ = read_kafka_source(probe_settings, commit=False, decrypt_fn=decrypt_fn)
     return list(df.schema.items())
 
 

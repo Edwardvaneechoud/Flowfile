@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
+from confluent_kafka import Consumer, ConsumerGroupTopicPartitions
+from confluent_kafka.admin import AdminClient
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import KafkaConnection, Secret
@@ -15,7 +17,7 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionUpdate,
     KafkaTopicInfo,
 )
-from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, store_secret
+from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 logger = logging.getLogger(__name__)
 
@@ -99,24 +101,26 @@ def update_kafka_connection(
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    if update.connection_name is not None:
+    # Only update fields explicitly provided in the request (allows clearing via null)
+    provided = update.model_fields_set
+    if "connection_name" in provided:
         db_conn.connection_name = update.connection_name
-    if update.bootstrap_servers is not None:
+    if "bootstrap_servers" in provided:
         db_conn.bootstrap_servers = update.bootstrap_servers
-    if update.security_protocol is not None:
+    if "security_protocol" in provided:
         db_conn.security_protocol = update.security_protocol
-    if update.sasl_mechanism is not None:
+    if "sasl_mechanism" in provided:
         db_conn.sasl_mechanism = update.sasl_mechanism
-    if update.sasl_username is not None:
+    if "sasl_username" in provided:
         db_conn.sasl_username = update.sasl_username
-    if update.schema_registry_url is not None:
+    if "schema_registry_url" in provided:
         db_conn.schema_registry_url = update.schema_registry_url
-    if update.ssl_ca_location is not None:
+    if "ssl_ca_location" in provided:
         db_conn.ssl_ca_location = update.ssl_ca_location
-    if update.ssl_cert_location is not None:
+    if "ssl_cert_location" in provided:
         db_conn.ssl_cert_location = update.ssl_cert_location
-    if update.extra_config is not None:
-        db_conn.extra_config = json.dumps(update.extra_config)
+    if "extra_config" in provided:
+        db_conn.extra_config = json.dumps(update.extra_config) if update.extra_config else None
 
     # Update secrets if provided
     if update.sasl_password is not None:
@@ -125,8 +129,6 @@ def update_kafka_connection(
             if db_conn.sasl_password_id:
                 secret = db.query(Secret).filter(Secret.id == db_conn.sasl_password_id).first()
                 if secret:
-                    from flowfile_core.secret_manager.secret_manager import encrypt_secret
-
                     secret.encrypted_value = encrypt_secret(password_value, user_id)
             else:
                 new_secret = store_secret(
@@ -142,8 +144,6 @@ def update_kafka_connection(
             if db_conn.ssl_key_id:
                 secret = db.query(Secret).filter(Secret.id == db_conn.ssl_key_id).first()
                 if secret:
-                    from flowfile_core.secret_manager.secret_manager import encrypt_secret
-
                     secret.encrypted_value = encrypt_secret(key_value, user_id)
             else:
                 new_secret = store_secret(
@@ -163,25 +163,29 @@ def delete_kafka_connection(db: Session, connection_id: int, user_id: int) -> No
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    # Clean up associated secrets
+    # Delete secrets first, then the connection
     secret_ids = [db_conn.sasl_password_id, db_conn.ssl_key_id]
-    db.delete(db_conn)
     for sid in secret_ids:
         if sid:
             secret = db.query(Secret).filter(Secret.id == sid).first()
             if secret:
                 db.delete(secret)
+    db.delete(db_conn)
     db.commit()
 
 
 def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -> dict:
-    """Build a confluent-kafka consumer config dict from a stored connection."""
+    """Build a confluent-kafka consumer config dict from a stored connection.
+
+    Secret values (``sasl.password``, ``ssl.key.pem``) are returned in their
+    **encrypted** form (``$ffsec$`` format).  They are only decrypted at
+    point-of-use via ``KafkaReadSettings.to_consumer_config(decrypt_fn=...)``.
+    """
     config: dict[str, str] = {
         "bootstrap.servers": db_conn.bootstrap_servers,
         "enable.auto.commit": "false",
     }
-    if db_conn.security_protocol != "PLAINTEXT":
-        config["security.protocol"] = db_conn.security_protocol
+    config["security.protocol"] = db_conn.security_protocol
     if db_conn.sasl_mechanism:
         config["sasl.mechanism"] = db_conn.sasl_mechanism
     if db_conn.sasl_username:
@@ -189,7 +193,7 @@ def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -
     if db_conn.sasl_password_id:
         secret = db.query(Secret).filter(Secret.id == db_conn.sasl_password_id).first()
         if secret:
-            config["sasl.password"] = decrypt_secret(secret.encrypted_value, user_id).get_secret_value()
+            config["sasl.password"] = secret.encrypted_value
     if db_conn.ssl_ca_location:
         config["ssl.ca.location"] = db_conn.ssl_ca_location
     if db_conn.ssl_cert_location:
@@ -197,13 +201,30 @@ def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -
     if db_conn.ssl_key_id:
         secret = db.query(Secret).filter(Secret.id == db_conn.ssl_key_id).first()
         if secret:
-            config["ssl.key.pem"] = decrypt_secret(secret.encrypted_value, user_id).get_secret_value()
+            config["ssl.key.pem"] = secret.encrypted_value
     if db_conn.extra_config:
         extra = json.loads(db_conn.extra_config)
         blocked_prefixes = ("sasl.", "ssl.", "security.protocol")
-        extra = {k: v for k, v in extra.items() if not k.startswith(blocked_prefixes)}
+        blocked_exact = {"bootstrap.servers", "group.id", "enable.auto.commit", "enable.partition.eof"}
+        extra = {
+            k: v for k, v in extra.items() if not k.startswith(blocked_prefixes) and k not in blocked_exact
+        }
         config.update(extra)
     return config
+
+
+def _decrypt_config_secrets(config: dict, user_id: int) -> dict:
+    """Return a copy of *config* with encrypted secret values decrypted in-place.
+
+    Used by helpers that create a confluent-kafka ``Consumer`` / ``AdminClient``
+    directly (connection test, topic discovery, consumer group management).
+    """
+    out = dict(config)
+    for key in ("sasl.password", "ssl.key.pem"):
+        val = out.get(key)
+        if val and val.startswith("$ffsec$"):
+            out[key] = decrypt_secret(val, user_id).get_secret_value()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -217,9 +238,7 @@ def test_kafka_connection(db: Session, connection_id: int, user_id: int) -> Kafk
         return KafkaConnectionTestResult(success=False, message="Connection not found")
 
     try:
-        from confluent_kafka import Consumer
-
-        config = build_consumer_config(db, db_conn, user_id)
+        config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
         config["group.id"] = "flowfile-connection-test"
         consumer = Consumer(config)
         try:
@@ -242,16 +261,14 @@ def list_topics(db: Session, connection_id: int, user_id: int) -> list[KafkaTopi
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    from confluent_kafka import Consumer
-
-    config = build_consumer_config(db, db_conn, user_id)
+    config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
     config["group.id"] = "flowfile-topic-discovery"
     consumer = Consumer(config)
     try:
         metadata = consumer.list_topics(timeout=10.0)
         topics = []
         for name, topic_meta in metadata.topics.items():
-            if not name.startswith("_"):  # Skip internal topics
+            if not name.startswith("__"):  # Skip internal topics (e.g. __consumer_offsets)
                 topics.append(KafkaTopicInfo(name=name, partition_count=len(topic_meta.partitions)))
         return sorted(topics, key=lambda t: t.name)
     finally:
@@ -272,9 +289,7 @@ def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    from confluent_kafka.admin import AdminClient
-
-    config = build_consumer_config(db, db_conn, user_id)
+    config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
     admin = AdminClient(config)
     futures = admin.delete_consumer_groups([group_id])
     for gid, future in futures.items():
@@ -297,10 +312,7 @@ def get_consumer_group_offsets(
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
-    from confluent_kafka import ConsumerGroupTopicPartitions
-    from confluent_kafka.admin import AdminClient
-
-    config = build_consumer_config(db, db_conn, user_id)
+    config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
     admin = AdminClient(config)
 
     try:

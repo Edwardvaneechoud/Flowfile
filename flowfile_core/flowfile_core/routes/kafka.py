@@ -9,8 +9,10 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.kafka.connection_manager import (
+    build_consumer_config,
     delete_kafka_connection,
     get_consumer_group_offsets,
+    get_kafka_connection,
     list_kafka_connections,
     list_topics,
     reset_consumer_group,
@@ -25,6 +27,9 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionUpdate,
     KafkaTopicInfo,
 )
+from flowfile_core.secret_manager.secret_manager import decrypt_secret
+from shared.kafka.consumer import infer_topic_schema
+from shared.kafka.models import KafkaReadSettings
 
 router = APIRouter(prefix="/kafka", tags=["kafka"])
 
@@ -122,31 +127,22 @@ def infer_kafka_topic_schema(
     sample, and returns the inferred column names and types. Not called
     automatically during flow setup.
     """
-    from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection
-    from shared.kafka.consumer import infer_topic_schema
-    from shared.kafka.models import KafkaReadSettings
-
     db_conn = get_kafka_connection(db, connection_id, current_user.id)
     if db_conn is None:
         raise HTTPException(status_code=404, detail="Kafka connection not found")
 
     consumer_config = build_consumer_config(db, db_conn, current_user.id)
-    settings = KafkaReadSettings(
-        bootstrap_servers=consumer_config.get("bootstrap.servers", ""),
+    settings = KafkaReadSettings.from_consumer_config(
+        consumer_config,
         topic=topic_name,
         group_id=f"flowfile-schema-probe-{topic_name}",
         start_offset="earliest",
-        security_protocol=consumer_config.get("security.protocol", "PLAINTEXT"),
-        sasl_mechanism=consumer_config.get("sasl.mechanism"),
-        sasl_username=consumer_config.get("sasl.username"),
-        sasl_password=consumer_config.get("sasl.password"),
-        ssl_ca_location=consumer_config.get("ssl.ca.location"),
-        ssl_cert_location=consumer_config.get("ssl.certificate.location"),
-        ssl_key_pem=consumer_config.get("ssl.key.pem"),
     )
 
+    decrypt_fn = lambda v: decrypt_secret(v).get_secret_value()
+
     try:
-        schema_pairs = infer_topic_schema(settings, sample_size=sample_size)
+        schema_pairs = infer_topic_schema(settings, sample_size=sample_size, decrypt_fn=decrypt_fn)
         return [{"name": name, "dtype": str(dtype)} for name, dtype in schema_pairs]
     except Exception as e:
         logger.error("Schema inference failed for topic %s on connection %d: %s", topic_name, connection_id, e)
