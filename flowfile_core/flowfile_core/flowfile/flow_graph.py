@@ -46,6 +46,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
+    ExternalKafkaFetcher,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -74,6 +75,11 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.kafka.connection_manager import (
+    build_consumer_config,
+    get_kafka_connection,
+    get_kafka_connection_by_name,
+)
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -89,6 +95,8 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared.kafka.consumer import infer_topic_schema
+from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
 try:
@@ -2301,13 +2309,13 @@ class FlowGraph:
 
         node = self.get_node(node_database_reader.node_id)
         if node:
+            node.schema_callback = schema_callback
             node.node_type = node_type
             node.name = node_type
             node.function = _func
             node.setting_input = node_database_reader
             node.node_settings.cache_results = node_database_reader.cache_results
             self.add_node_to_starting_list(node)
-            node.schema_callback = schema_callback
         else:
             node = FlowNode(
                 node_database_reader.node_id,
@@ -2321,6 +2329,99 @@ class FlowGraph:
             self._node_db[node_database_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
+        """Adds a node to read data from a Kafka or Redpanda topic.
+
+        Follows the same pattern as add_database_reader: offloads consumption
+        to the worker, which writes an IPC temp file and returns a serialized
+        LazyFrame reference. Offset tracking is handled by Kafka consumer groups.
+
+        Args:
+            node_kafka_source: The settings for the Kafka source node.
+        """
+
+        logger.info("Adding kafka source")
+        node_type = "kafka_source"
+        kafka_settings = node_kafka_source.kafka_settings
+
+        # Resolve connection and build consumer config
+        with get_db_context() as db:
+            db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
+            if db_conn is None:
+                if kafka_settings.kafka_connection_name:
+                    db_conn = get_kafka_connection_by_name(
+                        db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
+                    )
+                if db_conn is None:
+                    raise HTTPException(status_code=400, detail="Kafka connection not found")
+
+            consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+
+        kafka_read_settings = KafkaReadSettings.from_consumer_config(
+            consumer_config,
+            topic=kafka_settings.topic_name,
+            value_format=kafka_settings.value_format,
+            group_id=kafka_settings.sync_name or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
+            start_offset=kafka_settings.start_offset,
+            max_messages=kafka_settings.max_messages,
+            poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
+            flowfile_flow_id=node_kafka_source.flow_id,
+            flowfile_node_id=node_kafka_source.node_id,
+        )
+
+        def _func():
+            external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_kafka_fetcher
+            fl = FlowDataEngine(external_kafka_fetcher.get_result())
+            node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def _decrypt_fn(encrypted: str) -> str:
+            return decrypt_secret(encrypted).get_secret_value()
+
+        def schema_callback():
+            schema_pairs = infer_topic_schema(kafka_read_settings, sample_size=10, decrypt_fn=_decrypt_fn)
+            # Since the schema callback takes quite some time, we only run the function once.
+            if not schema_pairs:
+                result = [
+                    FlowfileColumn.from_input(column_name="_kafka_key", data_type="String"),
+                    FlowfileColumn.from_input(column_name="_kafka_partition", data_type="Int64"),
+                    FlowfileColumn.from_input(column_name="_kafka_offset", data_type="Int64"),
+                    FlowfileColumn.from_input(column_name="_kafka_timestamp", data_type="Datetime"),
+                ]
+            else:
+                result = [FlowfileColumn.create_from_polars_dtype(column_name=n, data_type=t) for n, t in schema_pairs]
+            return result
+
+        node = self.get_node(node_kafka_source.node_id)
+        if node:
+            # Set user_provided_schema_callback BEFORE setting_input, because
+            # setting_input triggers reset() which looks up the schema_callback.
+            # Without this, reset() falls back to create_schema_callback_from_function(_func)
+            # which actually executes the Kafka consumer.
+            node.user_provided_schema_callback = schema_callback
+            node.schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_kafka_source
+            node.node_settings.cache_results = node_kafka_source.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_kafka_source.node_id,
+                function=_func,
+                setting_input=node_kafka_source,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[node_kafka_source.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_kafka_source.node_id)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node that reads data from a SQL source.

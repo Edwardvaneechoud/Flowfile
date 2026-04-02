@@ -25,6 +25,7 @@ from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
@@ -129,6 +130,7 @@ app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
+app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])

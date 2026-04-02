@@ -372,6 +372,18 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_title="Cloud Storage Writer",
             drawer_intro="Save data to AWS S3 and other cloud storage",
         ),
+        NodeTemplate(
+            name="Kafka Source",
+            item="kafka_source",
+            input=0,
+            output=1,
+            node_type="input",
+            transform_type="other",
+            image="kafka_source.svg",
+            node_group="input",
+            drawer_title="Kafka Source",
+            drawer_intro="Read data from a Kafka or Redpanda topic",
+        ),
     ]
     nodes_list.sort(key=lambda x: x.name)
     nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}

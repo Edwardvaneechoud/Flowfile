@@ -1165,7 +1165,6 @@ class FlowNode:
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
-
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
