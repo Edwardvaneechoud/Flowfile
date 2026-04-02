@@ -958,7 +958,8 @@ class FlowNode:
         Returns False if full execution logic is needed.
         """
         # Can't skip if forced refresh
-        if reset_cache:
+
+        if reset_cache or performance_mode:
             return False
 
         # Output nodes always run
@@ -1205,11 +1206,9 @@ class FlowNode:
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
-
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
-
         # Fast-path: check if we can skip without creating executor
         if self._can_skip_execution_fast(run_location, performance_mode, reset_cache):
             node_logger.info("Node is up-to-date, skipping execution")

@@ -10,9 +10,11 @@ from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_c
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.kafka_source.main import read_kafka
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.spawner import process_manager, start_fuzzy_process, start_generic_process, start_process
+from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
 router = APIRouter()
@@ -283,6 +285,40 @@ def store_sql_db_result(
 
     except Exception as e:
         logger.error(f"Error processing sql source: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/store_kafka_read_result")
+def store_kafka_result(
+    kafka_read_settings: KafkaReadSettings, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Consume messages from a Kafka topic and store the result as an IPC file.
+
+    Follows the same pattern as store_database_read_result.
+    """
+    logger.info("Processing Kafka source operation for topic: %s", kafka_read_settings.topic)
+
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(
+            create_and_get_default_cache_dir(kafka_read_settings.flowfile_flow_id), f"{task_id}.arrow"
+        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
+        status_dict[task_id] = status
+        logger.info("Starting Kafka read task: %s", task_id)
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=read_kafka,
+            file_ref=file_path,
+            flowfile_flow_id=kafka_read_settings.flowfile_flow_id,
+            flowfile_node_id=kafka_read_settings.flowfile_node_id,
+            task_id=task_id,
+            kwargs={"kafka_read_settings": kafka_read_settings},
+        )
+        return status
+
+    except Exception as e:
+        logger.error("Error processing Kafka source: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

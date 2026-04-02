@@ -12,7 +12,7 @@ import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     FuzzyJoinInput,
     OperationType,
@@ -126,6 +126,14 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
     return Status(**f.json())
 
 
+def trigger_kafka_read(kafka_read_settings) -> Status:
+    """Send a Kafka read request to the worker service."""
+    f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
+    return Status(**f.json())
+
+
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
@@ -212,8 +220,6 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     # Skip worker check if worker communication is disabled
     if not OFFLOAD_TO_WORKER:
         return False
@@ -746,6 +752,17 @@ class ExternalCreateFetcher(BaseFetcher):
 class ExternalDatabaseFetcher(BaseFetcher):
     def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
         r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalKafkaFetcher(BaseFetcher):
+    """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher."""
+
+    def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
+        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == "Processing"
         if wait_on_completion:
