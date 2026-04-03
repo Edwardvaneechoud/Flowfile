@@ -62,31 +62,31 @@
     <div v-if="nodeResults.length > 0" class="section">
       <h3>Node Results</h3>
       <div class="table-wrapper">
-        <table class="styled-table results-table">
-          <thead>
-            <tr>
-              <th>Node</th>
-              <th>Status</th>
-              <th>Duration</th>
-              <th>Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(nr, idx) in nodeResults" :key="idx">
-              <td>{{ nr.node_name || `Node ${nr.node_id}` }}</td>
-              <td>
-                <span
-                  class="status-badge"
-                  :class="nr.success ? 'success' : nr.success === false ? 'failure' : 'pending'"
-                >
-                  {{ nr.success ? "OK" : nr.success === false ? "Failed" : "Running" }}
-                </span>
-              </td>
-              <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : "--" }}</td>
-              <td class="error-text">{{ nr.error || "--" }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <table class="styled-table results-table">
+        <thead>
+          <tr>
+            <th>Node</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(nr, idx) in nodeResults" :key="idx">
+            <td>{{ nr.node_name || `Node ${nr.node_id}` }}</td>
+            <td>
+              <span
+                class="status-badge"
+                :class="nr.success ? 'success' : nr.success === false ? 'failure' : 'pending'"
+              >
+                {{ nr.success ? "OK" : nr.success === false ? "Failed" : "Running" }}
+              </span>
+            </td>
+            <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : "--" }}</td>
+            <td class="error-text">{{ nr.error || "--" }}</td>
+          </tr>
+        </tbody>
+      </table>
       </div>
     </div>
 

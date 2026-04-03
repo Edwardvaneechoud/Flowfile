@@ -215,24 +215,6 @@ def run(host: str = None, port: int = None):
 _cli_logger = logging.getLogger("flowfile.run_flow_cli")
 
 
-def _get_local_user_id() -> int:
-    """Resolve the local_user's ID from the database for CLI execution."""
-    try:
-        from flowfile_core.database.connection import SessionLocal
-        from flowfile_core.database import models as db_models
-
-        db = SessionLocal()
-        try:
-            local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
-            if local_user:
-                return local_user.id
-        finally:
-            db.close()
-    except Exception:
-        pass
-    return 1  # Fallback — matches jwt.py convention
-
-
 def _run_flow_cli(flow_path: str, run_id: int) -> int:
     """Execute a flow in-process (used by PyInstaller builds via ``--run-flow``).
 
@@ -265,7 +247,7 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
 
     _cli_logger.debug("Loading flow from: %s", flow_path)
     try:
-        flow = open_flow(path, user_id=_get_local_user_id())
+        flow = open_flow(path)
     except Exception as e:
         _cli_logger.exception("Error loading flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)

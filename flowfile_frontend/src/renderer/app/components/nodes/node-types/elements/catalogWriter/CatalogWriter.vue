@@ -48,7 +48,12 @@
           filterable
           placeholder="Select key columns"
         >
-          <el-option v-for="col in availableColumns" :key="col" :label="col" :value="col" />
+          <el-option
+            v-for="col in availableColumns"
+            :key="col"
+            :label="col"
+            :value="col"
+          />
         </el-select>
       </div>
 

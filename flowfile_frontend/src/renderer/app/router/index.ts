@@ -57,11 +57,6 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CloudConnectionView/CloudConnectionView.vue"),
       },
       {
-        name: "kafkaConnectionManager",
-        path: "kafkaConnectionManager",
-        component: () => import("../views/KafkaConnectionView/KafkaConnectionView.vue"),
-      },
-      {
         name: "secretManager",
         path: "secretManager",
         component: () => import("../views/SecretsView/SecretsView.vue"),

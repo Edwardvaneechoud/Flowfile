@@ -141,7 +141,7 @@ class TestCatalogWriter:
         graph = _create_graph()
         # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
-        breakpoint()
+
         # Node 2: catalog writer
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
@@ -161,7 +161,7 @@ class TestCatalogWriter:
         graph.add_catalog_writer(writer)
         connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
         add_connection(graph, connection)
-        breakpoint()
+
         _run_graph(graph)
 
         # Verify the table was registered

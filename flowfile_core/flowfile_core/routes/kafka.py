@@ -172,13 +172,12 @@ def get_sync_offsets_route(
 def reset_sync_offsets_route(
     sync_name: str,
     connection_id: int = Query(..., description="Kafka connection ID to access the broker"),
-    topic: str = Query(..., description="Topic to reset offsets for"),
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Reset committed offsets to the beginning so the next run re-reads all messages."""
+    """Reset offsets by deleting the consumer group (re-reads from start_offset)."""
     try:
-        reset_consumer_group(db, sync_name, connection_id, current_user.id, topic=topic)
-        return {"message": f"Consumer group '{sync_name}' reset to beginning of topic '{topic}'."}
+        reset_consumer_group(db, sync_name, connection_id, current_user.id)
+        return {"message": f"Consumer group '{sync_name}' deleted. Next run will use auto.offset.reset."}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None

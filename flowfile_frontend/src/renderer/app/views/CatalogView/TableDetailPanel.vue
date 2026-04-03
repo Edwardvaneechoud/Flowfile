@@ -104,7 +104,9 @@
             >
               <td class="version-number">
                 {{ entry.version }}
-                <span v-if="entry.version === tableHistory!.current_version" class="version-badge"
+                <span
+                  v-if="entry.version === tableHistory!.current_version"
+                  class="version-badge"
                   >current</span
                 >
               </td>
@@ -113,10 +115,7 @@
               <td class="version-params">
                 <span class="version-params-cell">
                   {{ truncateParams(formatParams(entry.parameters)) }}
-                  <span
-                    v-if="formatParams(entry.parameters).length > 60"
-                    class="version-params-full"
-                  >
+                  <span v-if="formatParams(entry.parameters).length > 60" class="version-params-full">
                     {{ formatParams(entry.parameters) }}
                   </span>
                 </span>
@@ -243,7 +242,9 @@ const emit = defineEmits([
   "selectVersion",
 ]);
 
-const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
+const hasHistory = computed(
+  () => props.tableHistory && props.tableHistory.history.length > 0,
+);
 
 const isViewingHistorical = computed(
   () =>

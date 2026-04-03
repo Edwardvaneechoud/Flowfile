@@ -11,7 +11,6 @@ const BUILTIN_ICONS = new Set([
   "cross_join.png",
   "catalog_reader.svg",
   "catalog_writer.svg",
-  "kafka_source.svg",
   "database_reader.svg",
   "database_writer.svg",
   "explore_data.png",

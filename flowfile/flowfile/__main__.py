@@ -4,24 +4,6 @@ import sys
 from pathlib import Path
 
 
-def _get_local_user_id() -> int:
-    """Resolve the local_user's ID from the database for CLI execution."""
-    try:
-        from flowfile_core.database.connection import SessionLocal
-        from flowfile_core.database import models as db_models
-
-        db = SessionLocal()
-        try:
-            local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
-            if local_user:
-                return local_user.id
-        finally:
-            db.close()
-    except Exception:
-        pass
-    return 1  # Fallback — matches jwt.py convention
-
-
 def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: int | None = None) -> int:
     """
     Load and execute a flow from a YAML/JSON file.
@@ -56,7 +38,7 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     print(f"Loading flow from: {flow_path}")
 
     try:
-        flow = open_flow(path, user_id=_get_local_user_id())
+        flow = open_flow(path)
     except Exception as e:
         print(f"Error loading flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)

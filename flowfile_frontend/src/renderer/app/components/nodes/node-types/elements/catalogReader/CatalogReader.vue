@@ -39,7 +39,12 @@
 
       <div v-if="versionOptions.length > 0" class="catalog-field">
         <label class="catalog-label">Version</label>
-        <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
+        <el-select
+          v-model="nodeData.delta_version"
+          size="small"
+          placeholder="Latest"
+          clearable
+        >
           <el-option
             v-for="v in versionOptions"
             :key="v.version"

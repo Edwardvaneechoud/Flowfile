@@ -51,13 +51,6 @@ export default {
       },
     },
     {
-      name: "kafkaConnectionManager",
-      displayName: "menu.kafkaConnectionManager",
-      meta: {
-        icon: "fa-solid fa-tower-broadcast",
-      },
-    },
-    {
       name: "secretManager",
       displayName: "menu.secretManager",
       meta: {

@@ -2122,45 +2122,6 @@ class FlowDataEngine:
             self.data_frame.select(cols_for_select), number_of_records=self.number_of_records, schema=new_schema
         )
 
-    def align_to_schema(self, expected_schema: list[FlowfileColumn]) -> FlowDataEngine:
-        """Aligns the DataFrame to an expected schema.
-
-        Adds any missing columns as typed nulls and reorders all columns to
-        match the order defined in *expected_schema*.  Extra columns present
-        in the data but absent from the expected schema are appended at the
-        end so no data is silently dropped.
-
-        Args:
-            expected_schema: The desired column list, in order.
-
-        Returns:
-            A new ``FlowDataEngine`` whose columns match *expected_schema*.
-        """
-        actual_names = set(self.columns)
-        expected_names = [c.column_name for c in expected_schema]
-
-        # Add missing columns as typed null literals
-        missing_exprs = []
-        for col in expected_schema:
-            if col.column_name not in actual_names:
-                pl_type = cast_str_to_polars_type(col.data_type)
-                missing_exprs.append(pl.lit(None).cast(pl_type).alias(col.column_name))
-
-        df = self.data_frame
-        if missing_exprs:
-            df = df.with_columns(missing_exprs)
-
-        # Build final column order: expected first, then any extras
-        expected_set = set(expected_names)
-        extra_names = [c for c in self.columns if c not in expected_set]
-        final_order = expected_names + extra_names
-
-        return FlowDataEngine(
-            df.select(final_order),
-            number_of_records=self.number_of_records,
-            streamable=self._streamable,
-        )
-
     def reorganize_order(self, column_order: list[str]) -> FlowDataEngine:
         """Reorganizes columns into a specified order.
 

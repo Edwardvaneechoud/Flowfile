@@ -83,7 +83,6 @@ from flowfile_core.kafka.connection_manager import (
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
     CloudStorageReadSettingsInternal,
@@ -96,7 +95,7 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from shared.kafka.consumer import infer_topic_schema, read_kafka_source
+from shared.kafka.consumer import infer_topic_schema
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -2078,7 +2077,7 @@ class FlowGraph:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
-            breakpoint()
+
             catalog_dir = storage.catalog_tables_directory
             catalog_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2105,80 +2104,26 @@ class FlowGraph:
                 op_type = "write_delta"
                 op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
 
-            if self.flow_settings.execution_location == "local":
-                dest = str(dest_path)
-                df.lazy = True # ensure that flow data engine is lazy
-                pl_lf: pl.LazyFrame = df.data_frame
-                if op_type == "merge_delta":
-                    from deltalake import DeltaTable as DT
-
-                    table_exists = dest_path.is_dir() and (dest_path / "_delta_log").is_dir()
-                    if not table_exists:
-                        os.makedirs(dest, exist_ok=True)
-                        if delta_mode in ("delete", "update"):
-                            pl_lf.clear().sink_delta(dest, mode="error")
-                        else:
-                            pl_lf.sink_delta(dest, mode="error")
-                    else:
-                        if not settings.merge_keys:
-                            raise ValueError("merge_keys required for merge operations on existing tables")
-                        dt = DT(dest)
-                        if delta_mode in ("upsert", "update"):
-                            target_cols = {f.name for f in dt.schema().fields}
-                            new_cols = [c for c in df.columns if c not in target_cols]
-                            if new_cols:
-                                pl_lf.clear().collect().write_delta(
-                                    dest, mode="append", delta_write_options={"schema_mode": "merge"}
-                                )
-                                dt = DT(dest)
-                        predicate = " AND ".join(
-                            f'target."{k}" = source."{k}"' for k in settings.merge_keys
-                        )
-                        merger = dt.merge(
-                            source=pl_lf.collect().to_arrow(),
-                            predicate=predicate,
-                            source_alias="source",
-                            target_alias="target",
-                        )
-                        if delta_mode == "upsert":
-                            merger.when_matched_update_all().when_not_matched_insert_all().execute()
-                        elif delta_mode == "update":
-                            merger.when_matched_update_all().execute()
-                        elif delta_mode == "delete":
-                            merger.when_matched_delete().execute()
-                else:
-                    os.makedirs(dest, exist_ok=True)
-                    delta_write_options: dict[str, str] = {}
-                    if delta_mode == "overwrite":
-                        delta_write_options["schema_mode"] = "overwrite"
-                    elif delta_mode == "append":
-                        delta_write_options["schema_mode"] = "merge"
-                    collected.write_delta(dest, mode=delta_mode, delta_write_options=delta_write_options)
-
-                # Let the catalog service read metadata from the written table
-                meta_kwargs: TableWriteMetadata = {}
-            else:
-                breakpoint()
-                fetcher = ExternalDfFetcher(
-                    flow_id=self.flow_id,
-                    node_id=node_catalog_writer.node_id,
-                    lf=df.data_frame,
-                    wait_on_completion=True,
-                    operation_type=op_type,
-                    kwargs=op_kwargs,
+            fetcher = ExternalDfFetcher(
+                flow_id=self.flow_id,
+                node_id=node_catalog_writer.node_id,
+                lf=df.data_frame,
+                wait_on_completion=True,
+                operation_type=op_type,
+                kwargs=op_kwargs,
+            )
+            if fetcher.has_error:
+                raise RuntimeError(
+                    f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
                 )
-                if fetcher.has_error:
-                    raise RuntimeError(
-                        f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
-                    )
 
-                # Extract metadata computed by the worker
-                meta_kwargs: TableWriteMetadata = {}
-                if isinstance(fetcher.result, dict):
-                    meta_kwargs = {
-                        k: fetcher.result.get(k)
-                        for k in ("schema", "row_count", "column_count", "size_bytes")
-                    }
+            # Extract metadata computed by the worker
+            meta_kwargs = {}
+            if isinstance(fetcher.result, dict):
+                meta_kwargs = {
+                    k: fetcher.result.get(k)
+                    for k in ("schema", "row_count", "column_count", "size_bytes")
+                }
 
             # Register / update in catalog
             try:
@@ -2427,20 +2372,9 @@ class FlowGraph:
         )
 
         def _func():
-            if self.execution_location == "local":
-                # Local execution — consume directly in-process
-                df, _ = read_kafka_source(kafka_read_settings, decrypt_fn=_decrypt_fn)
-                fl = FlowDataEngine(df.lazy())
-            else:
-                # Remote execution — offload to worker
-                external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
-                node._fetch_cached_df = external_kafka_fetcher
-                fl = FlowDataEngine(external_kafka_fetcher.get_result())
-            # The worker DataFrame may have fewer columns than the inferred
-            # schema (e.g. empty topic or starting at "latest").  Align to
-            # the schema_callback result so downstream nodes see stable columns.
-            expected_columns = schema_callback()
-            fl = fl.align_to_schema(expected_columns)
+            external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_kafka_fetcher
+            fl = FlowDataEngine(external_kafka_fetcher.get_result())
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 

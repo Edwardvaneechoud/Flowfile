@@ -338,7 +338,6 @@
     "nodeDesigner": "Node Designer",
     "databaseManager": "Database Connection Manager",
     "cloudConnectionManager": "Cloud Connection Manager",
-    "kafkaConnectionManager": "Kafka Connection Manager",
     "kernelManager": "Kernel Manager",
     "fileManager": "File Manager",
     "admin": "User Management",
