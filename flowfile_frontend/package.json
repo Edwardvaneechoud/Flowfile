@@ -78,7 +78,7 @@
     "@vue-flow/core": "^1.42.1",
     "@vue-flow/minimap": "^1.5.2",
     "@vue-flow/node-resizer": "^1.4.0",
-    "axios": "^1.12.0",
+    "axios": "^1.13.5",
     "chart.js": "^3.8.0",
     "depcheck": "^1.4.7",
     "electron-is-dev": "^2.0.0",
