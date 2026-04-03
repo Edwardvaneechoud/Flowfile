@@ -459,7 +459,7 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
   for (const run of activeRuns) {
     await catalogStore.cancelRun(run.id);
   }
-  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
 }
 
 const statusClass = computed(() => {
@@ -503,7 +503,7 @@ async function saveDescription(scheduleId: number) {
 async function handleRunNow(scheduleId: number) {
   try {
     await CatalogApi.triggerScheduleNow(scheduleId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }

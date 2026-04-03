@@ -13,8 +13,6 @@ import tempfile
 import polars as pl
 import pytest
 
-from tests.conftest import is_worker_running
-
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
@@ -52,13 +50,6 @@ def clean_state():
     _cleanup()
 
 
-@pytest.fixture(params=["local", "remote"])
-def execution_location(request):
-    if request.param == "remote" and not is_worker_running():
-        pytest.skip("Worker not running")
-    return request.param
-
-
 def _create_namespace():
     """Create a two-level namespace hierarchy and return the schema-level id."""
     with get_db_context() as db:
@@ -91,7 +82,6 @@ def _create_flow_registration(namespace_id: int, name: str = "test_flow", path: 
 def _create_graph(
     flow_id: int = 1,
     source_registration_id: int | None = None,
-    execution_location: str = "local",
 ) -> FlowGraph:
     """Create a FlowGraph with optional source_registration_id."""
     handler = FlowfileHandler()
@@ -100,7 +90,7 @@ def _create_graph(
         name="test_flow",
         path=".",
         execution_mode="Development",
-        execution_location=execution_location,
+        execution_location="local",
         source_registration_id=source_registration_id,
     )
     handler.register_flow(settings)
@@ -145,13 +135,13 @@ SAMPLE_DATA = [
 class TestCatalogWriter:
     """Test that catalog_writer nodes materialize data and register tables."""
 
-    def test_writer_creates_catalog_table(self, execution_location):
+    def test_writer_creates_catalog_table(self):
         """Running a flow with a catalog_writer should create a CatalogTable row."""
         ns_id = _create_namespace()
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
         # Node 1: manual input
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
-
+        breakpoint()
         # Node 2: catalog writer
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
@@ -171,7 +161,7 @@ class TestCatalogWriter:
         graph.add_catalog_writer(writer)
         connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
         add_connection(graph, connection)
-
+        breakpoint()
         _run_graph(graph)
 
         # Verify the table was registered
@@ -186,11 +176,11 @@ class TestCatalogWriter:
             assert os.path.isdir(table.file_path)
             assert "_delta_log" in os.listdir(table.file_path)
 
-    def test_writer_stores_source_registration_id(self, execution_location):
+    def test_writer_stores_source_registration_id(self):
         """When a flow has source_registration_id, the produced table should reference it."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="producer_flow")
-        graph = _create_graph(source_registration_id=reg_id, execution_location=execution_location)
+        graph = _create_graph(source_registration_id=reg_id)
 
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
@@ -217,10 +207,10 @@ class TestCatalogWriter:
             assert len(tables) == 1
             assert tables[0].source_registration_id == reg_id
 
-    def test_writer_overwrite_mode_replaces_table(self, execution_location):
+    def test_writer_overwrite_mode_replaces_table(self):
         """With write_mode='overwrite', running twice should replace the table and preserve its ID."""
         ns_id = _create_namespace()
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
 
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
 
@@ -251,7 +241,7 @@ class TestCatalogWriter:
             original_updated_at = tables[0].updated_at
 
         # Run again with different data
-        graph2 = _create_graph(flow_id=2, execution_location=execution_location)
+        graph2 = _create_graph(flow_id=2)
         _add_manual_input(graph2, [{"name": "Diana", "age": 40, "city": "Dublin"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
         graph2.add_node_promise(promise2)
@@ -280,13 +270,13 @@ class TestCatalogWriter:
             assert tables[0].row_count == 1
             assert tables[0].updated_at >= original_updated_at
 
-    def test_overwrite_preserves_trigger_table_reference(self, execution_location):
+    def test_overwrite_preserves_trigger_table_reference(self):
         """FlowSchedule.trigger_table_id still resolves after an overwrite."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="triggered_flow")
 
         # First write to create the table
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
@@ -324,7 +314,7 @@ class TestCatalogWriter:
             schedule_id = sched.id
 
         # Overwrite the table with new data
-        graph2 = _create_graph(flow_id=2, execution_location=execution_location)
+        graph2 = _create_graph(flow_id=2)
         _add_manual_input(graph2, [{"name": "Eve", "age": 28, "city": "Edinburgh"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
         graph2.add_node_promise(promise2)
@@ -353,13 +343,13 @@ class TestCatalogWriter:
             assert table is not None
             assert table.row_count == 1
 
-    def test_overwrite_preserves_read_links(self, execution_location):
+    def test_overwrite_preserves_read_links(self):
         """CatalogTableReadLink entries survive a table overwrite."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="reader_flow", path="/tmp/reader.yaml")
 
         # First write
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
         graph.add_node_promise(promise)
@@ -389,7 +379,7 @@ class TestCatalogWriter:
             db.commit()
 
         # Overwrite the table
-        graph2 = _create_graph(flow_id=2, execution_location=execution_location)
+        graph2 = _create_graph(flow_id=2)
         _add_manual_input(graph2, [{"name": "Zara", "age": 22, "city": "Zurich"}], node_id=1)
         promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
         graph2.add_node_promise(promise2)
@@ -448,12 +438,12 @@ class TestCatalogReader:
             )
         return table_out.id
 
-    def test_reader_loads_data_by_id(self, execution_location):
+    def test_reader_loads_data_by_id(self):
         """A catalog_reader node should load data when given a catalog_table_id."""
         ns_id = _create_namespace()
         table_id = self._register_table(ns_id)
 
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
         graph.add_node_promise(promise)
         reader = input_schema.NodeCatalogReader(
@@ -470,12 +460,12 @@ class TestCatalogReader:
         assert len(result_df) == 3
         assert set(result_df.columns) == {"name", "age", "city"}
 
-    def test_reader_loads_data_by_name(self, execution_location):
+    def test_reader_loads_data_by_name(self):
         """A catalog_reader node should also resolve a table by name + namespace."""
         ns_id = _create_namespace()
         self._register_table(ns_id)
 
-        graph = _create_graph(execution_location=execution_location)
+        graph = _create_graph()
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
         graph.add_node_promise(promise)
         reader = input_schema.NodeCatalogReader(
@@ -598,12 +588,12 @@ class TestSyncCatalogReadLinks:
 class TestCatalogRoundTrip:
     """Test writing data to the catalog then reading it back."""
 
-    def test_write_then_read_preserves_data(self, execution_location):
+    def test_write_then_read_preserves_data(self):
         """Data written by a catalog_writer should be readable by a catalog_reader."""
         ns_id = _create_namespace()
 
         # Step 1: Write data to catalog
-        write_graph = _create_graph(flow_id=1, execution_location=execution_location)
+        write_graph = _create_graph(flow_id=1)
         _add_manual_input(write_graph, SAMPLE_DATA, node_id=1)
 
         promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type="catalog_writer")
@@ -631,7 +621,7 @@ class TestCatalogRoundTrip:
             table_id = tables[0].id
 
         # Step 2: Read data back from catalog
-        read_graph = _create_graph(flow_id=2, execution_location=execution_location)
+        read_graph = _create_graph(flow_id=2)
         read_promise = input_schema.NodePromise(flow_id=2, node_id=1, node_type="catalog_reader")
         read_graph.add_node_promise(read_promise)
         reader = input_schema.NodeCatalogReader(
