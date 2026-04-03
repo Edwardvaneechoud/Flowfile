@@ -815,7 +815,8 @@ body,
 .custom-node-flow .vue-flow__node.draggable,
 .custom-node-flow .vue-flow__nodesselection-rect {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 10 5,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      10 5,
     grab;
 }
 
@@ -823,7 +824,8 @@ body,
 .custom-node-flow .vue-flow__node.dragging,
 .custom-node-flow .vue-flow__nodesselection-rect.dragging {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 10 10,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      10 10,
     grabbing;
 }
 
@@ -834,7 +836,8 @@ body,
 
 .custom-node-flow .vue-flow__handle.connectable {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M10 3v14M3 10h14' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M10 3v14M3 10h14' stroke='%23333' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") 10 10,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M10 3v14M3 10h14' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M10 3v14M3 10h14' stroke='%23333' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")
+      10 10,
     crosshair;
 }
 

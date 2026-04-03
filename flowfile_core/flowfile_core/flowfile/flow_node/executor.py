@@ -177,6 +177,15 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
 
+        # Cache-enabled nodes: check if cache file is still present
+        # This must come before performance_mode so cached results are preserved
+        # even when upstream nodes produce no new data.
+        if self.node.node_settings.cache_results:
+            if results_exists(self.node.hash):
+                return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
+
         # In performance mode we always evaluate all objects
         if performance_mode:
             strategy = self._determine_strategy(run_location)
@@ -191,13 +200,6 @@ class NodeExecutor:
         if self._source_file_changed(state):
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
-
-        # Cache-enabled nodes: check if cache file is still present
-        if self.node.node_settings.cache_results:
-            if results_exists(self.node.hash):
-                return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
         # Already ran with current settings → skip
         # Results are available in memory from previous execution

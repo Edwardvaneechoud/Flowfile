@@ -753,7 +753,6 @@ def generic_task(
     *args,
     **kwargs,
 ):
-    print(kwargs)
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
     try:

@@ -958,12 +958,20 @@ class FlowNode:
         Returns False if full execution logic is needed.
         """
         # Can't skip if forced refresh
-
-        if reset_cache or performance_mode:
+        if reset_cache:
             return False
 
         # Output nodes always run
         if self.node_template.node_group == "output":
+            return False
+
+        # Cache-enabled nodes: skip if the cache file is still present.
+        # Checked before performance_mode so cached results are preserved
+        # even when upstream nodes produce no new data.
+        if self.node_settings.cache_results:
+            return results_exists(self.hash)
+
+        if performance_mode:
             return False
 
         # Must run if never ran before
@@ -974,10 +982,6 @@ class FlowNode:
         if self.node_type == "read" and self._execution_state.source_file_info:
             if self._execution_state.source_file_info.has_changed():
                 return False
-
-        # Cache-enabled nodes: only skip if the cache file is still present
-        if self.node_settings.cache_results:
-            return results_exists(self.hash)
 
         # Already ran with current settings → skip
         # Results are available in memory from previous execution
