@@ -12,6 +12,8 @@ from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
 from uuid import uuid1
+from shared.delta_utils import get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import write_delta as _write_delta
 
 import fastexcel
 import polars as pl
@@ -2078,7 +2080,6 @@ class FlowGraph:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
-            breakpoint()
             catalog_dir = storage.catalog_tables_directory
             catalog_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2106,59 +2107,24 @@ class FlowGraph:
                 op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
 
             if self.flow_settings.execution_location == "local":
+
                 dest = str(dest_path)
-                df.lazy = True # ensure that flow data engine is lazy
-                pl_lf: pl.LazyFrame = df.data_frame
                 if op_type == "merge_delta":
-                    from deltalake import DeltaTable as DT
-
-                    table_exists = dest_path.is_dir() and (dest_path / "_delta_log").is_dir()
-                    if not table_exists:
-                        os.makedirs(dest, exist_ok=True)
-                        if delta_mode in ("delete", "update"):
-                            pl_lf.clear().sink_delta(dest, mode="error")
-                        else:
-                            pl_lf.sink_delta(dest, mode="error")
-                    else:
-                        if not settings.merge_keys:
-                            raise ValueError("merge_keys required for merge operations on existing tables")
-                        dt = DT(dest)
-                        if delta_mode in ("upsert", "update"):
-                            target_cols = {f.name for f in dt.schema().fields}
-                            new_cols = [c for c in df.columns if c not in target_cols]
-                            if new_cols:
-                                pl_lf.clear().collect().write_delta(
-                                    dest, mode="append", delta_write_options={"schema_mode": "merge"}
-                                )
-                                dt = DT(dest)
-                        predicate = " AND ".join(
-                            f'target."{k}" = source."{k}"' for k in settings.merge_keys
-                        )
-                        merger = dt.merge(
-                            source=pl_lf.collect().to_arrow(),
-                            predicate=predicate,
-                            source_alias="source",
-                            target_alias="target",
-                        )
-                        if delta_mode == "upsert":
-                            merger.when_matched_update_all().when_not_matched_insert_all().execute()
-                        elif delta_mode == "update":
-                            merger.when_matched_update_all().execute()
-                        elif delta_mode == "delete":
-                            merger.when_matched_delete().execute()
+                    wrote = merge_into_delta(
+                        df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=settings.merge_keys
+                    )
                 else:
-                    os.makedirs(dest, exist_ok=True)
-                    delta_write_options: dict[str, str] = {}
-                    if delta_mode == "overwrite":
-                        delta_write_options["schema_mode"] = "overwrite"
-                    elif delta_mode == "append":
-                        delta_write_options["schema_mode"] = "merge"
-                    collected.write_delta(dest, mode=delta_mode, delta_write_options=delta_write_options)
+                    wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+                if not wrote:
+                    return df
 
-                # Let the catalog service read metadata from the written table
-                meta_kwargs: TableWriteMetadata = {}
+                meta_kwargs: TableWriteMetadata = {
+                    "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
+                    "row_count": df.count(),
+                    "column_count": df.number_of_fields,
+                    "size_bytes": get_delta_size_bytes(dest_path),
+                }
             else:
-                breakpoint()
                 fetcher = ExternalDfFetcher(
                     flow_id=self.flow_id,
                     node_id=node_catalog_writer.node_id,
@@ -2173,6 +2139,8 @@ class FlowGraph:
                     )
 
                 # Extract metadata computed by the worker
+                if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
+                    return df
                 meta_kwargs: TableWriteMetadata = {}
                 if isinstance(fetcher.result, dict):
                     meta_kwargs = {
