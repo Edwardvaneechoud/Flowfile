@@ -12,6 +12,8 @@ from pathlib import Path
 from time import time
 from typing import Any, Literal, Union
 from uuid import uuid1
+from shared.delta_utils import get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import write_delta as _write_delta
 
 import fastexcel
 import polars as pl
@@ -83,6 +85,7 @@ from flowfile_core.kafka.connection_manager import (
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
     CloudStorageReadSettingsInternal,
@@ -95,7 +98,7 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from shared.kafka.consumer import infer_topic_schema
+from shared.kafka.consumer import infer_topic_schema, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -2077,7 +2080,6 @@ class FlowGraph:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
-
             catalog_dir = storage.catalog_tables_directory
             catalog_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2104,26 +2106,47 @@ class FlowGraph:
                 op_type = "write_delta"
                 op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
 
-            fetcher = ExternalDfFetcher(
-                flow_id=self.flow_id,
-                node_id=node_catalog_writer.node_id,
-                lf=df.data_frame,
-                wait_on_completion=True,
-                operation_type=op_type,
-                kwargs=op_kwargs,
-            )
-            if fetcher.has_error:
-                raise RuntimeError(
-                    f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
-                )
+            if self.flow_settings.execution_location == "local":
 
-            # Extract metadata computed by the worker
-            meta_kwargs = {}
-            if isinstance(fetcher.result, dict):
-                meta_kwargs = {
-                    k: fetcher.result.get(k)
-                    for k in ("schema", "row_count", "column_count", "size_bytes")
+                dest = str(dest_path)
+                if op_type == "merge_delta":
+                    wrote = merge_into_delta(
+                        df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=settings.merge_keys
+                    )
+                else:
+                    wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+                if not wrote:
+                    return df
+
+                meta_kwargs: TableWriteMetadata = {
+                    "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
+                    "row_count": df.count(),
+                    "column_count": df.number_of_fields,
+                    "size_bytes": get_delta_size_bytes(dest_path),
                 }
+            else:
+                fetcher = ExternalDfFetcher(
+                    flow_id=self.flow_id,
+                    node_id=node_catalog_writer.node_id,
+                    lf=df.data_frame,
+                    wait_on_completion=True,
+                    operation_type=op_type,
+                    kwargs=op_kwargs,
+                )
+                if fetcher.has_error:
+                    raise RuntimeError(
+                        f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
+                    )
+
+                # Extract metadata computed by the worker
+                if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
+                    return df
+                meta_kwargs: TableWriteMetadata = {}
+                if isinstance(fetcher.result, dict):
+                    meta_kwargs = {
+                        k: fetcher.result.get(k)
+                        for k in ("schema", "row_count", "column_count", "size_bytes")
+                    }
 
             # Register / update in catalog
             try:
@@ -2372,9 +2395,20 @@ class FlowGraph:
         )
 
         def _func():
-            external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
-            node._fetch_cached_df = external_kafka_fetcher
-            fl = FlowDataEngine(external_kafka_fetcher.get_result())
+            if self.execution_location == "local":
+                # Local execution — consume directly in-process
+                df, _ = read_kafka_source(kafka_read_settings, decrypt_fn=_decrypt_fn)
+                fl = FlowDataEngine(df.lazy())
+            else:
+                # Remote execution — offload to worker
+                external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
+                node._fetch_cached_df = external_kafka_fetcher
+                fl = FlowDataEngine(external_kafka_fetcher.get_result())
+            # The worker DataFrame may have fewer columns than the inferred
+            # schema (e.g. empty topic or starting at "latest").  Align to
+            # the schema_callback result so downstream nodes see stable columns.
+            expected_columns = schema_callback()
+            fl = fl.align_to_schema(expected_columns)
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
