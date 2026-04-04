@@ -13,8 +13,9 @@ import type {
   NodeConnection,
   OperationResponse,
 } from "../types";
-import { FlowApi } from "../api";
+import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
+import { parseTabularText } from "../utils/clipboardUtils";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -330,8 +331,7 @@ export default function useDragAndDrop() {
         outputs: Array.from({ length: node.output }, (_, i) => ({
           id: `output-${i}`,
           position: Position.Right,
-          label:
-            node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
+          label: node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
         })),
         nodeTemplate: nodeTemplate,
       },
@@ -364,7 +364,9 @@ export default function useDragAndDrop() {
       if (!editorStore.showEdgeLabels) return edge;
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (sourceNode?.data?.outputs) {
-        const output = (sourceNode.data.outputs as NodeHandle[]).find((o) => o.id === edge.sourceHandle);
+        const output = (sourceNode.data.outputs as NodeHandle[]).find(
+          (o) => o.id === edge.sourceHandle,
+        );
         if (output?.label) {
           return { ...edge, label: output.label };
         }
@@ -600,6 +602,79 @@ export default function useDragAndDrop() {
     return lastResponse;
   }
 
+  /**
+   * Creates a manual_input node from clipboard tabular data pasted on the canvas.
+   * Returns the OperationResponse if successful, undefined otherwise.
+   */
+  async function createManualInputFromClipboard(
+    flowId: number,
+    x: number,
+    y: number,
+  ): Promise<OperationResponse | undefined> {
+    let clipboardText: string;
+    try {
+      clipboardText = await navigator.clipboard.readText();
+    } catch {
+      return undefined;
+    }
+
+    const parsed = parseTabularText(clipboardText);
+    if (!parsed || parsed.length < 2) return undefined;
+
+    // First row is headers, rest is data
+    const headers = parsed[0];
+    const dataRows = parsed.slice(1);
+
+    // Build column-major RawDataFormat
+    const columns = headers.map((name, i) => ({
+      name: name || `Column ${i + 1}`,
+      data_type: "String",
+    }));
+    const data: unknown[][] = headers.map((_, colIdx) => dataRows.map((row) => row[colIdx] ?? ""));
+
+    const nodeId = getId();
+
+    try {
+      const [component, nodeTemplate] = await Promise.all([
+        getComponent("manual_input"),
+        getNodeTemplateByItem("manual_input"),
+      ]);
+
+      const response = await FlowApi.insertNode(flowId, nodeId, "manual_input", x, y);
+
+      const newNode: Node = {
+        id: String(nodeId),
+        type: "custom-node",
+        position: { x, y },
+        data: {
+          id: nodeId,
+          label: "Manual Input",
+          component: markRaw(component),
+          inputs: [],
+          outputs: [{ id: "output-0", position: Position.Right }],
+          nodeTemplate,
+        },
+      };
+      addNodes(newNode);
+
+      // Set the data on the newly created node
+      await NodeApi.updateSettingsDirectly("manual_input", {
+        flow_id: flowId,
+        node_id: nodeId,
+        pos_x: x,
+        pos_y: y,
+        cache_results: false,
+        is_setup: true,
+        raw_data_format: { columns, data },
+      });
+
+      return response;
+    } catch (error) {
+      console.error("Error creating manual input from clipboard:", error);
+      return undefined;
+    }
+  }
+
   return {
     draggedType,
     isDragOver,
@@ -610,6 +685,7 @@ export default function useDragAndDrop() {
     onDrop,
     createCopyNode,
     createMultiCopyNodes,
+    createManualInputFromClipboard,
     importFlow,
   };
 }
