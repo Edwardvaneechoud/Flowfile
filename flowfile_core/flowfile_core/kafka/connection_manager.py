@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from confluent_kafka import Consumer, ConsumerGroupTopicPartitions
+from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient
 from sqlalchemy.orm import Session
 
@@ -280,24 +280,59 @@ def list_topics(db: Session, connection_id: int, user_id: int) -> list[KafkaTopi
 # ---------------------------------------------------------------------------
 
 
-def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id: int) -> None:
-    """Delete a consumer group, forcing the next consume to use auto.offset.reset.
+def reset_consumer_group(
+    db: Session, group_id: str, connection_id: int, user_id: int, topic: str
+) -> None:
+    """Reset a consumer group's offsets to the beginning of a topic.
 
-    The consumer group must not have active members (i.e., no flow currently running).
+    Sets committed offsets to 0 for every partition of *topic*, so the next
+    consume re-reads all messages regardless of ``auto.offset.reset``.
+
+    The consumer group must not have active members (i.e., no flow currently
+    running).
     """
+    from confluent_kafka import TopicPartition
+
     db_conn = get_kafka_connection(db, connection_id, user_id)
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")
 
     config = _decrypt_config_secrets(build_consumer_config(db, db_conn, user_id), user_id)
+
+    # Discover partition count for the topic
+    config["group.id"] = group_id
+    consumer = Consumer(config)
+    try:
+        metadata = consumer.list_topics(topic, timeout=10.0)
+        topic_meta = metadata.topics.get(topic)
+        if topic_meta is None or topic_meta.error is not None:
+            raise ValueError(f"Topic '{topic}' not found on the broker.")
+        partition_count = len(topic_meta.partitions)
+    finally:
+        consumer.close()
+
+    # Set committed offsets to 0 (beginning) for every partition
+    tps = [TopicPartition(topic, p, 0) for p in range(partition_count)]
     admin = AdminClient(config)
-    futures = admin.delete_consumer_groups([group_id])
+    futures = admin.alter_consumer_group_offsets(
+        [ConsumerGroupTopicPartitions(group_id, tps)]
+    )
     for gid, future in futures.items():
         try:
             future.result()
-            logger.info("Deleted consumer group: %s", gid)
-        except Exception as e:
-            logger.warning("Could not delete consumer group %s: %s", gid, e)
+            logger.info(
+                "Reset consumer group %s to beginning of topic %s (%d partitions)",
+                gid, topic, partition_count,
+            )
+        except KafkaException as e:
+            # GROUP_ID_NOT_FOUND is not an error — the group doesn't exist yet
+            kafka_err = e.args[0] if e.args else None
+            if hasattr(kafka_err, "code") and kafka_err.code() == KafkaError.GROUP_ID_NOT_FOUND:
+                logger.debug(
+                    "Consumer group %s does not exist yet (will be created on first run)", gid,
+                )
+                continue
+            logger.warning("Could not reset consumer group %s: %s", gid, e)
             raise ValueError(f"Could not reset consumer group '{gid}': {e}") from e
 
 

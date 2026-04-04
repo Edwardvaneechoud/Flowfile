@@ -5,7 +5,7 @@ run history, favorites and follows.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -203,6 +203,13 @@ class CatalogTableUpdate(BaseModel):
 class ColumnSchema(BaseModel):
     name: str
     dtype: str
+
+
+class TableWriteMetadata(TypedDict, total=False):
+    schema: list[dict[str, str]]
+    row_count: int
+    column_count: int
+    size_bytes: int
 
 
 class CatalogTableOut(BaseModel):

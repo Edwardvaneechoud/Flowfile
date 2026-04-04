@@ -47,6 +47,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseWriter,
     ExternalDfFetcher,
     ExternalKafkaFetcher,
+    fetch_kafka_offsets,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -83,6 +84,7 @@ from flowfile_core.kafka.connection_manager import (
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import build_execute_request, forward_kernel_logs, write_inputs_to_parquet
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import (
     AuthMethod,
     CloudStorageReadSettingsInternal,
@@ -95,7 +97,9 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from shared.kafka.consumer import infer_topic_schema
+from shared.delta_utils import get_delta_size_bytes, merge_into_delta
+from shared.delta_utils import write_delta as _write_delta
+from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -2049,7 +2053,6 @@ class FlowGraph:
         delta_version = node_catalog_reader.delta_version
 
         def _func() -> FlowDataEngine:
-
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
             if is_delta_table(resolved_path):
@@ -2077,7 +2080,6 @@ class FlowGraph:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
-
             catalog_dir = storage.catalog_tables_directory
             catalog_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2104,26 +2106,45 @@ class FlowGraph:
                 op_type = "write_delta"
                 op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
 
-            fetcher = ExternalDfFetcher(
-                flow_id=self.flow_id,
-                node_id=node_catalog_writer.node_id,
-                lf=df.data_frame,
-                wait_on_completion=True,
-                operation_type=op_type,
-                kwargs=op_kwargs,
-            )
-            if fetcher.has_error:
-                raise RuntimeError(
-                    f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
-                )
+            if self.flow_settings.execution_location == "local":
+                dest = str(dest_path)
+                if op_type == "merge_delta":
+                    wrote = merge_into_delta(
+                        df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=settings.merge_keys
+                    )
+                else:
+                    wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+                if not wrote:
+                    return df
 
-            # Extract metadata computed by the worker
-            meta_kwargs = {}
-            if isinstance(fetcher.result, dict):
-                meta_kwargs = {
-                    k: fetcher.result.get(k)
-                    for k in ("schema", "row_count", "column_count", "size_bytes")
+                meta_kwargs: TableWriteMetadata = {
+                    "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
+                    "row_count": df.count(),
+                    "column_count": df.number_of_fields,
+                    "size_bytes": get_delta_size_bytes(dest_path),
                 }
+            else:
+                fetcher = ExternalDfFetcher(
+                    flow_id=self.flow_id,
+                    node_id=node_catalog_writer.node_id,
+                    lf=df.data_frame,
+                    wait_on_completion=True,
+                    operation_type=op_type,
+                    kwargs=op_kwargs,
+                )
+                if fetcher.has_error:
+                    raise RuntimeError(
+                        f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
+                    )
+
+                # Extract metadata computed by the worker
+                if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
+                    return df
+                meta_kwargs: TableWriteMetadata = {}
+                if isinstance(fetcher.result, dict):
+                    meta_kwargs = {
+                        k: fetcher.result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")
+                    }
 
             # Register / update in catalog
             try:
@@ -2363,7 +2384,8 @@ class FlowGraph:
             consumer_config,
             topic=kafka_settings.topic_name,
             value_format=kafka_settings.value_format,
-            group_id=kafka_settings.sync_name or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
+            group_id=kafka_settings.sync_name
+            or f"flowfile-{node_kafka_source.flow_id}-node-{node_kafka_source.node_id}",
             start_offset=kafka_settings.start_offset,
             max_messages=kafka_settings.max_messages,
             poll_timeout_seconds=kafka_settings.poll_timeout_seconds,
@@ -2372,9 +2394,43 @@ class FlowGraph:
         )
 
         def _func():
-            external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
-            node._fetch_cached_df = external_kafka_fetcher
-            fl = FlowDataEngine(external_kafka_fetcher.get_result())
+            if self.execution_location == "local":
+                # Local execution — consume directly in-process with spill-to-IPC
+                import tempfile
+
+                fd, spill_file = tempfile.mkstemp(suffix=".arrow", prefix="kafka_")
+                os.close(fd)
+                result, kafka_result = read_kafka_source(
+                    kafka_read_settings,
+                    commit=False,
+                    decrypt_fn=_decrypt_fn,
+                    spill_path=spill_file,
+                )
+                lf = result if isinstance(result, pl.LazyFrame) else result.lazy()
+                fl = FlowDataEngine(lf)
+                # Store deferred commit info for post-stage commit
+                if kafka_result.messages_consumed > 0:
+                    node._on_flow_complete = make_kafka_commit_callback(
+                        kafka_read_settings, kafka_result.new_offsets, node_kafka_source.node_id,
+                        self.flow_logger, _decrypt_fn,
+                    )
+            else:
+                # Remote execution — offload to worker (worker uses commit=False + sidecar)
+                external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
+                node._fetch_cached_df = external_kafka_fetcher
+                fl = FlowDataEngine(external_kafka_fetcher.get_result())
+                # Fetch deferred offset data from worker sidecar
+                offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
+                if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
+                    node._on_flow_complete = make_kafka_commit_callback(
+                        kafka_read_settings, offsets_data["new_offsets"], node_kafka_source.node_id,
+                        self.flow_logger, _decrypt_fn,
+                    )
+            # The worker DataFrame may have fewer columns than the inferred
+            # schema (e.g. empty topic or starting at "latest").  Align to
+            # the schema_callback result so downstream nodes see stable columns.
+            expected_columns = schema_callback()
+            fl = fl.align_to_schema(expected_columns)
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -2397,10 +2453,6 @@ class FlowGraph:
 
         node = self.get_node(node_kafka_source.node_id)
         if node:
-            # Set user_provided_schema_callback BEFORE setting_input, because
-            # setting_input triggers reset() which looks up the schema_callback.
-            # Without this, reset() falls back to create_schema_callback_from_function(_func)
-            # which actually executes the Kafka consumer.
             node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
             node.node_type = node_type
@@ -3068,6 +3120,38 @@ class FlowGraph:
 
         return node_result, node
 
+    def _run_post_execution_callbacks(
+        self,
+        failed_node_ids: set[str | int],
+        skip_node_ids: set[str | int],
+    ) -> None:
+        """Invoke _on_flow_complete callbacks registered by source nodes.
+
+        Each callback receives ``success=True`` when the node and all its
+        downstream dependents completed without failure or skip.
+        Used e.g. by Kafka sources to commit offsets only on full success.
+
+        Note: the caller must guard against cancellation — this method is
+        only invoked when ``is_canceled`` is False.
+        """
+        incomplete_node_ids = failed_node_ids | skip_node_ids
+
+        for n in self.nodes:
+            callback = n._on_flow_complete
+            if callback is None:
+                continue
+            downstream_incomplete = n.node_id in incomplete_node_ids or any(
+                dep.node_id in incomplete_node_ids for dep in n.get_all_dependent_nodes()
+            )
+            success = not downstream_incomplete
+            try:
+                callback(success)
+            except Exception as e:
+                self.flow_logger.error(
+                    f"Post-execution callback failed for node {n.node_id}: {e}"
+                )
+            n._on_flow_complete = None
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -3093,16 +3177,9 @@ class FlowGraph:
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
 
-            # Selectively clear artifacts only for nodes that will re-run.
-            # Nodes that are up-to-date keep their artifacts in both the
-            # metadata tracker AND the kernel's in-memory store so that
-            # downstream nodes can still read them.
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
             rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
 
-            # Expand re-run set: if a re-running node previously deleted
-            # artifacts, the original producer nodes must also re-run so
-            # those artifacts are available again in the kernel store.
             while True:
                 deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
                     rerun_node_ids,
@@ -3154,6 +3231,7 @@ class FlowGraph:
 
             run_info_lock = threading.Lock()
             skip_node_ids: set[str | int] = plan_skip_ids
+            failed_node_ids: set[str | int] = set()
 
             for stage in execution_plan.stages:
                 if self.flow_settings.is_canceled:
@@ -3192,12 +3270,14 @@ class FlowGraph:
                         for future in as_completed(futures):
                             stage_results.append(future.result())
 
-                # After the stage completes, propagate failures to downstream nodes
                 for node_result, node in stage_results:
                     if not node_result.success:
+                        failed_node_ids.add(node.node_id)
+                        skip_node_ids.add(node.node_id)
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
-
+            if not self.flow_settings.is_canceled:
+                self._run_post_execution_callbacks(failed_node_ids, skip_node_ids)
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()

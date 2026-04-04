@@ -180,7 +180,7 @@ def read(file_path: str) -> pa.Table:
     with open_validated_file(file_path, 0) as source:
         reader = create_reader(source)
         batches, total_rows = collect_batches(reader, float("inf"))
-        table = pa.Table.from_batches(batches)  # type: ignore
+        table = pa.Table.from_batches(batches, schema=reader.schema)
         logger.info(f"Successfully read {total_rows} rows from {file_path}")
         return table
 
@@ -221,7 +221,7 @@ def read_top_n(file_path: str, n: int = 1000, strict: bool = False) -> pa.Table:
             logger.error(f"Strict mode: requested {n} rows but only {rows_collected} available")
             raise ValueError(f"Requested {n} rows but only {rows_collected} available")
 
-        table = pa.Table.from_batches(batches)  # type: ignore
+        table = pa.Table.from_batches(batches, schema=reader.schema)
         logger.info(f"Successfully read {rows_collected} rows from {file_path}")
     return table
 

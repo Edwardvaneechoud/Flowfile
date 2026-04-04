@@ -11,12 +11,14 @@ if TYPE_CHECKING:
     pass
 
 _BLOCKED_EXTRA_CONFIG_PREFIXES = ("sasl.", "ssl.", "security.protocol")
-_BLOCKED_EXTRA_CONFIG_EXACT = frozenset({
-    "bootstrap.servers",
-    "group.id",
-    "enable.auto.commit",
-    "enable.partition.eof",
-})
+_BLOCKED_EXTRA_CONFIG_EXACT = frozenset(
+    {
+        "bootstrap.servers",
+        "group.id",
+        "enable.auto.commit",
+        "enable.partition.eof",
+    }
+)
 
 
 class KafkaReadSettings(BaseModel):
@@ -149,3 +151,15 @@ class KafkaReadResult(BaseModel):
     new_offsets: dict[int, int]  # {partition: reached_offset} for logging
     messages_consumed: int
     partitions_read: int
+
+
+class DeferredKafkaCommit(BaseModel):
+    """Holds the information needed to commit Kafka offsets after downstream success.
+
+    Created during consumption with ``commit=False`` and stored on the
+    FlowNode.  After all downstream dependents succeed, ``commit_offsets()``
+    is called with these settings + offsets.
+    """
+
+    settings: KafkaReadSettings
+    offsets: dict[int, int]  # {partition: next_offset_to_commit}

@@ -58,6 +58,7 @@ class FlowNode:
     user_provided_schema_callback: Callable | None = None  # user provided callback function for schema calculation
     _setting_input: Any = None
     _hash: str | None = None  # host this for caching results
+    _cache_epoch: int = 0  # incremented by invalidate_cache() to bust the hash
     _function: Callable = None  # the function that needs to be executed when triggered
     _name: str = None  # name of the node, used for display
     _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
@@ -75,6 +76,10 @@ class FlowNode:
     # Using a callable avoids sync issues when flow_settings.parameters is mutated
     # directly without going through the FlowGraph.flow_settings setter.
     _params_getter: Callable[[], dict[str, str]] | None = None
+    # Post-execution callback — invoked by run_graph() after all stages complete.
+    # Receives success=True when this node and all downstream dependents succeeded.
+    # Used e.g. by Kafka sources to commit offsets only on success.
+    _on_flow_complete: Callable[[bool], None] | None = None
 
     def __init__(
         self,
@@ -144,6 +149,7 @@ class FlowNode:
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
         self._kernel_cancel_context = None
         self._kernel_cancel_event: threading.Event | None = None
+        self._cache_epoch = 0
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
@@ -151,6 +157,7 @@ class FlowNode:
         self._named_outputs: dict[str, FlowDataEngine] = {}
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
+        self._on_flow_complete = None
 
     @property
     def state_needs_reset(self) -> bool:
@@ -506,7 +513,7 @@ class FlowNode:
         """
         depends_on_hashes = [_node.hash for _node in self.all_inputs]
         node_data_hash = get_hash(setting_input)
-        return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid])
+        return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid, self._cache_epoch])
 
     @property
     def hash(self) -> str:
@@ -958,12 +965,20 @@ class FlowNode:
         Returns False if full execution logic is needed.
         """
         # Can't skip if forced refresh
-
-        if reset_cache or performance_mode:
+        if reset_cache:
             return False
 
         # Output nodes always run
         if self.node_template.node_group == "output":
+            return False
+
+        # Cache-enabled nodes: skip if the cache file is still present.
+        # Checked before performance_mode so cached results are preserved
+        # even when upstream nodes produce no new data.
+        if self.node_settings.cache_results:
+            return results_exists(self.hash)
+
+        if performance_mode:
             return False
 
         # Must run if never ran before
@@ -974,10 +989,6 @@ class FlowNode:
         if self.node_type == "read" and self._execution_state.source_file_info:
             if self._execution_state.source_file_info.has_changed():
                 return False
-
-        # Cache-enabled nodes: only skip if the cache file is still present
-        if self.node_settings.cache_results:
-            return results_exists(self.hash)
 
         # Already ran with current settings → skip
         # Results are available in memory from previous execution
@@ -1279,6 +1290,20 @@ class FlowNode:
                     self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
+
+    def invalidate_cache(self):
+        """Force cache invalidation by incrementing the cache epoch.
+
+        Changes the node's hash so Development mode re-executes instead
+        of returning stale results.  Used after external state changes
+        (e.g. Kafka consumer group offset reset) that don't alter the
+        node's configuration.
+        """
+        self._cache_epoch += 1
+        self._hash = None
+        self._execution_state.reset()
+        self.node_stats.has_run_with_current_setup = False
+        self.node_stats.has_completed_last_run = False
 
     def delete_lead_to_node(self, node_id: int) -> bool:
         """Removes a connection to a specific downstream node.

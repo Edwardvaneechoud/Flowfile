@@ -289,9 +289,7 @@ def store_sql_db_result(
 
 
 @router.post("/store_kafka_read_result")
-def store_kafka_result(
-    kafka_read_settings: KafkaReadSettings, background_tasks: BackgroundTasks
-) -> models.Status:
+def store_kafka_result(kafka_read_settings: KafkaReadSettings, background_tasks: BackgroundTasks) -> models.Status:
     """Consume messages from a Kafka topic and store the result as an IPC file.
 
     Follows the same pattern as store_database_read_result.
@@ -303,6 +301,7 @@ def store_kafka_result(
         file_path = os.path.join(
             create_and_get_default_cache_dir(kafka_read_settings.flowfile_flow_id), f"{task_id}.arrow"
         )
+        sidecar_path = file_path + ".offsets.json"
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
         status_dict[task_id] = status
         logger.info("Starting Kafka read task: %s", task_id)
@@ -313,13 +312,38 @@ def store_kafka_result(
             flowfile_flow_id=kafka_read_settings.flowfile_flow_id,
             flowfile_node_id=kafka_read_settings.flowfile_node_id,
             task_id=task_id,
-            kwargs={"kafka_read_settings": kafka_read_settings},
+            kwargs={
+                "kafka_read_settings": kafka_read_settings,
+                "sidecar_path": sidecar_path,
+                "file_path": file_path,
+            },
         )
         return status
 
     except Exception as e:
         logger.error("Error processing Kafka source: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/kafka_offsets/{task_id}")
+def get_kafka_offsets(task_id: str):
+    """Return deferred Kafka offset data for a completed task.
+
+    The worker writes a sidecar JSON file (``<file_ref>.offsets.json``)
+    during Kafka consumption.  Core calls this endpoint after the task
+    completes to retrieve the offsets for deferred commit.
+    """
+    status = status_dict.get(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    sidecar = status.file_ref + ".offsets.json"
+    if os.path.exists(sidecar):
+        import json
+
+        with open(sidecar) as f:
+            return json.loads(f.read())
+    return None
 
 
 @router.post("/create_table/{file_type}")
@@ -653,6 +677,11 @@ def clear_task(task_id: str):
         if os.path.exists(status.file_ref):
             os.remove(status.file_ref)
             logger.debug(f"Removed file: {status.file_ref}")
+        # Also remove Kafka offset sidecar if present
+        sidecar = status.file_ref + ".offsets.json"
+        if os.path.exists(sidecar):
+            os.remove(sidecar)
+            logger.debug(f"Removed sidecar: {sidecar}")
     except Exception as e:
         logger.error(f"Error removing file {status.file_ref}: {str(e)}", exc_info=True)
     with status_dict_lock:
