@@ -3,8 +3,7 @@
  * Returns a 2D string array (rows × cols) or null if the text is a single value.
  */
 export const parseTabularText = (text: string): string[][] | null => {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const trimmed = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+  const trimmed = normalizeLineEndings(text);
   if (trimmed.length === 0) return null;
 
   const lines = trimmed.split("\n");
@@ -39,64 +38,91 @@ export const inferColumnDataType = (values: unknown[]): string => {
   return "String";
 };
 
-/**
- * Parses CSV/TSV text with a specified or auto-detected delimiter.
- * Handles basic double-quote escaping (RFC 4180 style).
- */
-export const parseCsvText = (
-  text: string,
-  delimiter: "tab" | "comma" | "auto" = "auto",
-): string[][] => {
+export type CsvDelimiter = "tab" | "comma" | "auto";
+
+const DELIMITER_MAP: Record<Exclude<CsvDelimiter, "auto">, string> = {
+  tab: "\t",
+  comma: ",",
+};
+
+/** Normalize Windows/Mac line endings to Unix-style \n and strip trailing newline. */
+const normalizeLineEndings = (text: string): string => {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const trimmed = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
-  if (trimmed.length === 0) return [];
+  return normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+};
 
-  let sep: string;
-  if (delimiter === "tab") {
-    sep = "\t";
-  } else if (delimiter === "comma") {
-    sep = ",";
-  } else {
-    const tabCount = (trimmed.match(/\t/g) || []).length;
-    const commaCount = (trimmed.match(/,/g) || []).length;
-    sep = tabCount >= commaCount ? "\t" : ",";
-  }
+/** Count occurrences of a character in a string. */
+const countChar = (text: string, char: string): number =>
+  (text.match(new RegExp(char === "\t" ? "\\t" : char, "g")) || []).length;
 
+/** Pick the separator: use the explicit choice, or auto-detect by comparing tab vs comma frequency. */
+const resolveSeparator = (text: string, delimiter: CsvDelimiter): string => {
+  if (delimiter !== "auto") return DELIMITER_MAP[delimiter];
+  return countChar(text, "\t") >= countChar(text, ",") ? "\t" : ",";
+};
+
+/**
+ * Parses CSV/TSV text into a 2D string array.
+ *
+ * Supports:
+ * - Explicit or auto-detected delimiter (tab vs comma)
+ * - RFC 4180 double-quote escaping: `"hello ""world"""` → `hello "world"`
+ * - Mixed line endings (CRLF, CR, LF)
+ *
+ * @example
+ * parseCsvText("name,age\nAlice,30\nBob,25")
+ * // → [["name","age"], ["Alice","30"], ["Bob","25"]]
+ *
+ * parseCsvText("name\tage\nAlice\t30", "tab")
+ * // → [["name","age"], ["Alice","30"]]
+ */
+export const parseCsvText = (text: string, delimiter: CsvDelimiter = "auto"): string[][] => {
+  const content = normalizeLineEndings(text);
+  if (content.length === 0) return [];
+
+  const sep = resolveSeparator(content, delimiter);
   const rows: string[][] = [];
-  let current = "";
+  let field = "";
   let inQuotes = false;
   let row: string[] = [];
 
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i];
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
 
     if (inQuotes) {
       if (ch === '"') {
-        if (i + 1 < trimmed.length && trimmed[i + 1] === '"') {
-          current += '"';
+        // Escaped quote ("") → literal quote character
+        if (i + 1 < content.length && content[i + 1] === '"') {
+          field += '"';
           i++;
         } else {
+          // Closing quote
           inQuotes = false;
         }
       } else {
-        current += ch;
+        field += ch;
       }
-    } else if (ch === '"') {
+      continue;
+    }
+
+    // Outside quotes
+    if (ch === '"') {
       inQuotes = true;
     } else if (ch === sep) {
-      row.push(current);
-      current = "";
+      row.push(field);
+      field = "";
     } else if (ch === "\n") {
-      row.push(current);
-      current = "";
+      row.push(field);
+      field = "";
       rows.push(row);
       row = [];
     } else {
-      current += ch;
+      field += ch;
     }
   }
 
-  row.push(current);
+  // Push the final field and row
+  row.push(field);
   rows.push(row);
 
   return rows;
