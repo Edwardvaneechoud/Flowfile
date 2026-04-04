@@ -16,6 +16,7 @@ from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
+    decrypt_secret_value,
     delete_kafka_connection,
     get_consumer_group_offsets,
     get_kafka_connection,
@@ -35,7 +36,6 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaSyncCreate,
     KafkaTopicInfo,
 )
-from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.kafka.consumer import infer_topic_schema
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
@@ -153,11 +153,10 @@ def infer_kafka_topic_schema(
         start_offset="earliest",
     )
 
-    def decrypt_fn(v: str) -> str:
-        return decrypt_secret(v).get_secret_value()
+
 
     try:
-        schema_pairs = infer_topic_schema(settings, sample_size=sample_size, decrypt_fn=decrypt_fn)
+        schema_pairs = infer_topic_schema(settings, sample_size=sample_size, decrypt_fn=decrypt_secret_value)
         return [{"name": name, "dtype": str(dtype)} for name, dtype in schema_pairs]
     except Exception as e:
         logger.error("Schema inference failed for topic %s on connection %d: %s", topic_name, connection_id, e)
@@ -319,11 +318,10 @@ def create_kafka_sync(
         group_id=f"flowfile-schema-probe-{body.topic_name}",
         start_offset="earliest",
     )
-    def decrypt_fn(v: str) -> str:
-        return decrypt_secret(v).get_secret_value()
+
 
     try:
-        schema_pairs = infer_topic_schema(settings, sample_size=10, decrypt_fn=decrypt_fn)
+        schema_pairs = infer_topic_schema(settings, sample_size=10, decrypt_fn=decrypt_secret_value)
         fields = [{"name": name, "data_type": str(dtype)} for name, dtype in schema_pairs]
     except Exception:
         logger.warning("Schema inference failed for topic %s; creating sync with empty fields", body.topic_name)
