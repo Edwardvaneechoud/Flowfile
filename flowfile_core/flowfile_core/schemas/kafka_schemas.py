@@ -73,3 +73,15 @@ class KafkaConnectionTestResult(BaseModel):
     topics_found: int = 0
 
 
+class KafkaSyncCreate(BaseModel):
+    """Request body for creating a Kafka-to-catalog sync flow."""
+
+    sync_name: str
+    kafka_connection_id: int
+    topic_name: str
+    namespace_id: int | None = None
+    table_name: str
+    write_mode: Literal["append", "upsert", "overwrite"] = "append"
+    start_offset: Literal["earliest", "latest"] = "earliest"
+
+

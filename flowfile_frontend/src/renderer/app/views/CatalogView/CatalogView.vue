@@ -43,6 +43,11 @@
                 <i class="fa-solid fa-file-circle-plus"></i>
               </button>
             </el-tooltip>
+            <el-tooltip content="Create Kafka Sync" placement="bottom" :show-after="400">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateSync = true">
+                <i class="fa-solid fa-rotate"></i>
+              </button>
+            </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateNamespace = true">
                 <i class="fa-solid fa-plus"></i>
@@ -249,6 +254,12 @@
       @create="handleCreateSchedule"
     />
 
+    <CreateSyncModal
+      :visible="showCreateSync"
+      @close="showCreateSync = false"
+      @created="handleSyncCreated"
+    />
+
     <!-- Info Modal -->
     <el-dialog
       v-model="showInfoModal"
@@ -325,6 +336,7 @@ import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
+import CreateSyncModal from "./CreateSyncModal.vue";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -380,6 +392,7 @@ const showRegisterTable = ref(false);
 const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
+const showCreateSync = ref(false);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
@@ -633,6 +646,12 @@ function navigateToScheduleRuns(scheduleId: number) {
 
 function handleAddFlowSchedule(flowId: number) {
   preselectedFlowId.value = flowId;
+  showCreateSchedule.value = true;
+}
+
+function handleSyncCreated(flowRegistrationId: number) {
+  showCreateSync.value = false;
+  preselectedFlowId.value = flowRegistrationId;
   showCreateSchedule.value = true;
 }
 

@@ -50,3 +50,13 @@ export interface KafkaTopicInfo {
   name: string;
   partition_count: number;
 }
+
+export interface KafkaSyncCreate {
+  sync_name: string;
+  kafka_connection_id: number;
+  topic_name: string;
+  namespace_id: number | null;
+  table_name: string;
+  write_mode: "append" | "upsert" | "overwrite";
+  start_offset: "earliest" | "latest";
+}

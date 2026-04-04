@@ -4,8 +4,10 @@ import type {
   KafkaConnectionOut,
   KafkaConnectionTestResult,
   KafkaConnectionUpdate,
+  KafkaSyncCreate,
   KafkaTopicInfo,
 } from "./KafkaConnectionTypes";
+import type { FlowRegistration } from "../../types";
 
 const API_BASE_URL = "/kafka";
 
@@ -119,5 +121,16 @@ export const inferKafkaTopicSchema = async (
   } catch (error) {
     console.error("API Error: Failed to infer Kafka topic schema:", error);
     throw error;
+  }
+};
+
+export const createKafkaSync = async (data: KafkaSyncCreate): Promise<FlowRegistration> => {
+  try {
+    const response = await axios.post<FlowRegistration>(`${API_BASE_URL}/sync`, data);
+    return response.data;
+  } catch (error) {
+    console.error("API Error: Failed to create Kafka sync:", error);
+    const errorMsg = (error as any).response?.data?.detail || "Failed to create Kafka sync";
+    throw new Error(errorMsg);
   }
 };
