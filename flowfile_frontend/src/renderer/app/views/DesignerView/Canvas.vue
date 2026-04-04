@@ -79,8 +79,15 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode, createMultiCopyNodes } =
-  useDragAndDrop();
+const {
+  onDrop,
+  onDragOver,
+  onDragStart,
+  importFlow,
+  createCopyNode,
+  createMultiCopyNodes,
+  createManualInputFromClipboard,
+} = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
@@ -366,6 +373,9 @@ const copySelectedNodes = () => {
     return;
   }
 
+  // Snapshot the current system clipboard so we can detect external copies on paste
+  snapshotClipboard();
+
   if (selectedNodes.length === 1) {
     // Single node copy - use existing format for backward compatibility
     const node = selectedNodes[0];
@@ -480,6 +490,62 @@ const copyValue = async (x: number, y: number) => {
   }
 };
 
+/**
+ * Snapshots the current system clipboard text so we can detect
+ * whether the user copied something externally after copying a node.
+ */
+const snapshotClipboard = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    localStorage.setItem("clipboardAtNodeCopy", text);
+  } catch {
+    localStorage.setItem("clipboardAtNodeCopy", "");
+  }
+};
+
+const handleCanvasPaste = async (x: number, y: number) => {
+  const hasCopiedNode =
+    localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
+
+  if (hasCopiedNode) {
+    // A node was previously copied. Check if the system clipboard has changed
+    // since then — if so, the user copied something new externally (e.g. from
+    // Excel) and we should try tabular paste instead.
+    let clipboardChanged = false;
+    try {
+      const currentClipboard = await navigator.clipboard.readText();
+      const snapshot = localStorage.getItem("clipboardAtNodeCopy") ?? "";
+      clipboardChanged = currentClipboard !== snapshot;
+    } catch {
+      // Can't read clipboard — fall back to node paste
+    }
+
+    if (!clipboardChanged) {
+      copyValue(x, y);
+      return;
+    }
+  }
+
+  // Try clipboard tabular data
+  const flowPosition = screenToFlowCoordinate({ x, y });
+  const response = await createManualInputFromClipboard(
+    flowStore.flowId,
+    flowPosition.x,
+    flowPosition.y,
+  );
+  if (response) {
+    if (response.history) {
+      flowStore.updateHistoryState(response.history);
+    }
+    return;
+  }
+
+  // Clipboard wasn't tabular — fall back to node paste if available
+  if (hasCopiedNode) {
+    copyValue(x, y);
+  }
+};
+
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   const { actionId, position } = actionData;
   if (actionId === "fit-view") {
@@ -489,7 +555,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   } else if (actionId === "zoom-out") {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
-    copyValue(position.x, position.y);
+    handleCanvasPaste(position.x, position.y);
   }
 };
 
@@ -533,9 +599,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
     copySelectedNodes();
     event.preventDefault();
   } else if (eventKeyClicked && key === "v" && !isInputElement && !hasTextSelected) {
-    // Paste nodes only if no text is selected
-    copyValue(clickedPosition.value.x, clickedPosition.value.y);
+    // Paste: try clipboard tabular data first, then fall back to node paste
     event.preventDefault();
+    handleCanvasPaste(clickedPosition.value.x, clickedPosition.value.y);
   } else if (eventKeyClicked && key === "n") {
     // Create new flow
     event.preventDefault();
@@ -815,7 +881,8 @@ body,
 .custom-node-flow .vue-flow__node.draggable,
 .custom-node-flow .vue-flow__nodesselection-rect {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 10 5,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 12V7.5a1.25 1.25 0 0 1 2.5 0V11m0-4a1.25 1.25 0 0 1 2.5 0V11m0-3a1.25 1.25 0 0 1 2.5 0V11m0-1a1.25 1.25 0 0 1 2.5 0v3c0 3-2 5-5 5S6 16 6 13' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      10 5,
     grab;
 }
 
@@ -823,7 +890,8 @@ body,
 .custom-node-flow .vue-flow__node.dragging,
 .custom-node-flow .vue-flow__nodesselection-rect.dragging {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 10 10,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none'%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.5 13v-2c0-1 .8-1.5 2-1.5h4c1.2 0 2 .5 2 1.5v2c0 3-2 5-4 5s-4-2-4-5' stroke='%23333' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      10 10,
     grabbing;
 }
 
@@ -834,7 +902,8 @@ body,
 
 .custom-node-flow .vue-flow__handle.connectable {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M10 3v14M3 10h14' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M10 3v14M3 10h14' stroke='%23333' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") 10 10,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M10 3v14M3 10h14' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M10 3v14M3 10h14' stroke='%23333' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")
+      10 10,
     crosshair;
 }
 
