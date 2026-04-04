@@ -222,6 +222,8 @@ class _IpcWriter:
     def close(self) -> None:
         if self._writer is not None:
             self._writer.close()
+        if self._sink is not None:
+            self._sink.close()
 
     @property
     def has_written(self) -> bool:
@@ -293,6 +295,7 @@ def commit_offsets(
         decrypt_fn: Callable that decrypts encrypted secret strings.
     """
     from confluent_kafka import ConsumerGroupTopicPartitions, TopicPartition
+
     config = settings.to_consumer_config(decrypt_fn=decrypt_fn)
     # AdminClient only needs a subset of keys; remove consumer-specific ones
     admin_config = {

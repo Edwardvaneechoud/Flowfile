@@ -2408,7 +2408,6 @@ class FlowGraph:
                 )
                 lf = result if isinstance(result, pl.LazyFrame) else result.lazy()
                 fl = FlowDataEngine(lf)
-                breakpoint()
                 # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
@@ -3121,22 +3120,30 @@ class FlowGraph:
 
         return node_result, node
 
-    def _run_post_execution_callbacks(self, failed_node_ids: set[str | int]) -> None:
+    def _run_post_execution_callbacks(
+        self,
+        failed_node_ids: set[str | int],
+        skip_node_ids: set[str | int],
+    ) -> None:
         """Invoke _on_flow_complete callbacks registered by source nodes.
 
         Each callback receives ``success=True`` when the node and all its
-        downstream dependents completed without failure or cancellation.
+        downstream dependents completed without failure or skip.
         Used e.g. by Kafka sources to commit offsets only on full success.
+
+        Note: the caller must guard against cancellation — this method is
+        only invoked when ``is_canceled`` is False.
         """
+        incomplete_node_ids = failed_node_ids | skip_node_ids
 
         for n in self.nodes:
             callback = n._on_flow_complete
             if callback is None:
                 continue
-            downstream_failed = n.node_id in failed_node_ids or any(
-                dep.node_id in failed_node_ids for dep in n.get_all_dependent_nodes()
+            downstream_incomplete = n.node_id in incomplete_node_ids or any(
+                dep.node_id in incomplete_node_ids for dep in n.get_all_dependent_nodes()
             )
-            success = not downstream_failed and not self.flow_settings.is_canceled
+            success = not downstream_incomplete
             try:
                 callback(success)
             except Exception as e:
@@ -3170,16 +3177,9 @@ class FlowGraph:
                 nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
             )
 
-            # Selectively clear artifacts only for nodes that will re-run.
-            # Nodes that are up-to-date keep their artifacts in both the
-            # metadata tracker AND the kernel's in-memory store so that
-            # downstream nodes can still read them.
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
             rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
 
-            # Expand re-run set: if a re-running node previously deleted
-            # artifacts, the original producer nodes must also re-run so
-            # those artifacts are available again in the kernel store.
             while True:
                 deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
                     rerun_node_ids,
@@ -3276,8 +3276,8 @@ class FlowGraph:
                         skip_node_ids.add(node.node_id)
                         for dep in node.get_all_dependent_nodes():
                             skip_node_ids.add(dep.node_id)
-
-            self._run_post_execution_callbacks(failed_node_ids)
+            if not self.flow_settings.is_canceled:
+                self._run_post_execution_callbacks(failed_node_ids, skip_node_ids)
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()

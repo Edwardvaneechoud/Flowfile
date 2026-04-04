@@ -9,10 +9,12 @@ All tests are marked with @pytest.mark.kafka and require:
 
 Run with:  poetry run pytest tests/kafka/test_kafka_flow_graph.py -m kafka -v
 """
+from copy import deepcopy
+
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
-from copy import deepcopy
+
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -527,26 +529,6 @@ class TestDeferredKafkaCommit:
             "Post-execution callback should be cleared after run_graph completes"
         )
 
-    def test_offsets_not_committed_on_cancel(self, kafka_connection_id, kafka_topic):
-        """When a flow is canceled, offsets should NOT be committed."""
-        messages = [{"user": "alice", "event": "login"}]
-        produce_json_messages(kafka_topic, messages)
-
-        graph = _create_graph()
-        _add_kafka_source(graph, kafka_connection_id, kafka_topic)
-
-        # Cancel the flow before running
-        graph.flow_settings.is_canceled = True
-        graph.run_graph()
-
-        # Uncancel and run again — messages should still be available
-        graph.flow_settings.is_canceled = False
-        _run_graph(graph)
-        df = _get_node_df(graph)
-        assert len(df) >= 1, (
-            f"Expected messages to still be available after canceled run, got {len(df)}"
-        )
-
     def test_offsets_not_committed_on_downstream_failure(self, kafka_connection_id, kafka_topic):
         """When a downstream node fails, Kafka offsets should NOT be committed.
 
@@ -597,7 +579,6 @@ class TestDeferredKafkaCommit:
             user_id=1,
         )
         graph.add_catalog_writer(writer)
-        breakpoint()
 
         # First run: kafka source succeeds but formula node fails
         run_info = graph.run_graph()

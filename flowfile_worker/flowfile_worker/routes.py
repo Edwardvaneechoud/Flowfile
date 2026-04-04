@@ -341,7 +341,8 @@ def get_kafka_offsets(task_id: str):
     if os.path.exists(sidecar):
         import json
 
-        return json.loads(open(sidecar).read())
+        with open(sidecar) as f:
+            return json.loads(f.read())
     return None
 
 
