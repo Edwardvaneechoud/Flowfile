@@ -475,7 +475,7 @@ class TestSpillFlushMechanics:
 
             df = result_data.collect()
             assert df.height == 5
-            assert df["_kafka_offset"].n_unique() == 5
+            assert df.select(pl.struct("_kafka_partition", "_kafka_offset")).n_unique() == 5
         finally:
             os.unlink(spill_path)
 
