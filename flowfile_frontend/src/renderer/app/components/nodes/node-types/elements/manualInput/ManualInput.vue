@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded && nodeManualInput">
+  <div v-if="dataLoaded && nodeManualInput" class="manual-input-root">
     <generic-node-settings
       v-model="nodeManualInput"
       @update:model-value="handleGenericSettingsUpdate"
@@ -704,10 +704,43 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Propagate height through the wrapper chain so the table can fill available space */
+.manual-input-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.settings-wrapper) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.el-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.manual-input-root :deep(.el-tab-pane) {
+  height: 100%;
+}
+
 .settings-section {
   padding: var(--spacing-4);
   background: var(--color-background-primary);
   border-radius: var(--border-radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 /* Controls Section */
@@ -744,7 +777,8 @@ defineExpose({
 
 /* Table Container */
 .table-container {
-  max-height: 350px;
+  flex: 1;
+  min-height: 150px;
   overflow: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
