@@ -648,10 +648,13 @@ class TestDeferredCommitOffsets:
         df, result = read_kafka_source(settings, commit=False)
         assert result.messages_consumed == 10
 
-        # Manually commit offsets for only the first 5
-        commit_offsets(settings, {0: 5})
+        # Commit all offsets from the first read
+        commit_offsets(settings, result.new_offsets)
 
-        # Re-consume with the same group — should get the remaining 5
+        # Produce 3 more messages
+        produce_messages(kafka_topic, [{"i": i} for i in range(10, 13)])
+
+        # Re-consume — should only get the 3 new messages
         df2, result2 = read_kafka_source(settings)
-        assert result2.messages_consumed == 5
-        assert df2.height == 5
+        assert result2.messages_consumed == 3
+        assert df2.height == 3
