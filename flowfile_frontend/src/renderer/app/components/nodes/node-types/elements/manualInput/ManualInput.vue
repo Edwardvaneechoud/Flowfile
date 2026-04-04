@@ -727,7 +727,6 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: auto;
-  margin-bottom: 20px;
 }
 
 .manual-input-root :deep(.el-tab-pane) {
