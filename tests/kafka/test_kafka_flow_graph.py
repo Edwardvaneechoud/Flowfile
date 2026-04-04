@@ -537,6 +537,9 @@ class TestKafkaSourceCacheInvalidation:
         with get_db_context() as db:
             reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1, topic=kafka_topic)
 
+        # Invalidate node cache after external state change
+        graph.get_node(1).invalidate_cache()
+
         # Run again: should re-read ALL messages (3 total, from beginning)
         _run_graph(graph)
         df2 = _get_node_df(graph)
