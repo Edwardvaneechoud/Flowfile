@@ -4,10 +4,11 @@ Migrates old schema structures to new ones during file load.
 """
 
 import pickle
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
 
 # =============================================================================
@@ -67,8 +68,6 @@ def _migrate_dataclass_to_basemodel(obj: Any, model_class: type) -> Any:
 
     if not _is_dataclass_instance(obj):
         return obj  # Already a BaseModel or dict
-
-    from dataclasses import asdict, fields
 
     try:
         data = asdict(obj)
@@ -251,8 +250,6 @@ def ensure_compatibility_node_groupby(node_groupby: input_schema.NodeGroupBy):
     if not _is_dataclass_instance(groupby_input):
         return
 
-    from flowfile_core.schemas import transform_schema
-
     # Migrate each AggColl in agg_cols
     agg_cols = getattr(groupby_input, "agg_cols", []) or []
     new_agg_cols = []
@@ -283,8 +280,6 @@ def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
     # Check if already migrated (is a Pydantic model)
     if not _is_dataclass_instance(filter_input):
         return
-
-    from flowfile_core.schemas import transform_schema
 
     # Build the new FilterInput data with field name mappings
     filter_data = {
@@ -321,8 +316,6 @@ def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
 
     # Handle dataclass -> BaseModel migration for select_input items
     if node_select.select_input:
-        from flowfile_core.schemas import transform_schema
-
         new_select_input = []
         needs_migration = any(_is_dataclass_instance(si) for si in node_select.select_input)
 
@@ -354,8 +347,6 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
     # Check if right_select and left_select exist
     if not hasattr(join_input, "right_select") or not hasattr(join_input, "left_select"):
         return
-
-    from flowfile_core.schemas import transform_schema
 
     # Handle dataclass -> BaseModel migration for join_mapping
     if hasattr(join_input, "join_mapping") and join_input.join_mapping:
@@ -434,8 +425,6 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
         polars_code_input = node_polars.polars_code_input
 
         if _is_dataclass_instance(polars_code_input):
-            from flowfile_core.schemas import transform_schema
-
             new_polars_code_input = _migrate_dataclass_to_basemodel(polars_code_input, transform_schema.PolarsCodeInput)
             node_polars.polars_code_input = new_polars_code_input
 

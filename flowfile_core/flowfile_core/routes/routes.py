@@ -25,6 +25,7 @@ from flowfile_core import flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import is_electron_mode
@@ -279,8 +280,6 @@ def _run_and_track(flow, user_id: int | None):
     completed but won't appear in the run history. Failures are logged at
     ERROR level so they're visible in logs.
     """
-    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-
     flow_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
 
     # Resolve source_registration_id before execution so kernel nodes

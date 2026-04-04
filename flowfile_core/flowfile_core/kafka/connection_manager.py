@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, KafkaError, KafkaException
+from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, KafkaError, KafkaException, TopicPartition
 from confluent_kafka.admin import AdminClient
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,27 @@ from flowfile_core.schemas.kafka_schemas import (
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 logger = logging.getLogger(__name__)
+
+
+def decrypt_secret_value(encrypted: str) -> str:
+    """Decrypt an encrypted secret and return the plaintext string."""
+    return decrypt_secret(encrypted).get_secret_value()
+
+
+def _upsert_secret(
+    db: Session, existing_secret_id: int | None, name: str, secret_value, user_id: int
+) -> int:
+    """Update an existing secret or create a new one. Returns the secret ID."""
+    plain = secret_value.get_secret_value()
+    if not plain:
+        return existing_secret_id
+    if existing_secret_id:
+        secret = db.query(Secret).filter(Secret.id == existing_secret_id).first()
+        if secret:
+            secret.encrypted_value = encrypt_secret(plain, user_id)
+            return existing_secret_id
+    new_secret = store_secret(db, SecretInput(name=name, value=secret_value), user_id)
+    return new_secret.id
 
 
 # ---------------------------------------------------------------------------
@@ -124,34 +145,13 @@ def update_kafka_connection(
 
     # Update secrets if provided
     if update.sasl_password is not None:
-        password_value = update.sasl_password.get_secret_value()
-        if password_value:
-            if db_conn.sasl_password_id:
-                secret = db.query(Secret).filter(Secret.id == db_conn.sasl_password_id).first()
-                if secret:
-                    secret.encrypted_value = encrypt_secret(password_value, user_id)
-            else:
-                new_secret = store_secret(
-                    db,
-                    SecretInput(name=f"kafka_{db_conn.connection_name}_sasl", value=update.sasl_password),
-                    user_id,
-                )
-                db_conn.sasl_password_id = new_secret.id
-
+        db_conn.sasl_password_id = _upsert_secret(
+            db, db_conn.sasl_password_id, f"kafka_{db_conn.connection_name}_sasl", update.sasl_password, user_id
+        )
     if update.ssl_key_pem is not None:
-        key_value = update.ssl_key_pem.get_secret_value()
-        if key_value:
-            if db_conn.ssl_key_id:
-                secret = db.query(Secret).filter(Secret.id == db_conn.ssl_key_id).first()
-                if secret:
-                    secret.encrypted_value = encrypt_secret(key_value, user_id)
-            else:
-                new_secret = store_secret(
-                    db,
-                    SecretInput(name=f"kafka_{db_conn.connection_name}_ssl_key", value=update.ssl_key_pem),
-                    user_id,
-                )
-                db_conn.ssl_key_id = new_secret.id
+        db_conn.ssl_key_id = _upsert_secret(
+            db, db_conn.ssl_key_id, f"kafka_{db_conn.connection_name}_ssl_key", update.ssl_key_pem, user_id
+        )
 
     db.commit()
     db.refresh(db_conn)
@@ -291,8 +291,6 @@ def reset_consumer_group(
     The consumer group must not have active members (i.e., no flow currently
     running).
     """
-    from confluent_kafka import TopicPartition
-
     db_conn = get_kafka_connection(db, connection_id, user_id)
     if db_conn is None:
         raise ValueError(f"Kafka connection {connection_id} not found for user {user_id}.")

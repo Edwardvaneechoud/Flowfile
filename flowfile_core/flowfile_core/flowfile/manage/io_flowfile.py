@@ -6,6 +6,7 @@ from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 from shared.storage_config import storage
 
 try:
@@ -150,8 +151,6 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
 
 
 def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
-    from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-
     nodes_dict = {}
     node_starts = []
     for node in flowfile_data.nodes:
