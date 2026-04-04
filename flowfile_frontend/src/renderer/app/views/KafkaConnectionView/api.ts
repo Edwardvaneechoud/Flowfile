@@ -29,8 +29,7 @@ export const createKafkaConnection = async (
     return response.data;
   } catch (error) {
     console.error("API Error: Failed to create Kafka connection:", error);
-    const errorMsg =
-      (error as any).response?.data?.detail || "Failed to create Kafka connection";
+    const errorMsg = (error as any).response?.data?.detail || "Failed to create Kafka connection";
     throw new Error(errorMsg);
   }
 };
@@ -40,15 +39,11 @@ export const updateKafkaConnection = async (
   data: KafkaConnectionUpdate,
 ): Promise<KafkaConnectionOut> => {
   try {
-    const response = await axios.put<KafkaConnectionOut>(
-      `${API_BASE_URL}/connections/${id}`,
-      data,
-    );
+    const response = await axios.put<KafkaConnectionOut>(`${API_BASE_URL}/connections/${id}`, data);
     return response.data;
   } catch (error) {
     console.error("API Error: Failed to update Kafka connection:", error);
-    const errorMsg =
-      (error as any).response?.data?.detail || "Failed to update Kafka connection";
+    const errorMsg = (error as any).response?.data?.detail || "Failed to update Kafka connection";
     throw new Error(errorMsg);
   }
 };
@@ -62,9 +57,7 @@ export const deleteKafkaConnection = async (id: number): Promise<void> => {
   }
 };
 
-export const testKafkaConnection = async (
-  id: number,
-): Promise<KafkaConnectionTestResult> => {
+export const testKafkaConnection = async (id: number): Promise<KafkaConnectionTestResult> => {
   try {
     const response = await axios.post<KafkaConnectionTestResult>(
       `${API_BASE_URL}/connections/${id}/test`,
@@ -79,9 +72,7 @@ export const testKafkaConnection = async (
 
 export const fetchKafkaTopics = async (id: number): Promise<KafkaTopicInfo[]> => {
   try {
-    const response = await axios.get<KafkaTopicInfo[]>(
-      `${API_BASE_URL}/connections/${id}/topics`,
-    );
+    const response = await axios.get<KafkaTopicInfo[]>(`${API_BASE_URL}/connections/${id}/topics`);
     return response.data;
   } catch (error) {
     console.error("API Error: Failed to fetch Kafka topics:", error);
@@ -95,11 +86,9 @@ export const resetKafkaOffsets = async (
   topic: string,
 ): Promise<void> => {
   try {
-    await axios.post(
-      `${API_BASE_URL}/sync/${encodeURIComponent(syncName)}/reset`,
-      null,
-      { params: { connection_id: connectionId, topic } },
-    );
+    await axios.post(`${API_BASE_URL}/sync/${encodeURIComponent(syncName)}/reset`, null, {
+      params: { connection_id: connectionId, topic },
+    });
   } catch (error) {
     console.error("API Error: Failed to reset Kafka offsets:", error);
     const errorMsg = (error as any).response?.data?.detail || "Failed to reset offsets";
@@ -110,7 +99,7 @@ export const resetKafkaOffsets = async (
 export const inferKafkaTopicSchema = async (
   id: number,
   topic: string,
-  sampleSize: number = 10,
+  sampleSize = 10,
 ): Promise<{ name: string; dtype: string }[]> => {
   try {
     const response = await axios.get<{ name: string; dtype: string }[]>(
