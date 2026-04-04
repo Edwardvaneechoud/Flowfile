@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -154,7 +153,8 @@ def infer_kafka_topic_schema(
         start_offset="earliest",
     )
 
-    decrypt_fn = lambda v: decrypt_secret(v).get_secret_value()
+    def decrypt_fn(v: str) -> str:
+        return decrypt_secret(v).get_secret_value()
 
     try:
         schema_pairs = infer_topic_schema(settings, sample_size=sample_size, decrypt_fn=decrypt_fn)
@@ -287,7 +287,7 @@ def _build_sync_flow_data(
                         "namespace_id": body.namespace_id,
                         "description": None,
                         "write_mode": body.write_mode,
-                        "merge_keys": [],
+                        "merge_keys": body.merge_keys,
                     },
                 },
             },
@@ -319,7 +319,8 @@ def create_kafka_sync(
         group_id=f"flowfile-schema-probe-{body.topic_name}",
         start_offset="earliest",
     )
-    decrypt_fn = lambda v: decrypt_secret(v).get_secret_value()
+    def decrypt_fn(v: str) -> str:
+        return decrypt_secret(v).get_secret_value()
 
     try:
         schema_pairs = infer_topic_schema(settings, sample_size=10, decrypt_fn=decrypt_fn)

@@ -325,6 +325,13 @@ def reset_consumer_group(
                 gid, topic, partition_count,
             )
         except KafkaException as e:
+            # GROUP_ID_NOT_FOUND is not an error — the group doesn't exist yet
+            kafka_err = e.args[0] if e.args else None
+            if hasattr(kafka_err, "code") and kafka_err.code() == KafkaError.GROUP_ID_NOT_FOUND:
+                logger.debug(
+                    "Consumer group %s does not exist yet (will be created on first run)", gid,
+                )
+                continue
             logger.warning("Could not reset consumer group %s: %s", gid, e)
             raise ValueError(f"Could not reset consumer group '{gid}': {e}") from e
 

@@ -13,8 +13,6 @@ import tempfile
 import polars as pl
 import pytest
 
-from tests.conftest import is_worker_running
-
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
@@ -50,13 +48,6 @@ def clean_state():
     _cleanup()
     yield
     _cleanup()
-
-
-@pytest.fixture(params=["local", "remote"])
-def execution_location(request):
-    if request.param == "remote" and not is_worker_running():
-        pytest.skip("Worker not running")
-    return request.param
 
 
 def _create_namespace():

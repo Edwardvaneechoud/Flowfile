@@ -39,7 +39,6 @@ def find_parent_directory(target_dir_name,):
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 try:
-    from tests.conftest import is_worker_running
     from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 except ModuleNotFoundError:
@@ -1861,13 +1860,6 @@ class TestFlowGraphArtifactContext:
 # ---------------------------------------------------------------------------
 # Parametrized local/remote execution tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(params=["local", "remote"])
-def execution_location(request):
-    if request.param == "remote" and not is_worker_running():
-        pytest.skip("Worker not running")
-    return request.param
 
 
 @pytest.mark.skipif(

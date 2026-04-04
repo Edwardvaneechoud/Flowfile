@@ -58,5 +58,6 @@ export interface KafkaSyncCreate {
   namespace_id: number | null;
   table_name: string;
   write_mode: "append" | "upsert" | "overwrite";
+  merge_keys?: string[];
   start_offset: "earliest" | "latest";
 }

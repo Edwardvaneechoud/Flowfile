@@ -82,6 +82,7 @@ class KafkaSyncCreate(BaseModel):
     namespace_id: int | None = None
     table_name: str
     write_mode: Literal["append", "upsert", "overwrite"] = "append"
+    merge_keys: list[str] = []
     start_offset: Literal["earliest", "latest"] = "earliest"
 
 
