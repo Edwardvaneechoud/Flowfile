@@ -412,7 +412,6 @@ class TestKafkaSourceEmptySchema:
         upstream Kafka consumer returns an empty DataFrame with only metadata columns.
         """
         messages = [{"name": "alice", "age": 30}]
-        breakpoint()
         produce_json_messages(kafka_topic, messages)
 
         graph = _create_graph()
@@ -507,7 +506,7 @@ class TestKafkaSourceCacheInvalidation:
         """
         with get_db_context() as db:
             # Should not raise — GROUP_ID_NOT_FOUND is treated as success
-            reset_consumer_group(db, "nonexistent-group-id", kafka_connection_id, user_id=1)
+            reset_consumer_group(db, "nonexistent-group-id", kafka_connection_id, user_id=1, topic=kafka_topic)
 
     def test_development_mode_rerun_after_offset_reset(self, kafka_connection_id, kafka_topic):
         """In Development mode, resetting offsets should cause the node to re-execute.
@@ -536,7 +535,7 @@ class TestKafkaSourceCacheInvalidation:
 
         # Reset consumer group offsets
         with get_db_context() as db:
-            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1)
+            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1, topic=kafka_topic)
 
         # Run again: should re-read ALL messages (3 total, from beginning)
         _run_graph(graph)
@@ -573,7 +572,7 @@ class TestKafkaSourceCacheInvalidation:
 
         # Reset consumer group offsets
         with get_db_context() as db:
-            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1)
+            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1, topic=kafka_topic)
 
         # Third run: should re-read all messages from beginning
         _run_graph(graph)
@@ -637,7 +636,7 @@ class TestKafkaSourceCacheInvalidation:
 
         # Reset offsets
         with get_db_context() as db:
-            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1)
+            reset_consumer_group(db, sync_name, kafka_connection_id, user_id=1, topic=kafka_topic)
 
         # Third run: should re-read and write all messages again
         _run_graph(graph)
