@@ -79,8 +79,15 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode, createMultiCopyNodes } =
-  useDragAndDrop();
+const {
+  onDrop,
+  onDragOver,
+  onDragStart,
+  importFlow,
+  createCopyNode,
+  createMultiCopyNodes,
+  createManualInputFromClipboard,
+} = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
@@ -366,6 +373,9 @@ const copySelectedNodes = () => {
     return;
   }
 
+  // Snapshot the current system clipboard so we can detect external copies on paste
+  snapshotClipboard();
+
   if (selectedNodes.length === 1) {
     // Single node copy - use existing format for backward compatibility
     const node = selectedNodes[0];
@@ -480,6 +490,62 @@ const copyValue = async (x: number, y: number) => {
   }
 };
 
+/**
+ * Snapshots the current system clipboard text so we can detect
+ * whether the user copied something externally after copying a node.
+ */
+const snapshotClipboard = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    localStorage.setItem("clipboardAtNodeCopy", text);
+  } catch {
+    localStorage.setItem("clipboardAtNodeCopy", "");
+  }
+};
+
+const handleCanvasPaste = async (x: number, y: number) => {
+  const hasCopiedNode =
+    localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
+
+  if (hasCopiedNode) {
+    // A node was previously copied. Check if the system clipboard has changed
+    // since then — if so, the user copied something new externally (e.g. from
+    // Excel) and we should try tabular paste instead.
+    let clipboardChanged = false;
+    try {
+      const currentClipboard = await navigator.clipboard.readText();
+      const snapshot = localStorage.getItem("clipboardAtNodeCopy") ?? "";
+      clipboardChanged = currentClipboard !== snapshot;
+    } catch {
+      // Can't read clipboard — fall back to node paste
+    }
+
+    if (!clipboardChanged) {
+      copyValue(x, y);
+      return;
+    }
+  }
+
+  // Try clipboard tabular data
+  const flowPosition = screenToFlowCoordinate({ x, y });
+  const response = await createManualInputFromClipboard(
+    flowStore.flowId,
+    flowPosition.x,
+    flowPosition.y,
+  );
+  if (response) {
+    if (response.history) {
+      flowStore.updateHistoryState(response.history);
+    }
+    return;
+  }
+
+  // Clipboard wasn't tabular — fall back to node paste if available
+  if (hasCopiedNode) {
+    copyValue(x, y);
+  }
+};
+
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   const { actionId, position } = actionData;
   if (actionId === "fit-view") {
@@ -489,7 +555,7 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   } else if (actionId === "zoom-out") {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
-    copyValue(position.x, position.y);
+    handleCanvasPaste(position.x, position.y);
   }
 };
 
@@ -533,9 +599,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
     copySelectedNodes();
     event.preventDefault();
   } else if (eventKeyClicked && key === "v" && !isInputElement && !hasTextSelected) {
-    // Paste nodes only if no text is selected
-    copyValue(clickedPosition.value.x, clickedPosition.value.y);
+    // Paste: try clipboard tabular data first, then fall back to node paste
     event.preventDefault();
+    handleCanvasPaste(clickedPosition.value.x, clickedPosition.value.y);
   } else if (eventKeyClicked && key === "n") {
     // Create new flow
     event.preventDefault();
