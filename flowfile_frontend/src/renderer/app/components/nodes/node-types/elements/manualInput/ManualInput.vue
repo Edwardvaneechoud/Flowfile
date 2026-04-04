@@ -557,6 +557,13 @@ const applyPastedData = (data: string[][], startRowIndex: number, startColIndex:
       row.values[col.id] = data[r][c];
     }
   }
+
+  // Re-infer data types for affected columns
+  for (let c = 0; c < maxCols; c++) {
+    const col = columns.value[startColIndex + c];
+    const colValues = rows.value.map((r) => r.values[col.id]);
+    col.dataType = inferDataType(colValues);
+  }
 };
 
 const handleCellPaste = (event: ClipboardEvent, row: Row, col: Column) => {

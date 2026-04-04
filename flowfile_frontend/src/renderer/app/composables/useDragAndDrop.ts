@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
-import { parseTabularText } from "../utils/clipboardUtils";
+import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -625,12 +625,12 @@ export default function useDragAndDrop() {
     const headers = parsed[0];
     const dataRows = parsed.slice(1);
 
-    // Build column-major RawDataFormat
-    const columns = headers.map((name, i) => ({
-      name: name || `Column ${i + 1}`,
-      data_type: "String",
-    }));
+    // Build column-major RawDataFormat with inferred types
     const data: unknown[][] = headers.map((_, colIdx) => dataRows.map((row) => row[colIdx] ?? ""));
+    const columns = headers.map((name, colIdx) => ({
+      name: name || `Column ${colIdx + 1}`,
+      data_type: inferColumnDataType(data[colIdx]),
+    }));
 
     const nodeId = getId();
 

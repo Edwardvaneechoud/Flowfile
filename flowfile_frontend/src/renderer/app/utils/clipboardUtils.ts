@@ -21,6 +21,25 @@ export const parseTabularText = (text: string): string[][] | null => {
 };
 
 /**
+ * Infers a data type from an array of string values (as found in clipboard data).
+ * Returns one of: "Boolean", "Int64", "Float64", or "String".
+ */
+export const inferColumnDataType = (values: unknown[]): string => {
+  const valid = values.filter((v) => v !== null && v !== undefined && v !== "");
+  if (valid.length === 0) return "String";
+
+  if (valid.every((v) => v === "true" || v === "false")) return "Boolean";
+
+  if (
+    valid.every((v) => typeof v === "string" && !isNaN(Number(v)) && (v as string).trim() !== "")
+  ) {
+    return valid.every((v) => Number.isInteger(Number(v))) ? "Int64" : "Float64";
+  }
+
+  return "String";
+};
+
+/**
  * Parses CSV/TSV text with a specified or auto-detected delimiter.
  * Handles basic double-quote escaping (RFC 4180 style).
  */

@@ -488,9 +488,16 @@ const copyValue = async (x: number, y: number) => {
 };
 
 const handleCanvasPaste = async (x: number, y: number) => {
-  const flowPosition = screenToFlowCoordinate({ x, y });
+  // Priority 1: If a node was explicitly copied, paste it
+  const hasCopiedNode =
+    localStorage.getItem("copiedMultiNodes") || localStorage.getItem("copiedNode");
+  if (hasCopiedNode) {
+    copyValue(x, y);
+    return;
+  }
 
-  // Try creating a manual input node from clipboard tabular data
+  // Priority 2: Try clipboard tabular data (no copied node pending)
+  const flowPosition = screenToFlowCoordinate({ x, y });
   const response = await createManualInputFromClipboard(
     flowStore.flowId,
     flowPosition.x,
@@ -500,11 +507,7 @@ const handleCanvasPaste = async (x: number, y: number) => {
     if (response.history) {
       flowStore.updateHistoryState(response.history);
     }
-    return;
   }
-
-  // Fall back to standard node paste
-  copyValue(x, y);
 };
 
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
