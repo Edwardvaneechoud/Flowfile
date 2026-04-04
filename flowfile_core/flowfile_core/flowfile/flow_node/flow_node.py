@@ -76,6 +76,10 @@ class FlowNode:
     # Using a callable avoids sync issues when flow_settings.parameters is mutated
     # directly without going through the FlowGraph.flow_settings setter.
     _params_getter: Callable[[], dict[str, str]] | None = None
+    # Post-execution callback — invoked by run_graph() after all stages complete.
+    # Receives success=True when this node and all downstream dependents succeeded.
+    # Used e.g. by Kafka sources to commit offsets only on success.
+    _on_flow_complete: Callable[[bool], None] | None = None
 
     def __init__(
         self,
@@ -153,6 +157,7 @@ class FlowNode:
         self._named_outputs: dict[str, FlowDataEngine] = {}
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
+        self._on_flow_complete = None
 
     @property
     def state_needs_reset(self) -> bool:

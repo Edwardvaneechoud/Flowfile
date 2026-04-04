@@ -4,13 +4,18 @@ All tests are marked with @pytest.mark.kafka and require Docker.
 Run with:  poetry run pytest tests/kafka -m kafka -v
 """
 
+import json
+import os
+import tempfile
 import uuid
+from unittest.mock import patch
 
+import polars as pl
 import pytest
 
-from shared.kafka.consumer import infer_topic_schema, read_kafka_source
+from shared.kafka.consumer import commit_offsets, infer_topic_schema, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
-from test_utils.kafka.fixtures import BOOTSTRAP_SERVERS, produce_json_messages
+from test_utils.kafka.fixtures import BOOTSTRAP_SERVERS, create_topic, produce_json_messages
 
 pytestmark = pytest.mark.kafka
 
@@ -18,6 +23,28 @@ pytestmark = pytest.mark.kafka
 def _unique_group() -> str:
     """Generate a unique consumer group ID per test invocation."""
     return f"test-{uuid.uuid4().hex[:12]}"
+
+
+def _produce_n_messages(topic: str, n: int) -> None:
+    """Bulk-produce n JSON messages to a topic (optimised for throughput)."""
+    from confluent_kafka import Producer
+
+    producer = Producer({
+        "bootstrap.servers": BOOTSTRAP_SERVERS,
+        "linger.ms": "50",
+        "batch.num.messages": "10000",
+        "queue.buffering.max.messages": "1000000",
+    })
+    for i in range(n):
+        producer.produce(
+            topic,
+            key=f"k{i}".encode(),
+            value=json.dumps({"seq": i, "val": f"row_{i}"}).encode(),
+        )
+        if i % 10_000 == 0:
+            producer.poll(0)
+    remaining = producer.flush(timeout=60.0)
+    assert remaining == 0, f"Producer flush incomplete: {remaining} messages still in queue"
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +322,6 @@ class TestSchemaInference:
         assert result.messages_consumed == 5
 
 
-# ---------------------------------------------------------------------------
-# Error handling tests
-# ---------------------------------------------------------------------------
-
-
 class TestKafkaErrorHandling:
     """Tests for error conditions with a real broker."""
 
@@ -325,3 +347,311 @@ class TestKafkaErrorHandling:
 
         assert df.height == 2
         assert sorted(df["seq"].to_list()) == [1, 2]
+
+
+class TestSpillToIpc:
+    """Tests for the spill_path parameter that streams rows to an IPC file."""
+
+    def test_spill_path_returns_lazyframe(self, kafka_topic, produce_messages):
+        """When spill_path is set, result should be a LazyFrame."""
+        produce_messages(kafka_topic, [{"name": "Alice"}, {"name": "Bob"}])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 2
+
+            df = result_data.collect()
+            assert df.height == 2
+            assert "name" in df.columns
+            assert "_kafka_key" in df.columns
+        finally:
+            os.unlink(spill_path)
+
+    def test_spill_path_empty_topic(self, kafka_topic):
+        """Spill path with empty topic returns LazyFrame with correct schema."""
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=3.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 0
+            assert result_data.collect().height == 0
+        finally:
+            os.unlink(spill_path)
+
+    def test_without_spill_path_returns_dataframe(self, kafka_topic, produce_messages):
+        """Without spill_path, result should be a DataFrame (backward compat)."""
+        produce_messages(kafka_topic, [{"a": 1}])
+
+        settings = KafkaReadSettings(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            topic=kafka_topic,
+            group_id=_unique_group(),
+            start_offset="earliest",
+            poll_timeout_seconds=10.0,
+        )
+        result_data, _ = read_kafka_source(settings, commit=False)
+
+        assert isinstance(result_data, pl.DataFrame)
+
+
+# ---------------------------------------------------------------------------
+# Flush threshold tests (patched _FLUSH_SIZE=3)
+# ---------------------------------------------------------------------------
+
+
+class TestSpillFlushMechanics:
+    """Tests IPC flush mechanics with _FLUSH_SIZE patched to 3.
+
+    Uses real messages through a real broker — only the threshold is patched
+    so we can trigger multi-flush with just a handful of messages.
+    """
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_flush_at_exactly_flush_size(self, kafka_topic, produce_messages):
+        """Exactly _FLUSH_SIZE messages: one flush, no remainder."""
+        produce_messages(kafka_topic, [{"n": i} for i in range(3)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 3
+            assert result_data.collect().height == 3
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_flush_with_remainder(self, kafka_topic, produce_messages):
+        """5 messages with _FLUSH_SIZE=3: one flush (3) + remainder (2)."""
+        produce_messages(kafka_topic, [{"seq": i, "val": f"row_{i}"} for i in range(5)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 5
+
+            df = result_data.collect()
+            assert df.height == 5
+            assert df["_kafka_offset"].n_unique() == 5
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_two_flushes_plus_remainder(self, kafka_topic, produce_messages):
+        """8 messages with _FLUSH_SIZE=3: two flushes (3+3) + remainder (2)."""
+        produce_messages(kafka_topic, [{"seq": i} for i in range(8)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 8
+            assert result_data.collect().height == 8
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_ipc_file_has_multiple_record_batches(self, kafka_topic, produce_messages):
+        """IPC file should contain multiple Arrow record batches after flush."""
+        import pyarrow.ipc
+
+        produce_messages(kafka_topic, [{"n": i} for i in range(4)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            with pyarrow.ipc.open_file(spill_path) as reader:
+                assert reader.num_record_batches == 2  # flush (3) + remainder (1)
+                total = sum(reader.get_batch(i).num_rows for i in range(reader.num_record_batches))
+                assert total == 4
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_below_threshold_single_batch(self, kafka_topic, produce_messages):
+        """Below _FLUSH_SIZE: no streaming flush, single-batch IPC file."""
+        import pyarrow.ipc
+
+        produce_messages(kafka_topic, [{"n": i} for i in range(2)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=kafka_topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                poll_timeout_seconds=10.0,
+            )
+            result_data, _ = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result_data.collect().height == 2
+
+            with pyarrow.ipc.open_file(spill_path) as reader:
+                assert reader.num_record_batches == 1
+        finally:
+            os.unlink(spill_path)
+
+
+class TestLargeVolumeFlush:
+    """Tests that produce 100K+ real messages to verify flush at production scale.
+
+    These use the real _FLUSH_SIZE (100_000). They take a few seconds each
+    due to producing/consuming large volumes through a real broker.
+    """
+
+    def _run(self, n: int, expected_min_batches: int):
+        import pyarrow.ipc
+
+        topic = f"large_vol_{n}_{uuid.uuid4().hex[:8]}"
+        create_topic(topic, num_partitions=1)
+        _produce_n_messages(topic, n)
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            settings = KafkaReadSettings(
+                bootstrap_servers=BOOTSTRAP_SERVERS,
+                topic=topic,
+                group_id=_unique_group(),
+                start_offset="earliest",
+                max_messages=n,
+                poll_timeout_seconds=120.0,
+            )
+            result_data, result = read_kafka_source(settings, commit=False, spill_path=spill_path)
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == n
+
+            with pyarrow.ipc.open_file(spill_path) as reader:
+                assert reader.num_record_batches >= expected_min_batches
+                total = sum(reader.get_batch(i).num_rows for i in range(reader.num_record_batches))
+                assert total == n
+
+            df = result_data.collect()
+            assert df.height == n
+            assert df["_kafka_offset"].n_unique() == n
+
+            # Spot-check middle row
+            mid = n // 2
+            mid_rows = df.filter(pl.col("seq") == mid)
+            assert mid_rows.height == 1
+            assert mid_rows["val"][0] == f"row_{mid}"
+        finally:
+            os.unlink(spill_path)
+
+    def test_50k_below_threshold(self):
+        """50K messages: below _FLUSH_SIZE, single batch."""
+        self._run(50_000, expected_min_batches=1)
+
+    def test_100k_one_flush(self):
+        """100K messages: exactly one flush."""
+        self._run(100_000, expected_min_batches=1)
+
+    def test_150k_flush_plus_remainder(self):
+        """150K messages: one flush (100K) + remainder (50K)."""
+        self._run(150_000, expected_min_batches=2)
+
+    def test_250k_two_flushes(self):
+        """250K messages: two flushes + remainder."""
+        self._run(250_000, expected_min_batches=3)
+
+    def test_500k_five_flushes(self):
+        """500K messages: five flushes."""
+        self._run(500_000, expected_min_batches=5)
+
+
+class TestDeferredCommitOffsets:
+    """Tests for commit_offsets() with a real broker."""
+
+    def test_commit_offsets_then_resume(self, kafka_topic, produce_messages):
+        """Manually commit offsets, then verify the next consume resumes from there."""
+        produce_messages(kafka_topic, [{"i": i} for i in range(10)])
+
+        group = _unique_group()
+        settings = KafkaReadSettings(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            topic=kafka_topic,
+            group_id=group,
+            start_offset="earliest",
+            poll_timeout_seconds=10.0,
+        )
+
+        # Consume all 10 without committing
+        df, result = read_kafka_source(settings, commit=False)
+        assert result.messages_consumed == 10
+
+        # Manually commit offsets for only the first 5
+        commit_offsets(settings, {0: 5})
+
+        # Re-consume with the same group — should get the remaining 5
+        df2, result2 = read_kafka_source(settings)
+        assert result2.messages_consumed == 5
+        assert df2.height == 5

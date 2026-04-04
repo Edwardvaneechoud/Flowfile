@@ -134,6 +134,21 @@ def trigger_kafka_read(kafka_read_settings) -> Status:
     return Status(**f.json())
 
 
+def fetch_kafka_offsets(task_id: str) -> dict | None:
+    """Fetch deferred Kafka offset data from the worker for a completed task.
+
+    Returns a dict with ``new_offsets``, ``messages_consumed``, etc. from the
+    KafkaReadResult that was saved as a sidecar file, or ``None`` if no
+    offsets were recorded (e.g. empty topic).
+    """
+    f = requests.get(f"{WORKER_URL}/kafka_offsets/{task_id}")
+    if not f.ok:
+        logger.warning("Failed to fetch Kafka offsets for task %s: %s", task_id, f.text)
+        return None
+    data = f.json()
+    return data
+
+
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()

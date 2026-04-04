@@ -12,7 +12,7 @@ Run with:  poetry run pytest tests/kafka/test_kafka_flow_graph.py -m kafka -v
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
-
+from copy import deepcopy
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogNamespace,
@@ -25,7 +25,7 @@ from flowfile_core.database.models import (
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.kafka.connection_manager import reset_consumer_group, store_kafka_connection
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
 from test_utils.kafka.fixtures import (
     BOOTSTRAP_SERVERS,
@@ -290,7 +290,7 @@ class TestKafkaSourceWithDownstream:
             repo = SQLAlchemyCatalogRepository(db)
             tables = repo.list_tables(namespace_id=ns_id)
             assert len(tables) == 1
-            table = tables[0]
+            table = next(t for t in tables if t.name == "kafka_output")
             table_path = table.file_path
 
         initial_df = pl.read_delta(table_path)
@@ -489,6 +489,143 @@ class TestKafkaSourceEmptySchema:
 # ---------------------------------------------------------------------------
 # Tests: Cache invalidation after offset reset
 # ---------------------------------------------------------------------------
+
+
+class TestDeferredKafkaCommit:
+    """Tests that Kafka offsets are only committed after downstream success."""
+
+    def test_offsets_committed_on_success(self, kafka_connection_id, kafka_topic):
+        """After a successful flow run, deferred Kafka commits should be applied."""
+        messages = [
+            {"user": "alice", "event": "login"},
+            {"user": "bob", "event": "purchase"},
+        ]
+        produce_json_messages(kafka_topic, messages)
+
+        graph = _create_graph()
+        _add_kafka_source(graph, kafka_connection_id, kafka_topic)
+        _run_graph(graph)
+
+        # After success, offsets should be committed — a second run should see no messages
+        _run_graph(graph)
+        df = _get_node_df(graph)
+        assert len(df) == 0, (
+            f"Expected 0 messages on second run (offsets should be committed), got {len(df)}"
+        )
+
+    def test_deferred_commit_cleared_after_run(self, kafka_connection_id, kafka_topic):
+        """The _on_flow_complete callback should be None after a run."""
+        messages = [{"user": "alice", "event": "login"}]
+        produce_json_messages(kafka_topic, messages)
+
+        graph = _create_graph()
+        _add_kafka_source(graph, kafka_connection_id, kafka_topic)
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        assert node._on_flow_complete is None, (
+            "Post-execution callback should be cleared after run_graph completes"
+        )
+
+    def test_offsets_not_committed_on_cancel(self, kafka_connection_id, kafka_topic):
+        """When a flow is canceled, offsets should NOT be committed."""
+        messages = [{"user": "alice", "event": "login"}]
+        produce_json_messages(kafka_topic, messages)
+
+        graph = _create_graph()
+        _add_kafka_source(graph, kafka_connection_id, kafka_topic)
+
+        # Cancel the flow before running
+        graph.flow_settings.is_canceled = True
+        graph.run_graph()
+
+        # Uncancel and run again — messages should still be available
+        graph.flow_settings.is_canceled = False
+        _run_graph(graph)
+        df = _get_node_df(graph)
+        assert len(df) >= 1, (
+            f"Expected messages to still be available after canceled run, got {len(df)}"
+        )
+
+    def test_offsets_not_committed_on_downstream_failure(self, kafka_connection_id, kafka_topic):
+        """When a downstream node fails, Kafka offsets should NOT be committed.
+
+        Sets up: kafka_source (node 1) → formula (node 2) that adds a number
+        to a string column, which will fail at runtime. After the failed run,
+        a second run should still see the same messages.
+        """
+        messages = [
+            {"user": "alice", "event": "login"},
+            {"user": "bob", "event": "purchase"},
+        ]
+        produce_json_messages(kafka_topic, messages)
+        ns_id = _create_namespace()
+        writer_settings = input_schema.CatalogWriteSettings(
+            table_name="test_output",
+            namespace_id=ns_id,
+            write_mode="append"
+        )
+
+        graph = _create_graph()
+        _add_kafka_source(graph, kafka_connection_id, kafka_topic, node_id=1)
+
+        # Node 2: formula that will fail — adds integer 1 to string column [user]
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="formula")
+        graph.add_node_promise(promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
+        add_connection(graph, connection)
+
+        formula_input = input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=2,
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name="bad_result"),
+                function="1 + [user]",
+            ),
+        )
+        graph.add_formula(formula_input)
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=3, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        connection = input_schema.NodeConnection.create_from_simple_input(from_id=2, to_id=3)
+        add_connection(graph, connection)
+
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            catalog_write_settings=writer_settings,
+            user_id=1,
+        )
+        graph.add_catalog_writer(writer)
+        breakpoint()
+
+        # First run: kafka source succeeds but formula node fails
+        run_info = graph.run_graph()
+        assert not run_info.success, "Expected graph to fail due to type mismatch in formula"
+        new_formula_input = deepcopy(formula_input)
+        new_formula_input.function.function = "1 + 1"
+
+        graph.add_formula(new_formula_input)
+        run_info = graph.run_graph()
+        assert run_info.success
+
+        with get_db_context() as db:
+            from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            table = next(t for t in tables if t.name == "test_output")
+            table_path = table.file_path
+        initial_df = pl.read_delta(table_path)
+        assert len(initial_df) == 2
+        run_info = graph.run_graph()
+        new_df = pl.read_delta(table_path)
+        assert run_info.success
+        assert len(new_df) == 2, "Expected to have still 2 rows of data"
+        produce_json_messages(kafka_topic, messages)
+        graph.run_graph()
+        final_df = pl.read_delta(table_path)
+        assert len(final_df) == 4, 'Expect to have 4 messages'
+
 
 
 class TestKafkaSourceCacheInvalidation:

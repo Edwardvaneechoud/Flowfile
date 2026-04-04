@@ -718,13 +718,16 @@ def generic_task(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
     try:
-        df = func(*args, **kwargs)
-        if isinstance(df, pl.LazyFrame):
-            collect_lazy_frame(df).write_ipc(file_path)
-        elif isinstance(df, pl.DataFrame):
-            df.write_ipc(file_path)
+        result = func(*args, **kwargs)
+        if result is None:
+            # Function already wrote to file_path (e.g. Kafka spill_path)
+            flowfile_logger.info("Function returned None — file already written")
+        elif isinstance(result, pl.LazyFrame):
+            collect_lazy_frame(result).write_ipc(file_path)
+        elif isinstance(result, pl.DataFrame):
+            result.write_ipc(file_path)
         else:
-            raise Exception("Returned object is not a DataFrame or LazyFrame")
+            raise Exception("Returned object is not a DataFrame, LazyFrame, or None")
         with progress.get_lock():
             progress.value = 100
         flowfile_logger.info("Task completed successfully")

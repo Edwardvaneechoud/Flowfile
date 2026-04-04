@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from shared.kafka.models import KafkaReadSettings
+from shared.kafka.models import DeferredKafkaCommit, KafkaReadSettings
 
 
 class TestKafkaReadSettings:
@@ -156,3 +156,28 @@ class TestKafkaReadSettings:
         config = settings.to_consumer_config()
         assert config["session.timeout.ms"] == "6000"
         assert config["heartbeat.interval.ms"] == "2000"
+
+
+class TestDeferredKafkaCommit:
+    def test_create(self):
+        settings = KafkaReadSettings(bootstrap_servers="localhost:9092", topic="test")
+        commit = DeferredKafkaCommit(settings=settings, offsets={0: 10, 1: 20})
+        assert commit.offsets == {0: 10, 1: 20}
+        assert commit.settings.topic == "test"
+
+    def test_serialization_roundtrip(self):
+        settings = KafkaReadSettings(
+            bootstrap_servers="broker:9092",
+            topic="events",
+            group_id="my-sync",
+        )
+        commit = DeferredKafkaCommit(settings=settings, offsets={0: 100})
+        data = json.loads(commit.model_dump_json())
+        restored = DeferredKafkaCommit.model_validate(data)
+        assert restored.offsets == {0: 100}
+        assert restored.settings.group_id == "my-sync"
+
+    def test_empty_offsets(self):
+        settings = KafkaReadSettings(bootstrap_servers="localhost:9092", topic="test")
+        commit = DeferredKafkaCommit(settings=settings, offsets={})
+        assert commit.offsets == {}
