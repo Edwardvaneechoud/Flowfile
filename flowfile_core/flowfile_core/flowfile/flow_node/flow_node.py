@@ -950,50 +950,6 @@ class FlowNode:
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
 
-    def _can_skip_execution_fast(
-        self,
-        run_location: schemas.ExecutionLocationsLiteral,
-        performance_mode: bool,
-        reset_cache: bool,
-    ) -> bool:
-        """Fast-path check to avoid executor overhead when we can skip.
-
-        This inlines the most common skip conditions to avoid
-        creating an executor instance when not needed.
-
-        Returns True if execution can definitely be skipped.
-        Returns False if full execution logic is needed.
-        """
-        # Can't skip if forced refresh
-        if reset_cache:
-            return False
-
-        # Output nodes always run
-        if self.node_template.node_group == "output":
-            return False
-
-        # Cache-enabled nodes: skip if the cache file is still present.
-        # Checked before performance_mode so cached results are preserved
-        # even when upstream nodes produce no new data.
-        if self.node_settings.cache_results:
-            return results_exists(self.hash)
-
-        if performance_mode:
-            return False
-
-        # Must run if never ran before
-        if not self._execution_state.has_run_with_current_setup:
-            return False
-
-        # Check for source file changes (read nodes only)
-        if self.node_type == "read" and self._execution_state.source_file_info:
-            if self._execution_state.source_file_info.has_changed():
-                return False
-
-        # Already ran with current settings → skip
-        # Results are available in memory from previous execution
-        return True
-
     def _do_execute_full_local(self, performance_mode: bool = False) -> None:
         """Executes the node's logic locally, including example data generation.
 
@@ -1203,9 +1159,8 @@ class FlowNode:
     ) -> None:
         """Execute the node based on its current state and settings.
 
-        This method uses a fast-path to quickly skip execution when possible,
-        avoiding executor overhead. For cases requiring full execution logic,
-        it delegates to the NodeExecutor.
+        Delegates all execution and skip logic to the NodeExecutor, which is
+        the single source of truth for deciding whether a node should run.
 
         Args:
             run_location: Where to execute ('local' or 'remote')
@@ -1220,12 +1175,7 @@ class FlowNode:
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
-        # Fast-path: check if we can skip without creating executor
-        if self._can_skip_execution_fast(run_location, performance_mode, reset_cache):
-            node_logger.info("Node is up-to-date, skipping execution")
-            return
 
-        # Full execution logic via executor
         self.executor.execute(
             run_location=run_location,
             reset_cache=reset_cache,
