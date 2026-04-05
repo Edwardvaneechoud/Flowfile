@@ -174,6 +174,11 @@ class FlowfileStorage:
         return self.temp_directory / "kernel_shared" / "global_artifacts"
 
     @property
+    def template_data_directory(self) -> Path:
+        """Directory for cached template CSV data files."""
+        return self.base_directory / "template_data"
+
+    @property
     def catalog_tables_directory(self) -> Path:
         """Directory for materialized catalog table Parquet files."""
         if _is_docker_mode():
@@ -216,6 +221,7 @@ class FlowfileStorage:
             self.user_defined_nodes_icons,
             self.global_artifacts_directory,
             self.catalog_tables_directory,
+            self.template_data_directory,
         ]
 
         for directory in internal_directories + user_directories:
@@ -338,6 +344,11 @@ def get_global_artifacts_directory() -> str:
 def get_artifact_staging_directory() -> str:
     """Get artifact staging directory path as string."""
     return str(storage.artifact_staging_directory)
+
+
+def get_template_data_directory() -> str:
+    """Get template data directory path as string."""
+    return str(storage.template_data_directory)
 
 
 def get_database_url() -> str:

@@ -67,6 +67,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/KernelManagerView/KernelManagerView.vue"),
       },
       {
+        name: "templates",
+        path: "templates",
+        component: () => import("../views/TemplatesView/TemplatesView.vue"),
+      },
+      {
         name: "catalog",
         path: "catalog",
         component: () => import("../views/CatalogView/CatalogView.vue"),

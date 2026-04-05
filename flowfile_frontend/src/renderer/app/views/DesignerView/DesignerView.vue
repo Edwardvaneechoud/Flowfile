@@ -43,6 +43,10 @@
           <span class="material-icons">folder_open</span>
           Quick create
         </el-button>
+        <el-button type="primary" class="action-button" @click="browseTemplates">
+          <span class="material-icons">layers</span>
+          Browse Templates
+        </el-button>
       </div>
     </div>
     <canvas-flow
@@ -58,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import Status from "../../features/designer/editor/status.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -66,6 +71,8 @@ import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
+
+const router = useRouter();
 
 // Extract API functions
 const getAllFlows = FlowApi.getAllFlows;
@@ -215,6 +222,10 @@ const openQuickCreateDialog = () => {
     console.log("Opening quick create dialog");
     headerButtons.value.handleQuickCreateAction();
   }
+};
+
+const browseTemplates = () => {
+  router.push({ name: "templates" });
 };
 
 const initialSetup = async () => {

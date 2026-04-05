@@ -1,0 +1,51 @@
+id,product_name,sku
+1,Apple MacBook Pro 16-inch,MBP16-2024
+2,Samsung Galaxy S24 Ultra,SGS24U
+3,Sony WH-1000XM5 Headphones,SONYWH1000XM5
+4,Dell UltraSharp 27 Monitor,DELLUS27
+5,Logitech MX Master 3S,LOGMXM3S
+6,Apple iPad Pro 12.9,IPADP129
+7,Bose QuietComfort 45,BOSEQC45
+8,Microsoft Surface Pro 9,MSSP9
+9,Google Pixel 8 Pro,GPX8P
+10,HP Spectre x360 16,HPSX360-16
+11,Lenovo ThinkPad X1 Carbon,LENTPX1C
+12,Razer Blade 16,RZRB16
+13,Corsair K100 RGB Keyboard,CRSK100
+14,LG C3 65-inch OLED TV,LGC365
+15,Nintendo Switch OLED,NSWOLED
+16,Canon EOS R6 Mark II,CEOSR6M2
+17,DJI Mavic 3 Pro,DJIM3P
+18,Dyson V15 Detect,DYSONV15
+19,Sonos Era 300,SONOSE300
+20,Anker PowerCore 26800,ANKPC26800
+21,SteelSeries Arctis Nova Pro,SSANP
+22,Western Digital Black SN850X,WDSN850X
+23,ASUS ROG Strix G16,ASUSROGG16
+24,Jabra Elite 85t,JABRE85T
+25,Fitbit Charge 6,FBTC6
+26,Garmin Fenix 7X,GRMFX7X
+27,Kindle Paperwhite 2024,KINDLEPW24
+28,Roku Streaming Stick 4K,ROKUSS4K
+29,TP-Link Deco XE75,TPLXE75
+30,Samsung T7 Shield SSD,SAMT7SH
+31,Crucial MX500 1TB SSD,CRCMX500
+32,Seagate Expansion 4TB,SGTE4TB
+33,AMD Ryzen 9 7950X,AMDR97950X
+34,Intel Core i9-14900K,INTCI914900K
+35,NVIDIA GeForce RTX 4090,NVRTX4090
+36,Elgato Stream Deck MK.2,ELGSD2
+37,Blue Yeti X Microphone,BLUEYETIX
+38,Wacom Intuos Pro Medium,WCMIPM
+39,Brother HL-L2350DW Printer,BRHLL2350
+40,Epson EcoTank ET-2850,EPSONET2850
+41,CalDigit TS4 Dock,CLDGTS4
+42,Belkin Thunderbolt 4 Hub,BLKTB4H
+43,APC Back-UPS Pro 1500,APCBU1500
+44,Synology DS923+,SYNDS923
+45,Ubiquiti Dream Machine Pro,UBDMP
+46,Keychron Q1 Pro,KEYCQ1P
+47,Audio-Technica ATH-M50x,ATATHM50X
+48,Shure SM7B Microphone,SHURESM7B
+49,Rode NT-USB Mini,RODENTUSB
+50,Focusrite Scarlett 2i2,FOCSC2I2

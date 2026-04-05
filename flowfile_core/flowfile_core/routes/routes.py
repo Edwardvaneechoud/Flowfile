@@ -1298,3 +1298,60 @@ async def validate_db_settings(
         return {"message": "Query settings are valid"}
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+# =============================================================================
+# Template Endpoints
+# =============================================================================
+
+
+@router.get("/templates/", tags=["templates"])
+def list_templates():
+    """Returns metadata for all available flow templates."""
+    from flowfile_core.templates import get_all_template_metas
+
+    return get_all_template_metas()
+
+
+@router.post("/templates/create_from_template/", tags=["templates"])
+def create_from_template(template_id: str, current_user=Depends(get_current_active_user)) -> int:
+    """Instantiates a template as a new flow session.
+
+    Downloads required CSV data files from GitHub if not already cached locally,
+    then creates a flow from the template definition.
+    """
+    import tempfile
+
+    import yaml
+
+    from flowfile_core.templates import get_template_flowfile_data, get_template_required_files
+    from flowfile_core.templates.data_downloader import ensure_template_data, get_template_data_dir
+
+    try:
+        required_files = get_template_required_files(template_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    try:
+        ensure_template_data(required_files)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    data_dir = get_template_data_dir()
+    flowfile_data = get_template_flowfile_data(template_id, data_dir)
+
+    # Write to a temp YAML file and import via existing flow import path
+    from shared.storage_config import storage
+
+    flows_dir = storage.flows_directory
+    temp_path = flows_dir / f"{flowfile_data.flowfile_name.replace(' ', '_').lower()}.yaml"
+
+    with open(temp_path, "w", encoding="utf-8") as f:
+        yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
+
+    user_id = current_user.id if current_user else None
+    flow_id = flow_file_handler.import_flow(temp_path, user_id=user_id)
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow and flow.flow_settings:
+        _auto_register_flow(str(temp_path), flow.flow_settings.name, user_id)
+    return flow_id
