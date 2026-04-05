@@ -228,6 +228,7 @@ class CatalogTableOut(BaseModel):
     source_registration_name: str | None = None
     source_run_id: int | None = None
     read_by_flows: list["FlowSummary"] = Field(default_factory=list)
+    contract: dict | None = None
     created_at: datetime
     updated_at: datetime
 

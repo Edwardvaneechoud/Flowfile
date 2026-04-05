@@ -27,6 +27,8 @@ from flowfile_core.catalog.delta_utils import (
     table_exists,
 )
 from flowfile_core.catalog.exceptions import (
+    ContractExistsError,
+    ContractNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -47,6 +49,7 @@ from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
+    DataContract,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -1978,3 +1981,174 @@ class CatalogService:
             favorite_tables=fav_tables,
             active_runs=active_runs,
         )
+
+    # ========================================================================
+    # Data Contracts
+    # ========================================================================
+
+    def get_contract(self, table_id: int) -> DataContract | None:
+        """Return the contract for *table_id*, or ``None``."""
+        return self._repo.get_contract_by_table(table_id)
+
+    def create_contract(
+        self,
+        table_id: int,
+        name: str,
+        owner_id: int,
+        definition_json: str,
+        description: str | None = None,
+        status: str = "draft",
+    ) -> DataContract:
+        """Create a new contract for a catalog table."""
+        table = self._repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id)
+        existing = self._repo.get_contract_by_table(table_id)
+        if existing is not None:
+            raise ContractExistsError(table_id)
+        contract = DataContract(
+            table_id=table_id,
+            name=name,
+            description=description,
+            definition_json=definition_json,
+            owner_id=owner_id,
+            status=status,
+            version=1,
+        )
+        return self._repo.create_contract(contract)
+
+    def update_contract(
+        self,
+        table_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        definition_json: str | None = None,
+        status: str | None = None,
+    ) -> DataContract:
+        """Update an existing contract.  Bumps the version number."""
+        contract = self._repo.get_contract_by_table(table_id)
+        if contract is None:
+            raise ContractNotFoundError(table_id)
+        if name is not None:
+            contract.name = name
+        if description is not None:
+            contract.description = description
+        if definition_json is not None:
+            contract.definition_json = definition_json
+        if status is not None:
+            contract.status = status
+        contract.version = (contract.version or 1) + 1
+        return self._repo.update_contract(contract)
+
+    def delete_contract(self, table_id: int) -> None:
+        """Delete the contract attached to *table_id*."""
+        contract = self._repo.get_contract_by_table(table_id)
+        if contract is None:
+            raise ContractNotFoundError(table_id)
+        self._repo.delete_contract(table_id)
+
+    def mark_contract_validated(
+        self,
+        table_id: int,
+        passed: bool,
+        version: int | None = None,
+    ) -> DataContract:
+        """Set the validation state on the contract.
+
+        If *version* is not supplied, the current Delta version is read
+        from the table storage.
+        """
+        contract = self._repo.get_contract_by_table(table_id)
+        if contract is None:
+            raise ContractNotFoundError(table_id)
+
+        if version is None:
+            table = self._repo.get_table(table_id)
+            if table is not None and is_delta_table(table.file_path):
+                dt = DeltaTable(table.file_path)
+                version = dt.version()
+
+        contract.last_validated_version = version
+        contract.last_validated_at = datetime.now(timezone.utc)
+        contract.last_validation_passed = passed
+        return self._repo.update_contract(contract)
+
+    def generate_contract_from_table(self, table_id: int) -> str:
+        """Profile a catalog table and return a proposed ``DataContractDefinition`` as JSON.
+
+        Uses column metadata (dtype, null count, unique count) to infer rules.
+        """
+        from flowfile_core.schemas.contract_schema import (
+            ColumnContract,
+            DataContractDefinition,
+            DtypeRule,
+            NotNullRule,
+        )
+
+        table = self._repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id)
+
+        columns: list[ColumnContract] = []
+        if table.schema_json:
+            schema = json.loads(table.schema_json)
+            for col_info in schema:
+                rules = []
+                col_name = col_info.get("name", "")
+                col_dtype = col_info.get("dtype")
+                if col_dtype:
+                    rules.append(DtypeRule(expected_dtype=col_dtype))
+                rules.append(NotNullRule())
+                columns.append(ColumnContract(name=col_name, rules=rules))
+
+        definition = DataContractDefinition(columns=columns, allow_extra_columns=False)
+        return definition.model_dump_json()
+
+    def get_contract_summary(self, table_id: int) -> dict | None:
+        """Build a lightweight contract summary for a catalog table.
+
+        Returns ``None`` if no contract exists.
+        """
+        from flowfile_core.schemas.contract_schema import ContractSummary
+
+        contract = self._repo.get_contract_by_table(table_id)
+        if contract is None:
+            return None
+
+        # Count rules
+        from flowfile_core.schemas.contract_schema import DataContractDefinition
+
+        try:
+            definition = DataContractDefinition.model_validate_json(contract.definition_json)
+        except Exception:
+            definition = DataContractDefinition()
+        rule_count = sum(len(c.rules) for c in definition.columns) + len(definition.general_rules)
+
+        # Determine status
+        if contract.status == "draft":
+            status = "draft"
+        elif contract.last_validation_passed is False:
+            status = "failed"
+        elif contract.last_validated_version is not None:
+            # Try to compare with current Delta version
+            table = self._repo.get_table(table_id)
+            current_version = None
+            if table is not None and is_delta_table(table.file_path):
+                try:
+                    dt = DeltaTable(table.file_path)
+                    current_version = dt.version()
+                except Exception:
+                    pass
+            if current_version is not None and contract.last_validated_version >= current_version:
+                status = "validated"
+            else:
+                status = "stale"
+        else:
+            status = "stale"
+
+        return ContractSummary(
+            status=status,
+            last_validated_version=contract.last_validated_version,
+            current_version=None,  # populated by caller if needed
+            rule_count=rule_count,
+        ).model_dump()
