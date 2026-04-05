@@ -47,6 +47,15 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
+# API I/O
+import flowfile_frame.api as api  # noqa: F401
+from flowfile_frame.api import (  # noqa: F401
+    create_api_connection,
+    create_api_connection_if_not_exists,
+    del_api_connection,
+    get_all_available_api_connections,
+    read_api,
+)
 from flowfile_frame.cloud_storage.secret_manager import (  # noqa: F401
     create_cloud_storage_connection,
     create_cloud_storage_connection_if_not_exists,

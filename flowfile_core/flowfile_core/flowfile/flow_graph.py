@@ -42,6 +42,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_open_xlsx_datatypes,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    ExternalApiFetcher,
     ExternalCloudWriter,
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
@@ -2654,6 +2655,94 @@ class FlowGraph:
             input_columns=[],
             node_type=node_type,
             setting_input=external_source_input,
+        )
+
+    @with_history_capture(HistoryActionType.ADD_NODE)
+    def add_api_reader(self, node_api_reader: input_schema.NodeApiReader):
+        """Adds a node to read data from a REST API.
+
+        Data fetching is delegated entirely to the worker — the core performs
+        zero collection.  Only a small sample (≤10 records) is fetched in-process
+        for schema inference.
+
+        Args:
+            node_api_reader: The settings for the API reader node.
+        """
+        from flowfile_core.flowfile.api_connection_manager.api_connections import get_local_api_connection
+        from flowfile_core.flowfile.sources.external_sources.api_source.client import fetch_sample
+
+        api_s = node_api_reader.api_settings
+        logger.info("Adding API reader for %s %s", api_s.method, api_s.url)
+        node_type = "api_reader"
+        api_settings = node_api_reader.api_settings
+
+        # If using a stored connection, resolve it and merge auth / base_url
+        if api_settings.connection_mode == "reference" and api_settings.connection_name:
+            api_connection = get_local_api_connection(api_settings.connection_name, node_api_reader.user_id)
+            if api_connection is None:
+                msg = f"API connection '{api_settings.connection_name}' not found"
+                raise HTTPException(status_code=400, detail=msg)
+            if api_connection.auth and api_settings.auth is None:
+                api_settings.auth = api_connection.auth
+            if api_connection.base_url and not api_settings.url.startswith("http"):
+                api_settings.url = api_connection.base_url.rstrip("/") + "/" + api_settings.url.lstrip("/")
+            if api_connection.default_headers:
+                merged = dict(api_connection.default_headers)
+                if api_settings.headers:
+                    merged.update(api_settings.headers)
+                api_settings.headers = merged
+
+        # Build worker-safe settings with encrypted secrets
+        worker_settings = api_settings.to_worker_settings(user_id=node_api_reader.user_id)
+        worker_settings.flowfile_flow_id = node_api_reader.flow_id
+        worker_settings.flowfile_node_id = node_api_reader.node_id
+
+        def _func():
+            external_api_fetcher = ExternalApiFetcher(worker_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_api_fetcher
+            fl = FlowDataEngine(external_api_fetcher.get_result())
+            return fl
+
+        def schema_callback():
+            try:
+                sample = fetch_sample(api_settings, n=10)
+                if not sample:
+                    return []
+                df = pl.DataFrame(sample)
+                return [FlowfileColumn.from_input(name, str(dtype)) for name, dtype in df.schema.items()]
+            except Exception as e:
+                logger.warning("Could not infer API schema: %s", e)
+                return []
+
+        node = self.get_node(node_api_reader.node_id)
+        if node:
+            node.schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_api_reader
+            node.node_settings.cache_results = node_api_reader.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_api_reader.node_id,
+                function=_func,
+                setting_input=node_api_reader,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[node_api_reader.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_api_reader.node_id)
+
+        self.add_node_step(
+            node_id=node_api_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type=node_type,
+            setting_input=node_api_reader,
         )
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

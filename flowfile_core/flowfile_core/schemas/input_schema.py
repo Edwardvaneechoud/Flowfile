@@ -17,6 +17,7 @@ from pydantic import (
 
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
+from flowfile_core.schemas.api_schemas import ApiReadSettings
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
@@ -935,6 +936,16 @@ class NodeExternalSource(NodeBase):
     def get_default_description(self) -> str:
         """Describes the external source."""
         return self.identifier
+
+
+class NodeApiReader(NodeBase):
+    """Settings for a node that reads data from a REST API."""
+
+    api_settings: ApiReadSettings
+
+    def get_default_description(self) -> str:
+        """Describes the API source."""
+        return f"API: {self.api_settings.method} {self.api_settings.url}"
 
 
 class NodeFormula(NodeSingleInput):

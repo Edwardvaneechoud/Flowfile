@@ -95,6 +95,34 @@ class CloudStoragePermission(Base):
     can_list = Column(Boolean, default=True)
 
 
+class ApiConnection(Base):
+    __tablename__ = "api_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    base_url = Column(String, nullable=True)
+    auth_type = Column(String, nullable=False)  # api_key, bearer, basic, oauth2, custom_headers
+
+    # Auth fields (polymorphic based on auth_type)
+    auth_key = Column(String, nullable=True)  # ApiKeyAuth: header/param name
+    auth_key_location = Column(String, nullable=True)  # ApiKeyAuth: "header" or "query"
+    auth_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)  # token/password/api_key value
+    auth_username = Column(String, nullable=True)  # BasicAuth username
+
+    # OAuth2
+    oauth2_token_url = Column(String, nullable=True)
+    oauth2_client_id = Column(String, nullable=True)
+    oauth2_client_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    oauth2_scope = Column(String, nullable=True)
+
+    # Common
+    default_headers = Column(Text, nullable=True)  # JSON dict of default headers
+    verify_ssl = Column(Boolean, default=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class Kernel(Base):
     __tablename__ = "kernels"
 

@@ -44,6 +44,18 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_intro="Load data from CSV, Excel, or Parquet files",
         ),
         NodeTemplate(
+            name="API Reader",
+            item="api_reader",
+            input=0,
+            output=1,
+            transform_type="wide",
+            node_type="input",
+            image="external_source.png",
+            node_group="input",
+            drawer_title="API Reader",
+            drawer_intro="Read data from REST APIs with auth, pagination, and retries",
+        ),
+        NodeTemplate(
             name="Join",
             item="join",
             input=2,

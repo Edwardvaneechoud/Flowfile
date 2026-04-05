@@ -126,6 +126,18 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
     return Status(**f.json())
 
 
+def trigger_api_read(api_read_settings) -> Status:
+    """Send an API read request to the worker service."""
+    f = requests.post(
+        url=f"{WORKER_URL}/store_api_read_result",
+        data=api_read_settings.model_dump_json(),
+        headers={"Content-Type": "application/json"},
+    )
+    if not f.ok:
+        raise Exception(f"trigger_api_read: Could not read from API, {f.text}")
+    return Status(**f.json())
+
+
 def trigger_kafka_read(kafka_read_settings) -> Status:
     """Send a Kafka read request to the worker service."""
     f = requests.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
@@ -778,6 +790,17 @@ class ExternalKafkaFetcher(BaseFetcher):
 
     def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
         r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalApiFetcher(BaseFetcher):
+    """Fetches data from a REST API via the worker service. Same pattern as ExternalDatabaseFetcher."""
+
+    def __init__(self, api_read_settings, wait_on_completion: bool = True):
+        r = trigger_api_read(api_read_settings=api_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == "Processing"
         if wait_on_completion:

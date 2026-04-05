@@ -6,10 +6,12 @@ import uuid
 import polars as pl
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
+from flowfile_core.schemas.api_schemas import ApiReadSettingsWorker
 from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.api_source.main import read_api_source
 from flowfile_worker.external_sources.kafka_source.main import read_kafka
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
@@ -344,6 +346,39 @@ def get_kafka_offsets(task_id: str):
         with open(sidecar) as f:
             return json.loads(f.read())
     return None
+
+
+@router.post("/store_api_read_result")
+def store_api_result(api_read_settings: ApiReadSettingsWorker, background_tasks: BackgroundTasks) -> models.Status:
+    """Fetch data from a REST API and store the result as an IPC file.
+
+    Follows the same pattern as store_database_read_result.
+    """
+
+    logger.info("Processing API source operation for: %s %s", api_read_settings.method, api_read_settings.url)
+
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(
+            create_and_get_default_cache_dir(api_read_settings.flowfile_flow_id), f"{task_id}.arrow"
+        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
+        status_dict[task_id] = status
+        logger.info("Starting API read task: %s", task_id)
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=read_api_source,
+            file_ref=file_path,
+            flowfile_flow_id=api_read_settings.flowfile_flow_id,
+            flowfile_node_id=api_read_settings.flowfile_node_id,
+            task_id=task_id,
+            kwargs=dict(api_read_settings=api_read_settings),
+        )
+        return status
+
+    except Exception as e:
+        logger.error("Error processing API source: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/create_table/{file_type}")
