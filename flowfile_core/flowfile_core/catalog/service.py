@@ -1217,11 +1217,6 @@ class CatalogService:
 
         table = self.repo.update_table(table)
 
-        try:
-            self._fire_table_trigger_schedules(table.id, table.updated_at)
-        except Exception:
-            logger.exception("Failed to fire push triggers for table %s", table.id)
-
         return self._table_to_out(table)
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -1988,7 +1983,7 @@ class CatalogService:
 
     def get_contract(self, table_id: int) -> DataContract | None:
         """Return the contract for *table_id*, or ``None``."""
-        return self._repo.get_contract_by_table(table_id)
+        return self.repo.get_contract_by_table(table_id)
 
     def create_contract(
         self,
@@ -2000,10 +1995,10 @@ class CatalogService:
         status: str = "draft",
     ) -> DataContract:
         """Create a new contract for a catalog table."""
-        table = self._repo.get_table(table_id)
+        table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id)
-        existing = self._repo.get_contract_by_table(table_id)
+        existing = self.repo.get_contract_by_table(table_id)
         if existing is not None:
             raise ContractExistsError(table_id)
         contract = DataContract(
@@ -2015,7 +2010,7 @@ class CatalogService:
             status=status,
             version=1,
         )
-        return self._repo.create_contract(contract)
+        return self.repo.create_contract(contract)
 
     def update_contract(
         self,
@@ -2026,7 +2021,7 @@ class CatalogService:
         status: str | None = None,
     ) -> DataContract:
         """Update an existing contract.  Bumps the version number."""
-        contract = self._repo.get_contract_by_table(table_id)
+        contract = self.repo.get_contract_by_table(table_id)
         if contract is None:
             raise ContractNotFoundError(table_id)
         if name is not None:
@@ -2038,14 +2033,14 @@ class CatalogService:
         if status is not None:
             contract.status = status
         contract.version = (contract.version or 1) + 1
-        return self._repo.update_contract(contract)
+        return self.repo.update_contract(contract)
 
     def delete_contract(self, table_id: int) -> None:
         """Delete the contract attached to *table_id*."""
-        contract = self._repo.get_contract_by_table(table_id)
+        contract = self.repo.get_contract_by_table(table_id)
         if contract is None:
             raise ContractNotFoundError(table_id)
-        self._repo.delete_contract(table_id)
+        self.repo.delete_contract(table_id)
 
     def mark_contract_validated(
         self,
@@ -2058,12 +2053,12 @@ class CatalogService:
         If *version* is not supplied, the current Delta version is read
         from the table storage.
         """
-        contract = self._repo.get_contract_by_table(table_id)
+        contract = self.repo.get_contract_by_table(table_id)
         if contract is None:
             raise ContractNotFoundError(table_id)
 
         if version is None:
-            table = self._repo.get_table(table_id)
+            table = self.repo.get_table(table_id)
             if table is not None and is_delta_table(table.file_path):
                 dt = DeltaTable(table.file_path)
                 version = dt.version()
@@ -2071,7 +2066,18 @@ class CatalogService:
         contract.last_validated_version = version
         contract.last_validated_at = datetime.now(timezone.utc)
         contract.last_validation_passed = passed
-        return self._repo.update_contract(contract)
+        contract = self.repo.update_contract(contract)
+
+        # Fire downstream table triggers when validation passes
+        if passed:
+            try:
+                table = self.repo.get_table(table_id)
+                if table is not None:
+                    self._fire_table_trigger_schedules(table.id, table.updated_at)
+            except Exception:
+                logger.exception("Failed to fire push triggers after validation for table %s", table_id)
+
+        return contract
 
     def generate_contract_from_table(self, table_id: int) -> str:
         """Profile a catalog table and return a proposed ``DataContractDefinition`` as JSON.
@@ -2085,7 +2091,7 @@ class CatalogService:
             NotNullRule,
         )
 
-        table = self._repo.get_table(table_id)
+        table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id)
 
@@ -2111,7 +2117,7 @@ class CatalogService:
         """
         from flowfile_core.schemas.contract_schema import ContractSummary
 
-        contract = self._repo.get_contract_by_table(table_id)
+        contract = self.repo.get_contract_by_table(table_id)
         if contract is None:
             return None
 
@@ -2131,7 +2137,7 @@ class CatalogService:
             status = "failed"
         elif contract.last_validated_version is not None:
             # Try to compare with current Delta version
-            table = self._repo.get_table(table_id)
+            table = self.repo.get_table(table_id)
             current_version = None
             if table is not None and is_delta_table(table.file_path):
                 try:

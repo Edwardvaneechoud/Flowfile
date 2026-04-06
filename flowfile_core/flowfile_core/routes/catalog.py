@@ -1006,7 +1006,7 @@ def validate_contract(
         raise HTTPException(404, "No contract found for this table")
 
     # Get the raw table record for file_path
-    table_record = service._repo.get_table(table_id)
+    table_record = service.repo.get_table(table_id)
     if table_record is None:
         raise HTTPException(404, "Catalog table not found")
 
@@ -1014,12 +1014,19 @@ def validate_contract(
 
     import polars as pl
 
-    try:
+    if getattr(table_record, "storage_format", None) == "delta":
         lf = pl.scan_delta(table_record.file_path)
-    except Exception:
+    else:
         lf = pl.scan_parquet(table_record.file_path)
 
     result = run_validation(lf, definition)
+
+    # Auto-mark the contract validated at the current table version
+    try:
+        service.mark_contract_validated(table_id=table_id, passed=result.passed)
+    except Exception:
+        pass  # validation result is still returned even if marking fails
+
     return result
 
 
