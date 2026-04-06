@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.8.0"
+version = "0.8.2"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -52,7 +52,7 @@ pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
 deltalake = "^1.1.0"
 pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
 boto3 = ">=1.38.40,<1.38.47"
-cryptography = "^45.0.5"
+cryptography = ">=45.0.5,<47.0.0"
 httpx = "^0.28.1"
 docker = ">=7.0.0"
 tqdm = "^4.67.1"
@@ -60,6 +60,7 @@ s3fs = "^2025.7.0"
 pl-fuzzy-frame-match = ">=0.6.0"
 pyyaml = "^6.0.3"
 xlsx2csv = "^0.8.6"
+confluent-kafka = "^2.6"
 azure-storage-blob = ">=12.19.0"
 google-cloud-storage = ">=2.14.0"
 gcsfs = ">=2024.2.0"
@@ -80,6 +81,8 @@ start_azurite = "test_utils.azurite.commands:start_azurite"
 stop_azurite = "test_utils.azurite.commands:stop_azurite"
 start_gcs = "test_utils.gcs.commands:start_gcs"
 stop_gcs = "test_utils.gcs.commands:stop_gcs"
+start_redpanda = "test_utils.kafka.commands:start_redpanda"
+stop_redpanda = "test_utils.kafka.commands:stop_redpanda"
 flowfile-migrate = "tools.migrate.__main__:main"
 
 [tool.poetry.group.build]
@@ -112,7 +115,8 @@ markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package",
     "kernel: Integration tests requiring Docker kernel containers",
-    "docker_integration: Full Docker-based E2E tests (require Docker, slow)"
+    "docker_integration: Full Docker-based E2E tests (require Docker, slow)",
+    "kafka: Integration tests requiring a Kafka/Redpanda broker (Docker)",
 ]
 
 [tool.coverage.run]

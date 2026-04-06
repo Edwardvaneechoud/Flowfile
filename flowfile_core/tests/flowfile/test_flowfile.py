@@ -1,4 +1,6 @@
 
+import os
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from time import sleep
@@ -1909,4 +1911,91 @@ class TestFlowGraphArtifactContext:
 
         # Context should be cleared
         assert graph.artifact_context.get_published_by_node(99) == []
+
+
+# ---------------------------------------------------------------------------
+# Parametrized local/remote execution tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not is_docker_available(),
+    reason="Docker is not available or not running so database reader cannot be tested",
+)
+class TestDatabaseReaderExecution:
+    """Test database_reader in both local and remote execution modes."""
+
+    def test_database_reader(self, execution_location):
+        ensure_password_is_available()
+        graph = create_graph(execution_location=execution_location)
+        add_node_promise_on_type(graph, "database_reader", 1)
+        database_connection = input_schema.DatabaseConnection(
+            database_type="postgresql",
+            username="testuser",
+            password_ref="test_database_pw",
+            host="localhost",
+            port=5433,
+            database="testdb",
+        )
+        database_settings = input_schema.DatabaseSettings(
+            database_connection=database_connection,
+            schema_name="public",
+            table_name="movies",
+        )
+        node_database_reader = input_schema.NodeDatabaseReader(
+            database_settings=database_settings,
+            node_id=1,
+            flow_id=1,
+            user_id=1,
+        )
+        graph.add_database_reader(node_database_reader)
+        node = graph.get_node(1)
+        assert node.name == "database_reader"
+        predicted_schema = node.get_predicted_schema()
+        assert len(predicted_schema) == 20
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+        lf = node.get_resulting_data()
+        assert lf.count() > 0
+
+
+class TestOutputExecution:
+    """Test output node (CSV write) in both local and remote execution modes."""
+
+    def test_write_csv(self, execution_location):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings = {
+                "flow_id": 1,
+                "node_id": 2,
+                "cache_results": False,
+                "pos_x": 0,
+                "pos_y": 0,
+                "is_setup": True,
+                "description": "",
+                "output_settings": {
+                    "name": "output_data.csv",
+                    "directory": tmp_dir,
+                    "file_type": "csv",
+                    "fields": [],
+                    "write_mode": "overwrite",
+                    "table_settings": {
+                        "file_type": "csv",
+                        "delimiter": ",",
+                        "encoding": "utf-8",
+                    },
+                },
+            }
+            graph = create_graph(execution_location=execution_location)
+            add_manual_input(
+                graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+            )
+            add_node_promise_on_type(graph, "output", 2)
+            output_file = input_schema.NodeOutput(**settings)
+            connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+            add_connection(graph, connection)
+            graph.add_output(output_file)
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.csv")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
 

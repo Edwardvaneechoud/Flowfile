@@ -861,3 +861,19 @@ export interface NodeCloudStorageReader extends NodeBase {
 export interface NodeCloudStorageWriter extends NodeBase {
   cloud_storage_settings: CloudStorageWriteSettings;
 }
+
+export interface KafkaSourceSettings {
+  kafka_connection_id: number | null;
+  kafka_connection_name: string | null;
+  topic_name: string;
+  value_format: "json";
+  sync_name: string;
+  start_offset: "earliest" | "latest";
+  max_messages: number;
+  poll_timeout_seconds: number;
+}
+
+export interface NodeKafkaSource extends NodeBase {
+  kafka_settings: KafkaSourceSettings;
+  fields?: MinimalFieldInput[] | null;
+}

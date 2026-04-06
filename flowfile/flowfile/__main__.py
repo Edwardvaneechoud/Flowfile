@@ -38,7 +38,9 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     print(f"Loading flow from: {flow_path}")
 
     try:
-        flow = open_flow(path)
+        from flowfile_core.auth.utils import get_local_user_id
+
+        flow = open_flow(path, user_id=get_local_user_id())
     except Exception as e:
         print(f"Error loading flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)

@@ -106,7 +106,6 @@ class TestRunFlowCommand:
     def test_run_flow_success(self, simple_flow_yaml: Path, capsys):
         """Test successful flow execution."""
         result = run_flow(str(simple_flow_yaml))
-
         assert result == 0
 
         # Check output contains expected messages
