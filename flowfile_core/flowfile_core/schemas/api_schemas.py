@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
@@ -222,6 +221,8 @@ class ApiReadSettings(BaseModel):
     auth: ApiAuth | None = None
     pagination: ApiPagination = Field(default_factory=NoPagination)
     records_path: JsonPath | None = None  # e.g. ("data", "users")
+    response_format: Literal["nested", "flat"] = "nested"
+    flatten_separator: str = "_"  # only used when response_format="flat"
     timeout: float = 30.0
     max_retries: int = 3
     retry_backoff: float = 1.0
@@ -230,7 +231,7 @@ class ApiReadSettings(BaseModel):
     connection_name: str | None = None
     connection_mode: Literal["inline", "reference"] = "inline"
 
-    def to_worker_settings(self, user_id: int) -> ApiReadSettingsWorker:
+    def to_worker_settings(self, user_id: int, flow_id: int = 0, node_id: int | str = -1) -> ApiReadSettingsWorker:
         """Convert to worker-safe settings with encrypted secrets."""
         from flowfile_core.schemas.cloud_storage_schemas import encrypt_for_worker
 
@@ -248,11 +249,15 @@ class ApiReadSettings(BaseModel):
             auth=worker_auth,
             pagination=self.pagination,
             records_path=self.records_path,
+            response_format=self.response_format,
+            flatten_separator=self.flatten_separator,
             timeout=self.timeout,
             max_retries=self.max_retries,
             retry_backoff=self.retry_backoff,
             rate_limit_delay=self.rate_limit_delay,
             verify_ssl=self.verify_ssl,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
         )
 
 
@@ -268,6 +273,8 @@ class ApiReadSettingsWorker(BaseModel):
     auth: ApiAuthWorker | None = None
     pagination: ApiPagination = Field(default_factory=NoPagination)
     records_path: JsonPath | None = None
+    response_format: Literal["nested", "flat"] = "nested"
+    flatten_separator: str = "_"
     timeout: float = 30.0
     max_retries: int = 3
     retry_backoff: float = 1.0
@@ -333,16 +340,3 @@ def _encrypt_auth(auth: ApiAuth, user_id: int, encrypt_fn) -> ApiAuthWorker:
             headers={k: encrypt_fn(v, user_id) for k, v in auth.headers.items()},
         )
     raise ValueError(f"Unknown auth type: {type(auth)}")
-
-
-def _decrypt_auth_value(encrypted_value: str) -> str:
-    """Decrypt a single $ffsec$ encrypted value. For use in the worker."""
-    from flowfile_core.secret_manager.secret_manager import decrypt_secret
-
-    return decrypt_secret(encrypted_value).get_secret_value()
-
-
-def _basic_auth_header(username: str, password: str) -> str:
-    """Build a Basic auth header value."""
-    credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return f"Basic {credentials}"

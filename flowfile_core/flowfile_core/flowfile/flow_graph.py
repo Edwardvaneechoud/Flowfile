@@ -2693,9 +2693,11 @@ class FlowGraph:
                 api_settings.headers = merged
 
         # Build worker-safe settings with encrypted secrets
-        worker_settings = api_settings.to_worker_settings(user_id=node_api_reader.user_id)
-        worker_settings.flowfile_flow_id = node_api_reader.flow_id
-        worker_settings.flowfile_node_id = node_api_reader.node_id
+        worker_settings = api_settings.to_worker_settings(
+            user_id=node_api_reader.user_id,
+            flow_id=node_api_reader.flow_id,
+            node_id=node_api_reader.node_id,
+        )
 
         def _func():
             external_api_fetcher = ExternalApiFetcher(worker_settings, wait_on_completion=False)

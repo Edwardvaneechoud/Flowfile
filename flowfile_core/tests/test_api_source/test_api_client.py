@@ -10,6 +10,7 @@ from flowfile_core.flowfile.sources.external_sources.api_source.client import (
     build_auth,
     extract_records,
     fetch_sample,
+    flatten_record,
     paginated_iter,
     parse_link_header,
     resolve_json_path,
@@ -232,6 +233,80 @@ class TestPaginatedIter:
         )
         records = list(paginated_iter(settings))
         assert len(records) == 3
+
+
+class TestFlattenRecord:
+    def test_flat_record_unchanged(self):
+        record = {"id": 1, "name": "Alice"}
+        assert flatten_record(record) == {"id": 1, "name": "Alice"}
+
+    def test_nested_dict(self):
+        record = {"id": 1, "address": {"city": "NYC", "zip": "10001"}}
+        flat = flatten_record(record)
+        assert flat == {"id": 1, "address_city": "NYC", "address_zip": "10001"}
+
+    def test_deep_nesting(self):
+        record = {"a": {"b": {"c": 1}}}
+        assert flatten_record(record) == {"a_b_c": 1}
+
+    def test_lists_preserved(self):
+        record = {"id": 1, "tags": ["a", "b"], "address": {"city": "NYC"}}
+        flat = flatten_record(record)
+        assert flat == {"id": 1, "tags": ["a", "b"], "address_city": "NYC"}
+
+    def test_custom_separator(self):
+        record = {"a": {"b": 1}}
+        assert flatten_record(record, separator=".") == {"a.b": 1}
+
+    def test_none_values(self):
+        record = {"id": 1, "meta": {"score": None}}
+        assert flatten_record(record) == {"id": 1, "meta_score": None}
+
+
+class TestResponseFormatFlat:
+    """Test that response_format='flat' auto-flattens nested dicts during iteration."""
+
+    @patch("flowfile_core.flowfile.sources.external_sources.api_source.client.fetch_page")
+    def test_flat_format_flattens_nested(self, mock_fetch):
+        mock_fetch.return_value = MagicMock(
+            json=MagicMock(return_value=[
+                {"id": 1, "address": {"city": "NYC", "zip": "10001"}, "tags": ["a", "b"]},
+                {"id": 2, "address": {"city": "LA", "zip": "90001"}, "tags": ["c"]},
+            ]),
+            status_code=200,
+            headers={},
+            raise_for_status=MagicMock(),
+        )
+        settings = ApiReadSettings(url="https://example.com", response_format="flat")
+        records = list(paginated_iter(settings))
+        assert len(records) == 2
+        assert records[0] == {"id": 1, "address_city": "NYC", "address_zip": "10001", "tags": ["a", "b"]}
+        assert records[1] == {"id": 2, "address_city": "LA", "address_zip": "90001", "tags": ["c"]}
+
+    @patch("flowfile_core.flowfile.sources.external_sources.api_source.client.fetch_page")
+    def test_nested_format_preserves_structure(self, mock_fetch):
+        original = [{"id": 1, "address": {"city": "NYC"}}]
+        mock_fetch.return_value = MagicMock(
+            json=MagicMock(return_value=original),
+            status_code=200,
+            headers={},
+            raise_for_status=MagicMock(),
+        )
+        settings = ApiReadSettings(url="https://example.com", response_format="nested")
+        records = list(paginated_iter(settings))
+        assert records[0] == {"id": 1, "address": {"city": "NYC"}}
+
+    @patch("flowfile_core.flowfile.sources.external_sources.api_source.client.fetch_page")
+    def test_flat_with_custom_separator(self, mock_fetch):
+        mock_fetch.return_value = MagicMock(
+            json=MagicMock(return_value=[{"meta": {"score": 0.9}}]),
+            status_code=200,
+            headers={},
+            raise_for_status=MagicMock(),
+        )
+        settings = ApiReadSettings(url="https://example.com", response_format="flat", flatten_separator="__")
+        records = list(paginated_iter(settings))
+        assert records[0] == {"meta__score": 0.9}
 
 
 class TestFetchSample:

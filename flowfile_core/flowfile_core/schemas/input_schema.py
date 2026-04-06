@@ -942,10 +942,13 @@ class NodeApiReader(NodeBase):
     """Settings for a node that reads data from a REST API."""
 
     api_settings: ApiReadSettings
+    fields: list[MinimalFieldInfo] | None = None
 
     def get_default_description(self) -> str:
         """Describes the API source."""
-        return f"API: {self.api_settings.method} {self.api_settings.url}"
+        s = self.api_settings
+        url = s.url if len(s.url) <= 50 else s.url[:47] + "..."
+        return f"API: {s.method} {url}"
 
 
 class NodeFormula(NodeSingleInput):

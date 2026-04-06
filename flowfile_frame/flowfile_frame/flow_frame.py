@@ -2251,6 +2251,64 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
+    def unnest(
+        self,
+        columns: str | Column | Iterable[str | Column],
+        *more_columns: str | Column,
+        description: str = None,
+    ) -> FlowFrame:
+        """
+        Decompose Struct columns into separate top-level columns.
+
+        Each field in a Struct column becomes its own column. This is the
+        inverse of ``struct`` and is especially useful for flattening nested
+        API/JSON responses.
+
+        Parameters
+        ----------
+        columns : str, Column, or Sequence[str, Column]
+            Column names or expressions referencing Struct columns to unnest
+        *more_columns : str or Column
+            Additional columns to unnest, specified as positional arguments
+        description : str, optional
+            Description of this operation for the ETL graph
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with struct fields promoted to top-level columns
+        """
+        new_node_id = generate_node_id()
+
+        all_columns = []
+
+        if isinstance(columns, list | tuple):
+            all_columns.extend([col.column_name if isinstance(col, Column) else col for col in columns])
+        else:
+            all_columns.append(columns.column_name if isinstance(columns, Column) else columns)
+
+        if more_columns:
+            for col in more_columns:
+                all_columns.append(col.column_name if isinstance(col, Column) else col)
+
+        if len(all_columns) == 1:
+            columns_str = stringify_values(all_columns[0])
+        else:
+            columns_str = "[" + ", ".join([stringify_values(col) for col in all_columns]) + "]"
+
+        code = f"""
+        # Unnest struct columns into separate columns
+        output_df = input_df.unnest({columns_str})
+        """
+
+        cols_desc = ", ".join(str(s) for s in all_columns)
+        desc = description or f"Unnest column(s): {cols_desc}"
+
+        # Add polars code node
+        self._add_polars_code(new_node_id, code, desc)
+
+        return self._create_child_frame(new_node_id)
+
     def fuzzy_match(
         self,
         other: FlowFrame,

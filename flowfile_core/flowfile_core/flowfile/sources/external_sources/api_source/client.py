@@ -33,14 +33,48 @@ from flowfile_core.schemas.api_schemas import (
     OAuth2ClientCredentialsWorker,
     OffsetPagination,
     PageNumberPagination,
-    _basic_auth_header,
-    _decrypt_auth_value,
 )
 
 logger = logging.getLogger(__name__)
 
 # Simple in-memory cache for OAuth2 tokens: {token_url -> (token, expires_at)}
 _oauth2_token_cache: dict[str, tuple[str, float]] = {}
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
+
+def _basic_auth_header(username: str, password: str) -> str:
+    """Build a Basic auth header value."""
+    import base64
+
+    credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return f"Basic {credentials}"
+
+
+def _decrypt_worker_secret(value: str) -> str:
+    """Decrypt a $ffsec$ encrypted string (worker context)."""
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+    return decrypt_secret(value)
+
+
+def flatten_record(record: dict[str, Any], separator: str = "_", prefix: str = "") -> dict[str, Any]:
+    """Recursively flatten nested dicts. Lists are preserved as-is.
+
+    >>> flatten_record({"a": {"b": 1, "c": {"d": 2}}, "e": [3]})
+    {"a_b": 1, "a_c_d": 2, "e": [3]}
+    """
+    flat: dict[str, Any] = {}
+    for key, value in record.items():
+        new_key = f"{prefix}{separator}{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(flatten_record(value, separator, new_key))
+        else:
+            flat[new_key] = value
+    return flat
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +126,7 @@ def _resolve_secret(value: Any) -> str:
     if hasattr(value, "get_secret_value"):
         return value.get_secret_value()
     if isinstance(value, str) and value.startswith("$ffsec$"):
-        return _decrypt_auth_value(value)
+        return _decrypt_worker_secret(value)
     return str(value)
 
 
@@ -237,6 +271,13 @@ def parse_link_header(link_header: str | None) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _maybe_flatten(record: dict[str, Any], settings: ApiReadSettings | ApiReadSettingsWorker) -> dict[str, Any]:
+    """Apply flattening if response_format is 'flat'."""
+    if settings.response_format == "flat":
+        return flatten_record(record, settings.flatten_separator)
+    return record
+
+
 def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generator[dict[str, Any], None, None]:
     """Yield records one-by-one across all pages. Pages are fetched lazily."""
     auth_headers, auth_params = build_auth(settings.auth)
@@ -265,7 +306,8 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 settings.max_retries,
                 settings.retry_backoff,
             )
-            yield from extract_records(resp.json(), settings.records_path)
+            for record in extract_records(resp.json(), settings.records_path):
+                yield _maybe_flatten(record, settings)
             return
 
         # --- OffsetPagination ---
@@ -294,7 +336,7 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 if not records:
                     return
                 for record in records:
-                    yield record
+                    yield _maybe_flatten(record, settings)
                     total_yielded += 1
                     if pagination.max_records and total_yielded >= pagination.max_records:
                         return
@@ -336,7 +378,8 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 records = extract_records(data, settings.records_path)
                 if not records:
                     return
-                yield from records
+                for record in records:
+                    yield _maybe_flatten(record, settings)
                 pages_fetched += 1
 
                 if pagination.max_pages and pages_fetched >= pagination.max_pages:
@@ -400,7 +443,8 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 records = extract_records(data, settings.records_path)
                 if not records:
                     return
-                yield from records
+                for record in records:
+                    yield _maybe_flatten(record, settings)
                 pages_fetched += 1
 
                 if pagination.max_pages and pages_fetched >= pagination.max_pages:
@@ -434,7 +478,8 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 records = extract_records(resp.json(), settings.records_path)
                 if not records:
                     return
-                yield from records
+                for record in records:
+                    yield _maybe_flatten(record, settings)
                 pages_fetched += 1
 
                 if pagination.max_pages and pages_fetched >= pagination.max_pages:
@@ -475,7 +520,8 @@ def paginated_iter(settings: ApiReadSettings | ApiReadSettingsWorker) -> Generat
                 records = extract_records(resp.json(), settings.records_path)
                 if not records:
                     return
-                yield from records
+                for record in records:
+                    yield _maybe_flatten(record, settings)
                 pages_fetched += 1
 
                 if pagination.max_pages and pages_fetched >= pagination.max_pages:
