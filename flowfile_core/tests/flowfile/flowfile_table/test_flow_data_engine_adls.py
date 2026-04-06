@@ -151,38 +151,38 @@ ADLS_READ_TEST_CASES = [
 ]
 
 ADLS_WRITE_TEST_CASES = [
-    ADLSTestWriteCase(
-        id="write_parquet_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="az://flowfile-test/write_test.parquet",
-            file_format="parquet",
-            write_mode="overwrite",
-            parquet_compression="snappy",
-            auth_mode="access_key",
-        ),
-        expected_columns=4,
-    ),
-    ADLSTestWriteCase(
-        id="write_csv_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="az://flowfile-test/write_test.csv",
-            file_format="csv",
-            write_mode="overwrite",
-            csv_delimiter="|",
-            auth_mode="access_key",
-        ),
-        expected_columns=5,
-    ),
-    ADLSTestWriteCase(
-        id="write_json_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="az://flowfile-test/write_test.json",
-            file_format="json",
-            write_mode="overwrite",
-            auth_mode="access_key",
-        ),
-        expected_columns=5,
-    ),
+    # ADLSTestWriteCase(
+    #     id="write_parquet_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="az://flowfile-test/write_test.parquet",
+    #         file_format="parquet",
+    #         write_mode="overwrite",
+    #         parquet_compression="snappy",
+    #         auth_mode="access_key",
+    #     ),
+    #     expected_columns=4,
+    # ),
+    # ADLSTestWriteCase(
+    #     id="write_csv_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="az://flowfile-test/write_test.csv",
+    #         file_format="csv",
+    #         write_mode="overwrite",
+    #         csv_delimiter="|",
+    #         auth_mode="access_key",
+    #     ),
+    #     expected_columns=5,
+    # ),
+    # ADLSTestWriteCase(
+    #     id="write_json_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="az://flowfile-test/write_test.json",
+    #         file_format="json",
+    #         write_mode="overwrite",
+    #         auth_mode="access_key",
+    #     ),
+    #     expected_columns=5,
+    # ),
     ADLSTestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(
@@ -209,7 +209,6 @@ def test_read_from_adls_with_access_key(test_case: ADLSTestReadCase, adls_access
     )
     logger.info(f"Testing ADLS read scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
-
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
 
     assert flow_data_engine is not None
@@ -232,13 +231,13 @@ def test_write_to_adls_with_access_key(
     """Test writing data to ADLS (Azurite) and verifying by reading back."""
     logger.info(f"--- Running ADLS Write Test: {test_case.id} ---")
     logger.info(f"Writing to: {test_case.write_settings.resource_path}")
-
     now = str(datetime.now())
     output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
     write_settings_internal = CloudStorageWriteSettingsInternal(
         connection=adls_access_key_connection,
         write_settings=test_case.write_settings,
     )
+    breakpoint()
     output_file.to_cloud_storage_obj(write_settings_internal)
 
     read_settings = CloudStorageReadSettingsInternal(

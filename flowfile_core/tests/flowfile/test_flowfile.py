@@ -1399,6 +1399,48 @@ def test_add_cloud_writer(flow_logger):
     handle_run_info(result)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer_adls(flow_logger):
+    conn = ensure_adls_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="az://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        connection_name=conn.connection_name,
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
+                                  {"name": "edward", "city": "a"},
+                                  {"name": "courtney", "city": "a"}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=write_settings)
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    result = graph.run_graph()
+    handle_run_info(result)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer_gcs(flow_logger):
+    conn = ensure_gcs_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="gs://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        connection_name=conn.connection_name,
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
+                                  {"name": "edward", "city": "a"},
+                                  {"name": "courtney", "city": "a"}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=write_settings)
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    result = graph.run_graph()
+    handle_run_info(result)
+
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario():
     ensure_cloud_storage_connection_is_available_and_get_connection()

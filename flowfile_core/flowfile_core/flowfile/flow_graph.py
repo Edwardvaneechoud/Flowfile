@@ -2504,12 +2504,7 @@ class FlowGraph:
                 user_id=node_cloud_storage_writer.user_id,
                 auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode,
             )
-            full_cloud_storage_connection = FullCloudStorageConnection(
-                storage_type=cloud_connection_settings.storage_type,
-                auth_method=cloud_connection_settings.auth_method,
-                aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
-                **CloudStorageReader.get_storage_options(cloud_connection_settings),
-            )
+            full_cloud_storage_connection = cloud_connection_settings
             if execute_remote:
                 settings = get_cloud_storage_write_settings_worker_interface(
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,
