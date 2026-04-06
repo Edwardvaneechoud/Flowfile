@@ -345,6 +345,39 @@ class CatalogTable(Base):
     __table_args__ = (UniqueConstraint("name", "namespace_id", name="uq_catalog_table_name_ns"),)
 
 
+class DataContract(Base):
+    """A data contract attached to a catalog table (1:1).
+
+    Stores typed validation rules as a JSON blob (serialized
+    ``DataContractDefinition``).  The validation state tracks whether the
+    table's current Delta version has been validated successfully.
+    """
+
+    __tablename__ = "data_contracts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False, unique=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+
+    # Serialized DataContractDefinition (JSON)
+    definition_json = Column(Text, nullable=False)
+
+    # Validation state
+    last_validated_version = Column(Integer, nullable=True)
+    last_validated_at = Column(DateTime, nullable=True)
+    last_validation_passed = Column(Boolean, nullable=True)
+
+    # Metadata
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String, nullable=False, default="draft")  # "draft" | "active" | "archived"
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("table_id", name="uq_data_contract_table"),)
+
+
 class CatalogTableReadLink(Base):
     """Tracks which registered flows read from which catalog tables."""
 
@@ -396,5 +429,3 @@ class KafkaConnection(Base):
 
     sasl_password = relationship("Secret", foreign_keys=[sasl_password_id], lazy="joined")
     ssl_key = relationship("Secret", foreign_keys=[ssl_key_id], lazy="joined")
-
-

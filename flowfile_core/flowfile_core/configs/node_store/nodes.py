@@ -249,6 +249,18 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_intro="Calculate the total number of rows",
         ),
         NodeTemplate(
+            name="Data validation",
+            item="data_validation",
+            input=1,
+            output=1,
+            transform_type="narrow",
+            node_type="process",
+            image="data_validation.png",
+            node_group="quality",
+            drawer_title="Validate Data",
+            drawer_intro="Check data against validation rules and add pass/fail columns",
+        ),
+        NodeTemplate(
             name="Cross join",
             item="cross_join",
             input=2,

@@ -943,7 +943,11 @@ class TestServiceLineageEnrichment:
 
 
 class TestPushTableTrigger:
-    """Tests for push-driven table_trigger schedule firing on overwrite_table_data."""
+    """Tests verifying that overwrite_table_data does NOT fire downstream triggers.
+
+    Downstream triggers are now fired by contract validation, not by overwrites.
+    See test_data_contracts_integration.py for validation-based trigger tests.
+    """
 
     @staticmethod
     def _setup_table_and_schedule(schedule_type="table_trigger"):
@@ -1000,71 +1004,9 @@ class TestPushTableTrigger:
 
             return schema.id, flow.id, table.id, schedule.id, tmp.name
 
-    def test_overwrite_fires_push_trigger(self, monkeypatch):
-        """Overwriting a table should create a FlowRun for its table_trigger schedule."""
+    def test_overwrite_does_not_fire_trigger(self, monkeypatch):
+        """Overwriting a table should NOT create a FlowRun — triggers are validation-driven."""
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
-
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
-
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            svc = CatalogService(repo)
-            svc.overwrite_table_data(table_id, parquet_path)
-
-            runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
-            assert len(runs) == 1
-
-    def test_push_trigger_skips_active_run(self, monkeypatch):
-        """If the flow already has an active run, no new FlowRun should be created."""
-        from datetime import datetime, timezone
-
-        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
-
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
-
-        # Create an active (unfinished) run
-        with get_db_context() as db:
-            active_run = FlowRun(
-                registration_id=flow_id,
-                flow_name="triggered_flow",
-                flow_path="/tmp/triggered.yaml",
-                user_id=1,
-                started_at=datetime.now(timezone.utc),
-                number_of_nodes=0,
-                run_type="scheduled",
-            )
-            db.add(active_run)
-            db.commit()
-
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            svc = CatalogService(repo)
-            svc.overwrite_table_data(table_id, parquet_path)
-
-            runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
-            # Only the pre-existing active run, no new one
-            assert len(runs) == 1
-
-    def test_push_trigger_updates_schedule_timestamps(self, monkeypatch):
-        """After firing, the schedule's last_triggered_at and last_trigger_table_updated_at should be set."""
-        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
-
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
-
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            svc = CatalogService(repo)
-            svc.overwrite_table_data(table_id, parquet_path)
-
-            schedule = db.query(FlowSchedule).get(schedule_id)
-            assert schedule.last_triggered_at is not None
-            assert schedule.last_trigger_table_updated_at is not None
-
-    def test_push_trigger_ignores_table_set_triggers(self, monkeypatch):
-        """table_set_trigger schedules should NOT be fired by the push mechanism."""
-        schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule(
-            schedule_type="table_set_trigger"
-        )
 
         monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
 

@@ -1280,6 +1280,36 @@ class FlowGraph:
             input_node_ids=[node_number_of_records.depending_on_id],
         )
 
+    def add_data_validation(self, settings: input_schema.NodeDataValidation):
+        """Adds a validation node that checks data against typed rules.
+
+        Passes data through and appends ``_is_valid`` / ``_violations`` columns.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            from flowfile_core.flowfile.flow_data_engine.validation import apply_validation
+            from flowfile_core.schemas.contract_schema import DataContractDefinition
+
+            definition = settings.definition
+            if not isinstance(definition, DataContractDefinition):
+                definition = DataContractDefinition.model_validate(definition)
+            result_lf = apply_validation(
+                fl.data_frame,
+                definition,
+                add_validity=settings.add_validity_column,
+                add_details=settings.add_violation_details,
+            )
+            return FlowDataEngine(result_lf)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="data_validation",
+            renew_schema=True,
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         """Adds a node that executes custom Polars code.
@@ -2411,8 +2441,11 @@ class FlowGraph:
                 # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, kafka_result.new_offsets, node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        kafka_result.new_offsets,
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             else:
                 # Remote execution — offload to worker (worker uses commit=False + sidecar)
@@ -2423,8 +2456,11 @@ class FlowGraph:
                 offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
                 if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, offsets_data["new_offsets"], node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        offsets_data["new_offsets"],
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
             # schema (e.g. empty topic or starting at "latest").  Align to
@@ -3265,9 +3301,7 @@ class FlowGraph:
             try:
                 callback(success)
             except Exception as e:
-                self.flow_logger.error(
-                    f"Post-execution callback failed for node {n.node_id}: {e}"
-                )
+                self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
     def run_graph(self) -> RunInformation | None:

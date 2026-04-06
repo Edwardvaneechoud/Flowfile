@@ -48,6 +48,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
+    "data_validation": input_schema.NodeDataValidation,
 }
 
 

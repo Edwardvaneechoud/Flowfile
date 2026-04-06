@@ -196,3 +196,19 @@ class ScheduleConflictError(CatalogError):
         self.registration_id = registration_id
         self.schedule_type = schedule_type
         super().__init__(f"A '{schedule_type}' schedule already exists for flow {registration_id}")
+
+
+class ContractNotFoundError(CatalogError):
+    """Raised when a data contract lookup fails."""
+
+    def __init__(self, table_id: int):
+        self.table_id = table_id
+        super().__init__(f"No data contract found for table_id={table_id}")
+
+
+class ContractExistsError(CatalogError):
+    """Raised when attempting to create a duplicate data contract."""
+
+    def __init__(self, table_id: int):
+        self.table_id = table_id
+        super().__init__(f"A data contract already exists for table_id={table_id}")

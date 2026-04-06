@@ -15,7 +15,7 @@ from pydantic import (
     model_validator,
 )
 
-from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas import contract_schema, transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.yaml_types import (
@@ -1282,6 +1282,23 @@ class NodePythonScript(NodeMultiInput):
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+
+class NodeDataValidation(NodeSingleInput):
+    """Settings for a validation node that checks data against typed rules.
+
+    Uses the same ``DataContractDefinition`` model as catalog data contracts.
+    Passes data through and appends ``_is_valid`` / ``_violations`` columns.
+    """
+
+    definition: "contract_schema.DataContractDefinition"
+    add_validity_column: bool = True
+    add_violation_details: bool = False
+
+    def get_default_description(self) -> str:
+        n_col = len(self.definition.columns)
+        n_gen = len(self.definition.general_rules)
+        return f"Validate {n_col} column(s), {n_gen} rule(s)"
 
 
 class UserDefinedNode(NodeMultiInput):

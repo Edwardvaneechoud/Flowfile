@@ -10,6 +10,8 @@ Public interface:
 
 from .exceptions import (
     CatalogError,
+    ContractExistsError,
+    ContractNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowExistsError,
@@ -55,4 +57,6 @@ __all__ = [
     "TableNotFoundError",
     "TableExistsError",
     "TableFavoriteNotFoundError",
+    "ContractNotFoundError",
+    "ContractExistsError",
 ]

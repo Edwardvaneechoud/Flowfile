@@ -323,9 +323,6 @@ class TestOverwriteTableDataDelta:
         """When all metadata is provided, overwrite should not read the file."""
         _, schema_id = _make_namespace()
 
-        # Disable push triggers for simplicity
-        monkeypatch.setattr(CatalogService, "_fire_table_trigger_schedules", lambda *a, **kw: 0)
-
         delta_dir = tmp_path / "overwrite_delta"
         delta_dir.mkdir()
 
@@ -369,7 +366,6 @@ class TestOverwriteTableDataDelta:
     def test_overwrite_updates_storage_format(self, tmp_path, monkeypatch):
         """overwrite_table_data should update storage_format on the DB record."""
         _, schema_id = _make_namespace()
-        monkeypatch.setattr(CatalogService, "_fire_table_trigger_schedules", lambda *a, **kw: 0)
 
         with get_db_context() as db:
             table = CatalogTable(

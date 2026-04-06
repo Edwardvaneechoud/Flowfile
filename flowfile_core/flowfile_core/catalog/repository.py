@@ -15,6 +15,7 @@ from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
+    DataContract,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -244,6 +245,18 @@ class CatalogRepository(Protocol):
     def set_trigger_table_ids(self, schedule_id: int, table_ids: list[int]) -> None: ...
 
     def delete_trigger_table_ids(self, schedule_id: int) -> None: ...
+
+    # -- Data Contracts ------------------------------------------------------
+
+    def get_contract_by_table(self, table_id: int) -> DataContract | None: ...
+
+    def create_contract(self, contract: DataContract) -> DataContract: ...
+
+    def update_contract(self, contract: DataContract) -> DataContract: ...
+
+    def delete_contract(self, table_id: int) -> None: ...
+
+    def list_contracts_for_tables(self, table_ids: list[int]) -> dict[int, DataContract]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -603,9 +616,7 @@ class SQLAlchemyCatalogRepository:
             self._db.commit()
 
     def list_table_favorites(self, user_id: int) -> list[TableFavorite]:
-        return (
-            self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
-        )
+        return self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
 
     def count_table_favorites(self, user_id: int) -> int:
         return self._db.query(TableFavorite).filter_by(user_id=user_id).count()
@@ -826,12 +837,7 @@ class SQLAlchemyCatalogRepository:
 
     def list_active_runs(self) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
-        return (
-            self._db.query(FlowRun)
-            .filter(FlowRun.ended_at.is_(None))
-            .order_by(FlowRun.started_at.desc())
-            .all()
-        )
+        return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""
@@ -873,9 +879,7 @@ class SQLAlchemyCatalogRepository:
     def get_trigger_table_ids(self, schedule_id: int) -> list[int]:
         """Return table IDs linked to a table_set_trigger schedule."""
         rows = (
-            self._db.query(ScheduleTriggerTable.table_id)
-            .filter(ScheduleTriggerTable.schedule_id == schedule_id)
-            .all()
+            self._db.query(ScheduleTriggerTable.table_id).filter(ScheduleTriggerTable.schedule_id == schedule_id).all()
         )
         return [r[0] for r in rows]
 
@@ -890,3 +894,29 @@ class SQLAlchemyCatalogRepository:
         """Remove all trigger table links for a schedule."""
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         self._db.commit()
+
+    # -- Data Contracts ------------------------------------------------------
+
+    def get_contract_by_table(self, table_id: int) -> DataContract | None:
+        return self._db.query(DataContract).filter_by(table_id=table_id).first()
+
+    def create_contract(self, contract: DataContract) -> DataContract:
+        self._db.add(contract)
+        self._db.commit()
+        self._db.refresh(contract)
+        return contract
+
+    def update_contract(self, contract: DataContract) -> DataContract:
+        self._db.commit()
+        self._db.refresh(contract)
+        return contract
+
+    def delete_contract(self, table_id: int) -> None:
+        self._db.query(DataContract).filter_by(table_id=table_id).delete()
+        self._db.commit()
+
+    def list_contracts_for_tables(self, table_ids: list[int]) -> dict[int, DataContract]:
+        if not table_ids:
+            return {}
+        rows = self._db.query(DataContract).filter(DataContract.table_id.in_(table_ids)).all()
+        return {c.table_id: c for c in rows}

@@ -21,6 +21,8 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
     CatalogService,
+    ContractExistsError,
+    ContractNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -849,3 +851,194 @@ async def scheduler_stop(current_user=Depends(get_current_active_user)):
     await scheduler.stop()
     set_scheduler(None)
     return {"message": "Scheduler stopped"}
+
+
+# ---------------------------------------------------------------------------
+# Data Contracts
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tables/{table_id}/contract")
+def get_contract(
+    table_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Get the data contract for a catalog table."""
+    from flowfile_core.schemas.contract_schema import DataContractDefinition, DataContractOut
+
+    contract = service.get_contract(table_id)
+    if contract is None:
+        raise HTTPException(404, "No contract found for this table")
+    definition = DataContractDefinition.model_validate_json(contract.definition_json)
+    return DataContractOut(
+        id=contract.id,
+        table_id=contract.table_id,
+        name=contract.name,
+        description=contract.description,
+        definition=definition,
+        last_validated_version=contract.last_validated_version,
+        last_validated_at=contract.last_validated_at,
+        last_validation_passed=contract.last_validation_passed,
+        status=contract.status,
+        version=contract.version,
+        owner_id=contract.owner_id,
+        created_at=contract.created_at,
+        updated_at=contract.updated_at,
+    )
+
+
+@router.post("/tables/{table_id}/contract", status_code=201)
+def create_contract(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a data contract for a catalog table."""
+    from flowfile_core.schemas.contract_schema import DataContractCreate, DataContractDefinition, DataContractOut
+
+    body = DataContractCreate(table_id=table_id, name=f"Contract for table {table_id}")
+    try:
+        contract = service.create_contract(
+            table_id=table_id,
+            name=body.name,
+            owner_id=current_user.id,
+            definition_json=body.definition.model_dump_json(),
+            description=body.description,
+            status=body.status,
+        )
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found") from None
+    except ContractExistsError:
+        raise HTTPException(409, "A contract already exists for this table") from None
+    definition = DataContractDefinition.model_validate_json(contract.definition_json)
+    return DataContractOut(
+        id=contract.id,
+        table_id=contract.table_id,
+        name=contract.name,
+        description=contract.description,
+        definition=definition,
+        last_validated_version=contract.last_validated_version,
+        last_validated_at=contract.last_validated_at,
+        last_validation_passed=contract.last_validation_passed,
+        status=contract.status,
+        version=contract.version,
+        owner_id=contract.owner_id,
+        created_at=contract.created_at,
+        updated_at=contract.updated_at,
+    )
+
+
+@router.put("/tables/{table_id}/contract")
+def update_contract(
+    table_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Update the data contract for a catalog table."""
+    from flowfile_core.schemas.contract_schema import DataContractDefinition, DataContractOut, DataContractUpdate
+
+    body = DataContractUpdate()
+    try:
+        contract = service.update_contract(
+            table_id=table_id,
+            name=body.name,
+            description=body.description,
+            definition_json=body.definition.model_dump_json() if body.definition else None,
+            status=body.status,
+        )
+    except ContractNotFoundError:
+        raise HTTPException(404, "No contract found for this table") from None
+    definition = DataContractDefinition.model_validate_json(contract.definition_json)
+    return DataContractOut(
+        id=contract.id,
+        table_id=contract.table_id,
+        name=contract.name,
+        description=contract.description,
+        definition=definition,
+        last_validated_version=contract.last_validated_version,
+        last_validated_at=contract.last_validated_at,
+        last_validation_passed=contract.last_validation_passed,
+        status=contract.status,
+        version=contract.version,
+        owner_id=contract.owner_id,
+        created_at=contract.created_at,
+        updated_at=contract.updated_at,
+    )
+
+
+@router.delete("/tables/{table_id}/contract", status_code=204)
+def delete_contract(
+    table_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Delete the data contract for a catalog table."""
+    try:
+        service.delete_contract(table_id)
+    except ContractNotFoundError:
+        raise HTTPException(404, "No contract found for this table") from None
+
+
+@router.post("/tables/{table_id}/contract/generate")
+def generate_contract(
+    table_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Auto-generate a contract definition from the table's current data profile."""
+    from flowfile_core.schemas.contract_schema import DataContractDefinition
+
+    try:
+        definition_json = service.generate_contract_from_table(table_id)
+    except TableNotFoundError:
+        raise HTTPException(404, "Catalog table not found") from None
+    return DataContractDefinition.model_validate_json(definition_json)
+
+
+@router.post("/tables/{table_id}/contract/validate")
+def validate_contract(
+    table_id: int,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Run validation of the table against its contract. Returns a ValidationResult."""
+    from flowfile_core.flowfile.flow_data_engine.validation import validate_contract as run_validation
+    from flowfile_core.schemas.contract_schema import DataContractDefinition
+
+    contract = service.get_contract(table_id)
+    if contract is None:
+        raise HTTPException(404, "No contract found for this table")
+
+    # Get the raw table record for file_path
+    table_record = service.repo.get_table(table_id)
+    if table_record is None:
+        raise HTTPException(404, "Catalog table not found")
+
+    definition = DataContractDefinition.model_validate_json(contract.definition_json)
+
+    import polars as pl
+
+    if getattr(table_record, "storage_format", None) == "delta":
+        lf = pl.scan_delta(table_record.file_path)
+    else:
+        lf = pl.scan_parquet(table_record.file_path)
+
+    result = run_validation(lf, definition)
+
+    # Auto-mark the contract validated at the current table version
+    try:
+        service.mark_contract_validated(table_id=table_id, passed=result.passed)
+    except Exception:
+        pass  # validation result is still returned even if marking fails
+
+    return result
+
+
+@router.put("/tables/{table_id}/contract/mark-validated")
+def mark_contract_validated(
+    table_id: int,
+    passed: bool = Query(...),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Mark the contract as validated (or failed) at the current Delta version."""
+    try:
+        service.mark_contract_validated(table_id=table_id, passed=passed)
+    except ContractNotFoundError:
+        raise HTTPException(404, "No contract found for this table") from None
+    return {"status": "ok"}
