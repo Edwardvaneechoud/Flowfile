@@ -49,9 +49,7 @@
       </div>
 
       <div class="form-field">
-        <label for="database" class="form-label">{{
-          isSqlite ? "File Path" : "Database"
-        }}</label>
+        <label for="database" class="form-label">{{ isSqlite ? "File Path" : "Database" }}</label>
         <input
           id="database"
           v-model="connection.database"

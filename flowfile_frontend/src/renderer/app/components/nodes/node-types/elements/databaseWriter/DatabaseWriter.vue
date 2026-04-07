@@ -77,12 +77,7 @@
                 @change="handleSchemaChange"
                 @blur="handleSchemaBlur"
               >
-                <el-option
-                  v-for="s in availableSchemas"
-                  :key="s"
-                  :label="s"
-                  :value="s"
-                />
+                <el-option v-for="s in availableSchemas" :key="s" :label="s" :value="s" />
               </el-select>
               <button
                 type="button"
@@ -112,12 +107,7 @@
                 @change="handleTableSelect"
                 @blur="handleTableBlur"
               >
-                <el-option
-                  v-for="t in availableTables"
-                  :key="t"
-                  :label="t"
-                  :value="t"
-                />
+                <el-option v-for="t in availableTables" :key="t" :label="t" :value="t" />
               </el-select>
               <button
                 type="button"

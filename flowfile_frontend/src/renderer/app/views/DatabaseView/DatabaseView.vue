@@ -142,7 +142,11 @@ import {
   updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
-import { FullDatabaseConnectionInterface, FullDatabaseConnection, defaultPorts } from "./databaseConnectionTypes";
+import {
+  FullDatabaseConnectionInterface,
+  FullDatabaseConnection,
+  defaultPorts,
+} from "./databaseConnectionTypes";
 import type { DatabaseType } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 
