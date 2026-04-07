@@ -39,12 +39,23 @@ def _write_parquet_to_cloud(
         raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
 
 
+def _normalize_delta_path(resource_path: str) -> str:
+    """Normalize az:// paths to abfss:// for delta-rs compatibility.
+
+    The delta-rs library (>= 1.1.0) does not handle the az:// scheme correctly,
+    so we convert to abfss:// which is functionally equivalent.
+    """
+    if resource_path.startswith("az://"):
+        return "abfss://" + resource_path[len("az://"):]
+    return resource_path
+
+
 def _write_delta_to_cloud(
     df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to Delta Lake format in cloud storage."""
     sink_kwargs = {
-        "target": resource_path,
+        "target": _normalize_delta_path(resource_path),
         "mode": write_settings.write_mode,
     }
     if storage_options:
@@ -144,7 +155,9 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
     writer_func = writers.get(write_settings.file_format)
     if not writer_func:
         raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
-
+    logger.info(f"storage options: {storage_options}")
+    logger.info(f"write settings: {write_settings}")
+    logger.info(f"resource path: {write_settings.resource_path}")
     writer_func(df, write_settings.resource_path, storage_options, write_settings, logger)
 
     logger.info(f"Successfully wrote data to {write_settings.resource_path}")
