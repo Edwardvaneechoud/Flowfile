@@ -40,17 +40,6 @@ body {
   background-color: var(--color-background-primary);
 }
 
-/* ========== Page Transitions ========== */
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.page-fade-enter-from,
-.page-fade-leave-to {
-  opacity: 0;
-}
-
 /* ========== Typography Base ========== */
 h1, h2, h3, h4, h5, h6 {
   margin: 0;

@@ -29,7 +29,7 @@ from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
-    get_first_file_from_s3_dir,
+    get_first_file_from_cloud_dir,
 )
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
@@ -64,6 +64,12 @@ from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
 from flowfile_core.schemas.schemas import ExecutionLocationsLiteral, get_global_execution_location
 from flowfile_core.utils.utils import ensure_similarity_dicts
+from shared.cloud_storage import (
+    get_lazy_frame_from_gcs_pyarrow_dataset,
+    scan_delta_from_gcs,
+)
+from shared.cloud_storage.utils import normalize_delta_path
+from shared.cloud_storage.writers import write_to_cloud
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -390,138 +396,24 @@ class FlowDataEngine:
         """
         connection = settings.connection
         write_settings = settings.write_settings
-
         logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
 
-        if write_settings.write_mode == "append" and write_settings.file_format != "delta":
-            raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
-        # Dispatch to the correct writer based on file format
-        if write_settings.file_format == "parquet":
-            self._write_parquet_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
-            )
-        elif write_settings.file_format == "delta":
-            self._write_delta_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
-            )
-        elif write_settings.file_format == "csv":
-            self._write_csv_to_cloud(write_settings.resource_path, storage_options, credential_provider, write_settings)
-        elif write_settings.file_format == "json":
-            self._write_json_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings
-            )
-        else:
-            raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
+        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
 
-        logger.info(f"Successfully wrote data to {write_settings.resource_path}")
-
-    def _write_parquet_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-    ):
-        """(Internal) Writes the DataFrame to a Parquet file in cloud storage.
-
-        Uses `sink_parquet` for efficient streaming writes. Falls back to a
-        collect-then-write pattern if sinking fails.
-        """
-        try:
-            sink_kwargs = {
-                "path": resource_path,
-                "compression": write_settings.parquet_compression,
-            }
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-            try:
-                self.data_frame.sink_parquet(**sink_kwargs)
-            except Exception as e:
-                logger.warning(f"Failed to sink the data, falling back to collecing and writing. \n {e}")
-                pl_df = self.collect()
-                sink_kwargs["file"] = sink_kwargs.pop("path")
-                pl_df.write_parquet(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
-
-    def _write_delta_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-    ):
-        """(Internal) Writes the DataFrame to a Delta Lake table in cloud storage.
-
-        This operation requires collecting the data first, as `write_delta` operates
-        on an eager DataFrame.
-        """
-        sink_kwargs = {
-            "target": resource_path,
-            "mode": write_settings.write_mode,
-        }
-        if storage_options:
-            sink_kwargs["storage_options"] = storage_options
-        if credential_provider:
-            sink_kwargs["credential_provider"] = credential_provider
-        self.collect().write_delta(**sink_kwargs)
-
-    def _write_csv_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-    ):
-        """(Internal) Writes the DataFrame to a CSV file in cloud storage.
-
-        Uses `sink_csv` for efficient, streaming writes of the data.
-        """
-        try:
-            sink_kwargs = {
-                "path": resource_path,
-                "separator": write_settings.csv_delimiter,
-            }
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-
-            # sink_csv executes the lazy query and writes the result
-            self.data_frame.sink_csv(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}") from e
-
-    def _write_json_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-    ):
-        """(Internal) Writes the DataFrame to a line-delimited JSON (NDJSON) file.
-
-        Uses `sink_ndjson` for efficient, streaming writes.
-        """
-        try:
-            sink_kwargs = {"path": resource_path}
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-            self.data_frame.sink_ndjson(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}") from e
+        write_to_cloud(
+            df=self.data_frame,
+            resource_path=write_settings.resource_path,
+            storage_options=storage_options,
+            file_format=write_settings.file_format,
+            write_mode=write_settings.write_mode,
+            compression=write_settings.parquet_compression,
+            separator=write_settings.csv_delimiter,
+            credential_provider=credential_provider,
+            use_pyarrow=use_pyarrow,
+            logger=logger,
+        )
 
     @classmethod
     def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> FlowDataEngine:
@@ -548,24 +440,26 @@ class FlowDataEngine:
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-        # Get storage options based on connection type
         storage_options = CloudStorageReader.get_storage_options(connection)
-        # Get credential provider if needed
         credential_provider = CloudStorageReader.get_credential_provider(connection)
+        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
                 read_settings.resource_path,
                 storage_options,
                 credential_provider,
                 read_settings.scan_mode == "directory",
+                use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings
+                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings
+                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "json":
             return cls._read_json_from_cloud(
@@ -573,6 +467,7 @@ class FlowDataEngine:
                 storage_options,
                 credential_provider,
                 read_settings.scan_mode == "directory",
+                use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "iceberg":
             return cls._read_iceberg_from_cloud(
@@ -585,19 +480,69 @@ class FlowDataEngine:
         else:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
 
+    @classmethod
+    def _read_directory_via_gcsfs(
+        cls,
+        resource_path: str,
+        storage_options: dict[str, Any],
+        file_format: str,
+        read_settings: cloud_storage_schemas.CloudStorageReadSettings | None = None,
+    ) -> FlowDataEngine:
+        """Read multiple files from a GCS directory using gcsfs glob + open."""
+        import gcsfs
+
+        fs = gcsfs.GCSFileSystem(**storage_options)
+        path = resource_path.replace("gs://", "").rstrip("/")
+        files = fs.glob(f"{path}/*.{file_format}")
+        if not files:
+            raise ValueError(f"No {file_format} files found in {resource_path}")
+
+        dfs = []
+        for f in files:
+            if file_format == "parquet":
+                dfs.append(pl.read_parquet(fs.open(f)))
+            elif file_format == "csv":
+                dfs.append(
+                    pl.read_csv(
+                        fs.open(f),
+                        has_header=read_settings.csv_has_header if read_settings else True,
+                        separator=read_settings.csv_delimiter if read_settings else ",",
+                        encoding=read_settings.csv_encoding if read_settings else "utf8",
+                    )
+                )
+            elif file_format == "json":
+                dfs.append(pl.read_ndjson(fs.open(f)))
+
+        df = pl.concat(dfs)
+        return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
+
     @staticmethod
     def _get_schema_from_first_file_in_dir(
-        source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"]
+            source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"],
+            use_pyarrow: bool = False,
     ) -> list[FlowfileColumn] | None:
         """Infers the schema by scanning the first file in a cloud directory."""
+        from pyarrow import parquet as pq
         try:
-            scan_func = getattr(pl, "scan_" + file_format)
-            first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
-            return convert_stats_to_column_info(
-                FlowDataEngine._create_schema_stats_from_pl_schema(
-                    scan_func(first_file_ref, storage_options=storage_options).collect_schema()
+            first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
+
+            if use_pyarrow:
+                import gcsfs
+                fs = gcsfs.GCSFileSystem(**storage_options)
+                return convert_stats_to_column_info(
+                    FlowDataEngine._create_schema_stats_from_pl_schema(
+                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table())
+                        .collect_schema()
+                    )
                 )
-            )
+            else:
+                read_func = getattr(pl, "scan_" + file_format)
+
+                return convert_stats_to_column_info(
+                    FlowDataEngine._create_schema_stats_from_pl_schema(
+                        read_func(first_file_ref, storage_options=storage_options).collect_schema()
+                    )
+                )
         except Exception as e:
             logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
 
@@ -619,6 +564,7 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         is_directory: bool,
+        use_pyarrow: bool = False,
     ) -> FlowDataEngine:
         """Reads Parquet file(s) from cloud storage."""
         try:
@@ -626,18 +572,22 @@ class FlowDataEngine:
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
-
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
 
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
             if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet")
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet",
+                                                                use_pyarrow=use_pyarrow)
             else:
                 schema = None
-            lf = pl.scan_parquet(**scan_kwargs)
-
+            if use_pyarrow:
+                lf = get_lazy_frame_from_gcs_pyarrow_dataset(resource_path=resource_path,
+                                                             storage_options=storage_options,
+                                                             is_directory=is_directory)
+            else:
+                lf = pl.scan_parquet(**scan_kwargs)
             return cls(
                 lf,
                 number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
@@ -657,19 +607,25 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
+        use_pyarrow: bool = False,
     ) -> FlowDataEngine:
         """Reads a Delta Lake table from cloud storage."""
         try:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
-            scan_kwargs = {"source": resource_path}
-            if read_settings.delta_version:
-                scan_kwargs["version"] = read_settings.delta_version
-            if storage_options:
-                scan_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                scan_kwargs["credential_provider"] = credential_provider
-            lf = pl.scan_delta(**scan_kwargs)
+            if use_pyarrow:
+                lf = scan_delta_from_gcs(
+                    resource_path, storage_options, delta_version=read_settings.delta_version
+                )
+            else:
+                scan_kwargs = {"source": normalize_delta_path(resource_path)}
+                if read_settings.delta_version:
+                    scan_kwargs["version"] = read_settings.delta_version
+                if storage_options:
+                    scan_kwargs["storage_options"] = storage_options
+                if credential_provider:
+                    scan_kwargs["credential_provider"] = credential_provider
+                lf = pl.scan_delta(**scan_kwargs)
 
             return cls(
                 lf,
@@ -688,9 +644,13 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
+        use_pyarrow: bool = False,
     ) -> FlowDataEngine:
         """Reads CSV file(s) from cloud storage."""
         try:
+            if use_pyarrow and read_settings.scan_mode == "directory":
+                return cls._read_directory_via_gcsfs(resource_path, storage_options, "csv", read_settings)
+
             scan_kwargs = {
                 "source": resource_path,
                 "has_header": read_settings.csv_has_header,
@@ -710,11 +670,15 @@ class FlowDataEngine:
             else:
                 schema = None
 
-            lf = pl.scan_csv(**scan_kwargs)
+            if use_pyarrow:
+                df = pl.read_csv(**scan_kwargs)
+                lf = df.lazy()
+            else:
+                lf = pl.scan_csv(**scan_kwargs)
 
             return cls(
                 lf,
-                number_of_records=6_666_666,  # Will be calculated lazily
+                number_of_records=6_666_666,
                 optimize_memory=True,
                 streamable=True,
                 schema=schema,
@@ -731,9 +695,13 @@ class FlowDataEngine:
         storage_options: dict[str, Any],
         credential_provider: Callable | None,
         is_directory: bool,
+        use_pyarrow: bool = False,
     ) -> FlowDataEngine:
         """Reads JSON file(s) from cloud storage."""
         try:
+            if use_pyarrow and is_directory:
+                return cls._read_directory_via_gcsfs(resource_path, storage_options, "json")
+
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
             scan_kwargs = {"source": resource_path}
@@ -743,7 +711,16 @@ class FlowDataEngine:
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
 
-            lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
+            if use_pyarrow:
+                # For GCS via gcsfs: use gcsfs.open for single-file JSON
+                import gcsfs
+                fs = gcsfs.GCSFileSystem(**storage_options)
+                path = resource_path.replace("gs://", "")
+                with fs.open(path) as f:
+                    df = pl.read_ndjson(f)
+                return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
+
+            lf = pl.scan_ndjson(**scan_kwargs)
 
             return cls(
                 lf,

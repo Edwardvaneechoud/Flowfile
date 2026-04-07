@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.8.1"
+version = "0.8.2"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -61,6 +61,9 @@ pl-fuzzy-frame-match = ">=0.6.0"
 pyyaml = "^6.0.3"
 xlsx2csv = "^0.8.6"
 confluent-kafka = "^2.6"
+azure-storage-blob = ">=12.19.0"
+google-cloud-storage = ">=2.14.0"
+gcsfs = ">=2024.2.0"
 
 
 [tool.poetry.scripts]
@@ -74,6 +77,10 @@ flowfile = "flowfile.__main__:main"
 flowfile_scheduler = "flowfile_scheduler.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
+start_azurite = "test_utils.azurite.commands:start_azurite"
+stop_azurite = "test_utils.azurite.commands:stop_azurite"
+start_gcs = "test_utils.gcs.commands:start_gcs"
+stop_gcs = "test_utils.gcs.commands:stop_gcs"
 start_redpanda = "test_utils.kafka.commands:start_redpanda"
 stop_redpanda = "test_utils.kafka.commands:stop_redpanda"
 flowfile-migrate = "tools.migrate.__main__:main"

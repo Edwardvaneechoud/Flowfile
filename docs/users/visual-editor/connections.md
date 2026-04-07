@@ -1,6 +1,10 @@
 # Connections
 
-Save and reuse database and cloud storage credentials across your flows.
+Save and reuse database, cloud storage, and Kafka credentials across your flows.
+
+All connection types and secrets are managed from a single **Connections** page, accessible
+via the **Connections** icon in the left sidebar. Use the tabs to switch between
+**Database**, **Cloud Storage**, **Kafka**, and **Secrets**.
 
 Connections store your credentials securely (passwords are encrypted via [Secrets](../secrets.md))
 so you can reference them by name in Database Reader, Database Writer, Cloud Storage Reader,
@@ -19,7 +23,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 
 ### Creating a Database Connection
 
-1. Click the **Database** icon in the left sidebar to open the Database Connection Manager
+1. Open the **Connections** page from the left sidebar and select the **Database** tab
 2. Click **Create New Connection**
 3. Fill in the connection fields:
 
@@ -36,12 +40,12 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 
 4. Click **Update Connection** to save
 
-<!-- PLACEHOLDER: Screenshot of the Database Connection Manager page -->
+<!-- should show the new tabbed Connections page with the Database tab active -->
 ![Database Connection Manager](../../assets/images/guides/connections/database-manager.png)
 
-*The Database Connection Manager showing saved connections*
+*The Connections page showing the Database tab with saved connections*
 
-<!-- PLACEHOLDER: Screenshot of the Create Database Connection form -->
+<!-- should show the Add Database Connection dialog opened from the Database tab -->
 ![Create Database Connection](../../assets/images/guides/connections/create-db-connection.png)
 
 *Creating a new PostgreSQL connection*
@@ -76,7 +80,7 @@ In a **Database Reader** or **Database Writer** node:
 
 ### Creating a Cloud Storage Connection
 
-1. Click the **Cloud** icon in the left sidebar
+1. Open the **Connections** page and select the **Cloud Storage** tab
 2. Click **Add Connection**
 3. Configure the connection:
 
@@ -93,16 +97,43 @@ In a **Database Reader** or **Database Writer** node:
 
 4. Click **Create Connection**
 
-<!-- PLACEHOLDER: Screenshot of Cloud Connection Manager -->
+<!-- should show the new tabbed Connections page with the Cloud Storage tab active -->
 ![Cloud Connection Manager](../../assets/images/guides/connections/cloud-manager.png)
 
-*The Cloud Storage Connection Manager*
+*The Connections page showing the Cloud Storage tab*
 
 ### Using Cloud Connections in Flows
 
 In a **Cloud Storage Reader** or **Cloud Storage Writer** node, select your saved connection from the dropdown.
 
 For a step-by-step tutorial, see [Manage Cloud Storage](tutorials/cloud-connections.md).
+
+---
+
+## Kafka Connections
+
+### Creating a Kafka Connection
+
+1. Open the **Connections** page and select the **Kafka** tab
+2. Click **Add Connection**
+3. Configure the connection:
+
+| Field | Description |
+|-------|-------------|
+| **Connection Name** | Unique identifier (e.g., `prod_kafka`) |
+| **Bootstrap Servers** | Comma-separated list of broker addresses (e.g., `broker1:9092,broker2:9092`) |
+| **Security Protocol** | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, or `SASL_SSL` |
+| **SASL Mechanism** | `PLAIN`, `SCRAM-SHA-256`, or `SCRAM-SHA-512` (when using SASL) |
+| **SASL Username / Password** | Credentials for SASL authentication |
+| **SSL CA Certificate** | CA certificate for SSL connections |
+| **SSL Certificate / Key** | Client certificate and key for mutual TLS |
+| **Schema Registry URL** | URL of the Confluent Schema Registry (optional) |
+
+4. Click **Create Connection**
+
+### Using Kafka Connections in Flows
+
+Select your saved Kafka connection when configuring Kafka Reader or Kafka Writer nodes.
 
 ---
 

@@ -72,6 +72,10 @@ class CloudStorageConnection(Base):
     azure_client_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     azure_sas_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
 
+    # Google Cloud Storage fields
+    gcs_service_account_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    gcs_project_id = Column(String, nullable=True)
+
     # Common fields
     endpoint_url = Column(String, nullable=True)
     extra_config = Column(Text, nullable=True)  # JSON field for additional config
