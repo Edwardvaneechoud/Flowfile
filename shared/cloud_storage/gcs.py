@@ -1,4 +1,4 @@
-"""Consolidated GCS cloud storage helpers.
+"""GCS-specific cloud storage helpers.
 
 Shared by flowfile_core and flowfile_worker for reading/writing to GCS
 via gcsfs/PyArrow when Polars' native support is insufficient (e.g.,
@@ -7,14 +7,15 @@ token + endpoint_url combo for GCS emulators).
 
 from __future__ import annotations
 
-from typing import Any, Literal
-from urllib.parse import urlparse
-from deltalake import DeltaTable, write_deltalake
-import polars as pl
 import os
 import tempfile
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 import gcsfs
+import polars as pl
+from deltalake import DeltaTable, write_deltalake
+
 
 def use_pyarrow_for_gcs(storage_type: str, endpoint_url: str | None) -> bool:
     """Whether to use PyArrow/gcsfs backend for GCS operations.
@@ -79,7 +80,6 @@ def get_lazy_frame_from_gcs_pyarrow_dataset(
     is_directory
         If True, glob/wildcard patterns are stripped to get the base directory path.
     """
-    import gcsfs
     import pyarrow.dataset as ds
 
     clean_path = (
@@ -117,7 +117,6 @@ def sink_to_gcs(
     **kwargs
         Additional arguments passed to the underlying writer.
     """
-    import gcsfs
     import pyarrow.parquet as pq
 
     fs = gcsfs.GCSFileSystem(**storage_options)
@@ -159,9 +158,7 @@ def write_delta_to_gcs(
     mode
         Write mode: 'overwrite' or 'append'.
     """
-
     clean_path = get_path_without_scheme(path)
-
 
     fs = gcsfs.GCSFileSystem(**storage_options)
 
@@ -200,8 +197,6 @@ def scan_delta_from_gcs(
     pl.LazyFrame
         A lazy frame backed by the Delta table's PyArrow dataset.
     """
-
-
     fs = gcsfs.GCSFileSystem(**storage_options)
     clean_path = get_path_without_scheme(resource_path)
 

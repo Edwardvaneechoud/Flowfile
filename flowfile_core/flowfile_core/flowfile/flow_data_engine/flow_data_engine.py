@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Generator, Iterable
-from copy import copy, deepcopy
+from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
 from typing import Any, Literal, TypeVar
@@ -68,9 +68,9 @@ from flowfile_core.utils.utils import ensure_similarity_dicts
 from shared.cloud_storage import (
     get_lazy_frame_from_gcs_pyarrow_dataset,
     scan_delta_from_gcs,
-    sink_to_gcs,
-    write_delta_to_gcs,
 )
+from shared.cloud_storage.utils import normalize_delta_path
+from shared.cloud_storage.writers import write_to_cloud
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -398,169 +398,23 @@ class FlowDataEngine:
         connection = settings.connection
         write_settings = settings.write_settings
         logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
-        if write_settings.write_mode == "append" and write_settings.file_format != "delta":
-            raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
 
-        # Dispatch to the correct writer based on file format
-        if write_settings.file_format == "parquet":
-            self._write_parquet_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
-            )
-        elif write_settings.file_format == "delta":
-            self._write_delta_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
-            )
-        elif write_settings.file_format == "csv":
-            self._write_csv_to_cloud(write_settings.resource_path, storage_options, credential_provider, write_settings,
-                                     use_pyarrow)
-        elif write_settings.file_format == "json":
-            self._write_json_to_cloud(
-                write_settings.resource_path, storage_options, credential_provider, write_settings, use_pyarrow
-            )
-        else:
-            raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
-
-        logger.info(f"Successfully wrote data to {write_settings.resource_path}")
-
-    def _write_parquet_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-            use_pyarrow: bool = False
-    ):
-        """(Internal) Writes the DataFrame to a Parquet file in cloud storage.
-
-        Uses `sink_parquet` for efficient streaming writes. Falls back to a
-        collect-then-write pattern if sinking fails.
-        """
-        try:
-            sink_kwargs = {
-                "path": resource_path,
-                "compression": write_settings.parquet_compression,
-            }
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-            try:
-                if use_pyarrow:
-                    sink_to_gcs(self.data_frame, path=resource_path, storage_options=storage_options, file_format="parquet")
-                else:
-                    self.data_frame.sink_parquet(**sink_kwargs)
-            except Exception as e:
-                logger.warning(f"Failed to sink the data, falling back to collecing and writing. \n {e}")
-                pl_df = self.collect()
-                sink_kwargs["file"] = sink_kwargs.pop("path")
-                pl_df.write_parquet(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}") from e
-
-    @staticmethod
-    def _normalize_delta_path(resource_path: str) -> str:
-        """Normalize az:// paths to abfss:// for delta-rs compatibility.
-
-        The delta-rs library (>= 1.1.0) does not handle the az:// scheme correctly,
-        so we convert to abfss:// which is functionally equivalent.
-        See: https://github.com/delta-io/delta-rs/issues/3716
-        """
-        if resource_path.startswith("az://"):
-            return "abfss://" + resource_path[len("az://"):]
-        return resource_path
-
-    def _write_delta_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-        use_pyarrow: bool = False,
-    ):
-        """(Internal) Writes the DataFrame to a Delta Lake table in cloud storage.
-
-        This operation requires collecting the data first, as `write_delta` operates
-        on an eager DataFrame.
-        """
-        if use_pyarrow:
-            write_delta_to_gcs(
-                self.data_frame, resource_path, storage_options, mode=write_settings.write_mode
-            )
-            return
-
-        sink_kwargs = {
-            "target": self._normalize_delta_path(resource_path),
-            "mode": write_settings.write_mode,
-        }
-        if storage_options:
-            sink_kwargs["storage_options"] = storage_options
-        if credential_provider:
-            sink_kwargs["credential_provider"] = credential_provider
-        self.data_frame.sink_delta(**sink_kwargs)
-
-    def _write_csv_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-        use_pyarrow: bool = False
-    ):
-        """(Internal) Writes the DataFrame to a CSV file in cloud storage.
-
-        Uses `sink_csv` for efficient, streaming writes of the data.
-        """
-        try:
-            sink_kwargs = {
-                "path": resource_path,
-                "separator": write_settings.csv_delimiter,
-            }
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-            if use_pyarrow:
-                sink_to_gcs(self.data_frame, resource_path, storage_options, file_format="csv",
-                            separator=write_settings.csv_delimiter)
-            else:
-                self.data_frame.sink_csv(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}") from e
-
-    def _write_json_to_cloud(
-        self,
-        resource_path: str,
-        storage_options: dict[str, Any],
-        credential_provider: Callable | None,
-        write_settings: cloud_storage_schemas.CloudStorageWriteSettings,
-            use_pyarrow: bool = False,
-    ):
-        """(Internal) Writes the DataFrame to a line-delimited JSON (NDJSON) file.
-
-        Uses `sink_ndjson` for efficient, streaming writes.
-        """
-        try:
-            sink_kwargs = {"path": resource_path}
-            if storage_options:
-                sink_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                sink_kwargs["credential_provider"] = credential_provider
-            if use_pyarrow:
-                sink_to_gcs(self.data_frame, resource_path, storage_options, file_format="json",)
-            else:
-                self.data_frame.sink_ndjson(**sink_kwargs)
-
-        except Exception as e:
-            logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
-            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}") from e
+        write_to_cloud(
+            df=self.data_frame,
+            resource_path=write_settings.resource_path,
+            storage_options=storage_options,
+            file_format=write_settings.file_format,
+            write_mode=write_settings.write_mode,
+            compression=write_settings.parquet_compression,
+            separator=write_settings.csv_delimiter,
+            credential_provider=credential_provider,
+            use_pyarrow=use_pyarrow,
+            logger=logger,
+        )
 
     @classmethod
     def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> FlowDataEngine:
@@ -763,7 +617,7 @@ class FlowDataEngine:
                     resource_path, storage_options, delta_version=read_settings.delta_version
                 )
             else:
-                scan_kwargs = {"source": cls._normalize_delta_path(resource_path)}
+                scan_kwargs = {"source": normalize_delta_path(resource_path)}
                 if read_settings.delta_version:
                     scan_kwargs["version"] = read_settings.delta_version
                 if storage_options:
