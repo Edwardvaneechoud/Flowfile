@@ -136,10 +136,24 @@ snowflake_imports = collect_submodules('snowflake.connector',
     ])
 )
 
+# Collect Alembic migration files for runtime access
+def get_alembic_datas():
+    \"\"\"Collect Alembic migration files for PyInstaller bundling.\"\"\"
+    import os as _os
+    alembic_dir = _os.path.join("flowfile_core", "flowfile_core", "alembic")
+    alembic_ini = _os.path.join("flowfile_core", "flowfile_core", "alembic.ini")
+    datas = []
+    if _os.path.isdir(alembic_dir):
+        datas.append((alembic_dir, _os.path.join("flowfile_core", "alembic")))
+    if _os.path.isfile(alembic_ini):
+        datas.append((alembic_ini, "flowfile_core"))
+    return datas
+
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
 connectorx_datas = get_connectorx_metadata()
+alembic_datas = get_alembic_datas()
 
 # Create runtime hook file
 with open('connectorx_hook.py', 'w') as f:
@@ -148,7 +162,7 @@ with open('connectorx_hook.py', 'w') as f:
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=[],
-    datas=numpy_datas + pyarrow_datas + connectorx_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas,
     hiddenimports={hidden_imports} + snowflake_imports + [
         'numpy',
         'numpy.core._dtype_ctypes',
