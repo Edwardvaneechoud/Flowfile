@@ -472,7 +472,13 @@ function formatCell(value: any): string {
 
 /* preview-table extends .styled-table */
 .preview-table {
+  table-layout: auto;
   white-space: nowrap;
+}
+
+.preview-table th,
+.preview-table td {
+  width: auto;
 }
 
 .col-header {

@@ -9,7 +9,11 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
-from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri, get_polars_type
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
+    construct_sql_uri,
+    get_polars_type,
+    get_sqlalchemy_uri,
+)
 from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 
@@ -314,7 +318,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
     def validate(self) -> None:
         try:
-            engine = create_engine(self.connection_string)
+            engine = create_engine(get_sqlalchemy_uri(self.connection_string))
             if self.query_mode == "table":
                 try:
                     if self.schema_name is not None:
@@ -374,7 +378,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         Returns:
             List of FlowfileColumn objects representing the columns in the SQL source
         """
-        engine = create_engine(self.connection_string)
+        engine = create_engine(get_sqlalchemy_uri(self.connection_string))
 
         if self.query_mode == "table":
             try:
@@ -481,29 +485,49 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         return self.schema
 
 
-def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
+def _resolve_connection_string(database_settings: DatabaseSettings, user_id: int) -> str:
+    """Resolve DatabaseSettings into a connection string, handling inline/reference mode and SQLite."""
     database_connection = database_settings.database_connection
+
     if database_settings.connection_mode == "inline":
         if database_connection is None:
             raise ValueError("Database connection is required in inline mode")
-        encrypted_secret = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
+        is_sqlite = database_connection.database_type == "sqlite"
+        if is_sqlite:
+            password = None
+        else:
+            encrypted_secret = get_encrypted_secret(
+                current_user_id=user_id, secret_name=database_connection.password_ref
+            )
+            if encrypted_secret is None:
+                raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
+            password = decrypt_secret(encrypted_secret)
     else:
         database_connection = get_local_database_connection(database_settings.database_connection_name, user_id)
         encrypted_secret = database_connection.password.get_secret_value()
-    if encrypted_secret is None:
-        raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
+        password = decrypt_secret(encrypted_secret)
 
-    sql_source = SqlSource(
-        connection_string=construct_sql_uri(
-            database_type=database_connection.database_type,
-            host=database_connection.host,
-            port=database_connection.port,
-            database=database_connection.database,
-            username=database_connection.username,
-            password=decrypt_secret(encrypted_secret),
-        ),
+    return construct_sql_uri(
+        database_type=database_connection.database_type,
+        host=database_connection.host,
+        port=database_connection.port,
+        database=database_connection.database,
+        username=database_connection.username,
+        password=password,
+    )
+
+
+def create_engine_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> Engine:
+    """Create a SQLAlchemy Engine from DatabaseSettings."""
+    connection_string = _resolve_connection_string(database_settings, user_id)
+    return create_engine(get_sqlalchemy_uri(connection_string))
+
+
+def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
+    connection_string = _resolve_connection_string(database_settings, user_id)
+    return SqlSource(
+        connection_string=connection_string,
         query=None if database_settings.query_mode == "table" else database_settings.query,
         table_name=database_settings.table_name,
         schema_name=database_settings.schema_name,
     )
-    return sql_source

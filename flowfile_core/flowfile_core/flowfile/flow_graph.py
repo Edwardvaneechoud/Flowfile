@@ -2208,13 +2208,21 @@ class FlowGraph:
         node_type = "database_writer"
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
         database_connection: input_schema.DatabaseConnection | input_schema.FullDatabaseConnection | None
-        if database_settings.connection_mode == "inline":
+        is_sqlite = (
+            database_settings.connection_mode == "inline"
+            and database_settings.database_connection is not None
+            and database_settings.database_connection.database_type == "sqlite"
+        )
+        if database_settings.connection_mode == "inline" and not is_sqlite:
             database_connection: input_schema.DatabaseConnection = database_settings.database_connection
             encrypted_password = get_encrypted_secret(
                 current_user_id=node_database_writer.user_id, secret_name=database_connection.password_ref
             )
             if encrypted_password is None:
                 raise HTTPException(status_code=400, detail="Password not found")
+        elif is_sqlite:
+            database_connection = database_settings.database_connection
+            encrypted_password = None
         else:
             database_reference_settings = get_local_database_connection(
                 database_settings.database_connection_name, node_database_writer.user_id
@@ -2271,13 +2279,21 @@ class FlowGraph:
         node_type = "database_reader"
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
         database_connection: input_schema.DatabaseConnection | input_schema.FullDatabaseConnection | None
-        if database_settings.connection_mode == "inline":
+        is_sqlite = (
+            database_settings.connection_mode == "inline"
+            and database_settings.database_connection is not None
+            and database_settings.database_connection.database_type == "sqlite"
+        )
+        if database_settings.connection_mode == "inline" and not is_sqlite:
             database_connection: input_schema.DatabaseConnection = database_settings.database_connection
             encrypted_password = get_encrypted_secret(
                 current_user_id=node_database_reader.user_id, secret_name=database_connection.password_ref
             )
             if encrypted_password is None:
                 raise HTTPException(status_code=400, detail="Password not found")
+        elif is_sqlite:
+            database_connection = database_settings.database_connection
+            encrypted_password = None
         else:
             database_reference_settings = get_local_database_connection(
                 database_settings.database_connection_name, node_database_reader.user_id
@@ -2319,7 +2335,7 @@ class FlowGraph:
                     port=database_connection.port,
                     database=database_connection.database,
                     username=database_connection.username,
-                    password=decrypt_secret(encrypted_password),
+                    password=decrypt_secret(encrypted_password) if encrypted_password else None,
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
@@ -2640,6 +2656,7 @@ class FlowGraph:
                 ]
 
             node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
         else:
             logger.warning("Removing schema")
             node._schema_callback = None

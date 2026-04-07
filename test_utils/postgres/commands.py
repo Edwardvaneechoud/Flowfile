@@ -62,7 +62,7 @@ def start_postgres():
     if fixtures.setup_postgres_samples(args.schema, args.port, args.user, args.password, args.db, args.image_tag):
         if fixtures.start_postgres_container(args.container_name, args.port, args.image_tag)[1]:
             fixtures.print_connection_info(
-                "localhost", args.port, args.db, args.user, args.password, args.container_name
+                "localhost", args.port, args.db, args.user, args.container_name
             )
             return 0
     return 1
