@@ -1524,6 +1524,40 @@ class FlowFrame:
         )
         return self._create_child_frame(new_node_id)
 
+    def write_database(
+        self,
+        connection_name: str,
+        table_name: str,
+        *,
+        schema_name: str | None = None,
+        if_exists: Literal["append", "replace", "fail"] = "append",
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Write the data frame to a database using a stored connection.
+
+        Args:
+            connection_name: Name of the stored database connection to use.
+            table_name: Name of the table to write to.
+            schema_name: Database schema name (e.g., 'public' for PostgreSQL).
+            if_exists: What to do if the table already exists.
+            description: Optional description for this operation.
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        from flowfile_frame.database.frame_helpers import add_write_to_database
+
+        new_node_id = add_write_to_database(
+            self.flow_graph,
+            depends_on_node_id=self.node_id,
+            connection_name=connection_name,
+            table_name=table_name,
+            schema_name=schema_name,
+            if_exists=if_exists,
+            description=description,
+        )
+        return self._create_child_frame(new_node_id)
+
     def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:
         """
         Start a group by operation.

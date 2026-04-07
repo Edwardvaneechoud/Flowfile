@@ -6,9 +6,10 @@ stored Flowfile connections.
 
 from __future__ import annotations
 
-import tempfile
+from typing import TYPE_CHECKING
 
-import polars as pl
+if TYPE_CHECKING:
+    from flowfile_frame.flow_frame import FlowFrame
 
 
 def get_current_user_id() -> int:
@@ -20,21 +21,20 @@ def get_current_user_id() -> int:
     return 1
 
 
-def read_kafka(
-    connection_name: str,
+def add_kafka_source(
+    flow_graph,
     *,
+    connection_name: str,
     topic_name: str,
     max_messages: int = 100_000,
     start_offset: str = "latest",
     poll_timeout_seconds: float = 30.0,
     value_format: str = "json",
-) -> pl.LazyFrame:
-    """Read messages from a Kafka topic using a named Flowfile connection.
-
-    Resolves the Kafka connection by name, consumes messages from the
-    specified topic, and returns the data as a LazyFrame.
+) -> int:
+    """Add a Kafka source node to the flow graph.
 
     Args:
+        flow_graph: The flow graph to add the node to.
         connection_name: Name of the stored Kafka connection to use.
         topic_name: Kafka topic to consume from.
         max_messages: Maximum number of messages to consume.
@@ -43,51 +43,80 @@ def read_kafka(
         value_format: Message value format ('json').
 
     Returns:
-        pl.LazyFrame: The consumed messages as a LazyFrame.
+        int: The node ID of the created Kafka source node.
+    """
+    from flowfile_core.schemas.input_schema import KafkaSourceSettings, NodeKafkaSource
+    from flowfile_frame.utils import generate_node_id
+
+    node_id = generate_node_id()
+    flow_id = flow_graph.flow_id
+
+    settings = NodeKafkaSource(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=get_current_user_id(),
+        kafka_settings=KafkaSourceSettings(
+            kafka_connection_name=connection_name,
+            topic_name=topic_name,
+            max_messages=max_messages,
+            start_offset=start_offset,
+            poll_timeout_seconds=poll_timeout_seconds,
+            value_format=value_format,
+        ),
+    )
+
+    flow_graph.add_kafka_source(settings)
+    return node_id
+
+
+def read_kafka(
+    connection_name: str,
+    *,
+    topic_name: str,
+    max_messages: int = 100_000,
+    start_offset: str = "latest",
+    poll_timeout_seconds: float = 30.0,
+    value_format: str = "json",
+    flow_graph=None,
+) -> FlowFrame:
+    """Read messages from a Kafka topic using a named Flowfile connection.
+
+    Resolves the Kafka connection by name, creates a Kafka source node
+    in the flow graph, and returns a FlowFrame.
+
+    Args:
+        connection_name: Name of the stored Kafka connection to use.
+        topic_name: Kafka topic to consume from.
+        max_messages: Maximum number of messages to consume.
+        start_offset: Where to start consuming ('earliest' or 'latest').
+        poll_timeout_seconds: How long to poll for messages.
+        value_format: Message value format ('json').
+        flow_graph: Optional existing FlowGraph to add the node to.
+
+    Returns:
+        FlowFrame: A FlowFrame backed by a Kafka source node.
 
     Raises:
         ValueError: If the connection is not found.
     """
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.kafka.connection_manager import build_consumer_config, get_kafka_connection_by_name
-    from flowfile_core.secret_manager.secret_manager import decrypt_secret
-    from shared.kafka.consumer import read_kafka_source
-    from shared.kafka.models import KafkaReadSettings
+    from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.utils import create_flow_graph
 
-    user_id = get_current_user_id()
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
 
-    with get_db_context() as db:
-        db_conn = get_kafka_connection_by_name(db, connection_name, user_id)
-        if db_conn is None:
-            raise ValueError(f"Kafka connection '{connection_name}' not found")
-        consumer_config = build_consumer_config(db, db_conn, user_id)
-
-    kafka_read_settings = KafkaReadSettings.from_consumer_config(
-        consumer_config,
-        topic=topic_name,
-        value_format=value_format,
-        group_id=f"flowfile-frame-{connection_name}-{topic_name}",
-        start_offset=start_offset,
+    node_id = add_kafka_source(
+        flow_graph,
+        connection_name=connection_name,
+        topic_name=topic_name,
         max_messages=max_messages,
+        start_offset=start_offset,
         poll_timeout_seconds=poll_timeout_seconds,
+        value_format=value_format,
     )
 
-    def _decrypt_fn(encrypted: str) -> str:
-        return decrypt_secret(encrypted).get_secret_value()
-
-    # Consume messages with spill-to-IPC for memory efficiency
-    fd, spill_file = tempfile.mkstemp(suffix=".arrow", prefix="kafka_")
-    import os
-
-    os.close(fd)
-
-    result, _kafka_result = read_kafka_source(
-        kafka_read_settings,
-        commit=True,
-        decrypt_fn=_decrypt_fn,
-        spill_path=spill_file,
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id,
     )
-
-    if isinstance(result, pl.LazyFrame):
-        return result
-    return result.lazy()

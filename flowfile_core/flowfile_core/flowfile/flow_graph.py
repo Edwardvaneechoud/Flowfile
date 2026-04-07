@@ -1937,7 +1937,7 @@ class FlowGraph:
         if (
             input_nodes is not None
             or function.__name__ in ("placeholder", "analysis_preparation")
-            or node_type in ("cloud_storage_reader", "polars_lazy_frame", "input_data")
+            or node_type in ("cloud_storage_reader", "catalog_reader", "polars_lazy_frame", "input_data")
         ):
             if not existing_node:
                 node = FlowNode(

@@ -6,9 +6,12 @@ catalog, similar to how database/frame_helpers.py handles database operations.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from flowfile_frame.flow_frame import FlowFrame
 
 
 def get_current_user_id() -> int:
@@ -73,49 +76,49 @@ def read_catalog_table(
     *,
     namespace_id: int | None = None,
     delta_version: int | None = None,
-) -> pl.LazyFrame:
+    flow_graph=None,
+) -> FlowFrame:
     """Read a table from the Flowfile catalog.
 
     Resolves the table by name (and optionally namespace) via the catalog
-    service, then reads the underlying Delta or Parquet file directly.
+    service, then creates a catalog reader node in the flow graph.
 
     Args:
         table_name: Name of the catalog table to read.
         namespace_id: Optional namespace ID to scope the lookup.
         delta_version: Optional Delta version to read (for time-travel queries).
+        flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
-        pl.LazyFrame: The data read from the catalog table.
+        FlowFrame: A FlowFrame backed by a catalog reader node.
 
     Raises:
         ValueError: If the table cannot be found in the catalog.
     """
-    from flowfile_core.catalog.delta_utils import is_delta_table
-    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-    from flowfile_core.catalog.service import CatalogService
-    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.schemas import input_schema
+    from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.utils import create_flow_graph, generate_node_id
 
-    with get_db_context() as db:
-        repo = SQLAlchemyCatalogRepository(db)
-        svc = CatalogService(repo)
-        file_path = svc.resolve_table_file_path(
-            table_name=table_name,
-            namespace_id=namespace_id,
-        )
+    node_id = generate_node_id()
 
-    if not file_path:
-        raise ValueError(
-            f"Catalog table '{table_name}' not found"
-            + (f" in namespace {namespace_id}" if namespace_id is not None else "")
-        )
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
 
-    if is_delta_table(file_path):
-        scan_kwargs = {}
-        if delta_version is not None:
-            scan_kwargs["version"] = delta_version
-        return pl.scan_delta(file_path, **scan_kwargs)
-
-    return pl.scan_parquet(file_path)
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCatalogReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=get_current_user_id(),
+        catalog_table_name=table_name,
+        catalog_namespace_id=namespace_id,
+        delta_version=delta_version,
+    )
+    flow_graph.add_catalog_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id,
+    )
 
 
 def write_catalog_table(
@@ -146,74 +149,16 @@ def write_catalog_table(
     Raises:
         ValueError: If merge_keys are required but not provided.
     """
-    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-    from flowfile_core.catalog.service import CatalogService
-    from flowfile_core.database.connection import get_db_context
-    from shared.delta_utils import get_delta_size_bytes, merge_into_delta, write_delta
-    from shared.storage_config import storage
+    from flowfile_frame.flow_frame import FlowFrame
 
-    if write_mode in ("upsert", "update", "delete") and not merge_keys:
-        raise ValueError(f"merge_keys are required for write_mode='{write_mode}'")
+    if isinstance(df, pl.DataFrame):
+        df = df.lazy()
 
-    # Collect LazyFrame if needed
-    if isinstance(df, pl.LazyFrame):
-        collected = df.collect()
-    else:
-        collected = df
-
-    catalog_dir = storage.catalog_tables_directory
-    catalog_dir.mkdir(parents=True, exist_ok=True)
-
-    # Resolve destination path and check for existing table
-    with get_db_context() as db:
-        repo = SQLAlchemyCatalogRepository(db)
-        svc = CatalogService(repo)
-        existing, dest_path, delta_mode = svc.resolve_write_destination(
-            table_name=table_name,
-            namespace_id=namespace_id,
-            write_mode=write_mode,
-            catalog_dir=catalog_dir,
-        )
-
-    # Write the data
-    dest = str(dest_path)
-    if delta_mode in ("upsert", "update", "delete"):
-        wrote = merge_into_delta(collected, dest, merge_mode=delta_mode, merge_keys=merge_keys)
-    else:
-        wrote = write_delta(collected.lazy(), dest, mode=delta_mode)
-
-    if not wrote:
-        return
-
-    # Compute metadata
-    schema_list = [{"name": col, "dtype": str(collected.schema[col])} for col in collected.columns]
-    meta_kwargs = {
-        "schema": schema_list,
-        "row_count": len(collected),
-        "column_count": len(collected.columns),
-        "size_bytes": get_delta_size_bytes(dest_path),
-    }
-
-    # Register / update in catalog
-    user_id = get_current_user_id()
-    with get_db_context() as db:
-        repo = SQLAlchemyCatalogRepository(db)
-        svc = CatalogService(repo)
-        if existing is not None:
-            svc.overwrite_table_data(
-                table_id=existing.id,
-                table_path=dest,
-                description=description,
-                storage_format="delta",
-                **meta_kwargs,
-            )
-        else:
-            svc.register_table_from_data(
-                name=table_name,
-                table_path=dest,
-                owner_id=user_id,
-                namespace_id=namespace_id,
-                description=description,
-                storage_format="delta",
-                **meta_kwargs,
-            )
+    frame = FlowFrame(data=df)
+    frame.write_catalog_table(
+        table_name=table_name,
+        namespace_id=namespace_id,
+        write_mode=write_mode,
+        merge_keys=merge_keys,
+        description=description,
+    )
