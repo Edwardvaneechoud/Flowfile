@@ -50,7 +50,10 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+    create_engine_from_db_settings,
+    create_sql_source_from_db_settings,
+)
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
@@ -1295,5 +1298,60 @@ async def validate_db_settings(
         sql_source = create_sql_source_from_db_settings(database_settings, user_id=current_user.id)
         sql_source.validate()
         return {"message": "Query settings are valid"}
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.post("/db_schemas", tags=["db_connections"], response_model=list[str])
+async def get_db_schemas(
+    database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
+) -> list[str]:
+    """Returns available schema names for the given database connection."""
+    try:
+        engine = create_engine_from_db_settings(database_settings, user_id=current_user.id)
+        from sqlalchemy import inspect as sa_inspect
+
+        inspector = sa_inspect(engine)
+        schemas = sorted(inspector.get_schema_names())
+        engine.dispose()
+        return schemas
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.post("/db_tables", tags=["db_connections"], response_model=list[str])
+async def get_db_tables(
+    database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
+) -> list[str]:
+    """Returns available table names for the given database connection and optional schema.
+
+    When schema_name is provided, returns plain table names.
+    When schema_name is not provided, returns schema-qualified names (schema.table) across all
+    accessible schemas (skipping any that the user cannot read).
+    """
+    try:
+        engine = create_engine_from_db_settings(database_settings, user_id=current_user.id)
+        from sqlalchemy import inspect as sa_inspect
+
+        inspector = sa_inspect(engine)
+        schema = database_settings.schema_name if database_settings.schema_name else None
+
+        if schema:
+            tables = sorted(inspector.get_table_names(schema=schema))
+        else:
+            tables = []
+            for s in inspector.get_schema_names():
+                if s == "information_schema":
+                    continue
+                try:
+                    schema_tables = inspector.get_table_names(schema=s)
+                except Exception:
+                    # Skip schemas we don't have access to (e.g. performance_schema)
+                    continue
+                for t in schema_tables:
+                    tables.append(f"{s}.{t}")
+            tables.sort()
+        engine.dispose()
+        return tables
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

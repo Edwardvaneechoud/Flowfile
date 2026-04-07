@@ -2656,6 +2656,7 @@ class FlowGraph:
                 ]
 
             node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
         else:
             logger.warning("Removing schema")
             node._schema_callback = None
