@@ -237,7 +237,6 @@ def test_write_to_adls_with_access_key(
         connection=adls_access_key_connection,
         write_settings=test_case.write_settings,
     )
-    breakpoint()
     output_file.to_cloud_storage_obj(write_settings_internal)
 
     read_settings = CloudStorageReadSettingsInternal(
