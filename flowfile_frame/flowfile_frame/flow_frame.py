@@ -1490,6 +1490,40 @@ class FlowFrame:
         )
         return self._create_child_frame(new_node_id)
 
+    def write_catalog_table(
+        self,
+        table_name: str,
+        *,
+        namespace_id: int | None = None,
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        merge_keys: list[str] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Write the data frame to the Flowfile catalog.
+
+        Args:
+            table_name: Name of the catalog table to write to.
+            namespace_id: Optional namespace ID for the table.
+            write_mode: How to handle existing data.
+            merge_keys: Column names for merge operations (required for upsert/update/delete).
+            description: Optional description for this operation.
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        from flowfile_frame.catalog import add_write_to_catalog
+
+        new_node_id = add_write_to_catalog(
+            self.flow_graph,
+            depends_on_node_id=self.node_id,
+            table_name=table_name,
+            namespace_id=namespace_id,
+            write_mode=write_mode,
+            merge_keys=merge_keys,
+            description=description,
+        )
+        return self._create_child_frame(new_node_id)
+
     def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:
         """
         Start a group by operation.

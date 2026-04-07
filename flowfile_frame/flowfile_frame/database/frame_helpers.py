@@ -209,8 +209,6 @@ def write_database(
     Raises:
         ValueError: If the connection is not found.
     """
-    from sqlalchemy import create_engine
-
     from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
     from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri
     from flowfile_core.secret_manager.secret_manager import decrypt_secret
@@ -236,14 +234,11 @@ def write_database(
         url=connection.url,
     )
 
-    # Write to database using pandas (polars doesn't have direct SQL write support)
-    engine = create_engine(connection_string)
-    pandas_df = df.to_pandas()
-
-    pandas_df.to_sql(
-        name=table_name,
-        con=engine,
-        schema=schema_name,
-        if_exists=if_exists,
-        index=False,
+    # Write to database using Polars native write_database
+    full_table_name = f"{schema_name}.{table_name}" if schema_name else table_name
+    df.write_database(
+        table_name=full_table_name,
+        connection=connection_string,
+        if_table_exists=if_exists,
+        engine="sqlalchemy",
     )

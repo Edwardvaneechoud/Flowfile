@@ -174,38 +174,27 @@ class FlowGraphToPolarsConverter:
     def _handle_cloud_storage_reader(
         self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
     ):
-        cloud_read_settings = settings.cloud_storage_settings
+        cs = settings.cloud_storage_settings
         self.imports.add("import flowfile as ff")
-        if cloud_read_settings.file_format == "csv":
-            self._add_code(f"{var_name} = ff.scan_csv_from_cloud_storage(")
-            self._add_code(f'    "{cloud_read_settings.resource_path}",')
-            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
-            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
-            self._add_code(f'    delimiter="{cloud_read_settings.csv_delimiter}",')
-            self._add_code(f"    has_header={cloud_read_settings.csv_has_header},")
-            self._add_code(f'    encoding="{cloud_read_settings.csv_encoding}",')
-
-        elif cloud_read_settings.file_format == "parquet":
-            self._add_code(f"{var_name} = ff.scan_parquet_from_cloud_storage(")
-            self._add_code(f'    "{cloud_read_settings.resource_path}",')
-            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
-            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
-
-        elif cloud_read_settings.file_format == "json":
-            self._add_code(f"{var_name} = ff.scan_json_from_cloud_storage(")
-            self._add_code(f'    "{cloud_read_settings.resource_path}",')
-            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
-            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
-
-        elif cloud_read_settings.file_format == "delta":
-            self._add_code(f"{var_name} = ff.scan_delta(")
-            self._add_code(f'    "{cloud_read_settings.resource_path}",')
-            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
-            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
-            self._add_code(f"    version_id={cloud_read_settings.delta_version},")
-        else:
-            return
-        self._add_code(").data")
+        self._add_code(f"{var_name} = ff.read_from_cloud_storage(")
+        self._add_code(f'    "{cs.resource_path}",')
+        self._add_code(f'    file_format="{cs.file_format}",')
+        if cs.connection_name:
+            self._add_code(f'    connection_name="{cs.connection_name}",')
+        if cs.scan_mode and cs.scan_mode != "single_file":
+            self._add_code(f'    scan_mode="{cs.scan_mode}",')
+        # CSV-specific (only when non-default)
+        if cs.file_format == "csv":
+            if cs.csv_delimiter != ";":
+                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
+            if not cs.csv_has_header:
+                self._add_code(f"    has_header={cs.csv_has_header},")
+            if cs.csv_encoding != "utf8":
+                self._add_code(f'    encoding="{cs.csv_encoding}",')
+        # Delta-specific
+        if cs.file_format == "delta" and cs.delta_version is not None:
+            self._add_code(f"    delta_version={cs.delta_version},")
+        self._add_code(")")
 
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle file reading nodes."""
@@ -1024,40 +1013,28 @@ class FlowGraphToPolarsConverter:
     ) -> None:
         """Handle cloud storage writer nodes."""
         input_df = input_vars.get("main", "df")
-        # def write_csv_to_cloud_storage(
-        #     self, path: str, connection_name: typing.Optional[str] = None,
-        #     delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8',
-        #     description: Optional[str] = None
-        # ) -> 'FlowFrame': ...
-
-        output_settings = settings.cloud_storage_settings
+        cs = settings.cloud_storage_settings
         self.imports.add("import flowfile as ff")
-        self._add_code(f"(ff.FlowFrame({input_df})")
-        if output_settings.file_format == "csv":
-            self._add_code("    .write_csv_to_cloud_storage(")
-            self._add_code(f'        path="{output_settings.resource_path}",')
-            self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        delimiter="{output_settings.csv_delimiter}",')
-            self._add_code(f'        encoding="{output_settings.csv_encoding}",')
-            self._add_code(f'        description="{settings.description}"')
-        elif output_settings.file_format == "parquet":
-            self._add_code("    .write_parquet_to_cloud_storage(")
-            self._add_code(f'        path="{output_settings.resource_path}",')
-            self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        description="{settings.description}"')
-        elif output_settings.file_format == "json":
-            self._add_code("    .write_json_to_cloud_storage(")
-            self._add_code(f'        path="{output_settings.resource_path}",')
-            self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        description="{settings.description}"')
-        elif output_settings.file_format == "delta":
-            self._add_code("    .write_delta(")
-            self._add_code(f'        path="{output_settings.resource_path}",')
-            self._add_code(f'        write_mode="{output_settings.write_mode}",')
-            self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        description="{settings.description}"')
-        self._add_code("    )")
+        self._add_code(f"ff.write_to_cloud_storage(")
+        self._add_code(f"    {input_df},")
+        self._add_code(f'    "{cs.resource_path}",')
+        self._add_code(f'    file_format="{cs.file_format}",')
+        if cs.connection_name:
+            self._add_code(f'    connection_name="{cs.connection_name}",')
+        # CSV-specific (only when non-default)
+        if cs.file_format == "csv":
+            if cs.csv_delimiter != ";":
+                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
+            if cs.csv_encoding != "utf8":
+                self._add_code(f'    encoding="{cs.csv_encoding}",')
+        # Parquet-specific
+        if cs.file_format == "parquet" and cs.parquet_compression != "snappy":
+            self._add_code(f'    compression="{cs.parquet_compression}",')
+        # Delta-specific
+        if cs.file_format == "delta" and cs.write_mode != "overwrite":
+            self._add_code(f'    write_mode="{cs.write_mode}",')
         self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}  # pass-through after write")
 
     def _handle_output(self, settings: input_schema.NodeOutput, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle output nodes."""
@@ -1246,6 +1223,103 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    if_exists="{db_settings.if_exists}",')
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
+        self._add_code("")
+
+    def _handle_catalog_reader(
+        self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle catalog_reader nodes by generating code to read from the Flowfile catalog."""
+        table_name = settings.catalog_table_name
+        table_id = settings.catalog_table_id
+
+        if not table_name and not table_id:
+            self.unsupported_nodes.append(
+                (settings.node_id, "catalog_reader", "Catalog Reader node has no table name or ID configured")
+            )
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        label = table_name or f"id={table_id}"
+        self._add_code(f"# Read from catalog table: {label}")
+        self._add_code(f"{var_name} = ff.read_catalog_table(")
+        if table_name:
+            self._add_code(f'    "{table_name}",')
+        if settings.catalog_namespace_id is not None:
+            self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
+        if settings.delta_version is not None:
+            self._add_code(f"    delta_version={settings.delta_version},")
+        self._add_code(")")
+        self._add_code("")
+
+    def _handle_catalog_writer(
+        self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle catalog_writer nodes by generating code to write to the Flowfile catalog."""
+        ws = settings.catalog_write_settings
+        input_df = input_vars.get("main", "df")
+
+        if not ws.table_name:
+            self.unsupported_nodes.append(
+                (settings.node_id, "catalog_writer", "Catalog Writer node has no table name configured")
+            )
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        self._add_code(f"# Write to catalog table: {ws.table_name}")
+        self._add_code("ff.write_catalog_table(")
+        self._add_code(f"    {input_df}.collect(),")
+        self._add_code(f'    "{ws.table_name}",')
+        if ws.namespace_id is not None:
+            self._add_code(f"    namespace_id={ws.namespace_id},")
+        self._add_code(f'    write_mode="{ws.write_mode}",')
+        if ws.merge_keys:
+            self._add_code(f"    merge_keys={ws.merge_keys},")
+        if ws.description:
+            self._add_code(f'    description="{ws.description}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
+        self._add_code("")
+
+    def _handle_kafka_source(
+        self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle kafka_source nodes by generating code to read from a Kafka topic."""
+        ks = settings.kafka_settings
+
+        if not ks.kafka_connection_name and not ks.kafka_connection_id:
+            self.unsupported_nodes.append(
+                (settings.node_id, "kafka_source", "Kafka Source node has no connection configured")
+            )
+            return
+
+        if not ks.kafka_connection_name:
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "kafka_source",
+                    "Kafka Source node uses a connection ID instead of a name. "
+                    "Please use a named connection for code export.",
+                )
+            )
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        self._add_code(f"# Read from Kafka topic: {ks.topic_name}")
+        self._add_code(f"{var_name} = ff.read_kafka(")
+        self._add_code(f'    "{ks.kafka_connection_name}",')
+        self._add_code(f'    topic_name="{ks.topic_name}",')
+        if ks.max_messages != 100_000:
+            self._add_code(f"    max_messages={ks.max_messages},")
+        if ks.start_offset != "latest":
+            self._add_code(f'    start_offset="{ks.start_offset}",')
+        if ks.poll_timeout_seconds != 30.0:
+            self._add_code(f"    poll_timeout_seconds={ks.poll_timeout_seconds},")
+        if ks.value_format != "json":
+            self._add_code(f'    value_format="{ks.value_format}",')
+        self._add_code(")")
         self._add_code("")
 
     def _handle_external_source(

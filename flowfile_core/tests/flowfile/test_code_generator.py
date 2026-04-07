@@ -2572,7 +2572,6 @@ def test_cloud_storage_reader():
 
     flow.add_record_count(record_count_node)
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
-
     code = export_flow_to_polars(flow)
     result_df = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().data_frame
@@ -4238,6 +4237,643 @@ def test_union_relaxed_vs_strict():
 
     code = export_flow_to_polars(flow)
     verify_code_contains(code, "how='diagonal'")
+
+
+# ========================================
+# Catalog Reader Tests
+# ========================================
+
+
+def test_catalog_reader_by_table_name():
+    """Test catalog reader code generation with a table name."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=1,
+        catalog_table_name="my_table",
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.read_catalog_table(", '"my_table"')
+    assert "import flowfile as ff" in converter.imports
+
+
+def test_catalog_reader_with_namespace_and_version():
+    """Test catalog reader code generation with namespace and delta version."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=1,
+        catalog_table_name="versioned_table",
+        catalog_namespace_id=5,
+        delta_version=3,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output, "ff.read_catalog_table(", '"versioned_table"', "namespace_id=5", "delta_version=3"
+    )
+
+
+def test_catalog_reader_missing_table_name_adds_to_unsupported():
+    """Test that catalog reader with no table name or ID is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=1,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    assert len(converter.unsupported_nodes) == 1
+    assert "no table name" in converter.unsupported_nodes[0][2].lower()
+
+
+# ========================================
+# Catalog Writer Tests
+# ========================================
+
+
+def test_catalog_writer_overwrite_mode():
+    """Test catalog writer code generation with overwrite mode."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="output_table",
+            write_mode="overwrite",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output, "ff.write_catalog_table(", "df_1.collect()", '"output_table"',
+        'write_mode="overwrite"',
+    )
+    assert "import flowfile as ff" in converter.imports
+
+
+def test_catalog_writer_upsert_with_merge_keys():
+    """Test catalog writer code generation with upsert mode and merge keys."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="target_table",
+            namespace_id=3,
+            write_mode="upsert",
+            merge_keys=["id", "name"],
+            description="My upsert table",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=3",
+        'write_mode="upsert"', "merge_keys=[", 'description="My upsert table"',
+    )
+
+
+def test_catalog_writer_missing_table_name_adds_to_unsupported():
+    """Test that catalog writer with no table name is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    assert len(converter.unsupported_nodes) == 1
+    assert "no table name" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_catalog_writer_pass_through():
+    """Test that catalog writer generates pass-through assignment."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="output_table",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "df_2 = df_1")
+
+
+# ========================================
+# Catalog Code Generation Integration Tests
+# ========================================
+
+
+def _catalog_cleanup():
+    """Remove all catalog rows so tests start clean."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, CatalogTable, CatalogTableReadLink, FlowRegistration
+
+    with get_db_context() as db:
+        db.query(CatalogTableReadLink).delete()
+        db.query(CatalogTable).delete()
+        db.query(FlowRegistration).delete()
+        db.query(CatalogNamespace).delete()
+        db.commit()
+
+
+def _create_catalog_namespace() -> int:
+    """Create a namespace hierarchy and return the schema-level id."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace
+
+    with get_db_context() as db:
+        cat = CatalogNamespace(name="CodeGenCat", level=0, owner_id=1)
+        db.add(cat)
+        db.commit()
+        db.refresh(cat)
+        schema = CatalogNamespace(name="CodeGenSch", level=1, parent_id=cat.id, owner_id=1)
+        db.add(schema)
+        db.commit()
+        db.refresh(schema)
+        return schema.id
+
+
+def _register_catalog_table(name: str, ns_id: int, data: list[dict]) -> int:
+    """Write data as a parquet file, register it in the catalog, return the table id."""
+    import tempfile
+
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database.connection import get_db_context
+
+    df = pl.DataFrame(data)
+    tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+    df.write_parquet(tmp.name)
+    tmp.close()
+
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        table_out = svc.register_table(name=name, file_path=tmp.name, owner_id=1, namespace_id=ns_id)
+    return table_out.id
+
+
+def test_catalog_reader_code_executes():
+    """Integration test: register a catalog table, export reader flow to code, execute it.
+
+    Follows the pattern from test_catalog_flow_graph.py TestCatalogReader.
+    """
+    _catalog_cleanup()
+    ns_id = _create_catalog_namespace()
+    _register_catalog_table("code_gen_table", ns_id, [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}])
+
+    # Build flow with catalog_reader (table exists, so path resolves)
+    flow = create_basic_flow()
+    promise = input_schema.NodePromise(flow_id=flow.flow_id, node_id=1, node_type="catalog_reader")
+    flow.add_node_promise(promise)
+    reader = input_schema.NodeCatalogReader(
+        flow_id=flow.flow_id,
+        node_id=1,
+        catalog_table_name="code_gen_table",
+        catalog_namespace_id=ns_id,
+    )
+    flow.add_catalog_reader(reader)
+
+    # Export and execute the generated code
+    code = export_flow_to_polars(flow)
+    result = get_result_from_generated_code(code)
+    if hasattr(result, "collect"):
+        result = result.collect()
+    assert len(result) == 2
+    assert set(result.columns) == {"name", "age"}
+
+    _catalog_cleanup()
+
+
+def test_catalog_writer_code_executes():
+    """Integration test: export manual_input -> catalog_writer to code, execute it, verify catalog."""
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database.connection import get_db_context
+
+    _catalog_cleanup()
+    ns_id = _create_catalog_namespace()
+
+    # Build flow: manual_input -> catalog_writer
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+
+    promise = input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="catalog_writer")
+    flow.add_node_promise(promise)
+    writer = input_schema.NodeCatalogWriter(
+        flow_id=flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="written_from_code",
+            namespace_id=ns_id,
+            write_mode="overwrite",
+        ),
+        user_id=1,
+    )
+    flow.add_catalog_writer(writer)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Export and execute the generated code
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+
+    # Verify the table was written to the catalog
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        tables = svc.list_tables(namespace_id=ns_id)
+        assert len(tables) == 1
+        assert tables[0].name == "written_from_code"
+        assert tables[0].row_count == 5
+
+    _catalog_cleanup()
+
+
+def test_catalog_round_trip_code_generation():
+    """Integration test: write to catalog via generated code, then read back via generated code."""
+    _catalog_cleanup()
+    ns_id = _create_catalog_namespace()
+
+    # Step 1: Write data to catalog via generated code
+    write_flow = create_basic_flow()
+    create_sample_dataframe_node(write_flow, node_id=1)
+
+    promise = input_schema.NodePromise(flow_id=write_flow.flow_id, node_id=2, node_type="catalog_writer")
+    write_flow.add_node_promise(promise)
+    writer = input_schema.NodeCatalogWriter(
+        flow_id=write_flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="roundtrip_code_table",
+            namespace_id=ns_id,
+            write_mode="overwrite",
+        ),
+        user_id=1,
+    )
+    write_flow.add_catalog_writer(writer)
+    add_connection(write_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    write_code = export_flow_to_polars(write_flow)
+    verify_if_execute(write_code)
+
+    # Step 2: Read it back via generated code
+    read_flow = create_basic_flow(flow_id=2, name="read_flow")
+    read_promise = input_schema.NodePromise(flow_id=read_flow.flow_id, node_id=1, node_type="catalog_reader")
+    read_flow.add_node_promise(read_promise)
+    reader = input_schema.NodeCatalogReader(
+        flow_id=read_flow.flow_id,
+        node_id=1,
+        catalog_table_name="roundtrip_code_table",
+        catalog_namespace_id=ns_id,
+    )
+    read_flow.add_catalog_reader(reader)
+
+    read_code = export_flow_to_polars(read_flow)
+    result = get_result_from_generated_code(read_code)
+    if hasattr(result, "collect"):
+        result = result.collect()
+    assert len(result) == 5
+    assert set(result.columns) == {"id", "name", "age", "city", "salary"}
+
+    _catalog_cleanup()
+
+
+def test_kafka_source_with_connection_name():
+    """Test kafka source code generation with a named connection."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    kafka_source = input_schema.NodeKafkaSource(
+        flow_id=1,
+        node_id=1,
+        kafka_settings=input_schema.KafkaSourceSettings(
+            kafka_connection_name="my_kafka",
+            topic_name="events",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_kafka_source(kafka_source, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.read_kafka(", '"my_kafka"', 'topic_name="events"')
+    assert "import flowfile as ff" in converter.imports
+
+
+def test_kafka_source_with_all_parameters():
+    """Test kafka source code generation with non-default parameters."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    kafka_source = input_schema.NodeKafkaSource(
+        flow_id=1,
+        node_id=1,
+        kafka_settings=input_schema.KafkaSourceSettings(
+            kafka_connection_name="my_kafka",
+            topic_name="events",
+            max_messages=50_000,
+            start_offset="earliest",
+            poll_timeout_seconds=60.0,
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_kafka_source(kafka_source, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.read_kafka(", "max_messages=50000", 'start_offset="earliest"', "poll_timeout_seconds=60.0")
+
+
+def test_kafka_source_default_parameters_omitted():
+    """Test that kafka source omits parameters with default values."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    kafka_source = input_schema.NodeKafkaSource(
+        flow_id=1,
+        node_id=1,
+        kafka_settings=input_schema.KafkaSourceSettings(
+            kafka_connection_name="my_kafka",
+            topic_name="events",
+            max_messages=100_000,
+            start_offset="latest",
+            poll_timeout_seconds=30.0,
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_kafka_source(kafka_source, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    assert "max_messages" not in code_output
+    assert "start_offset" not in code_output
+    assert "poll_timeout_seconds" not in code_output
+
+
+def test_kafka_source_missing_connection_adds_to_unsupported():
+    """Test that kafka source with no connection is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    kafka_source = input_schema.NodeKafkaSource(
+        flow_id=1,
+        node_id=1,
+        kafka_settings=input_schema.KafkaSourceSettings(
+            topic_name="events",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_kafka_source(kafka_source, "df_1", {})
+
+    assert len(converter.unsupported_nodes) == 1
+    assert "no connection" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_kafka_source_id_only_adds_to_unsupported():
+    """Test that kafka source with only connection ID (no name) is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    kafka_source = input_schema.NodeKafkaSource(
+        flow_id=1,
+        node_id=1,
+        kafka_settings=input_schema.KafkaSourceSettings(
+            kafka_connection_id=42,
+            topic_name="events",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_kafka_source(kafka_source, "df_1", {})
+
+    assert len(converter.unsupported_nodes) == 1
+    assert "named connection" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_cloud_storage_reader_handler_unified():
+    """Test cloud storage reader generates unified read_from_cloud_storage call."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=1,
+        node_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path="s3://bucket/data.parquet",
+            connection_name="my_conn",
+            file_format="parquet",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_cloud_storage_reader(settings, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
+    assert "import flowfile as ff" in converter.imports
+    # Should NOT contain old format-specific calls
+    assert "scan_parquet_from_cloud_storage" not in code_output
+    assert "scan_csv_from_cloud_storage" not in code_output
+
+
+def test_cloud_storage_writer_handler_unified():
+    """Test cloud storage writer generates unified write_to_cloud_storage call."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+    settings = input_schema.NodeCloudStorageWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path="s3://bucket/output.parquet",
+            connection_name="my_conn",
+            file_format="parquet",
+        ),
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter.node_var_mapping[1] = "df_1"
+    converter.last_node_var = "df_1"
+    converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
+    assert "import flowfile as ff" in converter.imports
+    # Should NOT contain old FlowFrame wrapper pattern
+    assert "ff.FlowFrame(" not in code_output
+    # Should have pass-through assignment
+    assert "df_2 = df_1" in code_output
+
+
+@pytest.mark.kafka
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available")
+def test_kafka_source_code_executes():
+    """Test that kafka_source code generation produces executable code that reads from Redpanda."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import KafkaConnection
+    from flowfile_core.kafka.connection_manager import store_kafka_connection
+    from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
+    from test_utils.kafka.fixtures import (
+        BOOTSTRAP_SERVERS,
+        REDPANDA_CONTAINER_NAME,
+        create_topic,
+        is_container_running,
+        produce_json_messages,
+        start_redpanda_container,
+    )
+    breakpoint()
+    # Ensure Redpanda is running
+    if not is_container_running(REDPANDA_CONTAINER_NAME):
+        if not start_redpanda_container():
+            pytest.skip("Could not start Redpanda")
+
+    # Clean up any existing kafka connections
+    with get_db_context() as db:
+        db.query(KafkaConnection).delete()
+        db.commit()
+
+    try:
+        # Store a named Kafka connection in DB
+        with get_db_context() as db:
+            conn = store_kafka_connection(
+                db,
+                KafkaConnectionCreate(
+                    connection_name="test-codegen-kafka",
+                    bootstrap_servers=BOOTSTRAP_SERVERS,
+                    security_protocol="PLAINTEXT",
+                ),
+                user_id=1,
+            )
+        connection_id = conn.id
+
+        # Create topic and produce messages
+        topic_name = f"codegen_test_{uuid4().hex[:8]}"
+        create_topic(topic_name, num_partitions=1)
+        messages = [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            {"name": "Charlie", "age": 35},
+        ]
+        produce_json_messages(topic_name, messages)
+
+        # Build flow graph with kafka_source node
+        flow = create_basic_flow()
+        promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type="kafka_source")
+        flow.add_node_promise(promise)
+        kafka_settings = input_schema.KafkaSourceSettings(
+            kafka_connection_id=connection_id,
+            kafka_connection_name="test-codegen-kafka",
+            topic_name=topic_name,
+            start_offset="earliest",
+            poll_timeout_seconds=10.0,
+        )
+        node_kafka = input_schema.NodeKafkaSource(
+            flow_id=1,
+            node_id=1,
+            kafka_settings=kafka_settings,
+            user_id=1,
+        )
+        flow.add_kafka_source(node_kafka)
+
+        # Export to code
+        code = export_flow_to_polars(flow)
+        assert "ff.read_kafka(" in code
+        assert "test-codegen-kafka" in code
+        assert topic_name in code
+
+        # Execute generated code and verify
+        result = get_result_from_generated_code(code)
+        assert isinstance(result, (pl.DataFrame, pl.LazyFrame))
+        if isinstance(result, pl.LazyFrame):
+            result = result.collect()
+        assert len(result) == 3
+        assert "name" in result.columns
+        assert "age" in result.columns
+        assert set(result["name"].to_list()) == {"Alice", "Bob", "Charlie"}
+    finally:
+        # Cleanup
+        with get_db_context() as db:
+            db.query(KafkaConnection).delete()
+            db.commit()
 
 
 if __name__ == "__main__":
