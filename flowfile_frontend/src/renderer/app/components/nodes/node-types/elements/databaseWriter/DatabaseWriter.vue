@@ -66,6 +66,7 @@
             <label for="schema-name">Schema</label>
             <div class="input-with-fetch">
               <el-select
+                ref="schemaSelectRef"
                 v-model="nodeData.database_write_settings.schema_name"
                 filterable
                 allow-create
@@ -74,6 +75,7 @@
                 :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
                 class="flex-input"
                 @change="handleSchemaChange"
+                @blur="handleSchemaBlur"
               >
                 <el-option
                   v-for="s in availableSchemas"
@@ -99,6 +101,7 @@
             <label for="table-name">Table</label>
             <div class="input-with-fetch">
               <el-select
+                ref="tableSelectRef"
                 v-model="nodeData.database_write_settings.table_name"
                 filterable
                 allow-create
@@ -107,6 +110,7 @@
                 :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
                 class="flex-input"
                 @change="handleTableSelect"
+                @blur="handleTableBlur"
               >
                 <el-option
                   v-for="t in availableTables"
@@ -191,6 +195,8 @@ const availableSchemas = ref<string[]>([]);
 const schemasAreLoading = ref(false);
 const availableTables = ref<string[]>([]);
 const tablesAreLoading = ref(false);
+const schemaSelectRef = ref();
+const tableSelectRef = ref();
 
 // Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -235,6 +241,23 @@ const resetFields = () => {
 
 const handleSchemaChange = () => {
   availableTables.value = [];
+};
+
+// Commit typed text on blur so custom values aren't discarded by el-select
+const handleSchemaBlur = () => {
+  if (!nodeData.value) return;
+  const inputEl = schemaSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeData.value.database_write_settings.schema_name = inputEl.value;
+  }
+};
+
+const handleTableBlur = () => {
+  if (!nodeData.value) return;
+  const inputEl = tableSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeData.value.database_write_settings.table_name = inputEl.value;
+  }
 };
 
 const handleFetchSchemas = async (silent = false) => {

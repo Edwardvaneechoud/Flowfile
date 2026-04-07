@@ -79,6 +79,7 @@
               <label for="schema-name">Schema</label>
               <div class="input-with-fetch">
                 <el-select
+                  ref="schemaSelectRef"
                   v-model="nodeDatabaseReader.database_settings.schema_name"
                   filterable
                   allow-create
@@ -87,6 +88,7 @@
                   :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
                   class="flex-input"
                   @change="handleSchemaChange"
+                  @blur="handleSchemaBlur"
                 >
                   <el-option
                     v-for="s in availableSchemas"
@@ -112,6 +114,7 @@
               <label for="table-name">Table</label>
               <div class="input-with-fetch">
                 <el-select
+                  ref="tableSelectRef"
                   v-model="nodeDatabaseReader.database_settings.table_name"
                   filterable
                   allow-create
@@ -120,6 +123,7 @@
                   :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
                   class="flex-input"
                   @change="handleTableSelect"
+                  @blur="handleTableBlur"
                 >
                   <el-option
                     v-for="t in availableTables"
@@ -239,6 +243,8 @@ const availableSchemas = ref<string[]>([]);
 const schemasAreLoading = ref(false);
 const availableTables = ref<string[]>([]);
 const tablesAreLoading = ref(false);
+const schemaSelectRef = ref();
+const tableSelectRef = ref();
 
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
@@ -298,6 +304,23 @@ const handleSchemaChange = () => {
   availableTables.value = [];
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
+  }
+};
+
+// Commit typed text on blur so custom values aren't discarded by el-select
+const handleSchemaBlur = () => {
+  if (!nodeDatabaseReader.value) return;
+  const inputEl = schemaSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeDatabaseReader.value.database_settings.schema_name = inputEl.value;
+  }
+};
+
+const handleTableBlur = () => {
+  if (!nodeDatabaseReader.value) return;
+  const inputEl = tableSelectRef.value?.$el?.querySelector("input");
+  if (inputEl?.value) {
+    nodeDatabaseReader.value.database_settings.table_name = inputEl.value;
   }
 };
 
