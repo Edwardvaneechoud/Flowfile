@@ -7,7 +7,7 @@ from time import sleep
 from typing import Literal
 
 import pytest
-from sqlalchemy import Boolean, Column, Float, Integer, String, Text, create_engine
+
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
@@ -23,9 +23,6 @@ from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.types import DataType
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
-
-Base = declarative_base()
 
 
 def find_parent_directory(target_dir_name,):
@@ -61,53 +58,6 @@ except ModuleNotFoundError:
         ensure_cloud_storage_connection_is_available_and_get_connection,
         ensure_gcs_cloud_storage_connection_is_available_and_get_connection,
     )
-
-
-class Movie(Base):
-    __tablename__ = "movies"
-    id = Column(Integer, primary_key=True)
-    title = Column(String(255), nullable=False)
-    rating = Column(Float)
-    votes = Column(Integer)
-    description = Column(Text)
-    is_active = Column(Boolean, default=True)
-
-
-class Actor(Base):
-    __tablename__ = "actors"
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-    birth_year = Column(Integer)
-
-
-@pytest.fixture
-def sqlite_db(tmp_path):
-    """Create a temporary SQLite database with sample data."""
-    db_path = str(tmp_path / "test.db")
-    connection_string = f"sqlite:///{db_path}"
-    engine = create_engine(connection_string)
-    Base.metadata.create_all(engine)
-
-    session_factory = sessionmaker(bind=engine)
-    session: Session = session_factory()
-
-    movies = [
-        Movie(id=1, title="The Matrix", rating=8.7, votes=1800000, description="A sci-fi classic", is_active=True),
-        Movie(id=2, title="Inception", rating=8.8, votes=2200000, description="Mind-bending thriller", is_active=True),
-        Movie(id=3, title="The Shawshank Redemption", rating=9.3, votes=2500000, description="Drama", is_active=True),
-    ]
-    actors = [
-        Actor(id=1, name="Keanu Reeves", birth_year=1964),
-        Actor(id=2, name="Leonardo DiCaprio", birth_year=1974),
-        Actor(id=3, name="Morgan Freeman", birth_year=1937),
-    ]
-
-    session.add_all(movies + actors)
-    session.commit()
-    session.close()
-    engine.dispose()
-
-    yield db_path
 
 
 @pytest.fixture

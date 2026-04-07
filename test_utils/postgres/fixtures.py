@@ -313,7 +313,6 @@ def print_connection_info(
         port: int = POSTGRES_PORT,
         db: str = POSTGRES_DB,
         user: str = POSTGRES_USER,
-        password: str = POSTGRES_PASSWORD,
         container_name: str = POSTGRES_CONTAINER_NAME
 ) -> None:
     """
@@ -324,7 +323,6 @@ def print_connection_info(
         port: PostgreSQL port
         db: PostgreSQL database name
         user: PostgreSQL username
-        password: PostgreSQL password
         container_name: Docker container name
     """
     if not is_docker_available():
@@ -334,7 +332,6 @@ def print_connection_info(
         print("=" * 50 + "\n")
         return
 
-    masked_password = password[0] + "***" + password[-1] if len(password) > 2 else "***"
     print("\n" + "=" * 50)
     print("PostgreSQL Connection Information:")
     print("=" * 50)
@@ -342,7 +339,7 @@ def print_connection_info(
     print(f"Port:     {port}")
     print(f"Database: {db}")
     print(f"User:     {user}")
-    print(f"Password: {masked_password}")
+    print("Password: ***")
     print(f"Connection string: postgresql://{user}:***@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")

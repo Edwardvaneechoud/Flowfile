@@ -12,6 +12,7 @@ import subprocess
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import Any
 
 # Configure logging
 logging.basicConfig(
@@ -339,7 +340,6 @@ def print_connection_info(
     port: int = MYSQL_PORT,
     db: str = MYSQL_DB,
     user: str = MYSQL_USER,
-    password: str = MYSQL_PASSWORD,
     container_name: str = MYSQL_CONTAINER_NAME,
 ) -> None:
     """
@@ -352,7 +352,6 @@ def print_connection_info(
         print("=" * 50 + "\n")
         return
 
-    masked_password = password[0] + "***" + password[-1] if len(password) > 2 else "***"
     print("\n" + "=" * 50)
     print("MySQL Connection Information:")
     print("=" * 50)
@@ -360,7 +359,7 @@ def print_connection_info(
     print(f"Port:     {port}")
     print(f"Database: {db}")
     print(f"User:     {user}")
-    print(f"Password: {masked_password}")
+    print("Password: ***")
     print(f"Connection string: mysql://{user}:***@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")
@@ -369,7 +368,7 @@ def print_connection_info(
 
 
 @contextmanager
-def managed_mysql() -> Generator[dict[str, any], None, None]:
+def managed_mysql() -> Generator[dict[str, Any], None, None]:
     """
     Context manager for MySQL container management.
     Ensures proper cleanup even when tests fail.

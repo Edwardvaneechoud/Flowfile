@@ -49,7 +49,7 @@ def start_mysql():
 
     _, success = fixtures.start_mysql_container(args.container_name, args.port, args.image)
     if success:
-        fixtures.print_connection_info("localhost", args.port, args.db, args.user, args.password, args.container_name)
+        fixtures.print_connection_info("localhost", args.port, args.db, args.user, args.container_name)
         return 0
     return 1
 

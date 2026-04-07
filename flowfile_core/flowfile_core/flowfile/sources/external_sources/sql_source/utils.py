@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote_plus
 
 import polars as pl
 from polars import DataType as PolarsType
@@ -65,6 +64,10 @@ from sqlalchemy.sql.sqltypes import (
     _Binary,
 )
 from sqlalchemy.sql.type_api import ExternalType, TypeDecorator, TypeEngine, UserDefinedType, Variant
+
+from shared.sql_utils import SQLALCHEMY_DRIVER_MAP as _shared_SQLALCHEMY_DRIVER_MAP
+from shared.sql_utils import construct_sql_uri as _shared_construct_sql_uri
+from shared.sql_utils import get_sqlalchemy_uri as _shared_get_sqlalchemy_uri
 
 if TYPE_CHECKING:
     SqlType = (
@@ -369,6 +372,8 @@ def construct_sql_uri(
     """
     Constructs a SQL URI string from the provided parameters.
 
+    Thin wrapper around shared.sql_utils.construct_sql_uri that unwraps SecretStr passwords.
+
     Args:
         database_type: Database type (postgresql, mysql, sqlite, etc.)
         host: Database host address
@@ -385,74 +390,19 @@ def construct_sql_uri(
     Raises:
         ValueError: If insufficient information is provided
     """
-    # If URL is explicitly provided, return it directly
-    if url:
-        return url
-
-    # For SQLite, we handle differently since it uses a file path
-    if database_type.lower() == "sqlite":
-        # For SQLite, database is the path to the file
-        path = database or host or "./database.db"
-        # Strip sqlite:/// prefix if the full URI was passed as the path
-        if path.startswith("sqlite:///"):
-            path = path[len("sqlite:///"):]
-        return f"sqlite:///{path}"
-
-    # Validate that minimum required fields are present for other databases
-    if not host:
-        raise ValueError("Host is required to create a URI")
-
-    # Create credential part if username is provided
-    credentials = ""
-    if username:
-        credentials = username
-        if password:
-            # Get raw password from SecretStr and encode it
-            password_value = password.get_secret_value()
-            encoded_password = quote_plus(password_value)
-            credentials += f":{encoded_password}"
-        credentials += "@"
-
-    # Add port if specified
-    port_section = f":{port}" if port else ""
-
-    # Create base URI
-    if database:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}/{database}"
-    else:
-        base_uri = f"{database_type}://{credentials}{host}{port_section}"
-
-    # Add any additional connection parameters
-    if kwargs:
-        params = "&".join(f"{key}={quote_plus(str(value))}" for key, value in kwargs.items())
-        base_uri += f"?{params}"
-
-    return base_uri
+    password_str = password.get_secret_value() if password else None
+    return _shared_construct_sql_uri(
+        database_type=database_type,
+        host=host,
+        port=port,
+        username=username,
+        password=password_str,
+        database=database,
+        url=url,
+        **kwargs,
+    )
 
 
-# Mapping from base database URI schemes to SQLAlchemy-compatible schemes with driver suffixes.
-# connectorx uses base schemes (e.g. mysql://) while SQLAlchemy needs driver-specific schemes.
-SQLALCHEMY_DRIVER_MAP = {
-    "mysql": "mysql+pymysql",
-}
-
-
-def get_sqlalchemy_uri(uri: str) -> str:
-    """Convert a base database URI to SQLAlchemy-compatible format with driver suffix.
-
-    connectorx (used by pl.read_database_uri) accepts base URI schemes like mysql://,
-    but SQLAlchemy requires driver-specific schemes like mysql+pymysql://.
-    This function converts base URIs to the SQLAlchemy-compatible format.
-
-    URIs that don't need conversion (e.g. postgresql://, sqlite:///) are returned unchanged.
-
-    Args:
-        uri: A database URI string (e.g. "mysql://user:pass@host:3306/db")
-
-    Returns:
-        The URI with the appropriate SQLAlchemy driver suffix applied.
-    """
-    for base_scheme, sa_scheme in SQLALCHEMY_DRIVER_MAP.items():
-        if uri.startswith(f"{base_scheme}://"):
-            return uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)
-    return uri
+# Re-export shared SQL utilities so existing imports from this module continue to work
+SQLALCHEMY_DRIVER_MAP = _shared_SQLALCHEMY_DRIVER_MAP
+get_sqlalchemy_uri = _shared_get_sqlalchemy_uri
