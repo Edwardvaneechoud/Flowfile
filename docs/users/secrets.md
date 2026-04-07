@@ -43,12 +43,13 @@ On first start without a master key, Flowfile shows a setup screen:
 
 ## Creating Secrets
 
-1. Open **Settings** → **Secrets**
+1. Open the **Connections** page from the left sidebar and select the **Secrets** tab
 2. Click **Add Secret**
 3. Enter name (e.g., `prod_database_password`)
 4. Enter value
 5. Save
 
+<!-- should show the new tabbed Connections page with the Secrets tab active -->
 ![Secrets Panel](../assets/images/guides/secrets/secrets_panel.png)
 
 ## Using Secrets

@@ -125,7 +125,7 @@ nav:
         - Overview: users/python-api/tutorials/index.md
         - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
 
-    - Secrets: users/secrets.md
+    - Secrets & Encryption: users/secrets.md
 
   - Deployment:
     - Overview: users/deployment/index.md
