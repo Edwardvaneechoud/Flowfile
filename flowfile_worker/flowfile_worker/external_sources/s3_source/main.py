@@ -34,10 +34,6 @@ def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, log
     storage_options = connection.get_storage_options()
     use_pyarrow = connection.should_use_pyarrow_for_gcs()
 
-    logger.info(f"storage options: {storage_options}")
-    logger.info(f"write settings: {write_settings}")
-    logger.info(f"resource path: {write_settings.resource_path}")
-
     write_to_cloud(
         df=df,
         resource_path=write_settings.resource_path,

@@ -16,15 +16,6 @@ from flowfile_core.schemas.transform_schema import UniqueInput
 
 logger = getLogger(__name__)
 
-try:
-    from tests.flowfile_core_test_utils import is_docker_available
-except ModuleNotFoundError:
-    import os
-    import sys
-
-    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
-    from flowfile_core_test_utils import is_docker_available
-
 from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, is_gcs_available
 
 

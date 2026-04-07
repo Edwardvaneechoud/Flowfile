@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from math import ceil
 from typing import Any, Literal, TypeVar
 
-import gcsfs
 import polars as pl
 
 # Third-party imports
@@ -490,6 +489,7 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings | None = None,
     ) -> FlowDataEngine:
         """Read multiple files from a GCS directory using gcsfs glob + open."""
+        import gcsfs
 
         fs = gcsfs.GCSFileSystem(**storage_options)
         path = resource_path.replace("gs://", "").rstrip("/")
@@ -527,6 +527,7 @@ class FlowDataEngine:
             first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
 
             if use_pyarrow:
+                import gcsfs
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 return convert_stats_to_column_info(
                     FlowDataEngine._create_schema_stats_from_pl_schema(
@@ -712,6 +713,7 @@ class FlowDataEngine:
 
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
+                import gcsfs
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:

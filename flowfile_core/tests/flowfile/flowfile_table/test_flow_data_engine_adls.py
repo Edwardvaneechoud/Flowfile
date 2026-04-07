@@ -17,15 +17,6 @@ from flowfile_core.schemas.transform_schema import UniqueInput
 
 logger = getLogger(__name__)
 
-try:
-    from tests.flowfile_core_test_utils import is_docker_available
-except ModuleNotFoundError:
-    import os
-    import sys
-
-    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
-    from flowfile_core_test_utils import is_docker_available
-
 from test_utils.azurite.fixtures import (
     AZURITE_ACCOUNT_KEY,
     AZURITE_ACCOUNT_NAME,
@@ -151,38 +142,38 @@ ADLS_READ_TEST_CASES = [
 ]
 
 ADLS_WRITE_TEST_CASES = [
-    # ADLSTestWriteCase(
-    #     id="write_parquet_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="az://flowfile-test/write_test.parquet",
-    #         file_format="parquet",
-    #         write_mode="overwrite",
-    #         parquet_compression="snappy",
-    #         auth_mode="access_key",
-    #     ),
-    #     expected_columns=4,
-    # ),
-    # ADLSTestWriteCase(
-    #     id="write_csv_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="az://flowfile-test/write_test.csv",
-    #         file_format="csv",
-    #         write_mode="overwrite",
-    #         csv_delimiter="|",
-    #         auth_mode="access_key",
-    #     ),
-    #     expected_columns=5,
-    # ),
-    # ADLSTestWriteCase(
-    #     id="write_json_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="az://flowfile-test/write_test.json",
-    #         file_format="json",
-    #         write_mode="overwrite",
-    #         auth_mode="access_key",
-    #     ),
-    #     expected_columns=5,
-    # ),
+    ADLSTestWriteCase(
+        id="write_parquet_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="az://flowfile-test/write_test.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+            parquet_compression="snappy",
+            auth_mode="access_key",
+        ),
+        expected_columns=4,
+    ),
+    ADLSTestWriteCase(
+        id="write_csv_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="az://flowfile-test/write_test.csv",
+            file_format="csv",
+            write_mode="overwrite",
+            csv_delimiter="|",
+            auth_mode="access_key",
+        ),
+        expected_columns=5,
+    ),
+    ADLSTestWriteCase(
+        id="write_json_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="az://flowfile-test/write_test.json",
+            file_format="json",
+            write_mode="overwrite",
+            auth_mode="access_key",
+        ),
+        expected_columns=5,
+    ),
     ADLSTestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(
