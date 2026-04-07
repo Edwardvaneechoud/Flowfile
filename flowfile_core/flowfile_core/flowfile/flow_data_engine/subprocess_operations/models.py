@@ -12,6 +12,7 @@ OperationType = Literal[
     "store_sample",
     "write_parquet",
     "write_delta",
+    "merge_delta",
 ]
 
 

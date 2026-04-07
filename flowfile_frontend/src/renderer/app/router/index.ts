@@ -47,19 +47,25 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/DocumentationView/DocumentationView.vue"),
       },
       {
-        name: "databaseManager",
+        name: "connections",
+        path: "connections",
+        component: () => import("../views/ConnectionsView/ConnectionsView.vue"),
+      },
+      {
         path: "databaseManager",
-        component: () => import("../views/DatabaseView/DatabaseView.vue"),
+        redirect: { name: "connections", query: { tab: "database" } },
       },
       {
-        name: "cloudConnectionManager",
         path: "cloudConnectionManager",
-        component: () => import("../views/CloudConnectionView/CloudConnectionView.vue"),
+        redirect: { name: "connections", query: { tab: "cloud" } },
       },
       {
-        name: "secretManager",
+        path: "kafkaConnectionManager",
+        redirect: { name: "connections", query: { tab: "kafka" } },
+      },
+      {
         path: "secretManager",
-        component: () => import("../views/SecretsView/SecretsView.vue"),
+        redirect: { name: "connections", query: { tab: "secrets" } },
       },
       {
         name: "kernelManager",

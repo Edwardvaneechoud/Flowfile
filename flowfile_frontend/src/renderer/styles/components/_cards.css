@@ -237,7 +237,8 @@
 /* ========== Page Container ========== */
 .secret-manager-container,
 .database-manager-container,
-.cloud-connection-manager-container {
+.cloud-connection-manager-container,
+.kafka-connection-manager-container {
   max-width: 1200px;
   margin: 0 auto;
   padding: var(--spacing-5);

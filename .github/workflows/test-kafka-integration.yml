@@ -1,0 +1,128 @@
+name: Kafka Integration Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'shared/kafka/**'
+      - 'flowfile_core/flowfile_core/kafka/**'
+      - 'flowfile_worker/flowfile_worker/external_sources/kafka_source/**'
+      - 'tests/kafka/**'
+      - 'test_utils/kafka/**'
+      - '.github/workflows/test-kafka-integration.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'shared/kafka/**'
+      - 'flowfile_core/flowfile_core/kafka/**'
+      - 'flowfile_worker/flowfile_worker/external_sources/kafka_source/**'
+      - 'tests/kafka/**'
+      - 'test_utils/kafka/**'
+      - '.github/workflows/test-kafka-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  kafka-unit-tests:
+    name: Kafka Unit Tests (mocked)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-kafka-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-kafka-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction --no-ansi
+
+      - name: Run Kafka unit tests
+        run: poetry run pytest shared/tests/kafka/ -v --tb=short
+
+  kafka-integration-tests:
+    name: Kafka Integration Tests (real broker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-kafka-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-kafka-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction --no-ansi
+
+      - name: Start Redpanda container
+        run: poetry run start_redpanda
+
+      - name: Start flowfile_worker
+        run: |
+          poetry run flowfile_worker &
+          echo "Waiting for worker to start..."
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:63579/health > /dev/null 2>&1 || curl -s http://localhost:63579/ > /dev/null 2>&1; then
+              echo "Worker is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Worker failed to start within 30 seconds"
+          exit 1
+
+      - name: Run Kafka integration tests
+        run: |
+          poetry run pytest tests/kafka -m kafka -vv --tb=long --log-cli-level=INFO
+        timeout-minutes: 10
+        env:
+          TEST_MODE: "1"
+
+      - name: Stop Redpanda container
+        if: always()
+        run: poetry run stop_redpanda
+
+      - name: Show Redpanda logs on failure
+        if: failure()
+        run: |
+          echo "=== Redpanda container logs ==="
+          docker logs test-redpanda-kafka 2>&1 || echo "No logs available"
+          echo ""
+          echo "=== Worker process ==="
+          ps aux | grep flowfile_worker || echo "Worker not running"

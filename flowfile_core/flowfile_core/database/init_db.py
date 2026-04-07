@@ -100,6 +100,26 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN name TEXT"))
                 conn.commit()
 
+        # Migrate cloud_storage_connections: add GCS fields
+        result = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='cloud_storage_connections'")
+        )
+        if result.fetchone():
+            result = conn.execute(text("PRAGMA table_info(cloud_storage_connections)"))
+            cloud_columns = [row[1] for row in result.fetchall()]
+
+            if "gcs_service_account_key_id" not in cloud_columns:
+                logger.info("Adding gcs_service_account_key_id column to cloud_storage_connections")
+                conn.execute(
+                    text("ALTER TABLE cloud_storage_connections ADD COLUMN gcs_service_account_key_id INTEGER")
+                )
+                conn.commit()
+
+            if "gcs_project_id" not in cloud_columns:
+                logger.info("Adding gcs_project_id column to cloud_storage_connections")
+                conn.execute(text("ALTER TABLE cloud_storage_connections ADD COLUMN gcs_project_id VARCHAR"))
+                conn.commit()
+
         # Migrate flow_runs: rename run_type 'full_run' → 'in_designer_run'
         result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
         if result.fetchone():

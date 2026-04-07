@@ -740,11 +740,14 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
+export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete";
+
 export interface CatalogWriteSettings {
   table_name: string;
   namespace_id: number | null;
   description: string | null;
-  write_mode: "overwrite" | "error";
+  write_mode: CatalogWriteMode;
+  merge_keys: string[];
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -755,6 +758,7 @@ export interface NodeCatalogReader extends NodeBase {
   catalog_table_id: number | null;
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
+  delta_version: number | null;
 }
 
 export interface NodeInputData extends NodeBase {
@@ -866,4 +870,20 @@ export interface NodeCloudStorageReader extends NodeBase {
 
 export interface NodeCloudStorageWriter extends NodeBase {
   cloud_storage_settings: CloudStorageWriteSettings;
+}
+
+export interface KafkaSourceSettings {
+  kafka_connection_id: number | null;
+  kafka_connection_name: string | null;
+  topic_name: string;
+  value_format: "json";
+  sync_name: string;
+  start_offset: "earliest" | "latest";
+  max_messages: number;
+  poll_timeout_seconds: number;
+}
+
+export interface NodeKafkaSource extends NodeBase {
+  kafka_settings: KafkaSourceSettings;
+  fields?: MinimalFieldInput[] | null;
 }

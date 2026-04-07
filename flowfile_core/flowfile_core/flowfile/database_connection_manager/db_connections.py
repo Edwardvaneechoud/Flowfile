@@ -246,6 +246,25 @@ def store_cloud_connection(
         ).id
     else:
         azure_account_key_ref_id = None
+    if connection.azure_sas_token is not None:
+        azure_sas_token_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "_azure_sas_token", value=connection.azure_sas_token),
+            user_id,
+        ).id
+    else:
+        azure_sas_token_ref_id = None
+    if connection.gcs_service_account_key is not None:
+        gcs_service_account_key_ref_id = store_secret(
+            db,
+            SecretInput(
+                name=connection.connection_name + "_gcs_service_account_key",
+                value=connection.gcs_service_account_key,
+            ),
+            user_id,
+        ).id
+    else:
+        gcs_service_account_key_ref_id = None
 
     db_cloud_connection = DBCloudStorageConnection(
         connection_name=connection.connection_name,
@@ -264,6 +283,10 @@ def store_cloud_connection(
         azure_client_id=connection.azure_client_id,
         azure_account_key_id=azure_account_key_ref_id,
         azure_client_secret_id=azure_client_secret_ref_id,
+        azure_sas_token_id=azure_sas_token_ref_id,
+        # Google Cloud Storage fields
+        gcs_service_account_key_id=gcs_service_account_key_ref_id,
+        gcs_project_id=connection.gcs_project_id,
         # Common fields
         endpoint_url=connection.endpoint_url,
         verify_ssl=connection.verify_ssl,
@@ -317,6 +340,7 @@ def update_cloud_connection(
     db_connection.azure_client_id = connection.azure_client_id
     db_connection.endpoint_url = connection.endpoint_url
     db_connection.verify_ssl = connection.verify_ssl
+    db_connection.gcs_project_id = connection.gcs_project_id
 
     # Update secret fields only if new values are provided
     aws_secret_value = connection.aws_secret_access_key.get_secret_value() if connection.aws_secret_access_key else ""
@@ -346,6 +370,24 @@ def update_cloud_connection(
         user_id,
     )
 
+    azure_sas_value = connection.azure_sas_token.get_secret_value() if connection.azure_sas_token else ""
+    db_connection.azure_sas_token_id = _update_cloud_secret(
+        db,
+        db_connection.azure_sas_token_id,
+        azure_sas_value,
+        connection.connection_name + "_azure_sas_token",
+        user_id,
+    )
+
+    gcs_sa_value = connection.gcs_service_account_key.get_secret_value() if connection.gcs_service_account_key else ""
+    db_connection.gcs_service_account_key_id = _update_cloud_secret(
+        db,
+        db_connection.gcs_service_account_key_id,
+        gcs_sa_value,
+        connection.connection_name + "_gcs_service_account_key",
+        user_id,
+    )
+
     db.commit()
     db.refresh(db_connection)
     return db_connection
@@ -368,6 +410,7 @@ def get_full_cloud_storage_interface_from_db(
         azure_account_name=db_cloud_connection.azure_account_name,
         azure_tenant_id=db_cloud_connection.azure_tenant_id,
         azure_client_id=db_cloud_connection.azure_client_id,
+        gcs_project_id=db_cloud_connection.gcs_project_id,
         endpoint_url=db_cloud_connection.endpoint_url,
         verify_ssl=db_cloud_connection.verify_ssl,
     )
@@ -400,6 +443,18 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         if secret_record:
             azure_client_secret = decrypt_secret(secret_record.encrypted_value)
 
+    azure_sas_token = None
+    if db_connection.azure_sas_token_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_connection.azure_sas_token_id).first()
+        if secret_record:
+            azure_sas_token = decrypt_secret(secret_record.encrypted_value)
+
+    gcs_service_account_key = None
+    if db_connection.gcs_service_account_key_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_connection.gcs_service_account_key_id).first()
+        if secret_record:
+            gcs_service_account_key = decrypt_secret(secret_record.encrypted_value)
+
     # Construct the full Pydantic model
     return FullCloudStorageConnection(
         connection_name=db_connection.connection_name,
@@ -415,6 +470,9 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         azure_tenant_id=db_connection.azure_tenant_id,
         azure_client_id=db_connection.azure_client_id,
         azure_client_secret=azure_client_secret,
+        azure_sas_token=azure_sas_token,
+        gcs_service_account_key=gcs_service_account_key,
+        gcs_project_id=db_connection.gcs_project_id,
         endpoint_url=db_connection.endpoint_url,
         verify_ssl=db_connection.verify_ssl,
     )
@@ -438,6 +496,7 @@ def cloud_connection_interface_from_db_connection(
         azure_account_name=db_connection.azure_account_name,
         azure_tenant_id=db_connection.azure_tenant_id,
         azure_client_id=db_connection.azure_client_id,
+        gcs_project_id=db_connection.gcs_project_id,
         endpoint_url=db_connection.endpoint_url,
         verify_ssl=db_connection.verify_ssl,
     )
@@ -466,6 +525,7 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
             db_connection.azure_account_key_id,
             db_connection.azure_client_secret_id,
             db_connection.azure_sas_token_id,
+            db_connection.gcs_service_account_key_id,
         ]
         # Filter out None values
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]

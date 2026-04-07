@@ -85,7 +85,9 @@
         <div v-else-if="!isLoading && secrets.length === 0" class="empty-state">
           <i class="fa-solid fa-lock"></i>
           <p class="empty-state__title">No secrets configured yet</p>
-          <p class="empty-state__subtitle">Add a secret above to securely store credentials for your integrations and flows.</p>
+          <p class="empty-state__subtitle">
+            Add a secret above to securely store credentials for your integrations and flows.
+          </p>
         </div>
 
         <!-- Secrets List -->

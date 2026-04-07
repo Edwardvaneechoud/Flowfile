@@ -5,7 +5,13 @@ import os
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth.jwt import create_access_token, get_current_active_user, get_current_admin_user
+from flowfile_core.auth.jwt import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    get_current_active_user,
+    get_current_admin_user,
+)
 from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
@@ -44,7 +50,36 @@ async def login_for_access_token(
             )
 
         access_token = create_access_token(data={"sub": user.username})
-        return {"access_token": access_token, "token_type": "bearer"}
+        refresh_token = create_refresh_token(data={"sub": user.username})
+        return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(
+    refresh_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Exchange a valid refresh token for a new access token and refresh token."""
+    username = decode_refresh_token(refresh_token)
+
+    # Verify user still exists and is not disabled
+    user = db.query(db_models.User).filter(db_models.User.username == username).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if user.disabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    new_access_token = create_access_token(data={"sub": user.username})
+    new_refresh_token = create_refresh_token(data={"sub": user.username})
+    return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
 
 # Get current user endpoint

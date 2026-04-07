@@ -22,7 +22,7 @@ Before diving in, make sure you have:
 
 ## Step 2: Configure Your Database Connection in Flowfile
 
-1.  Open Flowfile and navigate to the database connection manager (often found under a "Connections" icon or within the main "Settings" area).
+1.  Open Flowfile and navigate to the **Connections** page from the left sidebar, then select the **Database** tab.
 2.  Click **"Create New Connection"**.
 3.  Fill in your connection details:
     *   Connection Name: `supa_base_connection` (or any name you prefer)
@@ -35,6 +35,7 @@ Before diving in, make sure you have:
     *   Enable SSL: Check if required by your database (Supabase typically requires it).
 4.  Click **"Update Connection"** to save.
 
+<!-- should show the new tabbed Connections page with the Database tab and a saved connection -->
 ### ![db_connection](../../../assets/images/guides/database_connectivity/db_connection.png) Connection overview in Flowfile
 
 ## Step 3: Create a New Data Flow

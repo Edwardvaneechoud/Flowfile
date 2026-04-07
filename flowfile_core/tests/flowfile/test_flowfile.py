@@ -1,4 +1,6 @@
 
+import os
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from time import sleep
@@ -41,7 +43,11 @@ def find_parent_directory(target_dir_name,):
 
 try:
     from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
-    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
+    from tests.utils import (
+        ensure_adls_cloud_storage_connection_is_available_and_get_connection,
+        ensure_cloud_storage_connection_is_available_and_get_connection,
+        ensure_gcs_cloud_storage_connection_is_available_and_get_connection,
+    )
 except ModuleNotFoundError:
     import os
     import sys
@@ -50,7 +56,11 @@ except ModuleNotFoundError:
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 
-    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
+    from tests.utils import (
+        ensure_adls_cloud_storage_connection_is_available_and_get_connection,
+        ensure_cloud_storage_connection_is_available_and_get_connection,
+        ensure_gcs_cloud_storage_connection_is_available_and_get_connection,
+    )
 
 
 class Movie(Base):
@@ -1419,6 +1429,54 @@ def test_schema_callback_cloud_read(flow_logger):
     node.get_table_example(True)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_schema_callback_cloud_read_adls(flow_logger):
+    # Validate schema callback with ADLS (Azurite) cloud storage reader
+    conn = ensure_adls_cloud_storage_connection_is_available_and_get_connection()
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="az://test-container/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    node.get_table_example(True)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_schema_callback_cloud_read_gcs(flow_logger):
+    # Validate schema callback with GCS (fake-gcs-server) cloud storage reader
+    conn = ensure_gcs_cloud_storage_connection_is_available_and_get_connection()
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="gs://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    node.get_table_example(True)
+
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
 def test_add_cloud_writer(flow_logger):
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
@@ -1450,6 +1508,48 @@ def test_add_cloud_writer(flow_logger):
     assert len(predicted_schema) == 2, 'Should have 2 columns in the schema'
     assert call_count['count'] == 0, 'Predicted data getter should not be called when getting schema'
 
+    result = graph.run_graph()
+    handle_run_info(result)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer_adls(flow_logger):
+    conn = ensure_adls_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="az://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        connection_name=conn.connection_name,
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
+                                  {"name": "edward", "city": "a"},
+                                  {"name": "courtney", "city": "a"}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=write_settings)
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    result = graph.run_graph()
+    handle_run_info(result)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer_gcs(flow_logger):
+    conn = ensure_gcs_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="gs://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        connection_name=conn.connection_name,
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
+                                  {"name": "edward", "city": "a"},
+                                  {"name": "courtney", "city": "a"}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=write_settings)
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
     result = graph.run_graph()
     handle_run_info(result)
 
@@ -1966,4 +2066,91 @@ class TestFlowGraphArtifactContext:
 
         # Context should be cleared
         assert graph.artifact_context.get_published_by_node(99) == []
+
+
+# ---------------------------------------------------------------------------
+# Parametrized local/remote execution tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not is_docker_available(),
+    reason="Docker is not available or not running so database reader cannot be tested",
+)
+class TestDatabaseReaderExecution:
+    """Test database_reader in both local and remote execution modes."""
+
+    def test_database_reader(self, execution_location):
+        ensure_password_is_available()
+        graph = create_graph(execution_location=execution_location)
+        add_node_promise_on_type(graph, "database_reader", 1)
+        database_connection = input_schema.DatabaseConnection(
+            database_type="postgresql",
+            username="testuser",
+            password_ref="test_database_pw",
+            host="localhost",
+            port=5433,
+            database="testdb",
+        )
+        database_settings = input_schema.DatabaseSettings(
+            database_connection=database_connection,
+            schema_name="public",
+            table_name="movies",
+        )
+        node_database_reader = input_schema.NodeDatabaseReader(
+            database_settings=database_settings,
+            node_id=1,
+            flow_id=1,
+            user_id=1,
+        )
+        graph.add_database_reader(node_database_reader)
+        node = graph.get_node(1)
+        assert node.name == "database_reader"
+        predicted_schema = node.get_predicted_schema()
+        assert len(predicted_schema) == 20
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+        lf = node.get_resulting_data()
+        assert lf.count() > 0
+
+
+class TestOutputExecution:
+    """Test output node (CSV write) in both local and remote execution modes."""
+
+    def test_write_csv(self, execution_location):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings = {
+                "flow_id": 1,
+                "node_id": 2,
+                "cache_results": False,
+                "pos_x": 0,
+                "pos_y": 0,
+                "is_setup": True,
+                "description": "",
+                "output_settings": {
+                    "name": "output_data.csv",
+                    "directory": tmp_dir,
+                    "file_type": "csv",
+                    "fields": [],
+                    "write_mode": "overwrite",
+                    "table_settings": {
+                        "file_type": "csv",
+                        "delimiter": ",",
+                        "encoding": "utf-8",
+                    },
+                },
+            }
+            graph = create_graph(execution_location=execution_location)
+            add_manual_input(
+                graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+            )
+            add_node_promise_on_type(graph, "output", 2)
+            output_file = input_schema.NodeOutput(**settings)
+            connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+            add_connection(graph, connection)
+            graph.add_output(output_file)
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.csv")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
 

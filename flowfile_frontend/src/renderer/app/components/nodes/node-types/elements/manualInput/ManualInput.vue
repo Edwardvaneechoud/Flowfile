@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded && nodeManualInput">
+  <div v-if="dataLoaded && nodeManualInput" class="manual-input-root">
     <generic-node-settings
       v-model="nodeManualInput"
       @update:model-value="handleGenericSettingsUpdate"
@@ -22,6 +22,16 @@
                 <i :class="showRawData ? 'fas fa-eye-slash' : 'fas fa-code'" />
               </template>
               {{ showRawData ? "Hide JSON" : "Edit JSON" }}
+            </el-button>
+            <el-button size="small" @click="toggleCsvPaste">
+              <template #icon>
+                <i :class="showCsvPaste ? 'fas fa-eye-slash' : 'fas fa-paste'" />
+              </template>
+              {{ showCsvPaste ? "Hide Paste Area" : "Paste CSV/TSV" }}
+            </el-button>
+            <el-button size="small" @click="copyAllData">
+              <template #icon><i class="fas fa-copy" /></template>
+              Copy All
             </el-button>
           </div>
           <div class="table-info">
@@ -58,7 +68,7 @@
                         v-model="col.dataType"
                         size="small"
                         class="type-select"
-                        :teleported="false"
+                        :teleported="true"
                       >
                         <el-option
                           v-for="dtype in dataTypes"
@@ -83,6 +93,7 @@
                     type="text"
                     @focus="selectAll($event)"
                     @keydown="handleCellKeydown($event, row, col)"
+                    @paste="handleCellPaste($event, row, col)"
                   />
                 </td>
                 <td class="row-actions">
@@ -117,13 +128,48 @@
             </div>
           </div>
         </el-collapse-transition>
+
+        <!-- CSV/TSV Paste Area -->
+        <el-collapse-transition>
+          <div v-if="showCsvPaste" class="raw-data-section">
+            <div class="raw-data-header">
+              <span class="raw-data-title">Paste CSV/TSV Data</span>
+              <span class="raw-data-hint">
+                Paste tab-separated (from Excel/Sheets) or comma-separated data
+              </span>
+            </div>
+            <div class="csv-options">
+              <el-radio-group v-model="csvDelimiter" size="small">
+                <el-radio-button value="tab">Tab (TSV)</el-radio-button>
+                <el-radio-button value="comma">Comma (CSV)</el-radio-button>
+                <el-radio-button value="auto">Auto-detect</el-radio-button>
+              </el-radio-group>
+              <el-checkbox v-model="csvFirstRowHeaders" size="small">
+                First row is headers
+              </el-checkbox>
+            </div>
+            <el-input
+              v-model="csvPasteString"
+              type="textarea"
+              :rows="10"
+              placeholder="Paste your data here..."
+              class="json-editor"
+            />
+            <div class="raw-data-controls">
+              <el-button type="primary" size="small" @click="applyCsvData">
+                <template #icon><i class="fas fa-sync" /></template>
+                Apply to Table
+              </el-button>
+            </div>
+          </div>
+        </el-collapse-transition>
       </div>
     </generic-node-settings>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createManualInput } from "./manualInputLogic";
@@ -134,6 +180,7 @@ import type {
 } from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { ElNotification } from "element-plus";
+import { parseTabularText, parseCsvText } from "../../../../../utils/clipboardUtils";
 
 interface Column {
   id: number;
@@ -154,6 +201,10 @@ const columns = ref<Column[]>([]);
 const rows = ref<Row[]>([]);
 const showRawData = ref(false);
 const rawDataString = ref("");
+const showCsvPaste = ref(false);
+const csvPasteString = ref("");
+const csvDelimiter = ref<"tab" | "comma" | "auto">("auto");
+const csvFirstRowHeaders = ref(true);
 
 let nextColumnId = 1;
 let nextRowId = 1;
@@ -395,23 +446,222 @@ const selectAll = (event: FocusEvent) => {
   target.select();
 };
 
-const handleCellKeydown = (event: KeyboardEvent, row: Row, col: Column) => {
-  if (event.key === "Tab" && !event.shiftKey) {
-    const colIndex = columns.value.findIndex((c) => c.id === col.id);
-    const rowIndex = rows.value.findIndex((r) => r.id === row.id);
+const focusCell = async (rowIndex: number, colIndex: number) => {
+  await nextTick();
+  const tableEl = document.querySelector(".modern-table");
+  if (!tableEl) return;
+  const dataRows = tableEl.querySelectorAll(".data-row");
+  if (rowIndex < 0 || rowIndex >= dataRows.length) return;
+  const cells = dataRows[rowIndex].querySelectorAll(".input-cell");
+  if (colIndex < 0 || colIndex >= cells.length) return;
+  (cells[colIndex] as HTMLInputElement).focus();
+};
 
-    // If last column and last row, add new row
-    if (colIndex === columns.value.length - 1 && rowIndex === rows.value.length - 1) {
-      event.preventDefault();
-      addRow();
-      // Focus first cell of new row after Vue updates DOM
-      setTimeout(() => {
-        const newRowCells = document.querySelectorAll(".data-row:last-child .input-cell");
-        if (newRowCells.length > 0) {
-          (newRowCells[0] as HTMLInputElement).focus();
+const handleCellKeydown = (event: KeyboardEvent, row: Row, col: Column) => {
+  const colIndex = columns.value.findIndex((c) => c.id === col.id);
+  const rowIndex = rows.value.findIndex((r) => r.id === row.id);
+  const lastCol = columns.value.length - 1;
+  const lastRow = rows.value.length - 1;
+
+  switch (event.key) {
+    case "Tab":
+      if (event.shiftKey) {
+        if (colIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex, colIndex - 1);
+        } else if (rowIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex - 1, lastCol);
         }
-      }, 0);
+      } else {
+        if (colIndex === lastCol && rowIndex === lastRow) {
+          event.preventDefault();
+          addRow();
+          focusCell(rowIndex + 1, 0);
+        }
+      }
+      break;
+
+    case "Enter":
+      event.preventDefault();
+      if (rowIndex < lastRow) {
+        focusCell(rowIndex + 1, colIndex);
+      } else {
+        addRow();
+        focusCell(rowIndex + 1, colIndex);
+      }
+      break;
+
+    case "ArrowUp":
+      if (rowIndex > 0) {
+        event.preventDefault();
+        focusCell(rowIndex - 1, colIndex);
+      }
+      break;
+
+    case "ArrowDown":
+      if (rowIndex < lastRow) {
+        event.preventDefault();
+        focusCell(rowIndex + 1, colIndex);
+      }
+      break;
+
+    case "ArrowLeft": {
+      const input = event.target as HTMLInputElement;
+      if (input.selectionStart === 0 && input.selectionEnd === 0 && colIndex > 0) {
+        event.preventDefault();
+        focusCell(rowIndex, colIndex - 1);
+      }
+      break;
     }
+
+    case "ArrowRight": {
+      const input = event.target as HTMLInputElement;
+      if (input.selectionStart === input.value.length && colIndex < lastCol) {
+        event.preventDefault();
+        focusCell(rowIndex, colIndex + 1);
+      }
+      break;
+    }
+  }
+};
+
+const applyPastedData = (data: string[][], startRowIndex: number, startColIndex: number) => {
+  const maxCols = Math.max(...data.map((r) => r.length));
+
+  // Auto-create columns if needed
+  while (columns.value.length < startColIndex + maxCols) {
+    columns.value.push({
+      id: nextColumnId,
+      name: `Column ${nextColumnId}`,
+      dataType: "String",
+    });
+    nextColumnId++;
+  }
+
+  // Auto-create rows if needed
+  while (rows.value.length < startRowIndex + data.length) {
+    const newRow: Row = { id: nextRowId, values: {} };
+    columns.value.forEach((col) => {
+      newRow.values[col.id] = "";
+    });
+    rows.value.push(newRow);
+    nextRowId++;
+  }
+
+  // Fill values
+  for (let r = 0; r < data.length; r++) {
+    const row = rows.value[startRowIndex + r];
+    for (let c = 0; c < data[r].length; c++) {
+      const col = columns.value[startColIndex + c];
+      row.values[col.id] = data[r][c];
+    }
+  }
+
+  // Re-infer data types for affected columns
+  for (let c = 0; c < maxCols; c++) {
+    const col = columns.value[startColIndex + c];
+    const colValues = rows.value.map((r) => r.values[col.id]);
+    col.dataType = inferDataType(colValues);
+  }
+};
+
+const handleCellPaste = (event: ClipboardEvent, row: Row, col: Column) => {
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text) return;
+
+  const parsed = parseTabularText(text);
+  if (!parsed) return; // Single value — let browser handle normally
+
+  event.preventDefault();
+  const rowIndex = rows.value.findIndex((r) => r.id === row.id);
+  const colIndex = columns.value.findIndex((c) => c.id === col.id);
+  applyPastedData(parsed, rowIndex, colIndex);
+};
+
+const copyAllData = async () => {
+  const headerLine = columns.value.map((c) => c.name).join("\t");
+  const dataLines = rows.value.map((row) =>
+    columns.value.map((col) => row.values[col.id] || "").join("\t"),
+  );
+  const tsv = [headerLine, ...dataLines].join("\n");
+
+  try {
+    await navigator.clipboard.writeText(tsv);
+    ElNotification({
+      title: "Copied",
+      message: `${rows.value.length} rows copied to clipboard`,
+      type: "success",
+      duration: 2000,
+    });
+  } catch {
+    ElNotification({
+      title: "Error",
+      message: "Failed to copy to clipboard",
+      type: "error",
+    });
+  }
+};
+
+const toggleCsvPaste = () => {
+  showCsvPaste.value = !showCsvPaste.value;
+};
+
+const applyCsvData = () => {
+  if (!csvPasteString.value.trim()) {
+    ElNotification({
+      title: "Error",
+      message: "Please paste some data first",
+      type: "error",
+    });
+    return;
+  }
+
+  try {
+    const parsed = parseCsvText(csvPasteString.value, csvDelimiter.value);
+    if (parsed.length === 0) {
+      ElNotification({
+        title: "Error",
+        message: "No data found in the pasted text",
+        type: "error",
+      });
+      return;
+    }
+
+    let data: Record<string, unknown>[];
+
+    if (csvFirstRowHeaders.value && parsed.length > 1) {
+      const headers = parsed[0];
+      data = parsed.slice(1).map((row) => {
+        const obj: Record<string, unknown> = {};
+        headers.forEach((header, i) => {
+          obj[header || `Column ${i + 1}`] = row[i] ?? "";
+        });
+        return obj;
+      });
+    } else {
+      const colCount = Math.max(...parsed.map((r) => r.length));
+      data = parsed.map((row) => {
+        const obj: Record<string, unknown> = {};
+        for (let i = 0; i < colCount; i++) {
+          obj[`Column ${i + 1}`] = row[i] ?? "";
+        }
+        return obj;
+      });
+    }
+
+    populateTableFromData(data);
+    ElNotification({
+      title: "Success",
+      message: `Table updated with ${data.length} rows`,
+      type: "success",
+    });
+  } catch {
+    ElNotification({
+      title: "Error",
+      message: "Failed to parse the pasted data. Please check the format.",
+      type: "error",
+    });
   }
 };
 
@@ -454,10 +704,43 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Propagate height through the wrapper chain so the table can fill available space */
+.manual-input-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.settings-wrapper) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.el-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.manual-input-root :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.manual-input-root :deep(.el-tab-pane) {
+  height: 100%;
+}
+
 .settings-section {
   padding: var(--spacing-4);
   background: var(--color-background-primary);
   border-radius: var(--border-radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 /* Controls Section */
@@ -494,7 +777,8 @@ defineExpose({
 
 /* Table Container */
 .table-container {
-  max-height: 350px;
+  flex: 1;
+  min-height: 150px;
   overflow: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
@@ -761,6 +1045,14 @@ defineExpose({
   margin-top: var(--spacing-3);
   display: flex;
   justify-content: flex-end;
+}
+
+.csv-options {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-3);
+  flex-wrap: wrap;
 }
 
 /* Custom Scrollbar */

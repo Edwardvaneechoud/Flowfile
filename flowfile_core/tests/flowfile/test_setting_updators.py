@@ -648,7 +648,6 @@ class TestCrossJoinExecution:
         """Test that cross join executes correctly after input columns change."""
         create_manual_input_node(basic_flow, 1, [{'a': 1}])
         create_manual_input_node(basic_flow, 2, [{'b': 2}])
-
         basic_flow.add_node_promise(input_schema.NodePromise(
             flow_id=1, node_id=3, node_type='cross_join'
         ))

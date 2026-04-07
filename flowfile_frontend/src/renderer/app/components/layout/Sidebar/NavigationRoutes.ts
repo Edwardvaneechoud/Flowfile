@@ -37,24 +37,10 @@ export default {
       },
     },
     {
-      name: "databaseManager",
-      displayName: "menu.databaseManager",
+      name: "connections",
+      displayName: "menu.connections",
       meta: {
-        icon: "fa-solid fa-database",
-      },
-    },
-    {
-      name: "cloudConnectionManager",
-      displayName: "menu.cloudConnectionManager",
-      meta: {
-        icon: "fa-solid fa-cloud",
-      },
-    },
-    {
-      name: "secretManager",
-      displayName: "menu.secretManager",
-      meta: {
-        icon: "fa-solid fa-key",
+        icon: "fa-solid fa-link",
       },
     },
     {

@@ -470,10 +470,18 @@ def write_delta(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
     try:
+        from shared.delta_utils import write_delta as _write_delta
+
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
-        os.makedirs(output_path, exist_ok=True)
-        df.write_delta(output_path, mode=mode)
+        wrote = _write_delta(df, output_path, mode=mode)
+
+        if not wrote:
+            queue.put({"skipped": True})
+            flowfile_logger.info(f"write_delta skipped (no-op) for {output_path}")
+            with progress.get_lock():
+                progress.value = 100
+            return
 
         size_bytes = _get_delta_size_bytes(Path(output_path))
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
@@ -494,6 +502,70 @@ def write_delta(
     except Exception as e:
         error_msg = str(e).encode()[:1024]
         flowfile_logger.error(f"Error during write_delta operation: {str(e)}")
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def merge_delta(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    output_path: str,
+    merge_mode: str = "upsert",
+    merge_keys: list[str] | None = None,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Collect a serialized LazyFrame and merge it into a Delta table.
+
+    Supports three merge modes:
+    - upsert: update matched rows + insert unmatched
+    - update: update only matched rows (no inserts)
+    - delete: remove matched rows from target
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
+    try:
+        from shared.delta_utils import merge_into_delta
+
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+        wrote = merge_into_delta(df, output_path, merge_mode=merge_mode, merge_keys=merge_keys)
+
+        if not wrote:
+            queue.put({"skipped": True})
+            flowfile_logger.info(f"merge_delta skipped (no-op) for {output_path}")
+            with progress.get_lock():
+                progress.value = 100
+            return
+
+        # Read back metadata from the resulting table
+        result_df = pl.scan_delta(output_path)
+        result_schema = result_df.collect_schema()
+        schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
+        row_count = result_df.select(pl.len()).collect().item()
+        size_bytes = _get_delta_size_bytes(Path(output_path))
+
+        queue.put(
+            {
+                "table_path": output_path,
+                "storage_format": "delta",
+                "schema": schema,
+                "row_count": row_count,
+                "column_count": len(schema),
+                "size_bytes": size_bytes,
+            }
+        )
+        flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f"Error during merge_delta operation: {str(e)}")
         with error_message.get_lock():
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
@@ -643,17 +715,19 @@ def generic_task(
     *args,
     **kwargs,
 ):
-    print(kwargs)
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting generic task")
     try:
-        df = func(*args, **kwargs)
-        if isinstance(df, pl.LazyFrame):
-            collect_lazy_frame(df).write_ipc(file_path)
-        elif isinstance(df, pl.DataFrame):
-            df.write_ipc(file_path)
+        result = func(*args, **kwargs)
+        if result is None:
+            # Function already wrote to file_path (e.g. Kafka spill_path)
+            flowfile_logger.info("Function returned None — file already written")
+        elif isinstance(result, pl.LazyFrame):
+            collect_lazy_frame(result).write_ipc(file_path)
+        elif isinstance(result, pl.DataFrame):
+            result.write_ipc(file_path)
         else:
-            raise Exception("Returned object is not a DataFrame or LazyFrame")
+            raise Exception("Returned object is not a DataFrame, LazyFrame, or None")
         with progress.get_lock():
             progress.value = 100
         flowfile_logger.info("Task completed successfully")

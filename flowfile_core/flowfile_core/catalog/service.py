@@ -131,7 +131,6 @@ class CatalogService:
         Offloads the work to the worker process when available.  Only falls
         back to local I/O when the worker is not running.
         """
-        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         if OFFLOAD_TO_WORKER:
@@ -1347,28 +1346,26 @@ class CatalogService:
         Raises
         ------
         TableExistsError
-            If the table exists and *write_mode* is not ``"overwrite"``.
+            If the table exists and *write_mode* is ``"error"``.
         """
 
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
         if existing is not None:
-            if write_mode != "overwrite":
+            if write_mode == "error":
                 raise TableExistsError(name=table_name, namespace_id=namespace_id)
 
             old_path = Path(existing.file_path)
             if is_delta_table(old_path):
-                return existing, old_path, "overwrite"
+                return existing, old_path, write_mode
 
             # Legacy parquet file — compute new delta dir at same stem.
-            # Do NOT delete the old file here; the caller's
-            # ``overwrite_table_data`` will clean it up *after* the new
-            # write succeeds, avoiding data loss if the write fails.
             new_dir = old_path.parent / old_path.stem
-            return existing, new_dir, "overwrite"
+            return existing, new_dir, write_mode
 
+        # New table — merge modes handled by the worker (it creates the table)
         dir_name = f"{table_name}_{uuid4().hex[:8]}"
-        return None, catalog_dir / dir_name, "error"
+        return None, catalog_dir / dir_name, write_mode
 
     def resolve_table_file_path(
         self,
@@ -1500,7 +1497,6 @@ class CatalogService:
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
-        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         table_path = str(data_path)
@@ -1537,7 +1533,6 @@ class CatalogService:
         if not is_delta_table(data_path):
             return DeltaTableHistory(current_version=0, history=[])
 
-        # Lazy import to avoid circular dependency with configs at module load time
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
         table_path = str(data_path)

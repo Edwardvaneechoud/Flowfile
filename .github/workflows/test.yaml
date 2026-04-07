@@ -139,6 +139,12 @@ jobs:
       - name: Start Mock S3 bucket with Sample Data
         run: poetry run start_minio
 
+      - name: Start Mock Azure Blob Storage (Azurite)
+        run: poetry run start_azurite
+
+      - name: Start Mock Google Cloud Storage
+        run: poetry run start_gcs
+
       # Run tests conditionally based on what changed
       - name: Run pytest for flowfile_frame
         if: |
@@ -176,6 +182,12 @@ jobs:
 
       - name: Stop Mock S3 bucket
         run: poetry run stop_minio
+
+      - name: Stop Mock Azure Blob Storage (Azurite)
+        run: poetry run stop_azurite
+
+      - name: Stop Mock Google Cloud Storage
+        run: poetry run stop_gcs
 
       - name: Generate coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
@@ -271,6 +283,14 @@ jobs:
         shell: pwsh
         run: poetry run start_minio
 
+      - name: Start Mock Azure Blob Storage (Azurite)
+        shell: pwsh
+        run: poetry run start_azurite
+
+      - name: Start Mock Google Cloud Storage
+        shell: pwsh
+        run: poetry run start_gcs
+
       - name: Run pytest for flowfile_frame
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
@@ -309,6 +329,14 @@ jobs:
       - name: Stop Mock S3 bucket
         shell: pwsh
         run: poetry run stop_minio
+
+      - name: Stop Mock Azure Blob Storage (Azurite)
+        shell: pwsh
+        run: poetry run stop_azurite
+
+      - name: Stop Mock Google Cloud Storage
+        shell: pwsh
+        run: poetry run stop_gcs
 
       - name: Run pytest for flowfile
         if: |

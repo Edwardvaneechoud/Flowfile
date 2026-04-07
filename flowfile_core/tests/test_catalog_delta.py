@@ -412,7 +412,7 @@ class TestOverwriteTableDataDelta:
 
 
 class TestResolveWriteDestination:
-    def test_new_table_returns_none_and_error_mode(self, tmp_path):
+    def test_new_table_returns_none_and_passthrough_mode(self, tmp_path):
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -424,7 +424,7 @@ class TestResolveWriteDestination:
                 catalog_dir=tmp_path,
             )
         assert existing is None
-        assert delta_mode == "error"
+        assert delta_mode == "overwrite"
         assert str(dest_path).startswith(str(tmp_path))
 
     def test_existing_table_non_overwrite_raises(self, tmp_path):
@@ -521,6 +521,80 @@ class TestResolveWriteDestination:
         assert pq_file.exists()
         # New path should be a directory at the same stem
         assert dest_path == tmp_path / "legacy"
+
+    def test_existing_delta_table_append(self, tmp_path):
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "delta_append"
+        delta_dir.mkdir()
+        (delta_dir / "_delta_log").mkdir()
+
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="delta_append_table",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="delta_append_table",
+                namespace_id=schema_id,
+                write_mode="append",
+                catalog_dir=tmp_path,
+            )
+        assert existing is not None
+        assert dest_path == delta_dir
+        assert delta_mode == "append"
+
+    def test_existing_delta_table_upsert(self, tmp_path):
+        _, schema_id = _make_namespace()
+        delta_dir = tmp_path / "delta_upsert"
+        delta_dir.mkdir()
+        (delta_dir / "_delta_log").mkdir()
+
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="delta_upsert_table",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="delta_upsert_table",
+                namespace_id=schema_id,
+                write_mode="upsert",
+                catalog_dir=tmp_path,
+            )
+        assert existing is not None
+        assert dest_path == delta_dir
+        assert delta_mode == "upsert"
+
+    def test_new_table_with_merge_mode(self, tmp_path):
+        _, schema_id = _make_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            existing, dest_path, delta_mode = svc.resolve_write_destination(
+                table_name="new_upsert",
+                namespace_id=schema_id,
+                write_mode="upsert",
+                catalog_dir=tmp_path,
+            )
+        assert existing is None
+        assert delta_mode == "upsert"
 
 
 # ---------------------------------------------------------------------------
