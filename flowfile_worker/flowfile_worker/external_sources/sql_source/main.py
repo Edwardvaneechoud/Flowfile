@@ -15,7 +15,7 @@ def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWrit
     # Write the DataFrame to the database
     df.write_database(
         table_name=database_write_settings.table_name,
-        connection=database_write_settings.connection.create_uri(),
+        connection=database_write_settings.connection.create_sqlalchemy_uri(),
         if_table_exists=database_write_settings.if_exists,
     )
     return True

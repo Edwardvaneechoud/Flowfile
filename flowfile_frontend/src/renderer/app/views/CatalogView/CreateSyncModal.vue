@@ -15,11 +15,7 @@
 
         <div class="form-group">
           <label class="field-label">Sync name</label>
-          <input
-            v-model="syncName"
-            class="input-field"
-            placeholder="e.g. orders-sync"
-          />
+          <input v-model="syncName" class="input-field" placeholder="e.g. orders-sync" />
           <span v-if="syncName" class="flow-name-hint">
             Flow will be named: <code>sync-{{ syncName }}</code>
           </span>
@@ -45,22 +41,13 @@
         <div class="form-group">
           <label class="field-label">Topic</label>
           <div class="topic-row">
-            <select
-              v-if="availableTopics.length > 0"
-              v-model="topicName"
-              class="input-field"
-            >
+            <select v-if="availableTopics.length > 0" v-model="topicName" class="input-field">
               <option value="">Select a topic...</option>
               <option v-for="topic in availableTopics" :key="topic.name" :value="topic.name">
                 {{ topic.name }} ({{ topic.partition_count }} partitions)
               </option>
             </select>
-            <input
-              v-else
-              v-model="topicName"
-              class="input-field"
-              placeholder="my-topic"
-            />
+            <input v-else v-model="topicName" class="input-field" placeholder="my-topic" />
             <button
               v-if="selectedConnectionId"
               class="btn-fetch"
@@ -97,7 +84,7 @@
         </div>
 
         <label class="checkbox-row">
-          <input type="checkbox" v-model="includeExisting" />
+          <input v-model="includeExisting" type="checkbox" />
           <span>Include existing messages</span>
           <span class="checkbox-hint">
             When checked, the first run reads all messages from the beginning of the topic.
