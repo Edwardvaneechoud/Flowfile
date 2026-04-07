@@ -1,0 +1,127 @@
+flowfile_version: 0.6.3
+flowfile_id: 1
+flowfile_name: Web Analytics Funnel
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/page_views.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: filter
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3, 6]
+  setting_input:
+    cache_results: false
+    filter_input:
+      mode: basic
+      basic_filter:
+        field: device
+        operator: equals
+        value: mobile
+- id: 3
+  type: group_by
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: page
+        agg: groupby
+        new_name: page
+      - old_name: event_id
+        agg: count
+        new_name: visit_count
+      - old_name: user_id
+        agg: n_unique
+        new_name: unique_visitors
+- id: 4
+  type: sort
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 750
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    sort_input:
+    - column: visit_count
+      how: descending
+- id: 5
+  type: explore_data
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1000
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+- id: 6
+  type: record_count
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 350
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: []
+  setting_input:
+    cache_results: false
+_template_meta:
+  template_id: web_analytics_funnel
+  name: Web Analytics Funnel
+  description: 'Analyze mobile page views: group by page, sort by visits, and count
+    total records.'
+  category: Intermediate
+  tags: [filter, group_by, sort, record_count]
+  node_count: 6
+  icon: analytics
+_required_csv_files: [page_views.csv]

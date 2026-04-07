@@ -3,6 +3,16 @@ import type { FlowTemplateMeta } from "../types/template.types";
 
 export class TemplatesApi {
   /**
+   * Ensure template YAML files are available locally (downloads from GitHub if needed).
+   * Should be called before listTemplates() to handle PyPI installs without repo checkout.
+   */
+  static async ensureAvailable(): Promise<void> {
+    await axios.get("/templates/ensure_available/", {
+      headers: { accept: "application/json" },
+    });
+  }
+
+  /**
    * Get metadata for all available flow templates
    */
   static async listTemplates(): Promise<FlowTemplateMeta[]> {

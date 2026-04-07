@@ -1,0 +1,125 @@
+flowfile_version: 0.6.3
+flowfile_id: 1
+flowfile_name: Product Fuzzy Match
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/internal_products.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 350
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/supplier_products.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 3
+  type: fuzzy_match
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 300
+  y_position: 200
+  left_input_id: null
+  right_input_id: 2
+  input_ids: [1]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: false
+    join_input:
+      join_mapping:
+      - left_col: product_name
+        right_col: product_name
+      left_select:
+        select:
+        - old_name: id
+          new_name: internal_id
+        - old_name: product_name
+          new_name: internal_name
+        - old_name: sku
+      right_select:
+        select:
+        - old_name: supplier_id
+        - old_name: product_name
+          new_name: supplier_name
+        - old_name: supplier
+      how: inner
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 4
+  type: filter
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 550
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    filter_input:
+      mode: advanced
+      advanced_filter: '[score] >= 80'
+- id: 5
+  type: explore_data
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 800
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: product_fuzzy_match
+  name: Product Catalog Fuzzy Match
+  description: Match internal product catalog against supplier listings using fuzzy
+    name matching.
+  category: Advanced
+  tags: [fuzzy_match, filter]
+  node_count: 5
+  icon: compare_arrows
+_required_csv_files: [internal_products.csv, supplier_products.csv]

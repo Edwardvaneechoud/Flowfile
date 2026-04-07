@@ -69,6 +69,8 @@ const filteredTemplates = computed(() => {
 const loadTemplates = async () => {
   isLoading.value = true;
   try {
+    // Ensure flow YAMLs are available locally (downloads from GitHub on first visit)
+    await TemplatesApi.ensureAvailable();
     templates.value = await TemplatesApi.listTemplates();
   } catch (error) {
     console.error("Failed to load templates:", error);

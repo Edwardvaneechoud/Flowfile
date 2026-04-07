@@ -1,0 +1,150 @@
+flowfile_version: 0.6.3
+flowfile_id: 1
+flowfile_name: Order Enrichment
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/orders.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 350
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/products.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 3
+  type: join
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 300
+  y_position: 200
+  left_input_id: null
+  right_input_id: 2
+  input_ids: [1]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: product_id
+        right_col: product_id
+      left_select:
+        select:
+        - old_name: order_id
+        - old_name: customer_id
+        - old_name: quantity
+        - old_name: order_date
+      right_select:
+        select:
+        - old_name: name
+          new_name: product_name
+        - old_name: category
+        - old_name: unit_price
+      how: left
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 4
+  type: formula
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 550
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    function:
+      field:
+        name: total_price
+        data_type: Auto
+      function: '[quantity] * [unit_price]'
+- id: 5
+  type: select
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 800
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: [6]
+  setting_input:
+    cache_results: false
+    keep_missing: false
+    select_input:
+    - old_name: order_id
+    - old_name: customer_id
+    - old_name: product_name
+    - old_name: category
+    - old_name: quantity
+    - old_name: unit_price
+    - old_name: total_price
+    - old_name: order_date
+    sorted_by: none
+- id: 6
+  type: explore_data
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1050
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: order_enrichment
+  name: Order Enrichment (Join)
+  description: Join orders with product details, calculate total price, and select
+    final columns.
+  category: Intermediate
+  tags: [join, formula, select]
+  node_count: 6
+  icon: join_inner
+_required_csv_files: [orders.csv, products.csv]

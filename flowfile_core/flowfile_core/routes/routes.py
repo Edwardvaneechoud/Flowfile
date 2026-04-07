@@ -1313,6 +1313,23 @@ def list_templates():
     return get_all_template_metas()
 
 
+@router.get("/templates/ensure_available/", tags=["templates"])
+def ensure_templates_available():
+    """Downloads template flow YAMLs from GitHub if not already cached locally.
+
+    Called by the frontend on first visit to the templates page to ensure
+    templates are available even when running from a PyPI install (no repo checkout).
+    """
+    from flowfile_core.templates import get_flow_yaml_filenames
+    from flowfile_core.templates.data_downloader import ensure_flow_yamls
+
+    try:
+        ensure_flow_yamls(get_flow_yaml_filenames())
+        return {"status": "ok"}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
 @router.post("/templates/create_from_template/", tags=["templates"])
 def create_from_template(template_id: str, current_user=Depends(get_current_active_user)) -> int:
     """Instantiates a template as a new flow session.
@@ -1320,8 +1337,6 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     Downloads required CSV data files from GitHub if not already cached locally,
     then creates a flow from the template definition.
     """
-    import tempfile
-
     import yaml
 
     from flowfile_core.templates import get_template_flowfile_data, get_template_required_files
@@ -1340,7 +1355,7 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     data_dir = get_template_data_dir()
     flowfile_data = get_template_flowfile_data(template_id, data_dir)
 
-    # Write to a temp YAML file and import via existing flow import path
+    # Write to a YAML file and import via existing flow import path
     from shared.storage_config import storage
 
     flows_dir = storage.flows_directory

@@ -1,0 +1,230 @@
+flowfile_version: 0.6.3
+flowfile_id: 1
+flowfile_name: Customer 360
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 50
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/customers.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 250
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/orders.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 3
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 450
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/support_tickets.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 4
+  type: join
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 300
+  y_position: 150
+  left_input_id: null
+  right_input_id: 2
+  input_ids: [1]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: customer_id
+        right_col: customer_id
+      left_select:
+        select:
+        - old_name: customer_id
+        - old_name: name
+        - old_name: segment
+        - old_name: city
+      right_select:
+        select:
+        - old_name: order_id
+        - old_name: quantity
+        - old_name: order_date
+      how: left
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 5
+  type: join
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 600
+  y_position: 250
+  left_input_id: null
+  right_input_id: 3
+  input_ids: [4]
+  outputs: [6]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: customer_id
+        right_col: customer_id
+      left_select:
+        select:
+        - old_name: customer_id
+        - old_name: name
+        - old_name: segment
+        - old_name: city
+        - old_name: order_id
+        - old_name: quantity
+      right_select:
+        select:
+        - old_name: ticket_id
+        - old_name: priority
+      how: left
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 6
+  type: group_by
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 900
+  y_position: 250
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: [7]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: customer_id
+        agg: groupby
+        new_name: customer_id
+      - old_name: name
+        agg: first
+        new_name: name
+      - old_name: segment
+        agg: first
+        new_name: segment
+      - old_name: city
+        agg: first
+        new_name: city
+      - old_name: order_id
+        agg: n_unique
+        new_name: total_orders
+      - old_name: quantity
+        agg: sum
+        new_name: total_items
+      - old_name: ticket_id
+        agg: n_unique
+        new_name: total_tickets
+- id: 7
+  type: formula
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1150
+  y_position: 250
+  left_input_id: null
+  right_input_id: null
+  input_ids: [6]
+  outputs: [8]
+  setting_input:
+    cache_results: false
+    function:
+      field:
+        name: customer_score
+        data_type: Auto
+      function: '[total_orders] * 10 + [total_items] - [total_tickets] * 5'
+- id: 8
+  type: sort
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1400
+  y_position: 250
+  left_input_id: null
+  right_input_id: null
+  input_ids: [7]
+  outputs: [9]
+  setting_input:
+    cache_results: false
+    sort_input:
+    - column: customer_score
+      how: descending
+- id: 9
+  type: explore_data
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1650
+  y_position: 250
+  left_input_id: null
+  right_input_id: null
+  input_ids: [8]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: customer_360
+  name: Multi-Source Customer 360
+  description: Join customers, orders, and support tickets to build a scored customer
+    profile.
+  category: Advanced
+  tags: [join, group_by, formula, sort]
+  node_count: 9
+  icon: hub
+_required_csv_files: [customers.csv, orders.csv, support_tickets.csv]
