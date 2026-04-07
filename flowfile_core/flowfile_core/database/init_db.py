@@ -2,6 +2,7 @@ import logging
 import os
 import secrets
 import string
+from importlib.metadata import PackageNotFoundError, version
 
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -125,12 +126,29 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
 
 
+def update_db_info(db: Session):
+    """Upsert the application version into the db_info table."""
+    try:
+        app_version = version("Flowfile")
+    except PackageNotFoundError:
+        app_version = "unknown"
+
+    row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
+    if row:
+        row.app_version = app_version
+    else:
+        db.add(db_models.DbInfo(id=1, app_version=app_version))
+    db.commit()
+    logger.info("Database info updated: app_version=%s", app_version)
+
+
 def init_db():
     db = SessionLocal()
     try:
         create_default_local_user(db)
         create_docker_admin_user(db)
         create_default_catalog_namespace(db)
+        update_db_info(db)
     finally:
         db.close()
 

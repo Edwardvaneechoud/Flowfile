@@ -17,9 +17,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def create_legacy_db(path: Path, tables_data: dict) -> None:
@@ -75,10 +73,11 @@ def _get_tables(db_path: Path) -> list[str]:
     return tables
 
 
-# Expected application tables (19) + alembic_version = 20
+# Expected application tables (20) + alembic_version = 21
 EXPECTED_APP_TABLES = {
     "users",
     "secrets",
+    "db_info",
     "database_connections",
     "cloud_storage_connections",
     "cloud_storage_permissions",
@@ -99,9 +98,7 @@ EXPECTED_APP_TABLES = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Scenario 1: Fresh install
-# ---------------------------------------------------------------------------
 
 
 class TestFreshInstall:
@@ -137,9 +134,7 @@ class TestFreshInstall:
         assert model_tables == db_tables
 
 
-# ---------------------------------------------------------------------------
 # Scenario 2: Legacy migration
-# ---------------------------------------------------------------------------
 
 
 class TestLegacyMigration:
@@ -236,9 +231,7 @@ class TestLegacyMigration:
         assert EXPECTED_APP_TABLES <= tables
 
 
-# ---------------------------------------------------------------------------
 # Dynamic column mapping
-# ---------------------------------------------------------------------------
 
 
 class TestDynamicColumnMapping:
@@ -336,9 +329,7 @@ class TestDynamicColumnMapping:
         assert count == 0
 
 
-# ---------------------------------------------------------------------------
 # Error handling
-# ---------------------------------------------------------------------------
 
 
 class TestErrorHandling:
@@ -385,9 +376,7 @@ class TestErrorHandling:
         assert row[0] == "user1"
 
 
-# ---------------------------------------------------------------------------
 # Scenario 3: Existing catalog DB (idempotency)
-# ---------------------------------------------------------------------------
 
 
 class TestExistingCatalogDb:
@@ -445,9 +434,7 @@ class TestExistingCatalogDb:
         assert row == 0  # legacy_user should NOT have been copied
 
 
-# ---------------------------------------------------------------------------
 # Topological sort
-# ---------------------------------------------------------------------------
 
 
 class TestTopologicalSort:

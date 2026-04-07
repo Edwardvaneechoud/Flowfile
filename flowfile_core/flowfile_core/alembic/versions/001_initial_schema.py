@@ -314,8 +314,17 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
     )
 
+    # --- db_info ---
+    op.create_table(
+        "db_info",
+        sa.Column("id", sa.Integer, primary_key=True, default=1),
+        sa.Column("app_version", sa.String, nullable=False),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("db_info")
     op.drop_table("kafka_connections")
     op.drop_table("scheduler_lock")
     op.drop_table("catalog_table_read_links")

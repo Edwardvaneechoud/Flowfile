@@ -24,10 +24,6 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 500
 
 
-# ---------------------------------------------------------------------------
-# Path helpers (PyInstaller-aware)
-# ---------------------------------------------------------------------------
-
 
 def _get_base_dir() -> Path:
     """Resolve the base directory for alembic files.
@@ -203,10 +199,6 @@ def migrate_data_from_legacy_db() -> None:
         old_engine.dispose()
         new_engine.dispose()
 
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
 
 
 def run_startup_migration() -> None:
