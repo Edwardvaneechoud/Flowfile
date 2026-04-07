@@ -49,11 +49,6 @@ def _get_alembic_config() -> Config:
     return cfg
 
 
-# ---------------------------------------------------------------------------
-# Catalog DB detection
-# ---------------------------------------------------------------------------
-
-
 def _catalog_db_exists() -> bool:
     """Check whether the new ``flowfile_catalog.db`` file already exists."""
     url = _storage_config.get_database_url()
@@ -63,21 +58,11 @@ def _catalog_db_exists() -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Alembic commands
-# ---------------------------------------------------------------------------
-
-
 def run_alembic_upgrade() -> None:
     """Run all pending Alembic migrations up to *head*."""
     cfg = _get_alembic_config()
     command.upgrade(cfg, "head")
     logger.info("Alembic migrations applied successfully")
-
-
-# ---------------------------------------------------------------------------
-# Legacy data migration
-# ---------------------------------------------------------------------------
 
 
 def _compute_table_order(inspector, tables: set[str]) -> list[str]:

@@ -13,6 +13,10 @@ from flowfile_core.database.migration import run_startup_migration
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Ensure a basic logging config exists so warnings emitted at import time
+# (before main.py's lifespan configures logging) are visible in container logs.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
 logger = logging.getLogger(__name__)
 
 # Run Alembic-based migrations (replaces the old manual run_migrations + create_all)
