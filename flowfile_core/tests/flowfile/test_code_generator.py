@@ -4800,7 +4800,6 @@ def test_kafka_source_code_executes():
         produce_json_messages,
         start_redpanda_container,
     )
-    breakpoint()
     # Ensure Redpanda is running
     if not is_container_running(REDPANDA_CONTAINER_NAME):
         if not start_redpanda_container():
