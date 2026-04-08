@@ -175,12 +175,16 @@
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted, watch } from "vue";
-import { NodeDatabaseReader, ConnectionModeOption, DatabaseConnection } from "../../../baseNode/nodeInput";
+import {
+  NodeDatabaseReader,
+  ConnectionModeOption,
+  DatabaseConnection,
+} from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
-import { FullDatabaseConnectionInterface} from "../../../../../views/DatabaseView/databaseConnectionTypes";
+import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";

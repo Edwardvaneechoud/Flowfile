@@ -402,3 +402,13 @@ class KafkaConnection(Base):
     ssl_key = relationship("Secret", foreign_keys=[ssl_key_id], lazy="joined")
 
 
+class DbInfo(Base):
+    """Single-row table tracking the application version that last touched this database."""
+
+    __tablename__ = "db_info"
+
+    id = Column(Integer, primary_key=True, default=1)
+    app_version = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
