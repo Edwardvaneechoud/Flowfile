@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 from polars._typing import CsvEncoding
@@ -9,6 +9,9 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.utils import generate_node_id
+
+if TYPE_CHECKING:
+    from flowfile_frame.flow_frame import FlowFrame
 
 
 def read_from_cloud_storage(
@@ -21,11 +24,11 @@ def read_from_cloud_storage(
     has_header: bool = True,
     encoding: str = "utf8",
     delta_version: int | None = None,
-) -> pl.LazyFrame:
+) -> FlowFrame:
     """Read data from cloud storage.
 
     Unified function that supports all cloud storage formats (CSV, Parquet,
-    JSON, Delta). Returns a pl.LazyFrame for consistency with read_database()
+    JSON, Delta). Returns a FlowFrame for consistency with read_database()
     and read_catalog_table().
 
     Args:
@@ -39,7 +42,7 @@ def read_from_cloud_storage(
         delta_version: Delta table version for time-travel (only used for Delta format).
 
     Returns:
-        pl.LazyFrame: The data read from cloud storage.
+        FlowFrame: A FlowFrame backed by a cloud storage reader node.
     """
     from flowfile_frame.flow_frame_methods import (
         scan_csv_from_cloud_storage,
@@ -78,11 +81,11 @@ def read_from_cloud_storage(
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 
-    return frame.data
+    return frame
 
 
 def write_to_cloud_storage(
-    df: pl.DataFrame | pl.LazyFrame,
+    df: pl.LazyFrame,
     path: str,
     *,
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet",
@@ -98,7 +101,7 @@ def write_to_cloud_storage(
     JSON, Delta). Consistent with write_database() and write_catalog_table().
 
     Args:
-        df: The DataFrame or LazyFrame to write.
+        df: The LazyFrame to write.
         path: Cloud storage destination path.
         file_format: File format to write.
         connection_name: Name of the stored cloud storage connection.
@@ -108,9 +111,6 @@ def write_to_cloud_storage(
         write_mode: 'overwrite' or 'append' (only used for Delta format).
     """
     from flowfile_frame.flow_frame import FlowFrame
-
-    if isinstance(df, pl.DataFrame):
-        df = df.lazy()
 
     frame = FlowFrame(data=df)
 

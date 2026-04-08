@@ -4264,6 +4264,7 @@ def test_catalog_reader_by_table_name():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(code_output, "ff.read_catalog_table(", '"my_table"')
     assert "import flowfile as ff" in converter.imports
+    assert ").data" in code_output
 
 
 def test_catalog_reader_with_namespace_and_version():
@@ -4337,7 +4338,7 @@ def test_catalog_writer_overwrite_mode():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.write_catalog_table(", "df_1.collect()", '"output_table"',
+        code_output, "ff.write_catalog_table(", "df_1,", '"output_table"',
         'write_mode="overwrite"',
     )
     assert "import flowfile as ff" in converter.imports
@@ -4625,6 +4626,7 @@ def test_kafka_source_with_connection_name():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(code_output, "ff.read_kafka(", '"my_kafka"', 'topic_name="events"')
     assert "import flowfile as ff" in converter.imports
+    assert ").data" in code_output
 
 
 def test_kafka_source_with_all_parameters():
@@ -4749,6 +4751,8 @@ def test_cloud_storage_reader_handler_unified():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(code_output, "ff.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
     assert "import flowfile as ff" in converter.imports
+    # Should extract .data from the FlowFrame result
+    assert ").data" in code_output
     # Should NOT contain old format-specific calls
     assert "scan_parquet_from_cloud_storage" not in code_output
     assert "scan_csv_from_cloud_storage" not in code_output

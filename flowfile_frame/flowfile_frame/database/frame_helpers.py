@@ -175,7 +175,7 @@ def read_database(
 
 
 def write_database(
-    df: pl.DataFrame | pl.LazyFrame,
+    df: pl.LazyFrame,
     connection_name: str,
     table_name: str,
     *,
@@ -187,7 +187,7 @@ def write_database(
     Wraps the data in a FlowFrame and creates a database writer node.
 
     Args:
-        df: The DataFrame or LazyFrame to write.
+        df: The LazyFrame to write.
         connection_name: Name of the stored database connection to use.
         table_name: Name of the table to write to.
         schema_name: Database schema name (e.g., 'public' for PostgreSQL).
@@ -200,9 +200,6 @@ def write_database(
         ValueError: If the connection is not found.
     """
     from flowfile_frame.flow_frame import FlowFrame
-
-    if isinstance(df, pl.DataFrame):
-        df = df.lazy()
 
     frame = FlowFrame(data=df)
     frame.write_database(

@@ -194,7 +194,7 @@ class FlowGraphToPolarsConverter:
         # Delta-specific
         if cs.file_format == "delta" and cs.delta_version is not None:
             self._add_code(f"    delta_version={cs.delta_version},")
-        self._add_code(")")
+        self._add_code(").data")
 
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle file reading nodes."""
@@ -1169,7 +1169,7 @@ class FlowGraphToPolarsConverter:
             for line in db_settings.query.split("\n"):
                 self._add_code(f"        {line}")
             self._add_code('    """,')
-            self._add_code(")")
+            self._add_code(").data")
         else:
             # Table mode
             self._add_code(f"{var_name} = ff.read_database(")
@@ -1178,7 +1178,7 @@ class FlowGraphToPolarsConverter:
                 self._add_code(f'    table_name="{db_settings.table_name}",')
             if db_settings.schema_name:
                 self._add_code(f'    schema_name="{db_settings.schema_name}",')
-            self._add_code(")")
+            self._add_code(").data")
 
         self._add_code("")
 
@@ -1214,7 +1214,7 @@ class FlowGraphToPolarsConverter:
 
         self._add_code(f"# Write to database using connection: {connection_name}")
         self._add_code("ff.write_database(")
-        self._add_code(f"    {input_df}.collect(),")
+        self._add_code(f"    {input_df},")
         self._add_code(f'    "{connection_name}",')
         self._add_code(f'    "{db_settings.table_name}",')
         if db_settings.schema_name:
@@ -1249,7 +1249,7 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
-        self._add_code(")")
+        self._add_code(").data")
         self._add_code("")
 
     def _handle_catalog_writer(
@@ -1269,7 +1269,7 @@ class FlowGraphToPolarsConverter:
 
         self._add_code(f"# Write to catalog table: {ws.table_name}")
         self._add_code("ff.write_catalog_table(")
-        self._add_code(f"    {input_df}.collect(),")
+        self._add_code(f"    {input_df},")
         self._add_code(f'    "{ws.table_name}",')
         if ws.namespace_id is not None:
             self._add_code(f"    namespace_id={ws.namespace_id},")
@@ -1319,7 +1319,7 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"    poll_timeout_seconds={ks.poll_timeout_seconds},")
         if ks.value_format != "json":
             self._add_code(f'    value_format="{ks.value_format}",')
-        self._add_code(")")
+        self._add_code(").data")
         self._add_code("")
 
     def _handle_external_source(

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 import polars as pl
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_frame.flow_frame import FlowFrame
 
 
@@ -122,7 +123,7 @@ def read_catalog_table(
 
 
 def write_catalog_table(
-    df: pl.DataFrame | pl.LazyFrame,
+    df: pl.LazyFrame,
     table_name: str,
     *,
     namespace_id: int | None = None,
@@ -130,10 +131,10 @@ def write_catalog_table(
     merge_keys: list[str] | None = None,
     description: str | None = None,
 ) -> None:
-    """Write a DataFrame to the Flowfile catalog as a Delta table.
+    """Write a LazyFrame to the Flowfile catalog as a Delta table.
 
     Args:
-        df: The DataFrame or LazyFrame to write.
+        df: The LazyFrame to write.
         table_name: Name of the catalog table to write to.
         namespace_id: Optional namespace ID for the table.
         write_mode: How to handle existing data:
@@ -150,9 +151,6 @@ def write_catalog_table(
         ValueError: If merge_keys are required but not provided.
     """
     from flowfile_frame.flow_frame import FlowFrame
-
-    if isinstance(df, pl.DataFrame):
-        df = df.lazy()
 
     frame = FlowFrame(data=df)
     frame.write_catalog_table(
