@@ -346,13 +346,31 @@ def get_database_url() -> str:
     Priority:
     1. ``FLOWFILE_DB_PATH`` env var (explicit override)
     2. ``TESTING=True`` env var → temp directory test DB
-    3. Default: ``<storage.database_directory>/flowfile.db``
+    3. Default: ``<storage.database_directory>/flowfile_catalog.db``
     """
     custom = os.environ.get("FLOWFILE_DB_PATH")
     if custom:
         return f"sqlite:///{custom}"
 
     if os.environ.get("TESTING") == "True":
-        return f"sqlite:///{storage.temp_directory / 'test_flowfile.db'}"
+        return f"sqlite:///{storage.temp_directory / 'test_flowfile_catalog.db'}"
 
-    return f"sqlite:///{storage.database_directory / 'flowfile.db'}"
+    return f"sqlite:///{storage.database_directory / 'flowfile_catalog.db'}"
+
+
+def get_legacy_database_path() -> Path | None:
+    """Return the path to the old ``flowfile.db`` if it exists, else ``None``.
+
+    Used only during the one-time data migration from ``flowfile.db`` →
+    ``flowfile_catalog.db``.  Returns ``None`` when ``FLOWFILE_DB_PATH`` is
+    set (the user is managing their own database path).
+    """
+    if os.environ.get("FLOWFILE_DB_PATH"):
+        return None
+
+    if os.environ.get("TESTING") == "True":
+        legacy = storage.temp_directory / "test_flowfile.db"
+    else:
+        legacy = storage.database_directory / "flowfile.db"
+
+    return legacy if legacy.exists() else None

@@ -89,4 +89,6 @@ services_dist/
 shared_data/
 flowfile.db
 **/flowfile.db
+flowfile_catalog.db
+**/flowfile_catalog.db
 *.flowfile
