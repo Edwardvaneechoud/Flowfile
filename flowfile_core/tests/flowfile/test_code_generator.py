@@ -8,6 +8,7 @@ from polars.testing import assert_frame_equal
 
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars, UnsupportedNodeError
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_frame.flow_frame import FlowFrame
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -4861,8 +4862,10 @@ def test_kafka_source_code_executes():
 
         # Execute generated code and verify
         result = get_result_from_generated_code(code)
-        assert isinstance(result, (pl.DataFrame, pl.LazyFrame))
-        if isinstance(result, pl.LazyFrame):
+        assert isinstance(result, (pl.DataFrame, pl.LazyFrame, FlowFrame))
+        if isinstance(result, FlowFrame):
+            result = result.collect()
+        elif isinstance(result, pl.LazyFrame):
             result = result.collect()
         assert len(result) == 3
         assert "name" in result.columns
