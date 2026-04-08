@@ -2626,7 +2626,6 @@ def test_cloud_storage_writer(file_format):
         file_format=file_format,
         connection_name=conn.connection_name
     )
-    breakpoint
     read_settings = cloud_ss.CloudStorageReadSettings(
         resource_path=output_file_name,
         file_format=file_format,
