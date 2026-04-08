@@ -151,6 +151,8 @@ class CatalogRepository(Protocol):
 
     def last_run_for_flow(self, registration_id: int) -> FlowRun | None: ...
 
+    def fail_stale_runs(self) -> int: ...
+
     def count_catalog_namespaces(self) -> int: ...
 
     def count_all_flows(self) -> int: ...
@@ -841,6 +843,24 @@ class SQLAlchemyCatalogRepository:
             .first()
             is not None
         )
+
+    def fail_stale_runs(self) -> int:
+        """Mark all runs with ended_at IS NULL as failed. Returns count."""
+        from datetime import datetime, timezone
+
+        stale = self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).all()
+        if not stale:
+            return 0
+        now = datetime.now(timezone.utc)
+        for run in stale:
+            run.ended_at = now
+            run.success = False
+            if run.started_at:
+                started_utc = run.started_at.replace(tzinfo=None)
+                now_utc = now.replace(tzinfo=None)
+                run.duration_seconds = (now_utc - started_utc).total_seconds()
+        self._db.commit()
+        return len(stale)
 
     def list_due_interval_schedules(self) -> list[FlowSchedule]:
         """Return enabled interval schedules (filtering done in Python)."""

@@ -438,6 +438,50 @@ class TestRuns:
         assert data["total"] == 0
         assert len(data["items"]) == 0
 
+    def test_fail_stale_runs_marks_orphaned_runs(self):
+        """Runs with ended_at=NULL should be marked as failed on startup."""
+        from datetime import datetime, timedelta, timezone
+
+        from flowfile_core.database.init_db import fail_stale_runs
+
+        with get_db_context() as db:
+            # Create an orphaned run (ended_at=NULL, simulating a crash)
+            stale_run = FlowRun(
+                flow_name="stale_flow",
+                flow_path="/tmp/stale.yaml",
+                user_id=1,
+                started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+                run_type="in_designer_run",
+            )
+            # Create a completed run (should NOT be modified)
+            completed_run = FlowRun(
+                flow_name="done_flow",
+                flow_path="/tmp/done.yaml",
+                user_id=1,
+                started_at=datetime.now(timezone.utc) - timedelta(hours=2),
+                ended_at=datetime.now(timezone.utc) - timedelta(hours=1),
+                success=True,
+                duration_seconds=3600.0,
+                run_type="in_designer_run",
+            )
+            db.add_all([stale_run, completed_run])
+            db.commit()
+            stale_id = stale_run.id
+            completed_id = completed_run.id
+
+            fail_stale_runs(db)
+
+            db.expire_all()
+            stale = db.get(FlowRun, stale_id)
+            assert stale.ended_at is not None, "Stale run should have ended_at set"
+            assert stale.success is False, "Stale run should be marked as failed"
+            assert stale.duration_seconds is not None, "Stale run should have duration_seconds"
+            assert stale.duration_seconds > 0, "Duration should be positive"
+
+            done = db.get(FlowRun, completed_id)
+            assert done.success is True, "Completed run should remain unchanged"
+            assert done.duration_seconds == 3600.0, "Completed run duration should be unchanged"
+
 
 # ---------------------------------------------------------------------------
 # Stats tests

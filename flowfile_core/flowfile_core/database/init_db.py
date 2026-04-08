@@ -142,6 +142,28 @@ def update_db_info(db: Session):
     logger.info("Database info updated: app_version=%s", app_version)
 
 
+def fail_stale_runs(db: Session):
+    """Mark any runs still showing ended_at=NULL as failed.
+
+    These are orphaned by a prior crash or restart.
+    """
+    from datetime import datetime, timezone
+
+    stale_runs = db.query(db_models.FlowRun).filter(db_models.FlowRun.ended_at.is_(None)).all()
+    if not stale_runs:
+        return
+    now = datetime.now(timezone.utc)
+    for run in stale_runs:
+        run.ended_at = now
+        run.success = False
+        if run.started_at:
+            started_utc = run.started_at.replace(tzinfo=None)
+            now_utc = now.replace(tzinfo=None)
+            run.duration_seconds = (now_utc - started_utc).total_seconds()
+    db.commit()
+    logger.info("Marked %d stale run(s) as failed on startup", len(stale_runs))
+
+
 def init_db():
     db = SessionLocal()
     try:
@@ -149,6 +171,7 @@ def init_db():
         create_docker_admin_user(db)
         create_default_catalog_namespace(db)
         update_db_info(db)
+        fail_stale_runs(db)
     finally:
         db.close()
 
