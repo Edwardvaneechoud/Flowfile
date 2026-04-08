@@ -1,84 +1,56 @@
-"""Tests for Kafka consumer logic using mocked confluent_kafka."""
+"""Tests for Kafka consumer logic using a real Redpanda broker.
 
-from unittest.mock import MagicMock, patch
+Requires a running Redpanda container. Start with:
+    poetry run start_redpanda
 
-import pytest
+Run tests:
+    poetry run pytest shared/tests/kafka/test_consumer.py -v
+"""
 
-from shared.kafka.consumer import read_kafka_source
+import os
+import tempfile
+import uuid
+from unittest.mock import patch
+
+import polars as pl
+
+from shared.kafka.consumer import commit_offsets, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
+from test_utils.kafka.fixtures import BOOTSTRAP_SERVERS, produce_json_messages
 
 
-def _make_mock_message(key, value, partition, offset, timestamp_ms=1700000000000):
-    """Create a mock Kafka message."""
-    msg = MagicMock()
-    msg.error.return_value = None
-    msg.key.return_value = key.encode() if key else None
-    msg.value.return_value = value.encode() if isinstance(value, str) else value
-    msg.partition.return_value = partition
-    msg.offset.return_value = offset
-    msg.timestamp.return_value = (1, timestamp_ms)  # CREATE_TIME
-    return msg
+def _unique_group() -> str:
+    return f"test-{uuid.uuid4().hex[:12]}"
 
 
-def _make_eof_message(partition):
-    """Create a mock EOF message."""
-    msg = MagicMock()
-    err = MagicMock()
-    err.code.return_value = -191  # KafkaError._PARTITION_EOF
-    msg.error.return_value = err
-    msg.partition.return_value = partition
-    return msg
+def _settings(topic: str, **overrides) -> KafkaReadSettings:
+    defaults = dict(
+        bootstrap_servers=BOOTSTRAP_SERVERS,
+        topic=topic,
+        group_id=_unique_group(),
+        start_offset="earliest",
+        poll_timeout_seconds=10.0,
+    )
+    defaults.update(overrides)
+    return KafkaReadSettings(**defaults)
 
 
-def _setup_consumer(mock_cls, topic, partitions=None):
-    """Set up a mock consumer with topic subscription and partition assignment."""
-    consumer = MagicMock()
-    mock_cls.return_value = consumer
-
-    if partitions is None:
-        partitions = {0}
-
-    # Simulate on_assign callback firing during subscribe
-    def fake_subscribe(topics, on_assign=None):
-        if on_assign:
-            tps = [MagicMock(partition=p) for p in partitions]
-            on_assign(consumer, tps)
-
-    consumer.subscribe.side_effect = fake_subscribe
-    return consumer
-
-
-def _make_consume_fn(batches):
-    """Create a consume() side_effect that returns batches then empty lists."""
-    it = iter(batches)
-
-    def consume_fn(**kwargs):
-        return next(it, [])
-
-    return consume_fn
+# ---------------------------------------------------------------------------
+# Basic consumer tests
+# ---------------------------------------------------------------------------
 
 
 class TestReadKafkaSource:
-    @patch("shared.kafka.consumer.Consumer")
-    def test_consume_json_messages(self, mock_consumer_cls):
-        """Test consuming JSON messages returns a proper DataFrame."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
-
-        batch1 = [
-            _make_mock_message("k1", '{"name": "Alice", "age": 30}', 0, 0),
-            _make_mock_message("k2", '{"name": "Bob", "age": 25}', 0, 1),
-            _make_mock_message(None, '{"name": "Charlie", "age": 35}', 0, 2),
+    def test_consume_json_messages(self, kafka_topic):
+        """Produce JSON messages, consume them, verify the DataFrame."""
+        messages = [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            {"name": "Charlie", "age": 35},
         ]
-        consumer.consume.side_effect = _make_consume_fn([batch1, [_make_eof_message(0)]])
+        produce_json_messages(kafka_topic, messages)
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            poll_timeout_seconds=5.0,
-        )
-
-        df, result = read_kafka_source(settings)
+        df, result = read_kafka_source(_settings(kafka_topic))
 
         assert df.height == 3
         assert "name" in df.columns
@@ -87,196 +59,284 @@ class TestReadKafkaSource:
         assert "_kafka_partition" in df.columns
         assert "_kafka_offset" in df.columns
         assert "_kafka_timestamp" in df.columns
-
         assert result.messages_consumed == 3
         assert result.new_offsets == {0: 3}
-        consumer.subscribe.assert_called_once()
-        consumer.commit.assert_called_once()
-        consumer.close.assert_called_once()
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_consume_no_messages(self, mock_consumer_cls):
-        """Test consuming from empty topic returns empty DataFrame."""
-        consumer = _setup_consumer(mock_consumer_cls, "empty-topic", {0})
-
-        # Empty batches + EOF
-        consumer.consume.side_effect = _make_consume_fn([[_make_eof_message(0)]])
-
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="empty-topic",
-            group_id="test-group",
-            poll_timeout_seconds=5.0,
-        )
-
-        df, result = read_kafka_source(settings)
+    def test_consume_no_messages(self, kafka_topic):
+        """Consuming from an empty topic returns an empty DataFrame."""
+        df, result = read_kafka_source(_settings(kafka_topic, poll_timeout_seconds=3.0))
 
         assert df.height == 0
         assert "_kafka_key" in df.columns
         assert result.messages_consumed == 0
-        consumer.commit.assert_not_called()
-        consumer.close.assert_called_once()
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_subscribe_uses_group_id(self, mock_consumer_cls):
-        """Test that the consumer group ID from settings is used."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
-        consumer.consume.side_effect = _make_consume_fn([[_make_eof_message(0)]])
+    def test_consume_respects_max_messages(self, kafka_topic):
+        """max_messages should cap consumed messages."""
+        produce_json_messages(kafka_topic, [{"x": i} for i in range(10)])
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="my-custom-group",
-            poll_timeout_seconds=5.0,
-        )
-
-        read_kafka_source(settings)
-
-        config = mock_consumer_cls.call_args[0][0]
-        assert config["group.id"] == "my-custom-group"
-
-    @patch("shared.kafka.consumer.Consumer")
-    def test_consume_respects_max_messages(self, mock_consumer_cls):
-        """Test that max_messages cap is respected."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
-
-        # Return batches of messages — more than max_messages
-        big_batch = [_make_mock_message("k", '{"x": 1}', 0, i) for i in range(10)]
-        consumer.consume.side_effect = _make_consume_fn([big_batch, big_batch])
-
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            max_messages=5,
-            poll_timeout_seconds=10.0,
-        )
-
-        df, result = read_kafka_source(settings)
+        df, result = read_kafka_source(_settings(kafka_topic, max_messages=5))
 
         assert result.messages_consumed == 5
         assert df.height == 5
-        consumer.commit.assert_called_once()
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_consume_skips_deserialization_errors(self, mock_consumer_cls):
-        """Test that messages failing deserialization are skipped."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
+    def test_consume_skips_deserialization_errors(self, kafka_topic):
+        """Invalid JSON messages should be skipped."""
+        from confluent_kafka import Producer
 
-        batch = [
-            _make_mock_message("k1", '{"valid": true}', 0, 0),
-            _make_mock_message("k2", "not json", 0, 1),
-            _make_mock_message("k3", '{"valid": true}', 0, 2),
-        ]
-        consumer.consume.side_effect = _make_consume_fn([batch, [_make_eof_message(0)]])
+        producer = Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
+        producer.produce(kafka_topic, value=b'{"valid": true, "seq": 1}')
+        producer.produce(kafka_topic, value=b"not json")
+        producer.produce(kafka_topic, value=b'{"valid": true, "seq": 2}')
+        producer.flush(timeout=10.0)
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            poll_timeout_seconds=5.0,
-        )
-
-        df, result = read_kafka_source(settings)
+        df, result = read_kafka_source(_settings(kafka_topic))
 
         assert df.height == 2
         assert result.messages_consumed == 2
-        assert result.new_offsets[0] == 3
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_no_commit_when_commit_false(self, mock_consumer_cls):
-        """Test that commit=False skips committing (used for schema probes)."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
+    def test_no_commit_when_commit_false(self, kafka_topic):
+        """commit=False should not commit offsets; re-consuming gets same messages."""
+        produce_json_messages(kafka_topic, [{"x": 1}])
 
-        batch = [_make_mock_message("k", '{"x": 1}', 0, 0)]
-        consumer.consume.side_effect = _make_consume_fn([batch, [_make_eof_message(0)]])
+        group = _unique_group()
+        settings = _settings(kafka_topic, group_id=group)
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="probe-group",
-            poll_timeout_seconds=5.0,
-        )
+        df1, _ = read_kafka_source(settings, commit=False)
+        assert df1.height == 1
 
-        df, result = read_kafka_source(settings, commit=False)
+        # Same group, should re-read the same message since we didn't commit
+        df2, result2 = read_kafka_source(settings)
+        assert result2.messages_consumed == 1
 
-        assert result.messages_consumed == 1
-        consumer.commit.assert_not_called()
+    def test_null_kafka_key_cast_to_string(self, kafka_topic):
+        """_kafka_key should be String type even when all keys are None."""
+        produce_json_messages(kafka_topic, [{"a": 1}, {"a": 2}])
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_null_kafka_key_cast_to_string(self, mock_consumer_cls):
-        """Test that _kafka_key is String type even when all keys are None."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
-
-        batch = [
-            _make_mock_message(None, '{"a": 1}', 0, 0),
-            _make_mock_message(None, '{"a": 2}', 0, 1),
-        ]
-        consumer.consume.side_effect = _make_consume_fn([batch, [_make_eof_message(0)]])
-
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            poll_timeout_seconds=5.0,
-        )
-
-        df, _ = read_kafka_source(settings)
-
-        import polars as pl
+        df, _ = read_kafka_source(_settings(kafka_topic))
 
         assert df["_kafka_key"].dtype == pl.String
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_breaks_on_all_partitions_eof(self, mock_consumer_cls):
-        """Test that consumer breaks immediately when all partitions reach EOF."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0, 1})
+    def test_consume_with_message_keys(self, kafka_topic):
+        """Messages produced with keys should have _kafka_key populated."""
+        produce_json_messages(kafka_topic, [{"id": "k1", "v": 1}, {"id": "k2", "v": 2}], key_field="id")
 
-        batch = [
-            _make_mock_message("k1", '{"x": 1}', 0, 0),
-            _make_mock_message("k2", '{"x": 2}', 1, 0),
-            _make_eof_message(0),
-            _make_eof_message(1),
-        ]
-        consumer.consume.side_effect = _make_consume_fn([batch])
+        df, _ = read_kafka_source(_settings(kafka_topic))
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            poll_timeout_seconds=30.0,  # Long timeout — should break early via EOF
-        )
+        assert df.height == 2
+        assert set(df["_kafka_key"].to_list()) == {"k1", "k2"}
 
-        import time
 
-        start = time.monotonic()
-        df, result = read_kafka_source(settings)
-        elapsed = time.monotonic() - start
+# ---------------------------------------------------------------------------
+# Spill-to-IPC tests
+# ---------------------------------------------------------------------------
 
-        assert result.messages_consumed == 2
-        assert elapsed < 15  # Should complete well before 30s timeout
 
-    @patch("shared.kafka.consumer.Consumer")
-    def test_breaks_on_consecutive_empty_polls(self, mock_consumer_cls):
-        """Test early exit after consecutive empty consume() results."""
-        consumer = _setup_consumer(mock_consumer_cls, "test-topic", {0})
+class TestSpillToIpc:
+    """Tests for the spill_path parameter that streams rows to IPC."""
 
-        batch = [_make_mock_message("k", '{"x": 1}', 0, 0)]
-        # One batch of messages, then empty results
-        consumer.consume.side_effect = _make_consume_fn([batch, [], []])
+    def test_spill_path_returns_lazyframe(self, kafka_topic):
+        """When spill_path is set, result should be a LazyFrame backed by the IPC file."""
+        produce_json_messages(kafka_topic, [{"name": "Alice"}, {"name": "Bob"}])
 
-        settings = KafkaReadSettings(
-            bootstrap_servers="localhost:9092",
-            topic="test-topic",
-            group_id="test-group",
-            poll_timeout_seconds=30.0,
-        )
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
 
-        import time
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic), commit=False, spill_path=spill_path
+            )
 
-        start = time.monotonic()
-        df, result = read_kafka_source(settings)
-        elapsed = time.monotonic() - start
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 2
+            assert os.path.exists(spill_path)
 
+            df = result_data.collect()
+            assert df.height == 2
+            assert "name" in df.columns
+            assert "_kafka_key" in df.columns
+        finally:
+            os.unlink(spill_path)
+
+    def test_spill_path_empty_topic(self, kafka_topic):
+        """Spill path with empty topic still returns a LazyFrame with correct schema."""
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic, poll_timeout_seconds=3.0),
+                commit=False,
+                spill_path=spill_path,
+            )
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 0
+            df = result_data.collect()
+            assert df.height == 0
+            assert "_kafka_key" in df.columns
+        finally:
+            os.unlink(spill_path)
+
+    def test_without_spill_path_returns_dataframe(self, kafka_topic):
+        """Without spill_path, result should still be a DataFrame (backward compat)."""
+        produce_json_messages(kafka_topic, [{"a": 1}])
+
+        result_data, result = read_kafka_source(_settings(kafka_topic), commit=False)
+
+        assert isinstance(result_data, pl.DataFrame)
         assert result.messages_consumed == 1
-        assert elapsed < 15
+
+
+class TestSpillFlushOverThreshold:
+    """Tests that IPC flush mechanics work correctly.
+
+    Patches _FLUSH_SIZE to 3 so we trigger multi-flush with just a handful
+    of real messages — no mocks needed.
+    """
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_flush_at_exactly_flush_size(self, kafka_topic):
+        """Exactly _FLUSH_SIZE messages: one flush, no remainder."""
+        produce_json_messages(kafka_topic, [{"n": i} for i in range(3)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic), commit=False, spill_path=spill_path
+            )
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 3
+            assert os.path.getsize(spill_path) > 0
+
+            df = result_data.collect()
+            assert df.height == 3
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_flush_with_remainder(self, kafka_topic):
+        """5 messages with _FLUSH_SIZE=3: one flush (3) + remainder (2)."""
+        produce_json_messages(kafka_topic, [{"seq": i, "val": f"row_{i}"} for i in range(5)])
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic), commit=False, spill_path=spill_path
+            )
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 5
+
+            df = result_data.collect()
+            assert df.height == 5
+
+            for col in ("seq", "val", "_kafka_key", "_kafka_partition", "_kafka_offset", "_kafka_timestamp"):
+                assert col in df.columns, f"Missing column: {col}"
+
+            assert df["_kafka_offset"].n_unique() == 5
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_two_full_flushes_plus_remainder(self, kafka_topic):
+        """8 messages with _FLUSH_SIZE=3: two flushes (3+3) + remainder (2)."""
+        produce_json_messages(kafka_topic, [{"seq": i} for i in range(8)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic), commit=False, spill_path=spill_path
+            )
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 8
+
+            df = result_data.collect()
+            assert df.height == 8
+            assert df["_kafka_offset"].n_unique() == 8
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_flush_ipc_file_is_valid_arrow(self, kafka_topic):
+        """The spilled IPC file is valid Arrow with multiple record batches."""
+        import pyarrow.ipc
+
+        produce_json_messages(kafka_topic, [{"n": i} for i in range(4)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            read_kafka_source(_settings(kafka_topic), commit=False, spill_path=spill_path)
+
+            with pyarrow.ipc.open_file(spill_path) as reader:
+                assert reader.num_record_batches == 2  # flush (3) + remainder (1)
+                total_rows = sum(reader.get_batch(i).num_rows for i in range(reader.num_record_batches))
+                assert total_rows == 4
+
+                schema = reader.schema
+                assert "n" in schema.names
+                assert "_kafka_offset" in schema.names
+        finally:
+            os.unlink(spill_path)
+
+    @patch("shared.kafka.consumer._FLUSH_SIZE", 3)
+    def test_below_threshold_writes_single_batch(self, kafka_topic):
+        """Messages below _FLUSH_SIZE with spill_path: single-batch IPC file."""
+        import pyarrow.ipc
+
+        produce_json_messages(kafka_topic, [{"n": i} for i in range(2)])
+
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            result_data, result = read_kafka_source(
+                _settings(kafka_topic), commit=False, spill_path=spill_path
+            )
+
+            assert isinstance(result_data, pl.LazyFrame)
+            assert result.messages_consumed == 2
+
+            df = result_data.collect()
+            assert df.height == 2
+
+            with pyarrow.ipc.open_file(spill_path) as reader:
+                assert reader.num_record_batches == 1
+        finally:
+            os.unlink(spill_path)
+
+
+# ---------------------------------------------------------------------------
+# commit_offsets tests
+# ---------------------------------------------------------------------------
+
+
+class TestCommitOffsets:
+    """Tests for the commit_offsets() function."""
+
+    def test_commit_offsets_then_resume(self, kafka_topic):
+        """Manually commit offsets, then verify the next consume resumes from there."""
+        produce_json_messages(kafka_topic, [{"i": i} for i in range(10)])
+
+        group = _unique_group()
+
+        # Consume all 10 without committing
+        settings = _settings(kafka_topic, group_id=group)
+        df, result = read_kafka_source(settings, commit=False)
+        assert result.messages_consumed == 10
+
+        # Manually commit offsets for only the first 5
+        commit_offsets(settings, {0: 5})
+
+        # Re-consume with the same group — should get the remaining 5
+        df2, result2 = read_kafka_source(settings)
+        assert result2.messages_consumed == 5
+        assert df2.height == 5

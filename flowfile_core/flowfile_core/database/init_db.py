@@ -1,123 +1,27 @@
-# Generate a random secure password and hash it
 import logging
 import os
 import secrets
 import string
+from importlib.metadata import PackageNotFoundError, version
 
 from passlib.context import CryptContext
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.password import get_password_hash
 from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import SessionLocal, engine
+from flowfile_core.database.connection import SessionLocal
+from flowfile_core.database.migration import run_startup_migration
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Ensure a basic logging config exists so warnings emitted at import time
+# (before main.py's lifespan configures logging) are visible in container logs.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
 logger = logging.getLogger(__name__)
 
-
-def run_migrations():
-    """Run database migrations to update schema for existing databases."""
-    with engine.connect() as conn:
-        # Check if users table exists
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'"))
-        if not result.fetchone():
-            logger.info("Users table does not exist, will be created with new schema")
-            return
-
-        # Check existing columns
-        result = conn.execute(text("PRAGMA table_info(users)"))
-        columns = [row[1] for row in result.fetchall()]
-
-        # Add is_admin column if missing
-        if "is_admin" not in columns:
-            logger.info("Adding is_admin column to users table")
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
-            conn.commit()
-            logger.info("Migration complete: is_admin column added")
-
-        # Add must_change_password column if missing
-        if "must_change_password" not in columns:
-            logger.info("Adding must_change_password column to users table")
-            conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
-            conn.commit()
-            logger.info("Migration complete: must_change_password column added")
-
-        # Migrate catalog_tables: add lineage columns
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_tables'"))
-        if result.fetchone():
-            result = conn.execute(text("PRAGMA table_info(catalog_tables)"))
-            table_columns = [row[1] for row in result.fetchall()]
-
-            if "source_registration_id" not in table_columns:
-                logger.info("Adding source_registration_id column to catalog_tables")
-                conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_registration_id INTEGER"))
-                conn.commit()
-
-            if "source_run_id" not in table_columns:
-                logger.info("Adding source_run_id column to catalog_tables")
-                conn.execute(text("ALTER TABLE catalog_tables ADD COLUMN source_run_id INTEGER"))
-                conn.commit()
-
-            if "storage_format" not in table_columns:
-                logger.info("Adding storage_format column to catalog_tables")
-                conn.execute(
-                    text("ALTER TABLE catalog_tables ADD COLUMN storage_format VARCHAR NOT NULL DEFAULT 'parquet'")
-                )
-                conn.commit()
-                logger.info("Migration complete: storage_format column added (existing rows default to 'parquet')")
-
-        # Migrate flow_runs: add pid column
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
-        if result.fetchone():
-            result = conn.execute(text("PRAGMA table_info(flow_runs)"))
-            run_columns = [row[1] for row in result.fetchall()]
-
-            if "pid" not in run_columns:
-                logger.info("Adding pid column to flow_runs")
-                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN pid INTEGER"))
-                conn.commit()
-
-            if "schedule_id" not in run_columns:
-                logger.info("Adding schedule_id column to flow_runs")
-                conn.execute(text("ALTER TABLE flow_runs ADD COLUMN schedule_id INTEGER"))
-                conn.commit()
-
-        # Migrate flow_schedules: add description column
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_schedules'"))
-        if result.fetchone():
-            result = conn.execute(text("PRAGMA table_info(flow_schedules)"))
-            schedule_columns = [row[1] for row in result.fetchall()]
-
-            if "description" not in schedule_columns:
-                logger.info("Adding description column to flow_schedules")
-                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN description TEXT"))
-                conn.commit()
-
-            if "name" not in schedule_columns:
-                logger.info("Adding name column to flow_schedules")
-                conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN name TEXT"))
-                conn.commit()
-
-        # Migrate flow_runs: rename run_type 'full_run' → 'in_designer_run'
-        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='flow_runs'"))
-        if result.fetchone():
-            updated = conn.execute(
-                text("UPDATE flow_runs SET run_type = 'in_designer_run' WHERE run_type = 'full_run'")
-            )
-            if updated.rowcount:
-                conn.commit()
-                logger.info(
-                    "Migration complete: renamed %d flow_runs from 'full_run' to 'in_designer_run'",
-                    updated.rowcount,
-                )
-
-
-# Run migrations BEFORE create_all to update existing tables
-run_migrations()
-# Then create any new tables (this will include is_admin for new databases)
-db_models.Base.metadata.create_all(bind=engine)
+# Run Alembic-based migrations (replaces the old manual run_migrations + create_all)
+run_startup_migration()
 
 
 def create_default_local_user(db: Session):
@@ -222,12 +126,29 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
 
 
+def update_db_info(db: Session):
+    """Upsert the application version into the db_info table."""
+    try:
+        app_version = version("Flowfile")
+    except PackageNotFoundError:
+        app_version = "unknown"
+
+    row = db.query(db_models.DbInfo).filter(db_models.DbInfo.id == 1).first()
+    if row:
+        row.app_version = app_version
+    else:
+        db.add(db_models.DbInfo(id=1, app_version=app_version))
+    db.commit()
+    logger.info("Database info updated: app_version=%s", app_version)
+
+
 def init_db():
     db = SessionLocal()
     try:
         create_default_local_user(db)
         create_docker_admin_user(db)
         create_default_catalog_namespace(db)
+        update_db_info(db)
     finally:
         db.close()
 

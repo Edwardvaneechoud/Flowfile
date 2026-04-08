@@ -952,7 +952,7 @@ class TestCacheResultsStrategy:
 
         assert decision.should_run is True
         assert decision.strategy == ExecutionStrategy.REMOTE
-        assert decision.reason == InvalidationReason.NEVER_RAN
+        assert decision.reason == InvalidationReason.CACHE_MISSING
 
 
 class TestPreviewAfterExecution:

@@ -758,13 +758,20 @@ class NodeRead(NodeBase):
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
-    database_type: str = "postgresql"
+    database_type: Literal["sqlite", "postgresql", "mysql"] = "postgresql"
     username: str | None = None
     password_ref: SecretRef | None = None
     host: str | None = None
     port: int | None = None
     database: str | None = None
     url: str | None = None
+
+    @field_validator("password_ref", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class FullDatabaseConnection(BaseModel):

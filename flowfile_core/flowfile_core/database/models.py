@@ -72,6 +72,10 @@ class CloudStorageConnection(Base):
     azure_client_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     azure_sas_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
 
+    # Google Cloud Storage fields
+    gcs_service_account_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    gcs_project_id = Column(String, nullable=True)
+
     # Common fields
     endpoint_url = Column(String, nullable=True)
     extra_config = Column(Text, nullable=True)  # JSON field for additional config
@@ -396,5 +400,15 @@ class KafkaConnection(Base):
 
     sasl_password = relationship("Secret", foreign_keys=[sasl_password_id], lazy="joined")
     ssl_key = relationship("Secret", foreign_keys=[ssl_key_id], lazy="joined")
+
+
+class DbInfo(Base):
+    """Single-row table tracking the application version that last touched this database."""
+
+    __tablename__ = "db_info"
+
+    id = Column(Integer, primary_key=True, default=1)
+    app_version = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 

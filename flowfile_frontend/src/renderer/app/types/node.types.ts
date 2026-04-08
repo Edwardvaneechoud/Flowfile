@@ -602,16 +602,26 @@ export interface ReceivedTable {
 // Database Types
 // ============================================================================
 
-export interface DatabaseConnection {
-  database_type: "postgresql" | "mysql";
-  username: string;
-  password_ref: string;
+interface BaseConnection {
   host?: string;
   port?: number;
   database?: string;
   url?: string;
 }
 
+export interface RemoteConnection extends BaseConnection {
+  database_type: "postgresql" | "mysql";
+  username: string;
+  password_ref: string; // Strictly required for remote DBs
+}
+
+export interface SqliteConnection extends BaseConnection {
+  database_type: "sqlite";
+  username?: string; // Optional or completely remove if SQLite doesn't need it
+  password_ref?: never; // Ensures password_ref cannot be used with SQLite
+}
+
+export type DatabaseConnection = RemoteConnection | SqliteConnection;
 export type ConnectionModeOption = "inline" | "reference";
 export type IfExistAction = "append" | "replace" | "fail";
 
@@ -860,4 +870,20 @@ export interface NodeCloudStorageReader extends NodeBase {
 
 export interface NodeCloudStorageWriter extends NodeBase {
   cloud_storage_settings: CloudStorageWriteSettings;
+}
+
+export interface KafkaSourceSettings {
+  kafka_connection_id: number | null;
+  kafka_connection_name: string | null;
+  topic_name: string;
+  value_format: "json";
+  sync_name: string;
+  start_offset: "earliest" | "latest";
+  max_messages: number;
+  poll_timeout_seconds: number;
+}
+
+export interface NodeKafkaSource extends NodeBase {
+  kafka_settings: KafkaSourceSettings;
+  fields?: MinimalFieldInput[] | null;
 }

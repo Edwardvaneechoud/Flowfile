@@ -6,212 +6,121 @@
 
 <p align="center">
   <b>Main Repository</b>: <a href="https://github.com/Edwardvaneechoud/Flowfile">Edwardvaneechoud/Flowfile</a><br>
-  <b>Documentation</b>: 
-  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_core/README.md">Core</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_worker/README.md">Worker</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_frontend/README.md">Frontend</a> - 
+  <b>Documentation</b>:
+  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_core/README.md">Core</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_worker/README.md">Worker</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_frontend/README.md">Frontend</a> -
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 
 <p>
-Flowfile is a visual ETL tool and Python library suite that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, or define data flows programmatically with Python and analyze results - all with high-performance data processing. Export your visual flows as standalone Python/Polars code for production deployment.
+Flowfile is an open-source data platform that combines a visual pipeline builder, a data catalog with Delta Lake storage, scheduling, Kafka ingestion, sandboxed Python execution, and a Polars-compatible Python API — all in a single <code>pip install</code>.
 </p>
 
-## 🚀 Getting Started
-
-### Installation
-
-Install Flowfile directly from PyPI:
+## Quick Start
 
 ```bash
 pip install Flowfile
-```
-
-### Quick Start: Web UI
-
-The easiest way to get started is by launching the web-based UI:
-
-```bash
-# Start the Flowfile web UI with integrated services
 flowfile run ui
 ```
 
-This will:
-- Start the combined core and worker services
-- Launch a web interface in your browser
-- Provide access to the full visual ETL capabilities
+This starts the backend services and opens the visual ETL interface in your browser.
 
-**Options:**
-```bash
-# Customize host
-flowfile run ui --host 0.0.0.0
+## What You Get
 
-# Start without opening a browser
-flowfile run ui --no-browser
-```
+- **Visual pipeline builder** with 30+ nodes for joins, filters, aggregations, fuzzy matching, pivots, and more
+- **Data catalog** with Delta Lake storage, version history, and lineage tracking
+- **Scheduling** — interval-based or triggered by catalog table updates
+- **Kafka/Redpanda ingestion** as a canvas node with automatic schema inference
+- **Sandboxed Python execution** in isolated Docker containers
+- **Code generation** — export visual flows as standalone Python/Polars scripts
+- **Flow parameters** — `${variable}` substitution, configurable via UI or CLI
+- **Cloud storage** — S3, Azure Data Lake Storage, Google Cloud Storage
+- **Database connectivity** — PostgreSQL, MySQL, SQL Server, Oracle, DuckDB, and more
+- **Python API** with Polars-like syntax and visual flow graph generation
 
-You can also start the web UI programmatically:
-
-```python
-import flowfile
-
-# Start with default settings
-flowfile.start_web_ui()
-
-# Or customize
-flowfile.start_web_ui(open_browser=False)
-```
-
-### Using the FlowFrame API
-
-Flowfile provides a Polars-like API for defining data pipelines programmatically:
+## Python API
 
 ```python
 import flowfile as ff
 from flowfile import col, open_graph_in_editor
 
-# Create a data pipeline
 df = ff.from_dict({
     "id": [1, 2, 3, 4, 5],
     "category": ["A", "B", "A", "C", "B"],
     "value": [100, 200, 150, 300, 250]
 })
 
-# Process the data
 result = df.filter(col("value") > 150).with_columns([
     (col("value") * 2).alias("double_value")
 ])
 
-# Open the graph in the web UI (starts the server if needed)
+# Open the pipeline on the visual canvas
 open_graph_in_editor(result.flow_graph)
 ```
 
-## 📦 Package Components
-
-The `Flowfile` PyPI package includes:
-
-- **Core Service (`flowfile_core`)**: The main ETL engine using Polars
-- **Worker Service (`flowfile_worker`)**: Handles computation-intensive tasks
-- **Web UI**: Browser-based visual ETL interface
-- **FlowFrame API (`flowfile_frame`)**: Polars-like API for Python coding
-
-## ✨ Key Features
-
-### Visual ETL with Web UI
-
-- **No Installation Required**: Launch directly from the pip package
-- **Drag-and-Drop Interface**: Build data pipelines visually
-- **Integrated Services**: Combined core and worker services
-- **Browser-Based**: Access from any device on your network
-- **Code Generation**: Export visual flows as Python/Polars scripts
-
-### FlowFrame API
-
-- **Familiar Syntax**: Polars-like API makes it easy to learn
-- **ETL Graph Generation**: Automatically builds visual workflows
-- **Lazy Evaluation**: Operations are not executed until needed
-- **Interoperability**: Move between code and visual interfaces
-
-### Data Operations
-
-- **Data Cleaning & Transformation**: Complex joins, filtering, etc.
-- **High Performance**: Built on Polars for efficient processing
-- **Data Integration**: Handle various file formats
-- **ETL Pipeline Building**: Create reusable workflows
-
-## 🔄 Common FlowFrame Operations
+## Common Operations
 
 ```python
-
 import flowfile as ff
 from flowfile import col, when, lit
 
-# Read data
-df = ff.from_dict({
-    "id": [1, 2, 3, 4, 5],
-    "category": ["A", "B", "A", "C", "B"],
-    "value": [100, 200, 150, 300, 250]
-})
-# df_parquet = ff.read_parquet("data.parquet")
-# df_csv = ff.read_csv("data.csv")
-
-other_df = ff.from_dict({
-    "product_id": [1, 2, 3, 4, 6],
-    "product_name": ["WidgetA", "WidgetB", "WidgetC", "WidgetD", "WidgetE"],
-    "supplier": ["SupplierX", "SupplierY", "SupplierX", "SupplierZ", "SupplierY"]
-}, flow_graph=df.flow_graph  # Assign the data to the same graph
-)
-
-# Filter
-filtered = df.filter(col("value") > 150)
+# Read from various sources
+df = ff.read_csv("data.csv")
+df_pq = ff.read_parquet("data.parquet")
 
 # Transform
-result = df.select(
-    col("id"),
-    (col("value") * 2).alias("double_value")
-)
-
-# Conditional logic
+filtered = df.filter(col("value") > 150)
 with_status = df.with_columns([
     when(col("value") > 200).then(lit("High")).otherwise(lit("Low")).alias("status")
 ])
 
-# Group and aggregate
+# Aggregate
 by_category = df.group_by("category").agg([
     col("value").sum().alias("total"),
     col("value").mean().alias("average")
 ])
 
-# Join data
+# Join
 joined = df.join(other_df, left_on="id", right_on="product_id")
 
-joined.flow_graph.flow_settings.execution_location = "auto"
-joined.flow_graph.flow_settings.execution_mode = "Development"
-ff.open_graph_in_editor(joined.flow_graph)  # opens the graph in the UI!
-
+# Visualize any pipeline
+ff.open_graph_in_editor(joined.flow_graph)
 ```
 
-## 📝 Code Generation
+## Code Generation
 
-Export your visual flows as standalone Python/Polars code for production use:
+Export visual flows as standalone Python/Polars scripts:
 
 ![Code Generation](https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/refs/heads/main/.github/images/generated_code.png)
 
-Simply click the "Generate code" button in the visual editor to:
-- Generate clean, readable Python/Polars code
-- Export flows without Flowfile dependencies
-- Deploy workflows in any Python environment
-- Share ETL logic with team members
+## Package Components
 
-## 🧰 Command-Line Interface
+- **Core Service** (`flowfile_core`) — ETL engine, catalog, scheduler, auth
+- **Worker Service** (`flowfile_worker`) — CPU-intensive data processing
+- **Web UI** — Browser-based visual pipeline builder
+- **FlowFrame API** (`flowfile_frame`) — Polars-compatible Python library
+- **Scheduler** (`flowfile_scheduler`) — Interval and table-trigger scheduling
+
+## CLI
 
 ```bash
-# Show help and version info
-flowfile
-
-# Start the web UI
-flowfile run ui [options]
-
-# Run individual services
-flowfile run core --host 0.0.0.0 --port 63578
-flowfile run worker --host 0.0.0.0 --port 63579
+flowfile run ui                              # Start web UI
+flowfile run core --host 0.0.0.0             # Start core service
+flowfile run worker --host 0.0.0.0           # Start worker service
+flowfile run flow pipeline.json              # Run a flow
+flowfile run flow pipeline.json --param key=value  # Run with parameters
 ```
 
-## 📚 Resources
+## More Options
 
-- **[Main Repository](https://github.com/Edwardvaneechoud/Flowfile)**: Latest code and examples
+- **Desktop App**: Download from [GitHub Releases](https://github.com/Edwardvaneechoud/Flowfile#-getting-started)
+- **Docker**: `docker compose up -d` for self-hosted deployments
+- **Browser Demo**: [demo.flowfile.org](https://demo.flowfile.org) (WASM, no server)
+
+## Resources
+
 - **[Documentation](https://edwardvaneechoud.github.io/Flowfile/)**: Comprehensive guides
+- **[Main Repository](https://github.com/Edwardvaneechoud/Flowfile)**: Latest code and examples
 - **[Technical Architecture](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c)**: Design overview
-
-## 🖥️ Full Application Options
-
-For the complete visual ETL experience, you have additional options:
-
-- **Desktop Application**: Download from the [main repository](https://github.com/Edwardvaneechoud/Flowfile#-getting-started)
-- **Docker Setup**: Run with Docker Compose
-- **Manual Setup**: For development environments
-
-## 📋 Development Roadmap
-
-See the [main repository](https://github.com/Edwardvaneechoud/Flowfile#-todo) for the latest development roadmap and TODO list.

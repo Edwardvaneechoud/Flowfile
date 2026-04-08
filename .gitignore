@@ -1,5 +1,5 @@
-mysql
-mysql/*
+/mysql
+/mysql/*
 .idea
 files/*
 .env
@@ -43,13 +43,17 @@ shared_data/
 saved_flows/
 /flowfile_frontend/playwright-report/index.html
 /flowfile.db
+/flowfile_catalog.db
 /flowfile_frontend/flowfile.db
+/flowfile_frontend/flowfile_catalog.db
 /flowfile_worker.spec
 /flowfile_frontend/test-results/.last-run.json
 /test_utils/postgres/postgres-docker-samples/
 **/test_flowfile.db
+**/test_flowfile_catalog.db
 /flowfile/flowfile/web/static/
 flowfile.db
+flowfile_catalog.db
 local_data
 /custom_nodes/
 /flowfile_core/tests/support_files/flows/new_flow.flowfile

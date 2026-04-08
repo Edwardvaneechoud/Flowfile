@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
+from shared.sql_utils import construct_sql_uri, get_sqlalchemy_uri
 
 
 class DataBaseConnection(BaseModel):
@@ -26,35 +27,32 @@ class DataBaseConnection(BaseModel):
         Otherwise, it constructs a URI from the individual components.
 
         Returns:
-            str: The database URI
+            str: The database URI (base scheme, suitable for connectorx)
         """
-        # If URL is already provided, use it
-        if self.url:
-            return self.url
+        password_str = None
+        if self.password:
+            password_str = decrypt_secret(self.password.get_secret_value()).get_secret_value()
+        return construct_sql_uri(
+            database_type=self.database_type,
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=password_str,
+            database=self.database,
+            url=self.url,
+        )
 
-        # Validate that required fields are present
-        if not all([self.host, self.database_type]):
-            raise ValueError("Host and database type are required to create a URI")
+    def create_sqlalchemy_uri(self) -> str:
+        """
+        Creates a SQLAlchemy-compatible database URI with driver suffix.
 
-        # Create credential part if username is provided
-        credentials = ""
-        if self.username:
-            credentials = self.username
-            if self.password:
-                # Get the raw password string from SecretStr
-                password_value = decrypt_secret(self.password.get_secret_value()).get_secret_value()
-                credentials += f":{password_value}"
-            credentials += "@"
+        connectorx uses base URI schemes (e.g. mysql://) while SQLAlchemy
+        requires driver-specific schemes (e.g. mysql+pymysql://).
 
-        # Create port part if port is provided
-        port_section = ""
-        if self.port:
-            port_section = f":{self.port}"
-        if self.database:
-            base_uri = f"{self.database_type}://{credentials}{self.host}{port_section}/{self.database}"
-        else:
-            base_uri = f"{self.database_type}://{credentials}{self.host}{port_section}"
-        return base_uri
+        Returns:
+            str: The database URI with appropriate driver suffix for SQLAlchemy.
+        """
+        return get_sqlalchemy_uri(self.create_uri())
 
 
 class DatabaseReadSettings(BaseModel):

@@ -10,11 +10,12 @@ Cloud storage connections securely store your AWS credentials and configuration,
 
 ### 1. Access Cloud Storage Connections
 
-Click the Cloud icon in the left sidebar to access the Cloud Storage Connections page.
+Open the **Connections** page from the left sidebar and select the **Cloud Storage** tab.
 
 <details markdown="1">
 <summary>Screenshot: Cloud Storage Connections Page</summary>
 
+<!-- should show the new tabbed Connections page with the Cloud Storage tab active -->
 ![Cloud storage connection page](../../../assets/images/guides/create_cloud_connection/cloud_storage_connection_page.png)
 
 
@@ -27,6 +28,7 @@ Click the **"+ Add Connection"** button to open the connection configuration dia
 <details markdown="1">
 <summary>Screenshot: Add Connection Dialog</summary>
 
+<!-- should show the Add Connection dialog opened from the Cloud Storage tab -->
 ![create_new_cloud_storage](../../../assets/images/guides/create_cloud_connection/add_cloud_connection.png)
 
 </details>

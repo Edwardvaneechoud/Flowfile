@@ -5,6 +5,8 @@ Start it with:  poetry run start_redpanda
 Or let the CI workflow handle it.
 """
 
+import uuid
+
 import pytest
 
 from test_utils.kafka.fixtures import (
@@ -42,12 +44,12 @@ def redpanda_broker():
 def kafka_topic(request):
     """Create a unique topic for each test.
 
-    Usage:
-        def test_something(kafka_topic):
-            # kafka_topic is a string like "test_something_0"
-            produce_json_messages(kafka_topic, [...])
+    Includes a UUID suffix so re-runs never pick up stale data from
+    a previous session sharing the same Redpanda container.
     """
-    topic_name = f"test_{request.node.name}".replace("[", "_").replace("]", "_").replace(" ", "_")[:249]
+    short_id = uuid.uuid4().hex[:8]
+    safe_name = request.node.name.replace("[", "_").replace("]", "_").replace(" ", "_")
+    topic_name = f"test_{safe_name}_{short_id}"[:249]
     create_topic(topic_name, num_partitions=2)
     return topic_name
 

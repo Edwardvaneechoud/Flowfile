@@ -35,6 +35,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     clear_task_from_worker as clear_task_from_worker,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    fetch_kafka_offsets as fetch_kafka_offsets,
+)
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     fetch_unique_values as fetch_unique_values,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (

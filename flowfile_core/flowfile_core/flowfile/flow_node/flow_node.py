@@ -58,6 +58,7 @@ class FlowNode:
     user_provided_schema_callback: Callable | None = None  # user provided callback function for schema calculation
     _setting_input: Any = None
     _hash: str | None = None  # host this for caching results
+    _cache_epoch: int = 0  # incremented by invalidate_cache() to bust the hash
     _function: Callable = None  # the function that needs to be executed when triggered
     _name: str = None  # name of the node, used for display
     _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
@@ -75,6 +76,10 @@ class FlowNode:
     # Using a callable avoids sync issues when flow_settings.parameters is mutated
     # directly without going through the FlowGraph.flow_settings setter.
     _params_getter: Callable[[], dict[str, str]] | None = None
+    # Post-execution callback — invoked by run_graph() after all stages complete.
+    # Receives success=True when this node and all downstream dependents succeeded.
+    # Used e.g. by Kafka sources to commit offsets only on success.
+    _on_flow_complete: Callable[[bool], None] | None = None
 
     def __init__(
         self,
@@ -144,6 +149,7 @@ class FlowNode:
         self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
         self._kernel_cancel_context = None
         self._kernel_cancel_event: threading.Event | None = None
+        self._cache_epoch = 0
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
@@ -151,6 +157,7 @@ class FlowNode:
         self._named_outputs: dict[str, FlowDataEngine] = {}
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
+        self._on_flow_complete = None
 
     @property
     def state_needs_reset(self) -> bool:
@@ -506,7 +513,7 @@ class FlowNode:
         """
         depends_on_hashes = [_node.hash for _node in self.all_inputs]
         node_data_hash = get_hash(setting_input)
-        return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid])
+        return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid, self._cache_epoch])
 
     @property
     def hash(self) -> str:
@@ -943,46 +950,6 @@ class FlowNode:
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
 
-    def _can_skip_execution_fast(
-        self,
-        run_location: schemas.ExecutionLocationsLiteral,
-        performance_mode: bool,
-        reset_cache: bool,
-    ) -> bool:
-        """Fast-path check to avoid executor overhead when we can skip.
-
-        This inlines the most common skip conditions to avoid
-        creating an executor instance when not needed.
-
-        Returns True if execution can definitely be skipped.
-        Returns False if full execution logic is needed.
-        """
-        # Can't skip if forced refresh
-
-        if reset_cache or performance_mode:
-            return False
-
-        # Output nodes always run
-        if self.node_template.node_group == "output":
-            return False
-
-        # Must run if never ran before
-        if not self._execution_state.has_run_with_current_setup:
-            return False
-
-        # Check for source file changes (read nodes only)
-        if self.node_type == "read" and self._execution_state.source_file_info:
-            if self._execution_state.source_file_info.has_changed():
-                return False
-
-        # Cache-enabled nodes: only skip if the cache file is still present
-        if self.node_settings.cache_results:
-            return results_exists(self.hash)
-
-        # Already ran with current settings → skip
-        # Results are available in memory from previous execution
-        return True
-
     def _do_execute_full_local(self, performance_mode: bool = False) -> None:
         """Executes the node's logic locally, including example data generation.
 
@@ -1192,9 +1159,8 @@ class FlowNode:
     ) -> None:
         """Execute the node based on its current state and settings.
 
-        This method uses a fast-path to quickly skip execution when possible,
-        avoiding executor overhead. For cases requiring full execution logic,
-        it delegates to the NodeExecutor.
+        Delegates all execution and skip logic to the NodeExecutor, which is
+        the single source of truth for deciding whether a node should run.
 
         Args:
             run_location: Where to execute ('local' or 'remote')
@@ -1209,12 +1175,7 @@ class FlowNode:
         if not self.is_setup:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
-        # Fast-path: check if we can skip without creating executor
-        if self._can_skip_execution_fast(run_location, performance_mode, reset_cache):
-            node_logger.info("Node is up-to-date, skipping execution")
-            return
 
-        # Full execution logic via executor
         self.executor.execute(
             run_location=run_location,
             reset_cache=reset_cache,
@@ -1279,6 +1240,20 @@ class FlowNode:
                     self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
+
+    def invalidate_cache(self):
+        """Force cache invalidation by incrementing the cache epoch.
+
+        Changes the node's hash so Development mode re-executes instead
+        of returning stale results.  Used after external state changes
+        (e.g. Kafka consumer group offset reset) that don't alter the
+        node's configuration.
+        """
+        self._cache_epoch += 1
+        self._hash = None
+        self._execution_state.reset()
+        self.node_stats.has_run_with_current_setup = False
+        self.node_stats.has_completed_last_run = False
 
     def delete_lead_to_node(self, node_id: int) -> bool:
         """Removes a connection to a specific downstream node.
