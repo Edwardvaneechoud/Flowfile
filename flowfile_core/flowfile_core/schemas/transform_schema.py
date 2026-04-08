@@ -466,7 +466,7 @@ class SelectInputs(BaseModel):
     @classmethod
     def create_from_pl_df(cls, df: pl.DataFrame | pl.LazyFrame) -> "SelectInputs":
         """Creates a SelectInputs object from a Polars DataFrame's columns."""
-        return cls(renames=[SelectInput(old_name=c) for c in df.columns])
+        return cls(renames=[SelectInput(old_name=c) for c in df.collect_schema().names()])
 
     def remove_select_input(self, old_key: str) -> None:
         """Removes a SelectInput from the list based on its original name."""
