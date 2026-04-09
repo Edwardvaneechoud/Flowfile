@@ -1397,7 +1397,7 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     import yaml
 
     from flowfile_core.templates import get_template_flowfile_data, get_template_required_files
-    from flowfile_core.templates.data_downloader import ensure_template_data, get_template_data_dir
+    from flowfile_core.templates.data_downloader import ensure_template_data
 
     try:
         required_files = get_template_required_files(template_id)
@@ -1405,11 +1405,12 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     try:
-        ensure_template_data(required_files)
+        resolved_files = ensure_template_data(required_files)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    data_dir = get_template_data_dir()
+    # Use the directory where the data files actually live
+    data_dir = next(iter(resolved_files.values())).parent
     flowfile_data = get_template_flowfile_data(template_id, data_dir)
 
     # Write to a YAML file and import via existing flow import path
