@@ -2,6 +2,20 @@
   <div class="code-container">
     <div class="code-header">
       <h4>Generated code</h4>
+      <div class="mode-toggle">
+        <button
+          :class="['toggle-button', { active: codeMode === 'flowframe' }]"
+          @click="setMode('flowframe')"
+        >
+          FlowFrame
+        </button>
+        <button
+          :class="['toggle-button', { active: codeMode === 'polars' }]"
+          @click="setMode('polars')"
+        >
+          Polars
+        </button>
+      </div>
       <div class="header-actions">
         <button class="refresh-button" :disabled="loading" @click="refreshCode">
           <svg
@@ -15,7 +29,9 @@
           >
             <path d="M23 4v6h-6"></path>
             <path d="M1 20v-6h6"></path>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            <path
+              d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+            ></path>
           </svg>
           <span v-if="loading" class="spinner"></span>
           {{ loading ? "Loading..." : "Refresh" }}
@@ -50,8 +66,11 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import { useNodeStore } from "../../../stores/column-store";
 
+type CodeMode = "flowframe" | "polars";
+
 const code = ref("");
 const loading = ref(false);
+const codeMode = ref<CodeMode>("flowframe");
 const nodeStore = useNodeStore();
 const lastLoadedFlowId = ref<number | null>(null);
 
@@ -65,10 +84,16 @@ const extensions = [
   }),
 ];
 
+const endpointMap: Record<CodeMode, string> = {
+  flowframe: "/editor/code_to_flowframe",
+  polars: "/editor/code_to_polars",
+};
+
 const fetchCode = async () => {
   loading.value = true;
   try {
-    const response = await axios.get(`/editor/code_to_polars?flow_id=${nodeStore.flow_id}`);
+    const endpoint = endpointMap[codeMode.value];
+    const response = await axios.get(`${endpoint}?flow_id=${nodeStore.flow_id}`);
     code.value = response.data;
     lastLoadedFlowId.value = nodeStore.flow_id;
   } catch (error) {
@@ -79,7 +104,15 @@ const fetchCode = async () => {
   }
 };
 
-// Watch for when the component becomes visible
+const setMode = (mode: CodeMode) => {
+  if (codeMode.value !== mode) {
+    codeMode.value = mode;
+    if (nodeStore.flow_id > 0) {
+      fetchCode();
+    }
+  }
+};
+
 watch(
   () => nodeStore.showCodeGenerator,
   (isShowing) => {
@@ -89,7 +122,6 @@ watch(
   },
 );
 
-// Also watch for flow changes while the component is visible
 watch(
   () => nodeStore.flow_id,
   (newFlowId) => {
@@ -99,7 +131,6 @@ watch(
   },
 );
 
-// Initial load if component is mounted while visible
 onMounted(() => {
   if (nodeStore.showCodeGenerator && nodeStore.flow_id > 0) {
     fetchCode();
@@ -141,6 +172,34 @@ const exportCode = () => {
 
 .code-header h4 {
   margin: 0;
+}
+
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--color-border, #444);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.toggle-button {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary, #999);
+  cursor: pointer;
+  font-size: var(--font-size-sm, 13px);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.toggle-button.active {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.toggle-button:not(.active):hover {
+  background: var(--color-bg-hover, #333);
 }
 
 .header-actions {

@@ -2383,7 +2383,6 @@ class FlowGraph:
         node_type = "kafka_source"
         kafka_settings = node_kafka_source.kafka_settings
 
-        # Resolve connection and build consumer config
         with get_db_context() as db:
             db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
             if db_conn is None:

@@ -1,5 +1,6 @@
 import inspect
 import typing
+from typing import Literal
 
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
@@ -25,32 +26,24 @@ class UnsupportedNodeError(Exception):
         super().__init__(f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}")
 
 
-class FlowGraphToPolarsConverter:
+class FlowGraphCodeConverter:
     """
-    Converts a FlowGraph into executable Polars code.
+    Base class for converting a FlowGraph into executable Python code.
 
-    This class takes a FlowGraph instance and generates standalone Python code
-    that uses only Polars, without any Flowfile dependencies.
+    Subclasses set `framework` to control whether code targets Polars or FlowFrame.
     """
 
-    flow_graph: FlowGraph
-    node_var_mapping: dict[int, str]
-    imports: set[str]
-    code_lines: list[str]
-    output_nodes: list[tuple[int, str]] = []
-    last_node_var: str | None = None
-    unsupported_nodes: list[tuple[int, str, str]]  # List of (node_id, node_type, reason)
-    custom_node_classes: dict[str, str]  # Maps custom node class name to source code
+    framework: str = "pl"
 
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
-        self.node_var_mapping: dict[int, str] = {}  # Maps node_id to variable name
+        self.node_var_mapping: dict[int, str] = {}
         self.imports: set[str] = {"import polars as pl"}
         self.code_lines: list[str] = []
-        self.output_nodes = []
-        self.last_node_var = None
-        self.unsupported_nodes = []
-        self.custom_node_classes = {}
+        self.output_nodes: list[tuple[int, str]] = []
+        self.last_node_var: str | None = None
+        self.unsupported_nodes: list[tuple[int, str, str]] = []
+        self.custom_node_classes: dict[str, str] = {}
 
     def convert(self) -> str:
         """
@@ -152,7 +145,7 @@ class FlowGraphToPolarsConverter:
     def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
         if file_settings.table_settings.encoding.lower() in ("utf-8", "utf8"):
             encoding = "utf8-lossy"
-            self._add_code(f"{var_name} = pl.scan_csv(")
+            self._add_code(f"{var_name} = {self.framework}.scan_csv(")
             self._add_code(f'    "{file_settings.abs_file_path}",')
             self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
             self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
@@ -161,66 +154,41 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"    skip_rows={file_settings.table_settings.starting_from_line},")
             self._add_code(")")
         else:
-            self._add_code(f"{var_name} = pl.read_csv(")
-            self._add_code(f'    "{file_settings.abs_file_path}",')
-            self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
-            self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
-            self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
-            if file_settings.table_settings.encoding:
-                self._add_code(f'    encoding="{file_settings.table_settings.encoding}",')
-            self._add_code(f"    skip_rows={file_settings.table_settings.starting_from_line},")
-            self._add_code(").lazy()")
+            self._handle_csv_read_non_utf8(file_settings, var_name)
 
-    def _handle_cloud_storage_reader(
-        self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
-    ):
-        cs = settings.cloud_storage_settings
-        self.imports.add("import flowfile as ff")
-        self._add_code(f"{var_name} = ff.read_from_cloud_storage(")
-        self._add_code(f'    "{cs.resource_path}",')
-        self._add_code(f'    file_format="{cs.file_format}",')
-        if cs.connection_name:
-            self._add_code(f'    connection_name="{cs.connection_name}",')
-        if cs.scan_mode and cs.scan_mode != "single_file":
-            self._add_code(f'    scan_mode="{cs.scan_mode}",')
-        # CSV-specific (only when non-default)
-        if cs.file_format == "csv":
-            if cs.csv_delimiter != ";":
-                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
-            if not cs.csv_has_header:
-                self._add_code(f"    has_header={cs.csv_has_header},")
-            if cs.csv_encoding != "utf8":
-                self._add_code(f'    encoding="{cs.csv_encoding}",')
-        # Delta-specific
-        if cs.file_format == "delta" and cs.delta_version is not None:
-            self._add_code(f"    delta_version={cs.delta_version},")
-        self._add_code(").data")
+    def _handle_csv_read_non_utf8(self, file_settings: input_schema.ReceivedTable, var_name: str):
+        self._add_code(f"{var_name} = {self.framework}.read_csv(")
+        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
+        self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
+        self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
+        if file_settings.table_settings.encoding:
+            self._add_code(f'    encoding="{file_settings.table_settings.encoding}",')
+        self._add_code(f"    skip_rows={file_settings.table_settings.starting_from_line},")
+        self._add_code(").lazy()")
 
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle file reading nodes."""
         file_settings = settings.received_file
-
         if file_settings.file_type == "csv":
             self._handle_csv_read(file_settings, var_name)
-
         elif file_settings.file_type == "parquet":
-            self._add_code(f'{var_name} = pl.scan_parquet("{file_settings.abs_file_path}")')
-
+            self._add_code(f'{var_name} = {self.framework}.scan_parquet("{file_settings.abs_file_path}")')
         elif file_settings.file_type in ("xlsx", "excel"):
-            self._add_code(f"{var_name} = pl.read_excel(")
-            self._add_code(f'    "{file_settings.abs_file_path}",')
-            if file_settings.table_settings.sheet_name:
-                self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
-            self._add_code(").lazy()")
-
+            self._handle_excel_read(file_settings, var_name)
         self._add_code("")
 
-    @staticmethod
-    def _generate_pl_schema_with_typing(flowfile_schema: list[FlowfileColumn]) -> str:
+    def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        self._add_code(f"{var_name} = {self.framework}.read_excel(")
+        self._add_code(f'    "{file_settings.abs_file_path}",')
+        if file_settings.table_settings.sheet_name:
+            self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
+        self._add_code(")")
+
+    def _generate_pl_schema_with_typing(self, flowfile_schema: list[FlowfileColumn]) -> str:
         polars_schema_str = (
-            "pl.Schema(["
+            f"{self.framework}.Schema(["
             + ", ".join(
-                f'("{flowfile_column.column_name}", pl.{flowfile_column.data_type})'
+                f'("{flowfile_column.column_name}", {self.framework}.{flowfile_column.data_type})'
                 for flowfile_column in flowfile_schema
             )
             + "])"
@@ -254,7 +222,7 @@ class FlowGraphToPolarsConverter:
             FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns
         )
         schema = self.get_manual_schema_input(flowfile_schema)
-        self._add_code(f"{var_name} = pl.LazyFrame({data}, schema={schema}, strict=False)")
+        self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
         self._add_code("")
 
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
@@ -280,7 +248,7 @@ class FlowGraphToPolarsConverter:
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
         input_df = input_vars.get("main", "df")
-        self._add_code(f"{var_name} = {input_df}.select(pl.len().alias('number_of_records'))")
+        self._add_code(f"{var_name} = {input_df}.select({self.framework}.len().alias('number_of_records'))")
 
     def _handle_graph_solver(self, settings: input_schema.NodeGraphSolver, var_name: str, input_vars: dict[str, str]):
         input_df = input_vars.get("main", "df")
@@ -288,8 +256,8 @@ class FlowGraphToPolarsConverter:
         to_col_name = settings.graph_solver_input.col_to
         output_col_name = settings.graph_solver_input.output_column_name
         self._add_code(
-            f'{var_name} = {input_df}.with_columns(graph_solver(pl.col("{from_col_name}"), '
-            f'pl.col("{to_col_name}"))'
+            f'{var_name} = {input_df}.with_columns(graph_solver({self.framework}.col("{from_col_name}"), '
+            f'{self.framework}.col("{to_col_name}"))'
             f'.alias("{output_col_name}"))'
         )
         self._add_code("")
@@ -303,9 +271,9 @@ class FlowGraphToPolarsConverter:
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
                 if select_input.old_name != select_input.new_name:
-                    expr = f'pl.col("{select_input.old_name}").alias("{select_input.new_name}")'
+                    expr = f'{self.framework}.col("{select_input.old_name}").alias("{select_input.new_name}")'
                 else:
-                    expr = f'pl.col("{select_input.old_name}")'
+                    expr = f'{self.framework}.col("{select_input.old_name}")'
 
                 if (select_input.data_type_change or select_input.is_altered) and select_input.data_type:
                     polars_dtype = self._get_polars_dtype(select_input.data_type)
@@ -556,7 +524,7 @@ class FlowGraphToPolarsConverter:
         """
         [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
-            f'pl.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
+            f'{self.framework}.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
             for rjk in settings.right_select.join_key_selects
             if rjk.keep
         ]
@@ -598,7 +566,7 @@ class FlowGraphToPolarsConverter:
                 - after_join_drop_cols: Right join keys marked for dropping
         """
         join_key_duplication_command = [
-            f'pl.col("{ljk.new_name}").alias("__jk_{ljk.new_name}")'
+            f'{self.framework}.col("{ljk.new_name}").alias("__jk_{ljk.new_name}")'
             for ljk in settings.left_select.join_key_selects
             if ljk.keep
         ]
@@ -745,7 +713,7 @@ class FlowGraphToPolarsConverter:
                 group_cols.append(agg_col.old_name)
             else:
                 agg_func = self._get_agg_function(agg_col.agg)
-                expr = f'pl.col("{agg_col.old_name}").{agg_func}().alias("{agg_col.new_name}")'
+                expr = f'{self.framework}.col("{agg_col.old_name}").{agg_func}().alias("{agg_col.new_name}")'
                 agg_exprs.append(expr)
 
         self._add_code(f"{var_name} = {input_df}.group_by({group_cols}).agg([")
@@ -776,8 +744,8 @@ class FlowGraphToPolarsConverter:
             expr_str = f'({pl_code}).alias("{col_name}")'
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != "pl.":
-                    output_type = "pl." + output_type
+                if output_type[:3] != f"{self.framework}.":
+                    output_type = f"{self.framework}." + output_type
                 expr_str += f".cast({output_type})"
             self._add_code(f"{var_name} = {input_df}.with_columns([{expr_str}])")
             self._add_code("")
@@ -788,8 +756,8 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != "pl.":
-                    output_type = "pl." + output_type
+                if output_type[:3] != f"{self.framework}.":
+                    output_type = f"{self.framework}." + output_type
                 self._add_code(f"    .cast({output_type})")
             self._add_code("])")
             self._add_code("")
@@ -798,7 +766,7 @@ class FlowGraphToPolarsConverter:
         pivot_input = settings.pivot_input
 
         self._add_code(f"{var_name} = ({input_df}.collect()")
-        self._add_code('    .with_columns(pl.lit(1).alias("__temp_index__"))')
+        self._add_code(f'    .with_columns({self.framework}.lit(1).alias("__temp_index__"))')
         self._add_code("    .pivot(")
         self._add_code(f'        values="{pivot_input.value_col}",')
         self._add_code('        index=["__temp_index__"],')
@@ -867,7 +835,7 @@ class FlowGraphToPolarsConverter:
         else:
             how = "diagonal"
 
-        self._add_code(f"{var_name} = pl.concat([")
+        self._add_code(f"{var_name} = {self.framework}.concat([")
         for df in dfs:
             self._add_code(f"    {df},")
         self._add_code(f"], how='{how}')")
@@ -957,7 +925,7 @@ class FlowGraphToPolarsConverter:
         text_input = settings.text_to_rows_input
 
         # First split the column
-        split_expr = f'pl.col("{text_input.column_to_split}").str.split("{text_input.split_fixed_value}")'
+        split_expr = f'{self.framework}.col("{text_input.column_to_split}").str.split("{text_input.split_fixed_value}")'
         if text_input.output_column_name and text_input.output_column_name != text_input.column_to_split:
             split_expr = f'{split_expr}.alias("{text_input.output_column_name}")'
             explode_col = text_input.output_column_name
@@ -979,10 +947,10 @@ class FlowGraphToPolarsConverter:
         if record_input.group_by and record_input.group_by_columns:
             # Row number within groups
             self._add_code(f"{var_name} = ({input_df}")
-            self._add_code(f"    .with_columns(pl.lit(1).alias('{record_input.output_column_name}'))")
+            self._add_code(f"    .with_columns({self.framework}.lit(1).alias('{record_input.output_column_name}'))")
             self._add_code("    .with_columns([")
             self._add_code(
-                f"    (pl.cum_count('{record_input.output_column_name}')"
+                f"    ({self.framework}.cum_count('{record_input.output_column_name}')"
                 f".over({record_input.group_by_columns}) + {record_input.offset} - 1)"
             )
             self._add_code(f"    .alias('{record_input.output_column_name}')")
@@ -1008,36 +976,7 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"{var_name} = {left_df}.join({right_df}, how='cross')")
         self._add_code("")
 
-    def _handle_cloud_storage_writer(
-        self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle cloud storage writer nodes."""
-        input_df = input_vars.get("main", "df")
-        cs = settings.cloud_storage_settings
-        self.imports.add("import flowfile as ff")
-        self._add_code(f"ff.write_to_cloud_storage(")
-        self._add_code(f"    {input_df},")
-        self._add_code(f'    "{cs.resource_path}",')
-        self._add_code(f'    file_format="{cs.file_format}",')
-        if cs.connection_name:
-            self._add_code(f'    connection_name="{cs.connection_name}",')
-        # CSV-specific (only when non-default)
-        if cs.file_format == "csv":
-            if cs.csv_delimiter != ";":
-                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
-            if cs.csv_encoding != "utf8":
-                self._add_code(f'    encoding="{cs.csv_encoding}",')
-        # Parquet-specific
-        if cs.file_format == "parquet" and cs.parquet_compression != "snappy":
-            self._add_code(f'    compression="{cs.parquet_compression}",')
-        # Delta-specific
-        if cs.file_format == "delta" and cs.write_mode != "overwrite":
-            self._add_code(f'    write_mode="{cs.write_mode}",')
-        self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}  # pass-through after write")
-
     def _handle_output(self, settings: input_schema.NodeOutput, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle output nodes."""
         input_df = input_vars.get("main", "df")
         output_settings = settings.output_settings
 
@@ -1046,17 +985,18 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    "{output_settings.abs_file_path}",')
             self._add_code(f'    separator="{output_settings.table_settings.delimiter}"')
             self._add_code(")")
-
         elif output_settings.file_type == "parquet":
             self._add_code(f'{input_df}.sink_parquet("{output_settings.abs_file_path}")')
-
         elif output_settings.file_type == "excel":
-            self._add_code(f"{input_df}.collect().write_excel(")
-            self._add_code(f'    "{output_settings.abs_file_path}",')
-            self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
-            self._add_code(")")
+            self._handle_output_excel(input_df, output_settings)
 
         self._add_code("")
+
+    def _handle_output_excel(self, input_df: str, output_settings) -> None:
+        self._add_code(f"{input_df}.write_excel(")
+        self._add_code(f'    "{output_settings.abs_file_path}",')
+        self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
+        self._add_code(")")
 
     def _handle_polars_code(
         self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
@@ -1068,7 +1008,7 @@ class FlowGraphToPolarsConverter:
             params = ""
             args = ""
         elif len(input_vars) == 1:
-            params = "input_df: pl.LazyFrame"
+            params = f"input_df: {self.framework}.LazyFrame"
             input_df = list(input_vars.values())[0]
             args = input_df
         else:
@@ -1078,7 +1018,7 @@ class FlowGraphToPolarsConverter:
             i = 1
             for key in sorted(input_vars.keys()):
                 if key.startswith("main"):
-                    param_list.append(f"input_df_{i}: pl.LazyFrame")
+                    param_list.append(f"input_df_{i}: {self.framework}.LazyFrame")
                     arg_list.append(input_vars[key])
                     i += 1
             params = ", ".join(param_list)
@@ -1128,198 +1068,6 @@ class FlowGraphToPolarsConverter:
         input_df = input_vars.get("main", "df")
         self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
         self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
-        self._add_code("")
-
-    def _handle_database_reader(
-        self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle database_reader nodes by generating code to read from database using a named connection."""
-        db_settings = settings.database_settings
-
-        # Only reference mode is supported for code generation
-        if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append(
-                (
-                    settings.node_id,
-                    "database_reader",
-                    "Database Reader nodes with inline connections cannot be exported. "
-                    "Please use a named connection (reference mode) instead.",
-                )
-            )
-            self._add_comment(f"# Node {settings.node_id}: Database Reader - Inline connections not supported")
-            return
-
-        if not db_settings.database_connection_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "database_reader", "Database Reader node is missing a connection name")
-            )
-            return
-
-        self.imports.add("import flowfile as ff")
-
-        connection_name = db_settings.database_connection_name
-        self._add_code(f"# Read from database using connection: {connection_name}")
-
-        if db_settings.query_mode == "query" and db_settings.query:
-            # Query mode - use triple quotes to preserve query formatting
-            self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
-            self._add_code('    query="""')
-            # Add each line of the query with proper indentation
-            for line in db_settings.query.split("\n"):
-                self._add_code(f"        {line}")
-            self._add_code('    """,')
-            self._add_code(").data")
-        else:
-            # Table mode
-            self._add_code(f"{var_name} = ff.read_database(")
-            self._add_code(f'    "{connection_name}",')
-            if db_settings.table_name:
-                self._add_code(f'    table_name="{db_settings.table_name}",')
-            if db_settings.schema_name:
-                self._add_code(f'    schema_name="{db_settings.schema_name}",')
-            self._add_code(").data")
-
-        self._add_code("")
-
-    def _handle_database_writer(
-        self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle database_writer nodes by generating code to write to database using a named connection."""
-        db_settings = settings.database_write_settings
-
-        # Only reference mode is supported for code generation
-        if db_settings.connection_mode != "reference":
-            self.unsupported_nodes.append(
-                (
-                    settings.node_id,
-                    "database_writer",
-                    "Database Writer nodes with inline connections cannot be exported. "
-                    "Please use a named connection (reference mode) instead.",
-                )
-            )
-            self._add_comment(f"# Node {settings.node_id}: Database Writer - Inline connections not supported")
-            return
-
-        if not db_settings.database_connection_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "database_writer", "Database Writer node is missing a connection name")
-            )
-            return
-
-        self.imports.add("import flowfile as ff")
-
-        connection_name = db_settings.database_connection_name
-        input_df = input_vars.get("main", "df")
-
-        self._add_code(f"# Write to database using connection: {connection_name}")
-        self._add_code("ff.write_database(")
-        self._add_code(f"    {input_df},")
-        self._add_code(f'    "{connection_name}",')
-        self._add_code(f'    "{db_settings.table_name}",')
-        if db_settings.schema_name:
-            self._add_code(f'    schema_name="{db_settings.schema_name}",')
-        if db_settings.if_exists:
-            self._add_code(f'    if_exists="{db_settings.if_exists}",')
-        self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
-        self._add_code("")
-
-    def _handle_catalog_reader(
-        self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle catalog_reader nodes by generating code to read from the Flowfile catalog."""
-        table_name = settings.catalog_table_name
-        table_id = settings.catalog_table_id
-
-        if not table_name and not table_id:
-            self.unsupported_nodes.append(
-                (settings.node_id, "catalog_reader", "Catalog Reader node has no table name or ID configured")
-            )
-            return
-
-        self.imports.add("import flowfile as ff")
-
-        label = table_name or f"id={table_id}"
-        self._add_code(f"# Read from catalog table: {label}")
-        self._add_code(f"{var_name} = ff.read_catalog_table(")
-        if table_name:
-            self._add_code(f'    "{table_name}",')
-        if settings.catalog_namespace_id is not None:
-            self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
-        if settings.delta_version is not None:
-            self._add_code(f"    delta_version={settings.delta_version},")
-        self._add_code(").data")
-        self._add_code("")
-
-    def _handle_catalog_writer(
-        self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle catalog_writer nodes by generating code to write to the Flowfile catalog."""
-        ws = settings.catalog_write_settings
-        input_df = input_vars.get("main", "df")
-
-        if not ws.table_name:
-            self.unsupported_nodes.append(
-                (settings.node_id, "catalog_writer", "Catalog Writer node has no table name configured")
-            )
-            return
-
-        self.imports.add("import flowfile as ff")
-
-        self._add_code(f"# Write to catalog table: {ws.table_name}")
-        self._add_code("ff.write_catalog_table(")
-        self._add_code(f"    {input_df},")
-        self._add_code(f'    "{ws.table_name}",')
-        if ws.namespace_id is not None:
-            self._add_code(f"    namespace_id={ws.namespace_id},")
-        self._add_code(f'    write_mode="{ws.write_mode}",')
-        if ws.merge_keys:
-            self._add_code(f"    merge_keys={ws.merge_keys},")
-        if ws.description:
-            self._add_code(f'    description="{ws.description}",')
-        self._add_code(")")
-        self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
-        self._add_code("")
-
-    def _handle_kafka_source(
-        self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle kafka_source nodes by generating code to read from a Kafka topic."""
-        ks = settings.kafka_settings
-
-        if not ks.kafka_connection_name and not ks.kafka_connection_id:
-            self.unsupported_nodes.append(
-                (settings.node_id, "kafka_source", "Kafka Source node has no connection configured")
-            )
-            return
-
-        if not ks.kafka_connection_name:
-            self.unsupported_nodes.append(
-                (
-                    settings.node_id,
-                    "kafka_source",
-                    "Kafka Source node uses a connection ID instead of a name. "
-                    "Please use a named connection for code export.",
-                )
-            )
-            return
-
-        self.imports.add("import flowfile as ff")
-
-        self._add_code(f"# Read from Kafka topic: {ks.topic_name}")
-        self._add_code(f"{var_name} = ff.read_kafka(")
-        self._add_code(f'    "{ks.kafka_connection_name}",')
-        self._add_code(f'    topic_name="{ks.topic_name}",')
-        if ks.max_messages != 100_000:
-            self._add_code(f"    max_messages={ks.max_messages},")
-        if ks.start_offset != "latest":
-            self._add_code(f'    start_offset="{ks.start_offset}",')
-        if ks.poll_timeout_seconds != 30.0:
-            self._add_code(f"    poll_timeout_seconds={ks.poll_timeout_seconds},")
-        if ks.value_format != "json":
-            self._add_code(f'    value_format="{ks.value_format}",')
-        self._add_code(").data")
         self._add_code("")
 
     def _handle_external_source(
@@ -1535,9 +1283,9 @@ class FlowGraphToPolarsConverter:
             # Check if value is numeric
             try:
                 float(val)
-                return f'pl.col("{col}") {polars_op} {val}'
+                return f'{self.framework}.col("{col}") {polars_op} {val}'
             except ValueError:
-                return f'pl.col("{col}") {polars_op} "{val}"'
+                return f'{self.framework}.col("{col}") {polars_op} "{val}"'
 
         return re.sub(pattern, replace_expr, expr)
 
@@ -1554,7 +1302,7 @@ class FlowGraphToPolarsConverter:
         """
         from flowfile_core.schemas.transform_schema import FilterOperator
 
-        col = f'pl.col("{basic.field}")'
+        col = f'{self.framework}.col("{basic.field}")'
         value = basic.value
         value2 = basic.value2
 
@@ -1643,21 +1391,21 @@ class FlowGraphToPolarsConverter:
         return col
 
     def _get_polars_dtype(self, dtype_str: str) -> str:
-        """Convert Flowfile dtype string to Polars dtype."""
+        fw = self.framework
         dtype_map = {
-            "String": "pl.Utf8",
-            "Integer": "pl.Int64",
-            "Double": "pl.Float64",
-            "Boolean": "pl.Boolean",
-            "Date": "pl.Date",
-            "Datetime": "pl.Datetime",
-            "Float32": "pl.Float32",
-            "Float64": "pl.Float64",
-            "Int32": "pl.Int32",
-            "Int64": "pl.Int64",
-            "Utf8": "pl.Utf8",
+            "String": f"{fw}.Utf8",
+            "Integer": f"{fw}.Int64",
+            "Double": f"{fw}.Float64",
+            "Boolean": f"{fw}.Boolean",
+            "Date": f"{fw}.Date",
+            "Datetime": f"{fw}.Datetime",
+            "Float32": f"{fw}.Float32",
+            "Float64": f"{fw}.Float64",
+            "Int32": f"{fw}.Int32",
+            "Int64": f"{fw}.Int64",
+            "Utf8": f"{fw}.Utf8",
         }
-        return dtype_map.get(dtype_str, "pl.Utf8")
+        return dtype_map.get(dtype_str, f"{fw}.Utf8")
 
     def _get_agg_function(self, agg: str) -> str:
         """Get Polars aggregation function name."""
@@ -1667,34 +1415,6 @@ class FlowGraphToPolarsConverter:
             "concat": "str.concat",
         }
         return agg_map.get(agg, agg)
-
-    def _sql_to_polars_expr(self, sql_expr: str) -> str:
-        """Convert SQL-like expression to Polars expression."""
-        # This is a very simplified converter
-        # In practice, you'd want a proper SQL parser
-
-        # Replace column references
-        import re
-
-        # Pattern for column names (simplified)
-        col_pattern = r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b"
-
-        def replace_col(match):
-            col_name = match.group(1)
-            # Skip SQL keywords
-            keywords = {"CASE", "WHEN", "THEN", "ELSE", "END", "AND", "OR", "NOT", "IN", "AS"}
-            if col_name.upper() in keywords:
-                return col_name
-            return f'pl.col("{col_name}")'
-
-        result = re.sub(col_pattern, replace_col, sql_expr)
-
-        # Handle CASE WHEN
-        if "CASE" in result:
-            # This would need proper parsing
-            result = "pl.when(...).then(...).otherwise(...)"
-
-        return result
 
     def add_return_code(self, lines: list[str]) -> None:
         if self.output_nodes:
@@ -1759,16 +1479,272 @@ class FlowGraphToPolarsConverter:
         return "\n".join(lines)
 
 
-# Example usage function
+class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
+    """Generates standalone Polars code from a FlowGraph."""
+
+    framework = "pl"
+
+    def _handle_csv_read_non_utf8(self, file_settings: input_schema.ReceivedTable, var_name: str):
+        self._add_code(f"{var_name} = {self.framework}.read_csv(")
+        self._add_code(f'    "{file_settings.abs_file_path}",')
+        self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
+        self._add_code(f"    has_header={file_settings.table_settings.has_headers},")
+        self._add_code(f"    ignore_errors={file_settings.table_settings.ignore_errors},")
+        if file_settings.table_settings.encoding:
+            self._add_code(f'    encoding="{file_settings.table_settings.encoding}",')
+        self._add_code(f"    skip_rows={file_settings.table_settings.starting_from_line},")
+        self._add_code(").lazy()")
+
+    def _handle_excel_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        self._add_code(f"{var_name} = {self.framework}.read_excel(")
+        self._add_code(f'    "{file_settings.abs_file_path}",')
+        if file_settings.table_settings.sheet_name:
+            self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
+        self._add_code(").lazy()")
+
+    def _handle_output_excel(self, input_df: str, output_settings) -> None:
+        self._add_code(f"{input_df}.collect().write_excel(")
+        self._add_code(f'    "{output_settings.abs_file_path}",')
+        self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
+        self._add_code(")")
+
+
+class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
+    """Generates FlowFrame code from a FlowGraph. Supports all node types including I/O."""
+
+    framework = "ff"
+
+    def __init__(self, flow_graph: FlowGraph):
+        super().__init__(flow_graph)
+        self.imports.add("import flowfile as ff")
+        self.imports.add("from flowfile import col")
+
+    def _handle_manual_input(
+        self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        self.imports.add("from flowfile_core.schemas.input_schema import RawData")
+        raw_data = settings.raw_data_format
+        self._add_code(f"{var_name} = ff.from_raw_data(RawData(**{raw_data.model_dump()}))")
+        self._add_code("")
+
+    def _handle_cloud_storage_reader(
+        self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
+    ):
+        cs = settings.cloud_storage_settings
+        self._add_code(f"{var_name} = ff.read_from_cloud_storage(")
+        self._add_code(f'    "{cs.resource_path}",')
+        self._add_code(f'    file_format="{cs.file_format}",')
+        if cs.connection_name:
+            self._add_code(f'    connection_name="{cs.connection_name}",')
+        if cs.scan_mode and cs.scan_mode != "single_file":
+            self._add_code(f'    scan_mode="{cs.scan_mode}",')
+        if cs.file_format == "csv":
+            if cs.csv_delimiter != ";":
+                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
+            if not cs.csv_has_header:
+                self._add_code(f"    has_header={cs.csv_has_header},")
+            if cs.csv_encoding != "utf8":
+                self._add_code(f'    encoding="{cs.csv_encoding}",')
+        if cs.file_format == "delta" and cs.delta_version is not None:
+            self._add_code(f"    delta_version={cs.delta_version},")
+        self._add_code(")")
+        self._add_code("")
+
+    def _handle_cloud_storage_writer(
+        self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        input_df = input_vars.get("main", "df")
+        cs = settings.cloud_storage_settings
+        self._add_code(f"{input_df}.write_to_cloud_storage(")
+        self._add_code(f'    "{cs.resource_path}",')
+        self._add_code(f'    file_format="{cs.file_format}",')
+        if cs.connection_name:
+            self._add_code(f'    connection_name="{cs.connection_name}",')
+        if cs.file_format == "csv":
+            if cs.csv_delimiter != ";":
+                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
+            if cs.csv_encoding != "utf8":
+                self._add_code(f'    encoding="{cs.csv_encoding}",')
+        if cs.file_format == "parquet" and cs.parquet_compression != "snappy":
+            self._add_code(f'    compression="{cs.parquet_compression}",')
+        if cs.file_format == "delta" and cs.write_mode != "overwrite":
+            self._add_code(f'    write_mode="{cs.write_mode}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}")
+        self._add_code("")
+
+    def _handle_database_reader(
+        self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        db_settings = settings.database_settings
+
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "database_reader",
+                    "Database Reader nodes with inline connections cannot be exported. "
+                    "Please use a named connection (reference mode) instead.",
+                )
+            )
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append(
+                (settings.node_id, "database_reader", "Database Reader node is missing a connection name")
+            )
+            return
+
+        connection_name = db_settings.database_connection_name
+
+        if db_settings.query_mode == "query" and db_settings.query:
+            self._add_code(f"{var_name} = ff.read_database(")
+            self._add_code(f'    "{connection_name}",')
+            self._add_code('    query="""')
+            for line in db_settings.query.split("\n"):
+                self._add_code(f"        {line}")
+            self._add_code('    """,')
+            self._add_code(")")
+        else:
+            self._add_code(f"{var_name} = ff.read_database(")
+            self._add_code(f'    "{connection_name}",')
+            if db_settings.table_name:
+                self._add_code(f'    table_name="{db_settings.table_name}",')
+            if db_settings.schema_name:
+                self._add_code(f'    schema_name="{db_settings.schema_name}",')
+            self._add_code(")")
+
+        self._add_code("")
+
+    def _handle_database_writer(
+        self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        db_settings = settings.database_write_settings
+
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "database_writer",
+                    "Database Writer nodes with inline connections cannot be exported. "
+                    "Please use a named connection (reference mode) instead.",
+                )
+            )
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append(
+                (settings.node_id, "database_writer", "Database Writer node is missing a connection name")
+            )
+            return
+
+        connection_name = db_settings.database_connection_name
+        input_df = input_vars.get("main", "df")
+
+        self._add_code(f"{input_df}.write_database(")
+        self._add_code(f'    "{connection_name}",')
+        self._add_code(f'    "{db_settings.table_name}",')
+        if db_settings.schema_name:
+            self._add_code(f'    schema_name="{db_settings.schema_name}",')
+        if db_settings.if_exists:
+            self._add_code(f'    if_exists="{db_settings.if_exists}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}")
+        self._add_code("")
+
+    def _handle_catalog_reader(
+        self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        table_name = settings.catalog_table_name
+        table_id = settings.catalog_table_id
+
+        if not table_name and not table_id:
+            self.unsupported_nodes.append(
+                (settings.node_id, "catalog_reader", "Catalog Reader node has no table name or ID configured")
+            )
+            return
+
+        label = table_name or f"id={table_id}"
+        self._add_code(f"# Read from catalog table: {label}")
+        self._add_code(f"{var_name} = ff.read_catalog_table(")
+        if table_name:
+            self._add_code(f'    "{table_name}",')
+        if settings.catalog_namespace_id is not None:
+            self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
+        if settings.delta_version is not None:
+            self._add_code(f"    delta_version={settings.delta_version},")
+        self._add_code(")")
+        self._add_code("")
+
+    def _handle_catalog_writer(
+        self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        ws = settings.catalog_write_settings
+        input_df = input_vars.get("main", "df")
+
+        if not ws.table_name:
+            self.unsupported_nodes.append(
+                (settings.node_id, "catalog_writer", "Catalog Writer node has no table name configured")
+            )
+            return
+
+        self._add_code(f"# Write to catalog table: {ws.table_name}")
+        self._add_code(f"{input_df}.write_catalog_table(")
+        self._add_code(f'    "{ws.table_name}",')
+        if ws.namespace_id is not None:
+            self._add_code(f"    namespace_id={ws.namespace_id},")
+        self._add_code(f'    write_mode="{ws.write_mode}",')
+        if ws.merge_keys:
+            self._add_code(f"    merge_keys={ws.merge_keys},")
+        if ws.description:
+            self._add_code(f'    description="{ws.description}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}")
+        self._add_code("")
+
+    def _handle_kafka_source(
+        self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        ks = settings.kafka_settings
+
+        if not ks.kafka_connection_name and not ks.kafka_connection_id:
+            self.unsupported_nodes.append(
+                (settings.node_id, "kafka_source", "Kafka Source node has no connection configured")
+            )
+            return
+
+        if not ks.kafka_connection_name:
+            self.unsupported_nodes.append(
+                (
+                    settings.node_id,
+                    "kafka_source",
+                    "Kafka Source node uses a connection ID instead of a name. "
+                    "Please use a named connection for code export.",
+                )
+            )
+            return
+
+        self._add_code(f"# Read from Kafka topic: {ks.topic_name}")
+        self._add_code(f"{var_name} = ff.read_kafka(")
+        self._add_code(f'    "{ks.kafka_connection_name}",')
+        self._add_code(f'    topic_name="{ks.topic_name}",')
+        if ks.max_messages != 100_000:
+            self._add_code(f"    max_messages={ks.max_messages},")
+        if ks.start_offset != "latest":
+            self._add_code(f'    start_offset="{ks.start_offset}",')
+        if ks.poll_timeout_seconds != 30.0:
+            self._add_code(f"    poll_timeout_seconds={ks.poll_timeout_seconds},")
+        if ks.value_format != "json":
+            self._add_code(f'    value_format="{ks.value_format}",')
+        self._add_code(")")
+        self._add_code("")
+
+
 def export_flow_to_polars(flow_graph: FlowGraph) -> str:
-    """
-    Export a FlowGraph to standalone Polars code.
-
-    Args:
-        flow_graph: The FlowGraph instance to convert
-
-    Returns:
-        str: Python code that can be executed standalone
-    """
     converter = FlowGraphToPolarsConverter(flow_graph)
+    return converter.convert()
+
+
+def export_flow_to_flowframe(flow_graph: FlowGraph) -> str:
+    converter = FlowGraphToFlowFrameConverter(flow_graph)
     return converter.convert()

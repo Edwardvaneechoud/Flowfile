@@ -63,6 +63,53 @@ df2 = ff.scan_csv("data.csv")  # Alias for read_csv
 
 Flowfile extends Polars with specialized cloud storage readers that integrate with secure connection management.
 
+### Unified Cloud Storage Reader
+
+`read_from_cloud_storage()` is a single entry point for reading any supported format from cloud storage. It dispatches to the appropriate format-specific reader internally.
+
+```python
+import flowfile as ff
+
+# Read Parquet (default format)
+df = ff.read_from_cloud_storage(
+    "s3://bucket/data.parquet",
+    connection_name="my-conn",
+)
+
+# Read CSV
+df = ff.read_from_cloud_storage(
+    "s3://bucket/data.csv",
+    file_format="csv",
+    connection_name="my-conn",
+    delimiter=",",
+    has_header=True,
+)
+
+# Read Delta with time travel
+df = ff.read_from_cloud_storage(
+    "s3://warehouse/my_table",
+    file_format="delta",
+    connection_name="my-conn",
+    delta_version=5,
+)
+```
+
+**Parameters:**
+
+- `source`: Cloud storage path (e.g., `s3://bucket/path/file.parquet`)
+- `file_format`: `"csv"`, `"parquet"`, `"json"`, or `"delta"` (default: `"parquet"`)
+- `connection_name`: Name of the stored cloud storage connection
+- `scan_mode`: `"single_file"` or `"directory"`. Auto-detected from path if `None`
+- `delimiter`: CSV field separator (default: `;`). Only used for CSV
+- `has_header`: Whether CSV has headers (default: `True`). Only used for CSV
+- `encoding`: CSV encoding (default: `utf8`). Only used for CSV
+- `delta_version`: Delta table version for time-travel queries. Only used for Delta
+
+!!! tip "Recommended Approach"
+    `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
+
+### Format-Specific Cloud Readers
+
 ### Cloud CSV Reading
 
 ```python
@@ -125,6 +172,57 @@ df = ff.scan_delta(
 )
 ```
 
+## Catalog Reading
+
+Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables.
+
+```python
+import flowfile as ff
+
+# Read a catalog table
+df = ff.read_catalog_table("my_table")
+
+# Read from a specific namespace
+df = ff.read_catalog_table("my_table", namespace_id=3)
+
+# Time travel to a specific Delta version
+df = ff.read_catalog_table("my_table", delta_version=5)
+```
+
+**Parameters:**
+
+- `table_name`: Name of the catalog table to read (required)
+- `namespace_id`: Optional namespace ID to scope the lookup
+- `delta_version`: Optional Delta version for time-travel queries
+
+Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
+
+## Kafka Reading
+
+Read messages from a Kafka topic using a stored Flowfile connection.
+
+```python
+import flowfile as ff
+
+df = ff.read_kafka(
+    "my-kafka-connection",
+    topic_name="events",
+    start_offset="earliest",
+    max_messages=10_000,
+)
+```
+
+**Parameters:**
+
+- `connection_name`: Name of the stored Kafka connection (required)
+- `topic_name`: Kafka topic to consume from (required)
+- `max_messages`: Maximum number of messages to consume (default: `100_000`)
+- `start_offset`: Where to start consuming: `"earliest"` or `"latest"` (default: `"latest"`)
+- `poll_timeout_seconds`: How long to poll for messages in seconds (default: `30.0`)
+- `value_format`: Message value format (default: `"json"`)
+
+Returns a `FlowFrame`.
+
 ## Database Reading
 
 Read data from SQL databases using stored connections.
@@ -170,6 +268,9 @@ df = ff.read_database(
 - `table_name`: Table to read from
 - `schema_name`: Database schema (e.g., "public")
 - `query`: Custom SQL query (takes precedence over `table_name`)
+
+!!! note "Return Type"
+    `read_database()` returns a `FlowFrame` (not a raw Polars `LazyFrame`). The result supports `.collect()` to materialize data, `.data` to access the underlying `LazyFrame`, and `open_graph_in_editor()` to visualize the pipeline in the UI.
 
 ## Connection Management
 

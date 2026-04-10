@@ -2,17 +2,17 @@
 
 Flowfile's Code Generator allows you to export your visually designed data pipelines as clean, executable Python code. This feature is designed to empower users who wish to inspect the underlying data transformation logic, integrate Flowfile pipelines into existing Python projects, or extend their workflows with custom scripts.
 
-The generated code is entirely self-contained and relies mostly on the Polars library, ensuring it can run independently of Flowfile.
+For pure transformation flows (filter, join, group by, etc.), the generated code is standalone Polars — no Flowfile dependency required. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) generate code that uses `import flowfile as ff` for connection-aware operations. The transformation logic remains Polars in both cases.
 ![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
 
 ## Key Characteristics of the Generated Code
 
 When you generate code from your Flowfile graph, you can expect the output to be:
 
-* **Standalone**: The code functions independently, requiring only Polars and common Python libraries.
+* **Mostly Standalone**: Transformation logic uses only Polars. I/O operations (database, catalog, cloud storage, Kafka) use `flowfile` for managed connections.
 * **Readable**: The structure mirrors your visual flow, making it easy to understand the sequence of operations.
-* **Direct Translation**: Each Flowfile node and its configured settings are directly translated into equivalent Polars operations.
-* **Ready for Integration**: You can copy, modify, and embed this code into other Python applications or scripts.
+* **Direct Translation**: Transformation nodes translate to Polars operations. I/O nodes translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
+* **Ready for Integration**: Pure transformation flows can be embedded anywhere. Flows with I/O nodes require `pip install Flowfile`.
 
 ## Examples of Generated Code
 
@@ -127,4 +127,42 @@ if __name__ == "__main__":
 
 </details>
 
+### Example 4: Reading from the Catalog
+
+When a flow includes I/O nodes like a catalog reader, the generated code imports `flowfile` and uses the FlowFrame API for connection-aware operations.
+
+**Flowfile Pipeline:**
+
+1.  **Catalog Reader** (e.g., `sales_data` table from namespace 3)
+2.  **Filter** (e.g., keep rows where `amount > 100`)
+
+<details markdown="1">
+<summary>Generated Code</summary>
+
+```python
+# Example 4: Catalog Read with Filter
+import flowfile as ff
+import polars as pl
+
+def run_etl_pipeline():
+    """
+    ETL Pipeline: Catalog Read and Filter
+    Generated from Flowfile
+    """
+    df_1 = ff.read_catalog_table("sales_data", namespace_id=3).data
+    df_2 = df_1.filter(pl.col("amount") > 100)
+    return df_2
+
+if __name__ == "__main__":
+    pipeline_output = run_etl_pipeline()
+```
+
+</details>
+
+!!! note "`.data` accessor"
+    The generated code calls `.data` on FlowFrame results to extract the underlying Polars `LazyFrame`. This keeps the rest of the pipeline as standard Polars operations.
+
 These examples provide a clear overview of the type of high-quality, executable Python code produced by Flowfile's Code Generator.
+
+!!! info "Future Direction"
+    In a future release, generated code will use the FlowFrame API directly for all operations, enabling round-trip editing between code and canvas.
