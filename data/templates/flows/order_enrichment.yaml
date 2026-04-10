@@ -1,9 +1,9 @@
-flowfile_version: 0.6.3
-flowfile_id: 1
+flowfile_version: 0.8.2
+flowfile_id: 4
 flowfile_name: Order Enrichment
 flowfile_settings:
   description: null
-  execution_mode: Performance
+  execution_mode: Development
   execution_location: local
   auto_save: false
   show_detailed_progress: true
@@ -127,7 +127,7 @@ nodes:
 - id: 6
   type: explore_data
   is_start_node: false
-  description: ''
+  description: 'Explore the output!'
   node_reference: null
   x_position: 1050
   y_position: 200
