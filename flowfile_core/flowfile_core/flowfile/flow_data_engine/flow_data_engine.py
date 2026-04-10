@@ -1400,7 +1400,9 @@ class FlowDataEngine:
             logger.warning(f"Error in filter expression: {e}")
             f = to_expr("False")
         df = self.data_frame.filter(f)
-        return FlowDataEngine(df, schema=self.schema, streamable=self._streamable)
+        _ = df.collect_schema()  # Collecting schema to ensure the filter is valid
+
+        return FlowDataEngine(df, streamable=self._streamable)
 
     def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a record ID (row number) column to the DataFrame.

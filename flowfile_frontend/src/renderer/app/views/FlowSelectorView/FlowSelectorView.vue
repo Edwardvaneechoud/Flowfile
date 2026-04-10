@@ -1,26 +1,31 @@
 <template>
   <div class="flow-tabs-container">
     <div class="flow-tabs">
-      <div
+      <el-tooltip
         v-for="flow in flows"
         :key="flow.flow_id"
-        class="flow-tab"
-        :class="{ active: selectedFlowId === flow.flow_id }"
-        :title="flow.name"
-        @click="selectFlow(flow.flow_id)"
+        :content="flow.name"
+        placement="bottom"
+        :show-after="400"
+        :hide-after="0"
       >
-        <div class="tab-content">
-          <span class="material-icons tab-icon">account_tree</span>
-          <span class="tab-name">{{ flow.name }}</span>
-        </div>
-        <span
-          class="material-icons close-icon"
-          :title="'Close ' + flow.name"
-          @click.stop="confirmCloseTab(flow.flow_id)"
+        <div
+          class="flow-tab"
+          :class="{ active: selectedFlowId === flow.flow_id }"
+          @click="selectFlow(flow.flow_id)"
         >
-          close
-        </span>
-      </div>
+          <div class="tab-content">
+            <span class="material-icons tab-icon">account_tree</span>
+            <span class="tab-name">{{ flow.name }}</span>
+          </div>
+          <span
+            class="material-icons close-icon"
+            @click.stop="confirmCloseTab(flow.flow_id)"
+          >
+            close
+          </span>
+        </div>
+      </el-tooltip>
     </div>
   </div>
 
@@ -277,7 +282,7 @@ defineExpose({
 }
 
 .tab-icon {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-xs);
   color: var(--color-accent);
   flex-shrink: 0;
 }
@@ -286,7 +291,7 @@ defineExpose({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: 0.01em;
   color: var(--color-text-secondary);

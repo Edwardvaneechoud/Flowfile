@@ -1,5 +1,6 @@
 import ast
 import base64
+import re
 import textwrap
 import time
 from collections.abc import Callable
@@ -244,7 +245,7 @@ class PolarsCodeParser:
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
 
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    if "__" in node.value:
+                    if re.search(r"__\w+__", node.value):
                         raise ValueError("Strings containing dunder patterns are not allowed")
 
         except SyntaxError as e:

@@ -1,0 +1,51 @@
+product_id,name,category,unit_price
+1,Laptop Pro 15,Computers,1299.99
+2,Laptop Air 13,Computers,999.99
+3,Desktop Tower,Computers,1599.99
+4,Mini PC,Computers,499.99
+5,Phone X,Mobile,899.99
+6,Phone SE,Mobile,429.99
+7,Phone Plus,Mobile,1099.99
+8,Tablet 10,Mobile,599.99
+9,Tablet Mini,Mobile,399.99
+10,Tablet Pro,Mobile,799.99
+11,Monitor 27,Displays,449.99
+12,Monitor 32,Displays,599.99
+13,Monitor Ultra,Displays,899.99
+14,Portable Monitor,Displays,299.99
+15,Mechanical Keyboard,Accessories,129.99
+16,Wireless Keyboard,Accessories,79.99
+17,Gaming Mouse,Accessories,69.99
+18,Ergonomic Mouse,Accessories,89.99
+19,Wireless Mouse,Accessories,49.99
+20,USB Hub,Accessories,39.99
+21,Webcam HD,Accessories,79.99
+22,Webcam 4K,Accessories,149.99
+23,Headphones Pro,Audio,299.99
+24,Headphones Basic,Audio,79.99
+25,Earbuds Pro,Audio,199.99
+26,Earbuds Basic,Audio,49.99
+27,Speaker Portable,Audio,129.99
+28,Speaker Desktop,Audio,89.99
+29,Microphone USB,Audio,119.99
+30,Microphone Pro,Audio,249.99
+31,Mouse Pad XL,Accessories,29.99
+32,Laptop Stand,Accessories,59.99
+33,Cable USB-C,Accessories,14.99
+34,Charger Fast,Accessories,34.99
+35,Power Bank,Accessories,49.99
+36,Screen Protector,Accessories,19.99
+37,Phone Case,Accessories,24.99
+38,Tablet Case,Accessories,34.99
+39,Docking Station,Accessories,179.99
+40,External SSD 1TB,Storage,109.99
+41,External SSD 2TB,Storage,179.99
+42,Flash Drive 128GB,Storage,19.99
+43,SD Card 256GB,Storage,39.99
+44,NAS Drive,Storage,299.99
+45,Router WiFi 6,Networking,149.99
+46,Network Switch,Networking,49.99
+47,Ethernet Cable,Networking,9.99
+48,WiFi Adapter,Networking,29.99
+49,Printer Laser,Office,249.99
+50,Printer Inkjet,Office,129.99

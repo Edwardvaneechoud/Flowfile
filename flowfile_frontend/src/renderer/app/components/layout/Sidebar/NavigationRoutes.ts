@@ -23,6 +23,13 @@ export default {
       },
     },
     {
+      name: "templates",
+      displayName: "menu.templates",
+      meta: {
+        icon: "fa-solid fa-layer-group",
+      },
+    },
+    {
       name: "catalog",
       displayName: "menu.catalog",
       meta: {
