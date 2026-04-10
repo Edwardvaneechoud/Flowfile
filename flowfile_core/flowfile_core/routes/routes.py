@@ -1387,7 +1387,7 @@ def ensure_templates_available():
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-@router.post("/templates/create_from_template/", tags=["templates"])
+@router.post("/templates/{template_id}/create", tags=["templates"])
 def create_from_template(template_id: str, current_user=Depends(get_current_active_user)) -> int:
     """Instantiates a template as a new flow session.
 
@@ -1413,18 +1413,21 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     data_dir = next(iter(resolved_files.values())).parent
     flowfile_data = get_template_flowfile_data(template_id, data_dir)
 
-    # Write to a YAML file and import via existing flow import path
+    # Write to a unique temp YAML and import via existing flow import path
+    import tempfile
+
     from shared.storage_config import storage
 
     flows_dir = storage.flows_directory
-    temp_path = flows_dir / f"{flowfile_data.flowfile_name.replace(' ', '_').lower()}.yaml"
-
-    with open(temp_path, "w", encoding="utf-8") as f:
-        yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
-
     user_id = current_user.id if current_user else None
-    flow_id = flow_file_handler.import_flow(temp_path, user_id=user_id)
+
+    with tempfile.NamedTemporaryFile(dir=flows_dir, suffix=".yaml", delete=True, mode="w", encoding="utf-8") as f:
+        yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
+        f.flush()
+        flow_id = flow_file_handler.import_flow(Path(f.name), user_id=user_id)
+
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(str(temp_path), flow.flow_settings.name, user_id)
+        flow_filename = f"{flowfile_data.flowfile_name.replace(' ', '_').lower()}.yaml"
+        _auto_register_flow(str(flows_dir / flow_filename), flow.flow_settings.name, user_id)
     return flow_id

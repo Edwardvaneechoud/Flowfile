@@ -28,6 +28,15 @@
       <p>Loading templates...</p>
     </div>
 
+    <div v-else-if="loadError" class="templates-view__empty">
+      <p>Could not load templates. Please check your connection and try again.</p>
+      <el-button @click="loadTemplates">Retry</el-button>
+    </div>
+
+    <div v-else-if="filteredTemplates.length === 0 && selectedCategory !== 'All'" class="templates-view__empty">
+      <p>No {{ selectedCategory }} templates found.</p>
+    </div>
+
     <div v-else-if="filteredTemplates.length === 0" class="templates-view__empty">
       <p>No templates available.</p>
     </div>
@@ -59,6 +68,7 @@ const nodeStore = useNodeStore();
 const templates = ref<FlowTemplateMeta[]>([]);
 const selectedCategory = ref("All");
 const isLoading = ref(true);
+const loadError = ref(false);
 const creatingTemplateId = ref<string | null>(null);
 
 const filteredTemplates = computed(() => {
@@ -68,12 +78,14 @@ const filteredTemplates = computed(() => {
 
 const loadTemplates = async () => {
   isLoading.value = true;
+  loadError.value = false;
   try {
     // Ensure flow YAMLs are available locally (downloads from GitHub on first visit)
     await TemplatesApi.ensureAvailable();
     templates.value = await TemplatesApi.listTemplates();
   } catch (error) {
     console.error("Failed to load templates:", error);
+    loadError.value = true;
     ElMessage.error("Failed to load templates");
   } finally {
     isLoading.value = false;

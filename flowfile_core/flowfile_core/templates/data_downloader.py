@@ -8,9 +8,7 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_DATA_BASE_URL = (
-    "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates"
-)
+TEMPLATE_DATA_BASE_URL = "https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates"
 TEMPLATE_FLOWS_BASE_URL = f"{TEMPLATE_DATA_BASE_URL}/flows"
 
 # Repo checkout path (development): data/templates/ relative to repo root
@@ -22,15 +20,17 @@ def get_template_data_dir() -> Path:
     return storage.template_data_directory
 
 
-def _download_file(url: str, local_path: Path) -> None:
+def _download_file(url: str, local_path: Path, timeout: int = 30) -> None:
     """Download a single file from a URL to a local path."""
     logger.info("Downloading template file: %s -> %s", url, local_path)
     try:
-        urllib.request.urlretrieve(url, local_path)  # noqa: S310
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+            local_path.write_bytes(resp.read())
     except Exception as e:
+        # Clean up partial downloads
+        local_path.unlink(missing_ok=True)
         raise RuntimeError(
-            f"Failed to download '{local_path.name}' from {url}. "
-            f"Please check your internet connection. Error: {e}"
+            f"Failed to download '{local_path.name}' from {url}. " f"Please check your internet connection. Error: {e}"
         ) from e
 
 

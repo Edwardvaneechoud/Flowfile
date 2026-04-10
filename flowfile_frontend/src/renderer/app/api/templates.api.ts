@@ -1,15 +1,20 @@
 import axios from "../services/axios.config";
 import type { FlowTemplateMeta } from "../types/template.types";
 
+let templatesEnsured = false;
+
 export class TemplatesApi {
   /**
    * Ensure template YAML files are available locally (downloads from GitHub if needed).
    * Should be called before listTemplates() to handle PyPI installs without repo checkout.
+   * Cached per session — only calls the backend once.
    */
   static async ensureAvailable(): Promise<void> {
+    if (templatesEnsured) return;
     await axios.get("/templates/ensure_available/", {
       headers: { accept: "application/json" },
     });
+    templatesEnsured = true;
   }
 
   /**
@@ -28,16 +33,10 @@ export class TemplatesApi {
    */
   static async createFromTemplate(templateId: string): Promise<number> {
     const response = await axios.post(
-      "/templates/create_from_template/",
+      `/templates/${templateId}/create`,
       {},
-      {
-        headers: { accept: "application/json" },
-        params: { template_id: templateId },
-      },
+      { headers: { accept: "application/json" } },
     );
-    if (response.status === 200) {
-      return response.data;
-    }
-    throw Error("Error creating flow from template");
+    return response.data;
   }
 }

@@ -39,8 +39,17 @@ def _load_template_yaml(yaml_path: Path) -> tuple[FlowTemplateMeta, list[str], d
     with open(yaml_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
+    if "_template_meta" not in data:
+        raise ValueError(f"Missing '_template_meta' in {yaml_path.name}")
+    if "_required_csv_files" not in data:
+        raise ValueError(f"Missing '_required_csv_files' in {yaml_path.name}")
+
     meta = FlowTemplateMeta.model_validate(data.pop("_template_meta"))
     required_files = data.pop("_required_csv_files")
+
+    if not isinstance(required_files, list):
+        raise TypeError(f"'_required_csv_files' must be a list in {yaml_path.name}")
+
     return meta, required_files, data
 
 

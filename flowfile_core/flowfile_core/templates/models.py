@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -7,7 +9,7 @@ class FlowTemplateMeta(BaseModel):
     template_id: str
     name: str
     description: str
-    category: str  # "Beginner" | "Intermediate" | "Advanced"
+    category: Literal["Beginner", "Intermediate", "Advanced"]
     tags: list[str]
     node_count: int
     icon: str  # material icon name

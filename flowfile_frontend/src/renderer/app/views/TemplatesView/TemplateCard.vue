@@ -1,5 +1,5 @@
 <template>
-  <div class="template-card" @click="$emit('use-template', template.template_id)">
+  <div class="template-card">
     <div class="template-card__header">
       <span class="material-icons template-card__icon">{{ template.icon }}</span>
       <span class="template-card__badge" :class="badgeClass">{{ template.category }}</span>
@@ -15,7 +15,7 @@
         <span v-for="tag in template.tags" :key="tag" class="template-card__tag">{{ tag }}</span>
       </div>
     </div>
-    <el-button type="primary" size="small" class="template-card__button" :loading="loading">
+    <el-button type="primary" size="small" class="template-card__button" :loading="loading" @click="$emit('use-template', template.template_id)">
       <span class="material-icons" style="font-size: 16px; margin-right: 4px">play_arrow</span>
       Use Template
     </el-button>
@@ -81,18 +81,34 @@ const badgeClass = computed(() => {
 }
 
 .template-card__badge--beginner {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .template-card__badge--intermediate {
-  background: #fff3e0;
-  color: #e65100;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .template-card__badge--advanced {
-  background: #fce4ec;
-  color: #c62828;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+/* Dark mode: use transparent backgrounds so they work on dark surfaces */
+[data-theme="dark"] .template-card__badge--beginner {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--color-success);
+}
+
+[data-theme="dark"] .template-card__badge--intermediate {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--color-warning);
+}
+
+[data-theme="dark"] .template-card__badge--advanced {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--color-danger);
 }
 
 .template-card__title {
