@@ -7,6 +7,11 @@
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
     <div class="sidebar-footer">
+      <div class="footer-btn-wrapper" data-tooltip="Interactive tutorial">
+        <button class="tutorial-button" @click="handleStartTutorial">
+          <span class="material-icons">school</span>
+        </button>
+      </div>
       <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
         <ThemeToggle />
       </div>
@@ -28,6 +33,8 @@ import Logo from "../Logo/Logo.vue";
 import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
 import authService from "../../../services/auth.service";
 import { useAuthStore } from "../../../stores/auth-store";
+import { useTutorialStore } from "../../../stores/tutorial-store";
+import { gettingStartedTutorial } from "../../tutorial/tutorials";
 
 // Define the isCollapse prop
 defineProps({
@@ -42,6 +49,7 @@ defineEmits(["toggle-collapse"]);
 
 const router = useRouter();
 const authStore = useAuthStore();
+const tutorialStore = useTutorialStore();
 
 // Filter routes based on admin status and Electron mode
 const items = computed(() => {
@@ -59,6 +67,13 @@ const items = computed(() => {
 
 // Only show logout button in Docker/web mode
 const showLogout = computed(() => !authService.isInElectronMode());
+
+const handleStartTutorial = async () => {
+  if (router.currentRoute.value.name !== "designer") {
+    await router.push({ name: "designer" });
+  }
+  tutorialStore.startTutorial(gettingStartedTutorial);
+};
 
 const handleLogout = () => {
   authService.logout();
@@ -101,6 +116,37 @@ const handleLogout = () => {
 /* Uses centralized [data-tooltip] styles from _modals.css */
 .footer-btn-wrapper {
   position: relative;
+}
+
+.tutorial-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.tutorial-button:hover {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.tutorial-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--color-accent);
+}
+
+.tutorial-button .material-icons {
+  font-size: 20px;
 }
 
 .logout-button {

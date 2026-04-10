@@ -444,3 +444,50 @@ def test_combine_complex_flow_graphs():
             assert "record_id" in data[0]
             assert all(row["age"] > 30 for row in data)
             assert set([row["record_id"] for row in data]) == {1, 2}
+
+
+def test_non_working_filter_error():
+    """Test if filter that does not work raises error."""
+    # Create graph with a chain of operations
+    graph1 = create_graph(flow_id=1, execution_mode="remote")
+
+    # Add input data
+    data = [
+        {"name": "John", "age": 30, "city": "New York"},
+        {"name": "Jane", "age": 25, "city": "Boston"},
+        {"name": "Mike", "age": 40, "city": "Chicago"},
+        {"name": "Sarah", "age": 35, "city": "New York"}
+    ]
+    add_manual_input(graph1, data, node_id=1)
+
+    # Add filter for age > 30
+    add_node_promise_on_type(graph1, "filter", 2)
+    filter_input = transform_schema.FilterInput(
+        advanced_filter="[age2] > 30",  # age2 is not a column
+        filter_type='advanced'
+    )
+    filter_settings = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=filter_input
+    )
+    graph1.add_filter(filter_settings)
+    connection1 = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph1, connection1)
+
+    # Add record ID node
+    add_node_promise_on_type(graph1, "record_id", 3)
+    record_id_settings = input_schema.NodeRecordId(
+        flow_id=1,
+        node_id=3,
+        depending_on_id=2,
+        record_id_input=transform_schema.RecordIdInput()
+    )
+    graph1.add_record_id(record_id_settings)
+    connection2 = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    add_connection(graph1, connection2)
+    run_info = graph1.run_graph()
+    result_filter_node = next(_node for _node in run_info.node_step_result if _node.node_id == 2)
+    assert not result_filter_node.success
+    assert 'unable to find column "age2"' in result_filter_node.error

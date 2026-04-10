@@ -273,8 +273,8 @@ class FlowfileNode(BaseModel):
             return None
         if isinstance(value, input_schema.NodePromise):
             return None
-        if hasattr(value, "to_yaml_dict"):
-            return value.to_yaml_dict()
+        if isinstance(value, dict):
+            return value
         if hasattr(value, "to_yaml_dict"):
             return value.to_yaml_dict()
         return value.model_dump(exclude=self._setting_input_exclude)
