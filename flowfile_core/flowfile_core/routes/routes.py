@@ -1414,20 +1414,23 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
     flowfile_data = get_template_flowfile_data(template_id, data_dir)
 
     # Write to a unique temp YAML and import via existing flow import path
-    import tempfile
+    import uuid
 
     from shared.storage_config import storage
 
     flows_dir = storage.flows_directory
     user_id = current_user.id if current_user else None
 
-    with tempfile.NamedTemporaryFile(dir=flows_dir, suffix=".yaml", delete=True, mode="w", encoding="utf-8") as f:
-        yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
-        f.flush()
-        flow_id = flow_file_handler.import_flow(Path(f.name), user_id=user_id)
+    flow_stem = flowfile_data.flowfile_name.replace(" ", "_").lower()
+    temp_path = flows_dir / f"{flow_stem}_{uuid.uuid4().hex[:8]}.yaml"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
+        flow_id = flow_file_handler.import_flow(temp_path, user_id=user_id)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        flow_filename = f"{flowfile_data.flowfile_name.replace(' ', '_').lower()}.yaml"
-        _auto_register_flow(str(flows_dir / flow_filename), flow.flow_settings.name, user_id)
+        _auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
     return flow_id
