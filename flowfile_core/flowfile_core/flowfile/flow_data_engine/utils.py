@@ -103,9 +103,9 @@ def execute_write_method(
         logger.info("Writing as csv file")
         if write_mode == "append":
             with open(path, "ab") as f:
-                write_method(file=f, separator=delimiter, quote_style="always")
+                write_method(f, separator=delimiter, quote_style="always")
         else:
-            write_method(file=path, separator=delimiter, quote_style="always")
+            write_method(path, separator=delimiter, quote_style="always")
     elif data_type == "parquet":
         logger.info("Writing as parquet file")
         write_method(path)
