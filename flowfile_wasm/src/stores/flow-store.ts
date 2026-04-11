@@ -112,6 +112,27 @@ export const useFlowStore = defineStore('flow', () => {
   // External datasets provided by the host application (for embedded mode)
   const externalDatasets = ref<Map<string, string>>(new Map())
 
+  // Before-export hooks: called right before the flow is exported to YAML.
+  // Used by ExploreData.vue to flush the live Graphic Walker chart spec
+  // into the node settings so it survives round-trip save/load.
+  type BeforeExportHook = () => void | Promise<void>
+  const beforeExportHooks = new Set<BeforeExportHook>()
+
+  function registerBeforeExportHook(hook: BeforeExportHook): () => void {
+    beforeExportHooks.add(hook)
+    return () => beforeExportHooks.delete(hook)
+  }
+
+  async function runBeforeExportHooks(): Promise<void> {
+    for (const hook of beforeExportHooks) {
+      try {
+        await hook()
+      } catch (err) {
+        console.warn('[flow-store] beforeExport hook failed:', err)
+      }
+    }
+  }
+
   // Preview cache state (for lazy loading)
   const previewCache = ref<Map<number, {
     data: any;
@@ -2222,7 +2243,11 @@ result
    * @param name - Optional name for the flow
    * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
-  function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+  async function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
+    // Flush any pending state from open explore_data panels so saved chart
+    // specs end up in the exported node settings.
+    await runBeforeExportHooks()
+
     const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
 
@@ -2424,6 +2449,7 @@ result
     updateNode,
     updateNodeSettings,
     updateNodeSettingsSilent,
+    registerBeforeExportHook,
     updateNodeDescription,
     updateNodeReference,
     validateNodeReference,

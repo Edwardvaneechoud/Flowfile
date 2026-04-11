@@ -710,10 +710,10 @@ async function handleRunFlow() {
   emit('execution-complete', nodeResults.value)
 }
 
-function handleSaveFlow() {
+async function handleSaveFlow() {
   const name = prompt('Enter flow name:', 'my_flow')
   if (name) {
-    flowStore.downloadFlowfile(name)
+    await flowStore.downloadFlowfile(name)
   }
 }
 
