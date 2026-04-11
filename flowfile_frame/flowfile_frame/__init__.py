@@ -47,6 +47,11 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
+from flowfile_frame.catalog import read_catalog_table, write_catalog_table  # noqa: F401
+from flowfile_frame.cloud_storage.frame_helpers import (  # noqa: F401
+    read_from_cloud_storage,
+    write_to_cloud_storage,
+)
 from flowfile_frame.cloud_storage.secret_manager import (  # noqa: F401
     create_cloud_storage_connection,
     create_cloud_storage_connection_if_not_exists,
@@ -87,12 +92,14 @@ from flowfile_frame.expr import (  # noqa: F401
 
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame  # noqa: F401
-
-# File I/O
+LazyFrame = FlowFrame  # Alias for compatibility with generated code
+DataFrame = FlowFrame  # Alias for compatibility with generated code
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
+    from_raw_data,
     read_csv,
+    read_excel,
     read_parquet,
     scan_csv,
     scan_csv_from_cloud_storage,
@@ -101,6 +108,9 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     scan_parquet,
     scan_parquet_from_cloud_storage,
 )
+
+# File I/O
+from flowfile_frame.kafka import read_kafka  # noqa: F401
 from flowfile_frame.lazy import fold  # noqa: F401
 
 # Selector utilities

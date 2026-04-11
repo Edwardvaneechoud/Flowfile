@@ -25,8 +25,8 @@ from flowfile_core.kernel import router as kernel_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
-from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.file_manager import router as file_manager_router
+from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router

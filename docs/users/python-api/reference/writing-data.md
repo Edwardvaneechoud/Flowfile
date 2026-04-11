@@ -51,6 +51,52 @@ df.write_parquet(
 
 Flowfile extends writing capabilities with specialized cloud storage writers that integrate with secure connection management.
 
+### Unified Cloud Storage Writer
+
+`write_to_cloud_storage()` is a single entry point for writing any supported format to cloud storage.
+
+```python
+import flowfile as ff
+
+# Write Parquet (default format)
+ff.write_to_cloud_storage(
+    df, "s3://bucket/output.parquet",
+    connection_name="my-conn",
+)
+
+# Write CSV
+ff.write_to_cloud_storage(
+    df, "s3://bucket/output.csv",
+    file_format="csv",
+    connection_name="my-conn",
+    delimiter=",",
+)
+
+# Write Delta with append mode
+ff.write_to_cloud_storage(
+    df, "s3://warehouse/my_table",
+    file_format="delta",
+    connection_name="my-conn",
+    write_mode="append",
+)
+```
+
+**Parameters:**
+
+- `df`: The `LazyFrame` to write
+- `path`: Cloud storage destination path
+- `file_format`: `"csv"`, `"parquet"`, `"json"`, or `"delta"` (default: `"parquet"`)
+- `connection_name`: Name of the stored cloud storage connection
+- `delimiter`: CSV field separator (default: `;`). Only used for CSV
+- `encoding`: CSV encoding (default: `utf8`). Only used for CSV
+- `compression`: Parquet compression: `"snappy"`, `"gzip"`, `"brotli"`, `"lz4"`, `"zstd"` (default: `"snappy"`). Only used for Parquet
+- `write_mode`: `"overwrite"` or `"append"` (default: `"overwrite"`). Only used for Delta
+
+!!! tip "Recommended Approach"
+    `write_to_cloud_storage()` is the recommended way to write to cloud storage. The format-specific methods below still work and are useful when you want a more concise call for a known format.
+
+### Format-Specific Cloud Writers
+
 ### Cloud CSV Writing
 
 ```python
@@ -126,6 +172,69 @@ new_data.write_delta(
 - `connection_name`: Name of configured cloud storage connection
 - `write_mode`: `overwrite` (replace) or `append` (add to existing)
 
+## Catalog Writing
+
+Write data to the Flowfile catalog as managed Delta tables. Available as both a standalone function and a FlowFrame method.
+
+### Standalone Function
+
+```python
+import flowfile as ff
+
+ff.write_catalog_table(
+    df, "output_table",
+    namespace_id=3,
+    write_mode="upsert",
+    merge_keys=["id"],
+)
+```
+
+**Parameters:**
+
+- `df`: The `LazyFrame` to write
+- `table_name`: Name of the catalog table to write to (required)
+- `namespace_id`: Optional namespace ID for the table
+- `write_mode`: How to handle existing data (default: `"overwrite"`). See [Write Modes](#write-modes)
+- `merge_keys`: Column names for merge operations (required for `upsert`, `update`, `delete`)
+- `description`: Optional description for the table
+
+### FlowFrame Method
+
+```python
+df.write_catalog_table(
+    "output_table",
+    write_mode="overwrite",
+)
+```
+
+Returns a new child `FlowFrame` representing the written data, allowing further chaining.
+
+## Database Writing
+
+Write data to a SQL database using a stored connection. Available as a method on `FlowFrame`.
+
+```python
+import flowfile as ff
+
+df = ff.read_csv("data.csv")
+df.write_database(
+    connection_name="my_db",
+    table_name="users",
+    schema_name="public",
+    if_exists="append",
+)
+```
+
+**Parameters:**
+
+- `connection_name`: Name of the stored database connection (required)
+- `table_name`: Name of the table to write to (required)
+- `schema_name`: Database schema name (e.g., `"public"`)
+- `if_exists`: What to do if the table exists: `"append"`, `"replace"`, or `"fail"` (default: `"append"`)
+- `description`: Optional description for this operation
+
+Returns a new child `FlowFrame`.
+
 ## Write Modes
 
 ### Overwrite vs Append
@@ -147,7 +256,30 @@ df.write_delta(
 ```
 
 !!! info "Append Mode"
-    Currently only supported for Delta Lake format. Other formats always overwrite.
+    For cloud storage, append is only supported for Delta Lake format. Other formats always overwrite.
+
+### Catalog Write Modes
+
+The catalog supports additional write modes beyond overwrite and append:
+
+- `overwrite` — Replace the entire table
+- `error` — Fail if the table already exists
+- `append` — Add rows to the existing table
+- `upsert` — Insert new rows or update existing rows matched by `merge_keys`
+- `update` — Update only existing rows matched by `merge_keys`
+- `delete` — Delete rows matching `merge_keys`
+
+```python
+# Upsert: insert or update based on merge keys
+ff.write_catalog_table(
+    df, "customers",
+    write_mode="upsert",
+    merge_keys=["customer_id"],
+)
+```
+
+!!! warning "Merge Keys Required"
+    The `upsert`, `update`, and `delete` modes require `merge_keys` to be specified.
 
 ## Connection Requirements
 

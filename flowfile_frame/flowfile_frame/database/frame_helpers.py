@@ -4,7 +4,9 @@ This module provides functions for reading from and writing to databases,
 similar to how cloud_storage/frame_helpers.py handles cloud storage operations.
 """
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
@@ -12,6 +14,9 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema
 from flowfile_frame.database.connection_manager import get_current_user_id
 from flowfile_frame.utils import generate_node_id
+
+if TYPE_CHECKING:
+    from flowfile_frame.flow_frame import FlowFrame
 
 
 def add_read_from_database(
@@ -125,11 +130,11 @@ def read_database(
     table_name: str | None = None,
     schema_name: str | None = None,
     query: str | None = None,
-) -> pl.LazyFrame:
+    flow_graph: FlowGraph | None = None,
+) -> FlowFrame:
     """Read data from a database using a stored connection.
 
-    This is a convenience function for reading data directly without
-    needing to create a FlowGraph.
+    Creates a database reader node in the flow graph and returns a FlowFrame.
 
     Either table_name or query must be provided. If both are provided,
     query takes precedence.
@@ -139,52 +144,38 @@ def read_database(
         table_name: Name of the table to read from.
         schema_name: Database schema name (e.g., 'public' for PostgreSQL).
         query: SQL query to execute instead of reading a table.
+        flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
-        pl.LazyFrame: The data read from the database.
+        FlowFrame: A FlowFrame backed by a database reader node.
 
     Raises:
         ValueError: If neither table_name nor query is provided.
         ValueError: If the connection is not found.
     """
-    from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
-    from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
-    from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri
-    from flowfile_core.secret_manager.secret_manager import decrypt_secret
+    from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.utils import create_flow_graph
 
-    if table_name is None and query is None:
-        raise ValueError("Either 'table_name' or 'query' must be provided")
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
 
-    user_id = get_current_user_id()
-    connection = get_local_database_connection(connection_name, user_id)
-
-    if connection is None:
-        raise ValueError(f"Database connection '{connection_name}' not found")
-
-    # Construct the connection string
-    connection_string = construct_sql_uri(
-        database_type=connection.database_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database,
-        username=connection.username,
-        password=decrypt_secret(connection.password.get_secret_value()),
-        url=connection.url,
-    )
-
-    # Create SQL source and read data
-    sql_source = SqlSource(
-        connection_string=connection_string,
-        query=query,
+    node_id = add_read_from_database(
+        flow_graph,
+        connection_name=connection_name,
         table_name=table_name,
         schema_name=schema_name,
+        query=query,
     )
 
-    return sql_source.get_data()
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id,
+    )
 
 
 def write_database(
-    df: pl.DataFrame | pl.LazyFrame,
+    df: pl.LazyFrame,
     connection_name: str,
     table_name: str,
     *,
@@ -193,11 +184,10 @@ def write_database(
 ) -> None:
     """Write data to a database using a stored connection.
 
-    This is a convenience function for writing data directly without
-    needing to create a FlowGraph.
+    Wraps the data in a FlowFrame and creates a database writer node.
 
     Args:
-        df: The DataFrame or LazyFrame to write.
+        df: The LazyFrame to write.
         connection_name: Name of the stored database connection to use.
         table_name: Name of the table to write to.
         schema_name: Database schema name (e.g., 'public' for PostgreSQL).
@@ -209,41 +199,12 @@ def write_database(
     Raises:
         ValueError: If the connection is not found.
     """
-    from sqlalchemy import create_engine
+    from flowfile_frame.flow_frame import FlowFrame
 
-    from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
-    from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri
-    from flowfile_core.secret_manager.secret_manager import decrypt_secret
-
-    user_id = get_current_user_id()
-    connection = get_local_database_connection(connection_name, user_id)
-
-    if connection is None:
-        raise ValueError(f"Database connection '{connection_name}' not found")
-
-    # Collect if LazyFrame
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-
-    # Construct the connection string
-    connection_string = construct_sql_uri(
-        database_type=connection.database_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database,
-        username=connection.username,
-        password=decrypt_secret(connection.password.get_secret_value()),
-        url=connection.url,
-    )
-
-    # Write to database using pandas (polars doesn't have direct SQL write support)
-    engine = create_engine(connection_string)
-    pandas_df = df.to_pandas()
-
-    pandas_df.to_sql(
-        name=table_name,
-        con=engine,
-        schema=schema_name,
+    frame = FlowFrame(data=df)
+    frame.write_database(
+        connection_name=connection_name,
+        table_name=table_name,
+        schema_name=schema_name,
         if_exists=if_exists,
-        index=False,
     )

@@ -324,7 +324,9 @@ class StringMethods:
             def wrapper(*args, **kwargs):
                 result = pl_attr(*args, **kwargs)
                 # Assume generic getattr methods don't change aggregation status
-                return self._create_next_expr(name, result, *args, **kwargs)
+                return self._create_next_expr(
+                    *args, method_name=name, result_expr=result, is_complex=True, **kwargs
+                )
 
             return wrapper
         else:
