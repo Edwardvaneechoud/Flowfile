@@ -1192,7 +1192,7 @@ def test_formula_node_cast(export_func):
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
     # Add formula node
-    breakpoint()
+
     formula_node = input_schema.NodeFormula(
         flow_id=1,
         node_id=2,
@@ -1320,7 +1320,7 @@ def test_pivot_operation(export_func):
                              "pivot(",
                              "values='quantity'",
                              'index=["date"]',
-                             "columns='product'",
+                             "on='product'",
                              "aggregate_function='sum'"
                              )
     verify_if_execute(code)
@@ -1355,8 +1355,8 @@ def test_pivot_no_index_operation(export_func):
         verify_code_contains(code,
                              "pivot(",
                              "values='quantity'",
-                             'index=["__temp_index__"]',
-                             "columns='product'",
+                             'index=["_temp_index_"]',
+                             "on='product'",
                              "aggregate_function='sum'"
                              )
     verify_if_execute(code)
@@ -1369,7 +1369,6 @@ def test_pivot_no_index_operation(export_func):
 def test_union_multiple_dataframes(export_func):
     """Test union of multiple dataframes"""
     flow = create_basic_flow()
-
     # Add three manual inputs with same structure
     for i in range(1, 4):
         data = input_schema.NodeManualInput(
@@ -1814,7 +1813,6 @@ def test_complex_workflow_unordered(tmp_path, export_func):
 def test_text_to_rows_operation(export_func):
     """Test text to rows (explode) operation"""
     flow = create_basic_flow()
-
     # Add manual input with comma-separated values
     data = input_schema.NodeManualInput(
         flow_id=1,

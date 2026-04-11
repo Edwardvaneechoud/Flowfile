@@ -771,16 +771,15 @@ class FlowGraphCodeConverter:
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input
-
         self._add_code(f"{var_name} = ({input_df}.collect()")
-        self._add_code(f'    .with_columns({self.framework}.lit(1).alias("__temp_index__"))')
+        self._add_code(f'    .with_columns({self.framework}.lit(1).alias("_temp_index_"))')
         self._add_code("    .pivot(")
         self._add_code(f'        values="{pivot_input.value_col}",')
-        self._add_code('        index=["__temp_index__"],')
-        self._add_code(f'        columns="{pivot_input.pivot_column}",')
+        self._add_code('        index=["_temp_index_"],')
+        self._add_code(f'        on="{pivot_input.pivot_column}",')
         self._add_code(f'        aggregate_function="{agg_func}"')
         self._add_code("    )")
-        self._add_code('    .drop("__temp_index__")')
+        self._add_code('    .drop("_temp_index_")')
         self._add_code(").lazy()")
         self._add_code("")
 
@@ -801,7 +800,7 @@ class FlowGraphCodeConverter:
             self._add_code(f"{var_name} = {input_df}.collect().pivot(")
             self._add_code(f"    values='{pivot_input.value_col}',")
             self._add_code(f"    index={pivot_input.index_columns},")
-            self._add_code(f"    columns='{pivot_input.pivot_column}',")
+            self._add_code(f"    on='{pivot_input.pivot_column}',")
 
             self._add_code(f"    aggregate_function='{agg_func}'")
             self._add_code(").lazy()")
@@ -1818,10 +1817,27 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         input_df = input_vars.get("main", "df")
         formula = settings.function.function
         col_name = settings.function.field.name
+        data_type = settings.function.field.data_type
 
+        if data_type not in (None, "Auto"):
+            self._add_code(
+                f"{var_name} = {input_df}.with_columns("
+                f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "
+                f"output_column_datatypes=[{repr(data_type)}])"
+            )
+        else:
+            self._add_code(
+                f"{var_name} = {input_df}.with_columns("
+                f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
+            )
+        self._add_code("")
+
+    def _handle_graph_solver(self, settings: input_schema.NodeGraphSolver, var_name: str, input_vars: dict[str, str]):
+        input_df = input_vars.get("main", "df")
+        gs = settings.graph_solver_input
         self._add_code(
-            f"{var_name} = {input_df}.with_columns("
-            f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
+            f'{var_name} = {input_df}.solve_graph("{gs.col_from}", "{gs.col_to}", '
+            f'output_column_name="{gs.output_column_name}")'
         )
         self._add_code("")
 
@@ -1906,6 +1922,44 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             self._add_code(f'    value_format="{ks.value_format}",')
         self._add_code(")")
         self._add_code("")
+
+    def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
+        pivot_input = settings.pivot_input
+        self._add_code(f"{var_name} = ({input_df}")
+        self._add_code(f'    .with_columns({self.framework}.lit(1).alias("_temp_index_"))')
+        self._add_code("    .pivot(")
+        self._add_code(f'        values="{pivot_input.value_col}",')
+        self._add_code('        index=["_temp_index_"],')
+        self._add_code(f'        on="{pivot_input.pivot_column}",')
+        self._add_code(f'        aggregate_function="{agg_func}"')
+        self._add_code("    )")
+        self._add_code('    .drop("_temp_index_")')
+        self._add_code(")")
+        self._add_code("")
+
+    def _handle_pivot(self, settings: input_schema.NodePivot, var_name: str, input_vars: dict[str, str]) -> None:
+        """Handle pivot nodes."""
+        input_df = input_vars.get("main", "df")
+        pivot_input = settings.pivot_input
+        if len(pivot_input.aggregations) > 1:
+            logger.error("Multiple aggregations are not convertable to polars code. " "Taking the first value")
+        if len(pivot_input.aggregations) > 0:
+            agg_func = pivot_input.aggregations[0]
+        else:
+            agg_func = "first"
+        if len(settings.pivot_input.index_columns) == 0:
+            self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
+        else:
+            # Generate pivot code
+            self._add_code(f"{var_name} = {input_df}.pivot(")
+            self._add_code(f"    values='{pivot_input.value_col}',")
+            self._add_code(f"    index={pivot_input.index_columns},")
+            self._add_code(f"    on='{pivot_input.pivot_column}',")
+
+            self._add_code(f"    aggregate_function='{agg_func}'")
+            self._add_code(")")
+            self._add_code("")
+
 
 
 def export_flow_to_polars(flow_graph: FlowGraph) -> str:

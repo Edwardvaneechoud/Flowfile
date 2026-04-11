@@ -1614,14 +1614,17 @@ class FlowFrame:
             return self.data.collect(*args, **kwargs)
         return self.data
 
-    def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> FlowFrame:
+    def _with_flowfile_formula(
+        self, flowfile_formula: str, output_column_name: str, description: str = None, output_column_datatype: str = "Auto"
+    ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
             depending_on_id=self.node_id,
             function=transform_schema.FunctionInput(
-                function=flowfile_formula, field=transform_schema.FieldInput(name=output_column_name, data_type="Auto")
+                function=flowfile_formula,
+                field=transform_schema.FieldInput(name=output_column_name, data_type=output_column_datatype),
             ),
             description=description,
         )
@@ -1642,6 +1645,29 @@ class FlowFrame:
 
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
+
+    def solve_graph(
+        self,
+        col_from: str,
+        col_to: str,
+        output_column_name: str = "graph_group",
+        *,
+        description: str | None = None,
+    ) -> FlowFrame:
+        new_node_id = generate_node_id()
+        graph_solver_settings = input_schema.NodeGraphSolver(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            graph_solver_input=transform_schema.GraphSolverInput(
+                col_from=col_from,
+                col_to=col_to,
+                output_column_name=output_column_name,
+            ),
+            description=description,
+        )
+        self.flow_graph.add_graph_solver(graph_solver_settings)
+        return self._create_child_frame(new_node_id)
 
     def cache(self) -> FlowFrame:
         setting_input = self.get_node_settings().setting_input
@@ -1926,19 +1952,26 @@ class FlowFrame:
             others = [other]
         else:
             others = other
-        all_graphs = []
-        all_graph_ids = []
-        for g in [self.flow_graph] + [f.flow_graph for f in others]:
-            if g.flow_id not in all_graph_ids:
-                all_graph_ids.append(g.flow_id)
-                all_graphs.append(g)
-        if len(all_graphs) > 1:
-            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*all_graphs)
-            for f in [self] + other:
-                f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
+
+        # Ensure all frames are in the same graph (combine all at once, not pairwise)
+        all_frames = [self] + others
+        unique_graphs = []
+        seen_flow_ids = set()
+        for f in all_frames:
+            if f.flow_graph.flow_id not in seen_flow_ids:
+                seen_flow_ids.add(f.flow_graph.flow_id)
+                unique_graphs.append(f.flow_graph)
+
+        if len(unique_graphs) > 1:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*unique_graphs)
+            for f in all_frames:
+                new_id = node_mappings.get((f.flow_graph.flow_id, f.node_id))
+                if new_id is None:
+                    raise ValueError(f"Cannot remap node {f.node_id} from flow {f.flow_graph.flow_id}")
+                f.node_id = new_id
+                f.flow_graph = combined_graph
             node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
-        else:
-            combined_graph = self.flow_graph
+
         new_node_id = generate_node_id()
         use_native = how == "diagonal_relaxed" and parallel and not rechunk
         if use_native:
@@ -1983,7 +2016,6 @@ class FlowFrame:
                 parallel={parallel}
             )
             """
-            self.flow_graph = combined_graph
 
             # Add polars code node with dependencies on all input frames
             depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
@@ -1992,7 +2024,6 @@ class FlowFrame:
             self._add_connection(self.node_id, new_node_id, "main")
 
             for other_frame in others:
-                other_frame.flow_graph = combined_graph
                 other_frame._add_connection(other_frame.node_id, new_node_id, "main")
         # Create and return the new frame
         return FlowFrame(
@@ -2121,6 +2152,7 @@ class FlowFrame:
         *exprs: Expr | Iterable[Expr] | Any,  # Allow Any for implicit lit conversion
         flowfile_formulas: list[str] | None = None,
         output_column_names: list[str] | None = None,
+        output_column_datatypes: list[str] | None = None,
         description: str | None = None,
         **named_exprs: Expr | Any,  # Allow Any for implicit lit conversion
     ) -> FlowFrame:
@@ -2200,14 +2232,21 @@ class FlowFrame:
         elif flowfile_formulas is not None and output_column_names is not None:
             if len(output_column_names) != len(flowfile_formulas):
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
+            if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
+                raise ValueError("Length of output_column_datatypes must match the number of formulas")
 
+            datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
             if len(flowfile_formulas) == 1:
-                return self._with_flowfile_formula(flowfile_formulas[0], output_column_names[0], description)
+                return self._with_flowfile_formula(
+                    flowfile_formulas[0], output_column_names[0], description, output_column_datatype=datatypes[0]
+                )
             ff = self
-            for i, (flowfile_formula, output_column_name) in enumerate(
-                zip(flowfile_formulas, output_column_names, strict=False)
+            for i, (flowfile_formula, output_column_name, datatype) in enumerate(
+                zip(flowfile_formulas, output_column_names, datatypes, strict=False)
             ):
-                ff = ff._with_flowfile_formula(flowfile_formula, output_column_name, f"{i}: {description}")
+                ff = ff._with_flowfile_formula(
+                    flowfile_formula, output_column_name, f"{i}: {description}", output_column_datatype=datatype
+                )
             return ff
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
