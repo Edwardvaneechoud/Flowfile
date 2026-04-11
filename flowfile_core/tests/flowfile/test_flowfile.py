@@ -1961,42 +1961,155 @@ class TestDatabaseReaderExecution:
 
 
 class TestOutputExecution:
-    """Test output node (CSV write) in both local and remote execution modes."""
+    """Test output node (CSV/Excel/Parquet write) in both local and remote execution modes."""
+
+    @staticmethod
+    def _build_output_graph(tmp_dir: str, file_name: str, file_type: str,
+                            execution_location: str, write_mode: str = "overwrite",
+                            sheet_name: str | None = None):
+        table_settings = {
+            "file_type": file_type,
+            "delimiter": ",",
+            "encoding": "utf-8",
+        }
+        if file_type == "excel":
+            table_settings["sheet_name"] = sheet_name or "Sheet1"
+        settings = {
+            "flow_id": 1,
+            "node_id": 2,
+            "cache_results": False,
+            "pos_x": 0,
+            "pos_y": 0,
+            "is_setup": True,
+            "description": "",
+            "output_settings": {
+                "name": file_name,
+                "directory": tmp_dir,
+                "file_type": file_type,
+                "fields": [],
+                "write_mode": write_mode,
+                "table_settings": table_settings,
+            },
+        }
+        graph = create_graph(execution_location=execution_location)
+        add_manual_input(
+            graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+        )
+        add_node_promise_on_type(graph, "output", 2)
+        output_file = input_schema.NodeOutput(**settings)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+        graph.add_output(output_file)
+        return graph
 
     def test_write_csv(self, execution_location):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            settings = {
-                "flow_id": 1,
-                "node_id": 2,
-                "cache_results": False,
-                "pos_x": 0,
-                "pos_y": 0,
-                "is_setup": True,
-                "description": "",
-                "output_settings": {
-                    "name": "output_data.csv",
-                    "directory": tmp_dir,
-                    "file_type": "csv",
-                    "fields": [],
-                    "write_mode": "overwrite",
-                    "table_settings": {
-                        "file_type": "csv",
-                        "delimiter": ",",
-                        "encoding": "utf-8",
-                    },
-                },
-            }
-            graph = create_graph(execution_location=execution_location)
-            add_manual_input(
-                graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.csv", "csv", execution_location
             )
-            add_node_promise_on_type(graph, "output", 2)
-            output_file = input_schema.NodeOutput(**settings)
-            connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-            add_connection(graph, connection)
-            graph.add_output(output_file)
             run_info = graph.run_graph()
             handle_run_info(run_info)
             output_path = os.path.join(tmp_dir, "output_data.csv")
             assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_csv_with_eager_dataframe(self, execution_location):
+        """Force the output node's input data to be an eager DataFrame (not lazy)
+        so the csv write falls back to `DataFrame.write_csv` instead of `sink_csv`.
+
+        This exercises the fallback path in `local_write_output`, which hits a
+        different Polars API than the sink_csv path."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_eager.csv", "csv", execution_location
+            )
+            # Run the upstream chain first so node 1 has resulting data, then
+            # force it from lazy → eager so the output node receives a
+            # DataFrame rather than a LazyFrame.
+            upstream = graph.get_node(1)
+            upstream_data = upstream.get_resulting_data()
+            upstream_data.lazy = False
+            assert not upstream_data.lazy, (
+                "precondition: upstream must be eager to exercise the write_csv fallback"
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_eager.csv")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_parquet(self, execution_location):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.parquet", "parquet", execution_location
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.parquet")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_excel(self, execution_location):
+        """Excel has no sink_excel method so local_write_output always falls
+        back to collecting into a DataFrame and calling `write_excel`."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.xlsx", "excel", execution_location,
+                sheet_name="Sheet1",
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.xlsx")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+
+class TestLocalWriteOutputUnit:
+    """Direct unit tests for `local_write_output` — exercises every branch of
+    the write path (sink_* vs fallback to collect().write_*) so that regressions
+    in either branch are caught regardless of flow-level data-laziness
+    heuristics.
+
+    These tests are local-only by construction: `local_write_output` is the
+    local code path, and there's no remote equivalent to parametrize against.
+    """
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_csv(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.csv")
+            utils.local_write_output(
+                data, data_type="csv", path=path, write_mode="overwrite", delimiter=","
+            )
+            assert os.path.exists(path), f"csv not written for shape={shape}"
+            reloaded = pl.read_csv(path)
+            assert reloaded.shape == (3, 2)
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_parquet(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.parquet")
+            utils.local_write_output(
+                data, data_type="parquet", path=path, write_mode="overwrite"
+            )
+            assert os.path.exists(path), f"parquet not written for shape={shape}"
+            reloaded = pl.read_parquet(path)
+            assert reloaded.shape == (3, 2)
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_excel(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.xlsx")
+            utils.local_write_output(
+                data, data_type="excel", path=path, write_mode="overwrite", sheet_name="Sheet1"
+            )
+            assert os.path.exists(path), f"excel not written for shape={shape}"
 
