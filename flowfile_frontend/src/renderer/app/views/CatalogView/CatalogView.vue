@@ -48,6 +48,15 @@
                 <i class="fa-solid fa-rotate"></i>
               </button>
             </el-tooltip>
+            <el-tooltip content="SQL Editor" placement="bottom" :show-after="400">
+              <button
+                class="btn btn-ghost btn-icon btn-sm"
+                :class="{ 'btn-active': showSqlEditor }"
+                @click="showSqlEditor = !showSqlEditor"
+              >
+                <i class="fa-solid fa-code"></i>
+              </button>
+            </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateNamespace = true">
                 <i class="fa-solid fa-plus"></i>
@@ -140,6 +149,7 @@
           @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
           @navigate-to-flow="navigateToFlow($event)"
           @select-version="catalogStore.selectVersion($event)"
+          @query-table="handleQueryTable($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -198,6 +208,11 @@
             />
           </div>
         </div>
+        <!-- SQL Editor -->
+        <SqlEditorPanel
+          v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
+          :initial-query="sqlInitialQuery"
+        />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -337,6 +352,7 @@ import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
+import SqlEditorPanel from "./SqlEditorPanel.vue";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -376,6 +392,12 @@ const tabs = computed(() => [
     icon: "fa-solid fa-calendar-days",
     badge: catalogStore.stats?.total_schedules ?? null,
   },
+  {
+    key: "sql" as CatalogTab,
+    label: "SQL",
+    icon: "fa-solid fa-code",
+    badge: null,
+  },
 ]);
 
 // Search and filter state
@@ -393,6 +415,8 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+const showSqlEditor = ref(false);
+const sqlInitialQuery = ref<string | undefined>(undefined);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
@@ -534,6 +558,14 @@ function openRegisterTableGlobal() {
 function openRegisterFlowGlobal() {
   registerFlowNamespaceId.value = defaultNamespaceId.value ?? null;
   showRegisterFlow.value = true;
+}
+
+function handleQueryTable(tableName: string) {
+  sqlInitialQuery.value = `SELECT * FROM ${tableName}`;
+  showSqlEditor.value = true;
+  // Clear selected table so the SQL editor panel shows
+  catalogStore.clearTableSelection();
+  router.push({ name: "catalog", query: { tab: "sql" } });
 }
 
 async function handleDeleteTable(tableId: number) {
@@ -1505,6 +1537,11 @@ onUnmounted(() => {
 .sidebar-header-actions {
   display: flex;
   gap: 4px;
+}
+
+.sidebar-header-actions .btn-active {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .catalog-detail {

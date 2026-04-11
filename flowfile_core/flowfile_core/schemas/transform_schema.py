@@ -1030,6 +1030,12 @@ class PolarsCodeInput(BaseModel):
     polars_code: str
 
 
+class SqlQueryInput(BaseModel):
+    """A container for a SQL query to execute against connected data sources."""
+
+    sql_code: str
+
+
 class SelectInputsManager:
     """Manager class that provides all query and mutation operations."""
 

@@ -13,6 +13,10 @@
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
       <div class="header-actions">
+        <button class="action-btn-lg" @click="emit('queryTable', table.name)">
+          <i class="fa-solid fa-code"></i>
+          Query table
+        </button>
         <button
           class="action-btn-lg"
           :class="{ active: table.is_favorite }"
@@ -241,6 +245,7 @@ const emit = defineEmits([
   "toggleTableFavorite",
   "navigateToFlow",
   "selectVersion",
+  "queryTable",
 ]);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);

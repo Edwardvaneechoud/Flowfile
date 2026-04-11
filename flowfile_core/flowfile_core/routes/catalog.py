@@ -67,7 +67,11 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
     NamespaceUpdate,
     PaginatedFlowRuns,
+    SaveQueryAsFlowRequest,
     SchedulerStatusOut,
+    SqlQueryRequest,
+    SqlQueryResult,
+    SqlTableMetadata,
     TableFavoriteOut,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
@@ -602,6 +606,49 @@ def remove_table_favorite(
         service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
     except TableFavoriteNotFoundError:
         raise HTTPException(404, "Table favorite not found") from None
+
+
+# ---------------------------------------------------------------------------
+# SQL Query
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sql/execute", response_model=SqlQueryResult)
+def execute_sql_query(
+    body: SqlQueryRequest,
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Execute a SQL query against Delta catalog tables."""
+    return service.execute_sql_query(query=body.query, max_rows=body.max_rows)
+
+
+@router.get("/sql/metadata", response_model=list[SqlTableMetadata])
+def get_sql_metadata(
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return table names and column schemas for SQL editor autocomplete."""
+    return service.get_sql_metadata()
+
+
+@router.post("/sql/save-as-flow")
+def save_query_as_flow(
+    body: SaveQueryAsFlowRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Save a SQL query as a registered flow with catalog_reader + sql_query nodes."""
+    try:
+        flow_id = service.save_sql_query_as_flow(
+            query=body.query,
+            name=body.name,
+            owner_id=current_user.id,
+            namespace_id=body.namespace_id,
+            description=body.description,
+            used_tables=body.used_tables,
+        )
+        return {"flow_id": flow_id}
+    except Exception as e:
+        raise HTTPException(500, str(e)) from e
 
 
 # ---------------------------------------------------------------------------

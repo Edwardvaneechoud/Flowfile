@@ -30,6 +30,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "graph_solver": input_schema.NodeGraphSolver,
     "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
+    "sql_query": input_schema.NodeSqlQuery,
     "join": input_schema.NodeJoin,
     "cross_join": input_schema.NodeCrossJoin,
     "fuzzy_match": input_schema.NodeFuzzyMatch,
