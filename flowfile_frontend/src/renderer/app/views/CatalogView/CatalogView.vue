@@ -560,8 +560,12 @@ function openRegisterFlowGlobal() {
   showRegisterFlow.value = true;
 }
 
+function quoteSqlName(name: string): string {
+  return /^[a-zA-Z_]\w*$/.test(name) ? name : `"${name}"`;
+}
+
 function handleQueryTable(tableName: string) {
-  sqlInitialQuery.value = `SELECT * FROM ${tableName}`;
+  sqlInitialQuery.value = `SELECT * FROM ${quoteSqlName(tableName)}`;
   showSqlEditor.value = true;
   // Clear selected table so the SQL editor panel shows
   catalogStore.clearTableSelection();

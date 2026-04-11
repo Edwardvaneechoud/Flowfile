@@ -71,7 +71,6 @@ from flowfile_core.schemas.catalog_schema import (
     SchedulerStatusOut,
     SqlQueryRequest,
     SqlQueryResult,
-    SqlTableMetadata,
     TableFavoriteOut,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
@@ -620,14 +619,6 @@ def execute_sql_query(
 ):
     """Execute a SQL query against Delta catalog tables."""
     return service.execute_sql_query(query=body.query, max_rows=body.max_rows)
-
-
-@router.get("/sql/metadata", response_model=list[SqlTableMetadata])
-def get_sql_metadata(
-    service: CatalogService = Depends(get_catalog_service),
-):
-    """Return table names and column schemas for SQL editor autocomplete."""
-    return service.get_sql_metadata()
 
 
 @router.post("/sql/save-as-flow")

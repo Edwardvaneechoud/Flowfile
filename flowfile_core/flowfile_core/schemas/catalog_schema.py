@@ -282,13 +282,6 @@ class SqlQueryResult(BaseModel):
     error: str | None = None
 
 
-class SqlTableMetadata(BaseModel):
-    """Metadata for a catalog table, used for SQL editor autocomplete."""
-
-    name: str
-    columns: list[ColumnSchema] = Field(default_factory=list)
-
-
 class SaveQueryAsFlowRequest(BaseModel):
     """Request to save a SQL query as a registered flow."""
 

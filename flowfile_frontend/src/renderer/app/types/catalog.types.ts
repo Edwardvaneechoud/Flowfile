@@ -316,8 +316,3 @@ export interface SqlQueryResult {
   used_tables: string[];
   error: string | null;
 }
-
-export interface SqlTableMetadata {
-  name: string;
-  columns: ColumnSchema[];
-}

@@ -80,7 +80,6 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
     PaginatedFlowRuns,
     SqlQueryResult,
-    SqlTableMetadata,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
 from shared.delta_utils import format_delta_timestamp, make_json_safe
@@ -1985,24 +1984,6 @@ class CatalogService:
     # ------------------------------------------------------------------ #
     # SQL Query
     # ------------------------------------------------------------------ #
-
-    def get_sql_metadata(self) -> list[SqlTableMetadata]:
-        """Return metadata for all Delta catalog tables (for SQL editor autocomplete)."""
-        tables = self.repo.list_tables()
-        result: list[SqlTableMetadata] = []
-        for table in tables:
-            path = Path(table.file_path)
-            if not is_delta_table(path):
-                continue
-            columns: list[ColumnSchema] = []
-            if table.schema_json:
-                try:
-                    raw = json.loads(table.schema_json)
-                    columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
-            result.append(SqlTableMetadata(name=table.name, columns=columns))
-        return result
 
     def resolve_all_delta_table_paths(self) -> dict[str, str]:
         """Build a {name: file_path} mapping for all Delta catalog tables."""

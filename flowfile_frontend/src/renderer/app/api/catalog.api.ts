@@ -24,7 +24,6 @@ import type {
   PaginatedFlowRuns,
   SchedulerStatus,
   SqlQueryResult,
-  SqlTableMetadata,
 } from "../types";
 
 export class CatalogApi {
@@ -305,11 +304,6 @@ export class CatalogApi {
       query,
       max_rows: maxRows,
     });
-    return response.data;
-  }
-
-  static async getSqlMetadata(): Promise<SqlTableMetadata[]> {
-    const response = await axios.get<SqlTableMetadata[]>("/catalog/sql/metadata");
     return response.data;
   }
 

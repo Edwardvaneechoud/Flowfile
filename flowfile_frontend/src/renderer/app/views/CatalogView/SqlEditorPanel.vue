@@ -111,12 +111,15 @@ import { ref, computed, onMounted, watch } from "vue";
 import { EditorView, keymap } from "@codemirror/view";
 import { Extension, Prec } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
+import { sql } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { CatalogApi } from "../../api/catalog.api";
-import { buildSqlExtension } from "./sqlCompletions";
+import { useCatalogStore } from "../../stores/catalog-store";
 import SqlResultsGrid from "./SqlResultsGrid.vue";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
-import type { SqlQueryResult, SqlTableMetadata } from "../../types";
+import type { SqlQueryResult } from "../../types";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   initialQuery?: string;
@@ -137,7 +140,6 @@ const executing = ref(false);
 const result = ref<SqlQueryResult | null>(null);
 const error = ref<string | null>(null);
 const resultTab = ref<"grid" | "explore">("grid");
-const sqlMetadata = ref<SqlTableMetadata[]>([]);
 const editorView = ref<EditorView | null>(null);
 
 // Query history (localStorage)
@@ -193,8 +195,16 @@ const runKeymap = keymap.of([
   },
 ]);
 
+const tableSchema = computed(() => {
+  const schema: Record<string, string[]> = {};
+  for (const t of catalogStore.allTables) {
+    schema[t.name] = [];
+  }
+  return schema;
+});
+
 const extensions = computed<Extension[]>(() => [
-  buildSqlExtension(sqlMetadata.value),
+  sql({ schema: tableSchema.value, upperCaseKeywords: true }),
   oneDark,
   Prec.highest(runKeymap),
 ]);
@@ -226,17 +236,8 @@ async function runQuery() {
   }
 }
 
-async function loadMetadata() {
-  try {
-    sqlMetadata.value = await CatalogApi.getSqlMetadata();
-  } catch {
-    // Autocomplete won't work but editor still usable
-  }
-}
-
 onMounted(() => {
   loadHistory();
-  loadMetadata();
 });
 </script>
 
