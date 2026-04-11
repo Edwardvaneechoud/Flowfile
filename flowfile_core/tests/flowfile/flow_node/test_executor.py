@@ -89,9 +89,10 @@ def add_node_promise(graph: FlowGraph, node_type: str, node_id: int):
 
 
 def create_graph_with_select(flow_id: int = 1,
-                             execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
+                             execution_mode: ExecutionModeLit = 'Development',
+                             execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """Create a graph with a manual input (node 1) connected to a select node (node 2)."""
-    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
     add_manual_input(graph, [{"name": "Alice", "age": 30}], node_id=1)
     add_node_promise(graph, 'select', node_id=2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -108,13 +109,14 @@ def create_graph_with_select(flow_id: int = 1,
 
 
 def create_graph_with_read_and_select(flow_id: int = 10,
-                                      execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
+                                      execution_mode: ExecutionModeLit = 'Development',
+                                      execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """Create a graph with a parquet read (node 1, 1000 rows) connected to a select node (node 2).
 
     Uses fake_data.parquet which has 1000 rows with columns including Name, City, Email, etc.
     The select node keeps only the Name column.
     """
-    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
     file_path = str(
         _find_parent_directory('Flowfile')
         / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'
@@ -146,9 +148,10 @@ def create_graph_with_read_and_select(flow_id: int = 10,
     return graph
 
 
-def create_graph_with_sort(flow_id: int = 2, execution_mode: ExecutionModeLit = 'Development') -> FlowGraph:
+def create_graph_with_sort(flow_id: int = 2, execution_mode: ExecutionModeLit = 'Development',
+                           execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """Create a graph with a manual input (node 1) connected to a sort node (node 2)."""
-    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id)
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
     add_manual_input(graph, [{"name": "Charlie", "age": 25}, {"name": "Alice", "age": 30}], node_id=1)
     add_node_promise(graph, 'sort', node_id=2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -580,9 +583,9 @@ class TestExecutorIntegration:
         finally:
             os.unlink(temp_path)
 
-    def test_executor_with_graph_execution(self):
+    def test_executor_with_graph_execution(self, execution_location):
         """Test that executor integrates properly with graph execution."""
-        graph = create_graph()
+        graph = create_graph(execution_location=execution_location)
         add_manual_input(graph, [{"name": "Alice"}, {"name": "Bob"}], node_id=1)
 
         node = graph.get_node(1)
@@ -962,9 +965,9 @@ class TestPreviewAfterExecution:
     Uses a read node (1000-row parquet) → select node pipeline running
     locally to test the full preview path."""
 
-    def test_preview_returns_data_after_run(self):
+    def test_preview_returns_data_after_run(self, execution_location):
         """After running the graph, preview should return sample data."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         run_info = graph.run_graph()
         assert run_info.success, f"Graph should run: {run_info}"
 
@@ -975,9 +978,9 @@ class TestPreviewAfterExecution:
         assert len(table_example.data) > 0, "Preview should contain rows"
         assert table_example.columns == ["Name"], "Select should keep only Name"
 
-    def test_preview_returns_at_most_100_rows(self):
+    def test_preview_returns_at_most_100_rows(self, execution_location):
         """The sample generator caps at 100 rows even though the source has 1000."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -995,9 +998,9 @@ class TestPreviewAfterExecution:
         assert table_example is not None
         assert table_example.data == []
 
-    def test_preview_does_not_recompute_node(self):
+    def test_preview_does_not_recompute_node(self, execution_location):
         """Calling get_table_example should read stored data, not re-execute."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1023,9 +1026,9 @@ class TestPreviewAfterExecution:
         )
         assert len(table_example.data) > 0
 
-    def test_preview_uses_cached_sample_on_repeated_calls(self):
+    def test_preview_uses_cached_sample_on_repeated_calls(self, execution_location):
         """Multiple preview calls should return the same data without recomputation."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1035,9 +1038,9 @@ class TestPreviewAfterExecution:
 
         assert first.data == second.data, "Repeated previews should return identical data"
 
-    def test_read_node_preview_returns_data(self):
+    def test_read_node_preview_returns_data(self, execution_location):
         """The read node (1000 rows) should also have preview data after run."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         read_node = graph.get_node(1)
@@ -1064,9 +1067,9 @@ class TestPreviewAfterUpstreamChange:
     a reset it may still enter the data path with a stale
     example_data_generator."""
 
-    def test_upstream_change_resets_execution_state(self):
+    def test_upstream_change_resets_execution_state(self, execution_location):
         """After changing settings, _execution_state should reflect the reset."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1087,13 +1090,13 @@ class TestPreviewAfterUpstreamChange:
         # _execution_state should be reset
         assert select_node._execution_state.has_run_with_current_setup is False
 
-    def test_settings_change_node_stats_has_completed_last_run(self):
+    def test_settings_change_node_stats_has_completed_last_run(self, execution_location):
         """Check whether node_stats.has_completed_last_run is properly reset
         when the node's settings change.
 
         get_table_example gates on node_stats.has_completed_last_run.
         If this stays True after a reset, preview will try to read stale data."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1118,11 +1121,11 @@ class TestPreviewAfterUpstreamChange:
             "the stale preview data issue has been fixed."
         )
 
-    def test_preview_after_settings_change_returns_stale_data(self):
+    def test_preview_after_settings_change_returns_stale_data(self, execution_location):
         """Documents current (incorrect) behavior: preview returns stale data
         after changing settings without re-running. When this starts failing,
         the stale-data bug is fixed."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1159,9 +1162,9 @@ class TestPreviewAfterUpstreamChange:
             # Fixed path: node_stats was properly reset, preview returns empty
             assert second_preview.data == []
 
-    def test_preview_correct_after_rerun(self):
+    def test_preview_correct_after_rerun(self, execution_location):
         """After changing settings AND re-running, preview returns fresh data."""
-        graph = create_graph_with_read_and_select()
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
         graph.run_graph()
 
         select_node = graph.get_node(2)
@@ -1192,8 +1195,7 @@ class TestPreviewAfterUpstreamChange:
         for row in second_preview.data:
             assert "City" in row, f"Expected City column in row, got: {row.keys()}"
 
-    @pytest.mark.parametrize("execution_location", ["local", "remote"])
-    def test_preview_after_upstream_settings_change_returns_stale_data(self, execution_location: ExecutionLocationLit):
+    def test_preview_after_upstream_settings_change_returns_stale_data(self, execution_location):
         """Documents stale-data behavior after upstream settings change without re-run.
         When this starts failing, the bug is fixed."""
         graph = create_graph_with_sort_and_select(execution_location=execution_location)
@@ -1217,11 +1219,11 @@ class TestPreviewAfterUpstreamChange:
         assert not select_node.node_stats.has_run_with_current_setup
         assert select_node.node_stats.has_completed_last_run
 
-    def test_fuzzy_match_behaviour(self):
+    def test_fuzzy_match_behaviour(self, execution_location):
         # found an issue with the fuzzy match schema predictor invoking a full run to observe the schema
         from copy import deepcopy
 
-        graph = create_graph(execution_mode="Development", execution_location="remote", flow_id=1)
+        graph = create_graph(execution_mode="Development", execution_location=execution_location, flow_id=1)
 
         received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
                                                     path=str(Path(find_parent_directory(

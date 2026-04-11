@@ -21,7 +21,7 @@ from flowfile_core.schemas.schemas import FlowParameter
 # ---------------------------------------------------------------------------
 
 
-def make_graph(flow_id: int = 99) -> FlowGraph:
+def make_graph(flow_id: int = 99, execution_location: str = "local") -> FlowGraph:
     handler = FlowfileHandler()
     handler.register_flow(
         schemas.FlowSettings(
@@ -29,7 +29,7 @@ def make_graph(flow_id: int = 99) -> FlowGraph:
             name="param_test",
             path=".",
             execution_mode="Development",
-            execution_location="local",
+            execution_location=execution_location,
         )
     )
     return handler.get_flow(flow_id)
@@ -52,9 +52,9 @@ def run_and_assert_ok(graph: FlowGraph) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_polars_code_parameter_substituted():
+def test_polars_code_parameter_substituted(execution_location):
     """${col_name} inside polars code is replaced with the parameter value."""
-    graph = make_graph(101)
+    graph = make_graph(101, execution_location=execution_location)
     graph.flow_settings.parameters = [FlowParameter(name="col_name", default_value="city")]
 
     # Manual input: [{name: "Alice", city: "Amsterdam"}]
@@ -92,9 +92,9 @@ def test_polars_code_parameter_substituted():
     assert list(result_df.columns) == ["city"]
 
 
-def test_polars_code_original_code_preserved_after_run():
+def test_polars_code_original_code_preserved_after_run(execution_location):
     """After run_graph, the ${...} reference must still be in setting_input (not resolved)."""
-    graph = make_graph(102)
+    graph = make_graph(102, execution_location=execution_location)
     graph.flow_settings.parameters = [FlowParameter(name="col", default_value="name")]
 
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
@@ -128,9 +128,9 @@ def test_polars_code_original_code_preserved_after_run():
     )
 
 
-def test_polars_code_filter_with_numeric_parameter():
+def test_polars_code_filter_with_numeric_parameter(execution_location):
     """A numeric parameter replaces ${threshold} so a filter expression evaluates correctly."""
-    graph = make_graph(103)
+    graph = make_graph(103, execution_location=execution_location)
     graph.flow_settings.parameters = [FlowParameter(name="threshold", default_value="30")]
 
     rows = [{"age": 25}, {"age": 35}, {"age": 40}]
@@ -166,9 +166,9 @@ def test_polars_code_filter_with_numeric_parameter():
     assert len(ages) == 2
 
 
-def test_polars_code_multiple_parameters():
+def test_polars_code_multiple_parameters(execution_location):
     """Two parameters in the same code string are both resolved."""
-    graph = make_graph(104)
+    graph = make_graph(104, execution_location=execution_location)
     graph.flow_settings.parameters = [
         FlowParameter(name="src_col", default_value="name"),
         FlowParameter(name="new_col", default_value="upper_name"),
@@ -208,9 +208,9 @@ def test_polars_code_multiple_parameters():
     assert result.to_dict()["upper_name"][0] == "ALICE"
 
 
-def test_no_parameters_flow_unchanged():
+def test_no_parameters_flow_unchanged(execution_location):
     """A flow with no parameters executes exactly as before (no regression)."""
-    graph = make_graph(105)
+    graph = make_graph(105, execution_location=execution_location)
     assert graph.flow_settings.parameters == []
 
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
@@ -243,9 +243,9 @@ def test_no_parameters_flow_unchanged():
     assert result.to_dict()["x"] == [2, 4]
 
 
-def test_unresolved_parameter_fails_node():
+def test_unresolved_parameter_fails_node(execution_location):
     """A ${missing} reference that has no matching parameter causes the node to fail."""
-    graph = make_graph(106)
+    graph = make_graph(106, execution_location=execution_location)
     graph.flow_settings.parameters = []  # no parameters defined
 
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
@@ -283,11 +283,11 @@ def test_unresolved_parameter_fails_node():
 # ---------------------------------------------------------------------------
 
 
-def test_node_retains_example_data_after_run_with_parameter():
+def test_node_retains_example_data_after_run_with_parameter(execution_location):
     """After run_graph with a parameter, example_data_generator and
     has_completed_last_run must still be set (not cleared by a spurious reset
     caused by the _hash mismatch introduced by parameter substitution)."""
-    graph = make_graph(201)
+    graph = make_graph(201, execution_location=execution_location)
     graph.flow_settings.parameters = [FlowParameter(name="col_name", default_value="city")]
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input")
     graph.add_node_promise(promise)
@@ -492,7 +492,7 @@ def test_read_node_predicted_schema_preserves_parameter_ref():
         os.unlink(csv_path)
 
 
-def test_read_node_run_with_parameterized_path():
+def test_read_node_run_with_parameterized_path(execution_location):
     """A read node with ${file_name} in the path should successfully read the
     file after parameter resolution during run_graph()."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
@@ -500,7 +500,7 @@ def test_read_node_run_with_parameterized_path():
         csv_path = f.name
 
     try:
-        graph = make_graph(303)
+        graph = make_graph(303, execution_location=execution_location)
         graph.flow_settings.parameters = [FlowParameter(name="file_name", default_value=csv_path)]
 
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="read")
