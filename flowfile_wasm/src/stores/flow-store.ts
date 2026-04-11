@@ -544,6 +544,19 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   /**
+   * Update a subset of node settings without triggering cache invalidation
+   * or re-execution. Used by explore_data to persist saved Graphic Walker
+   * chart specs back to the node settings without re-running the flow.
+   */
+  function updateNodeSettingsSilent(id: number, partial: Record<string, any>) {
+    const node = nodes.value.get(id)
+    if (node) {
+      node.settings = { ...(node.settings as any), ...partial } as NodeSettings
+      nodes.value.set(id, { ...node })
+    }
+  }
+
+  /**
    * Update the description for a node
    * This updates the node-level description (primary storage)
    * and syncs to settings.description for backward compatibility
@@ -1604,7 +1617,8 @@ result
             return { success: false, error: 'No input connected' }
           }
           result = await runPythonWithResult(`
-result = execute_preview(${nodeId}, ${inputId})
+import json
+result = execute_explore_data(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -1747,6 +1761,8 @@ result
         schema: result.schema,
         error: result.error,
         download: result.download,
+        graphic_walker_input: result.graphic_walker_input,
+        row_info: result.row_info,
         // Preserve data if schema unchanged (prevents data loss during schema propagation)
         data: schemaUnchanged ? existingResult?.data : undefined
       }
@@ -1806,14 +1822,15 @@ result
       await propagateSchemas()
 
       // Optional: Auto-fetch preview for selected node
+      // explore_data nodes use Graphic Walker (payload already on nodeResult),
+      // so the AG Grid preview is not needed for them.
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
-          // Use more rows for explore_data nodes (Preview Settings)
-          // Limited to 1000 to prevent UI lag with large datasets
           const node = nodes.value.get(selectedNodeId.value)
-          const maxRows = node?.type === 'explore_data' ? 1000 : 100
-          await fetchNodePreview(selectedNodeId.value, { maxRows })
+          if (node?.type !== 'explore_data') {
+            await fetchNodePreview(selectedNodeId.value, { maxRows: 100 })
+          }
         }
       }
 
@@ -1982,8 +1999,13 @@ result
 
       case 'explore_data':
         return {
-          ...base
-        } as NodeSettings
+          ...base,
+          graphic_walker_input: {
+            is_initial: true,
+            dataModel: { fields: [], data: [] },
+            specList: []
+          }
+        } as any
 
       case 'output':
         return {
@@ -2398,6 +2420,7 @@ result
     addNode,
     updateNode,
     updateNodeSettings,
+    updateNodeSettingsSilent,
     updateNodeDescription,
     updateNodeReference,
     validateNodeReference,

@@ -262,7 +262,9 @@ import SortSettings from './nodes/SortSettings.vue'
 const PolarsCodeSettings = defineAsyncComponent(() => import('./nodes/PolarsCodeSettings.vue'))
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
-import PreviewSettings from './nodes/PreviewSettings.vue'
+// Lazy-load the explore_data panel so React + Graphic Walker only enter the
+// bundle when a user actually opens an explore_data node.
+const ExploreData = defineAsyncComponent(() => import('./nodes/exploreData/ExploreData.vue'))
 const CodeGenerator = defineAsyncComponent(() => import('./CodeGenerator.vue'))
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
@@ -589,7 +591,7 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
-    explore_data: PreviewSettings,
+    explore_data: ExploreData,
     pivot: PivotSettings,
     unpivot: UnpivotSettings,
     output: OutputSettings,
