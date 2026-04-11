@@ -682,6 +682,9 @@ class FlowGraphCodeConverter:
         self._add_code(f'        how="{settings.join_input.how}"')
         self._add_code("    )")
 
+        # TODO(FlowFrame): The .collect().lazy() pattern for right joins returns a
+        # pl.LazyFrame, breaking the FlowFrame chain. The FlowFrame converter may
+        # need to override join handling or use framework-aware collect/lazy.
         # Handle right join special case
         if settings.join_input.how == "right":
             self._add_code(".collect()")  # Right join needs to be collected first cause of issue with rename
@@ -739,6 +742,11 @@ class FlowGraphCodeConverter:
             logger.debug(f'Unhandled conversion of the formula to polars expression falling back to expression {e}')
             can_convert_to_pl_code = False
 
+        # TODO(FlowFrame): to_polars_code() generates pl.col/pl.lit expressions that require
+        # `import polars as pl`. When framework == "ff", either:
+        # (a) add `import polars as pl` to FlowFrame converter imports, or
+        # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
+        # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
             expr_str = f'({pl_code}).alias("{col_name}")'
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
@@ -862,6 +870,10 @@ class FlowGraphCodeConverter:
 
     @staticmethod
     def _transform_fuzzy_mappings_to_string(fuzzy_mappings: list[FuzzyMapping]) -> str:
+        # TODO(FlowFrame): FuzzyMapping fields containing Polars Expr objects
+        # (e.g. threshold_expr) are serialized via repr, producing invalid code like
+        # `pl.lit(<Expr ['len()'] at 0x...>)`. Need to convert Expr objects to their
+        # code string representation.
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
             output_str += (
@@ -920,6 +932,9 @@ class FlowGraphCodeConverter:
         self, settings: input_schema.NodeTextToRows, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle text to rows (explode) nodes."""
+        # TODO(FlowFrame): Verify that {self.framework}.col() expressions work correctly
+        # when the input DataFrame may have been converted to pl.LazyFrame (e.g., after
+        # pivot .collect().lazy() or right join .collect().lazy() chains).
         input_df = input_vars.get("main", "df")
         text_input = settings.text_to_rows_input
 
@@ -1001,6 +1016,12 @@ class FlowGraphCodeConverter:
         self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle custom Polars code nodes."""
+        # TODO(FlowFrame): When framework == "ff", this generates `ff.LazyFrame` in the
+        # function signature, but flowfile doesn't export LazyFrame. User-written polars code
+        # also uses pl.col, pl.LazyFrame directly. Options:
+        # (a) Always use pl.LazyFrame in signatures (polars_code is inherently polars),
+        # (b) Override _handle_polars_code in FlowFrameConverter to add `import polars as pl`,
+        # (c) Add LazyFrame export to the flowfile package.
         code = settings.polars_code_input.polars_code.strip()
         # Determine function parameters based on number of inputs
         if len(input_vars) == 0:
@@ -1776,6 +1797,78 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")
+
+    def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
+        """Handle filter nodes using FlowFrame's native flowfile_formula parameter."""
+        input_df = input_vars.get("main", "df")
+
+        if settings.filter_input.is_advanced():
+            self._add_code(f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")')
+        else:
+            basic = settings.filter_input.basic_filter
+            if basic is not None and basic.field:
+                filter_expr = self._create_basic_filter_expr(basic)
+                self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
+            else:
+                self._add_code(f"{var_name} = {input_df}  # No filter applied")
+        self._add_code("")
+
+    def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
+        """Handle formula nodes using FlowFrame's native flowfile_formulas parameter."""
+        input_df = input_vars.get("main", "df")
+        formula = settings.function.function
+        col_name = settings.function.field.name
+
+        self._add_code(
+            f"{var_name} = {input_df}.with_columns("
+            f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
+        )
+        self._add_code("")
+
+    def _execute_join_with_post_processing(
+        self,
+        settings: input_schema.NodeJoin,
+        var_name: str,
+        left_df: str,
+        right_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        after_join_drop_cols: list[str],
+        reverse_action: dict | None,
+    ) -> None:
+        """FlowFrame override: use coalesce for right/outer joins instead of .collect()/.lazy().
+
+        Passing coalesce explicitly routes FlowFrame through its Polars code path,
+        giving the same join semantics as Polars without needing .collect()/.lazy()
+        which FlowFrame doesn't support. FlowFrame's native join always drops right
+        join keys, which is incorrect for right and outer joins.
+        """
+        if settings.join_input.how not in ("right", "outer"):
+            super()._execute_join_with_post_processing(
+                settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
+            )
+            return
+
+        how = settings.join_input.how
+        # coalesce=True for right joins (Polars default: drop left key, keep right key)
+        # coalesce=False for outer joins (preserve both join keys for post-processing)
+        coalesce = how == "right"
+
+        self._add_code(f"{var_name} = ({left_df}.join(")
+        self._add_code(f"        {right_df},")
+        self._add_code(f"        left_on={left_on},")
+        self._add_code(f"        right_on={right_on},")
+        self._add_code(f'        how="{how}",')
+        self._add_code(f"        coalesce={coalesce}")
+        self._add_code("    )")
+
+        if after_join_drop_cols:
+            self._add_code(f".drop({after_join_drop_cols})")
+
+        if reverse_action:
+            self._add_code(f".rename({reverse_action})")
+
+        self._add_code(")")
 
     def _handle_kafka_source(
         self, settings: input_schema.NodeKafkaSource, var_name: str, input_vars: dict[str, str]
