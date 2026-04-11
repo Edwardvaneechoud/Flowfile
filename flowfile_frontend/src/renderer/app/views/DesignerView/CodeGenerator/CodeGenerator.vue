@@ -96,9 +96,14 @@ const fetchCode = async () => {
     const response = await axios.get(`${endpoint}?flow_id=${nodeStore.flow_id}`);
     code.value = response.data;
     lastLoadedFlowId.value = nodeStore.flow_id;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to fetch code:", error);
-    code.value = "# Failed to generate code. Please check your flow configuration.";
+    const detail = error?.response?.data?.detail;
+    if (detail) {
+      code.value = `# ${detail}`;
+    } else {
+      code.value = "# Failed to generate code. Please check your flow configuration.";
+    }
   } finally {
     loading.value = false;
   }
