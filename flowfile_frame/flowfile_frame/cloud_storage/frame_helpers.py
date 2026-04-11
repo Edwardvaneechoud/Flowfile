@@ -85,7 +85,7 @@ def read_from_cloud_storage(
 
 
 def write_to_cloud_storage(
-    df: pl.LazyFrame,
+    df: FlowFrame,
     path: str,
     *,
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet",
@@ -101,7 +101,7 @@ def write_to_cloud_storage(
     JSON, Delta). Consistent with write_database() and write_catalog_table().
 
     Args:
-        df: The LazyFrame to write.
+        df: The flowframe to write.
         path: Cloud storage destination path.
         file_format: File format to write.
         connection_name: Name of the stored cloud storage connection.
@@ -110,22 +110,19 @@ def write_to_cloud_storage(
         compression: Parquet compression (only used for Parquet format).
         write_mode: 'overwrite' or 'append' (only used for Delta format).
     """
-    from flowfile_frame.flow_frame import FlowFrame
-
-    frame = FlowFrame(data=df)
 
     if file_format == "csv":
-        frame.write_csv_to_cloud_storage(
+        df.write_csv_to_cloud_storage(
             path=path, connection_name=connection_name, delimiter=delimiter, encoding=encoding,
         )
     elif file_format == "parquet":
-        frame.write_parquet_to_cloud_storage(
+        df.write_parquet_to_cloud_storage(
             path=path, connection_name=connection_name, compression=compression,
         )
     elif file_format == "json":
-        frame.write_json_to_cloud_storage(path=path, connection_name=connection_name)
+        df.write_json_to_cloud_storage(path=path, connection_name=connection_name)
     elif file_format == "delta":
-        frame.write_delta(path=path, connection_name=connection_name, write_mode=write_mode)
+        df.write_delta(path=path, connection_name=connection_name, write_mode=write_mode)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 

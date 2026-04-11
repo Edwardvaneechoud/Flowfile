@@ -25,7 +25,7 @@ def get_current_user_id() -> int:
 
 
 def add_write_to_catalog(
-    flow_graph: "FlowGraph",
+    flow_graph: FlowGraph,
     depends_on_node_id: int,
     *,
     table_name: str,
@@ -123,7 +123,7 @@ def read_catalog_table(
 
 
 def write_catalog_table(
-    df: pl.LazyFrame,
+    df: FlowFrame,
     table_name: str,
     *,
     namespace_id: int | None = None,
@@ -134,7 +134,7 @@ def write_catalog_table(
     """Write a LazyFrame to the Flowfile catalog as a Delta table.
 
     Args:
-        df: The LazyFrame to write.
+        df: The FlowFrame to write.
         table_name: Name of the catalog table to write to.
         namespace_id: Optional namespace ID for the table.
         write_mode: How to handle existing data:
@@ -150,10 +150,7 @@ def write_catalog_table(
     Raises:
         ValueError: If merge_keys are required but not provided.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-
-    frame = FlowFrame(data=df)
-    frame.write_catalog_table(
+    df.write_catalog_table(
         table_name=table_name,
         namespace_id=namespace_id,
         write_mode=write_mode,

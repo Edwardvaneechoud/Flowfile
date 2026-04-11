@@ -350,7 +350,7 @@ def generate_fuzzy_match_data():
 
     suppliers = ["TechDistro Inc", "Global Electronics", "DataParts Supply", "MegaWholesale", "ProTech Direct"]
     rows_supplier = []
-    for i, (original, variant) in enumerate(variations.items(), 1):
+    for i, (_, variant) in enumerate(variations.items(), 1):
         rows_supplier.append([i, variant, random.choice(suppliers)])
     write_csv("supplier_products.csv", ["supplier_id", "product_name", "supplier"], rows_supplier)
 

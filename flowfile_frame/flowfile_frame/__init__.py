@@ -95,6 +95,7 @@ from flowfile_frame.flow_frame import FlowFrame  # noqa: F401
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
+    from_raw_data,
     read_csv,
     read_parquet,
     scan_csv,

@@ -466,6 +466,39 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     )
 
 
+def from_raw_data(raw_data: input_schema.RawData, *, flow_graph: FlowGraph = None,
+                  description: str = None) -> FlowFrame:
+    """Create a FlowFrame from a RawData object.
+
+    Args:
+        raw_data: RawData object with columns and data
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+    Returns:
+        A FlowFrame with the data
+    """
+    node_id = generate_node_id()
+
+    if not flow_graph:
+        flow_graph = create_flow_graph()
+
+    input_node = input_schema.NodeManualInput(
+        flow_id=flow_graph.flow_id,
+        node_id=node_id,
+        raw_data_format=raw_data,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_manual_input(input_node)
+
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
 def concat(
     frames: list["FlowFrame"],
     how: str = "vertical",
