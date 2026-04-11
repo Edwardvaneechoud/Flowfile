@@ -1186,7 +1186,10 @@ gc.collect()
             data: existingResult?.data,
             error: existingResult?.error,  // ADD THIS - preserve error!
             execution_time: existingResult?.execution_time,
-            download: existingResult?.download
+            download: existingResult?.download,
+            // Preserve explore_data Graphic Walker payload across schema propagation
+            graphic_walker_input: existingResult?.graphic_walker_input,
+            row_info: existingResult?.row_info
           })
       } else {
         // inferOutputSchema returned null - this means:
