@@ -383,7 +383,7 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Output Operations',
     isOpen: true,
     nodes: [
-      { type: 'explore_data', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
+      { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0 },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0 }
     ]
