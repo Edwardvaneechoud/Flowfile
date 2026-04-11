@@ -177,6 +177,23 @@ def trigger_catalog_materialize(
     return response
 
 
+def trigger_sql_query(
+    query: str,
+    tables: dict[str, str],
+    max_rows: int = 10_000,
+) -> dict:
+    """Ask the worker to execute a SQL query against Delta catalog tables.
+
+    *tables* maps logical table names to absolute file paths.
+    Returns the parsed JSON response dict.
+    """
+    payload = {"query": query, "tables": tables, "max_rows": max_rows}
+    response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
+    return response.json()
+
+
 def trigger_read_table_metadata(
     table_name: str,
     storage_format: str = "delta",

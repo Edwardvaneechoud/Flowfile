@@ -60,6 +60,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_delta_history,
     trigger_delta_version_preview,
     trigger_read_table_metadata,
+    trigger_sql_query,
 )
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -78,6 +79,7 @@ from flowfile_core.schemas.catalog_schema import (
     GlobalArtifactOut,
     NamespaceTree,
     PaginatedFlowRuns,
+    SqlQueryResult,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
 from shared.delta_utils import format_delta_timestamp, make_json_safe
@@ -1978,3 +1980,132 @@ class CatalogService:
             favorite_tables=fav_tables,
             active_runs=active_runs,
         )
+
+    # ------------------------------------------------------------------ #
+    # SQL Query
+    # ------------------------------------------------------------------ #
+
+    def resolve_all_delta_table_paths(self) -> dict[str, str]:
+        """Build a {name: file_path} mapping for all Delta catalog tables."""
+        tables = self.repo.list_tables()
+        result: dict[str, str] = {}
+        for table in tables:
+            path = Path(table.file_path)
+            if is_delta_table(path):
+                result[table.name] = table.file_path
+        return result
+
+    def execute_sql_query(self, query: str, max_rows: int = 10_000) -> SqlQueryResult:
+        """Execute a SQL query against all Delta catalog tables via the worker."""
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+            UnsafeSQLError,
+            validate_sql_query,
+        )
+
+        try:
+            validate_sql_query(query)
+        except UnsafeSQLError as e:
+            return SqlQueryResult(error=str(e))
+
+        tables = self.resolve_all_delta_table_paths()
+        if not tables:
+            return SqlQueryResult(error="No Delta catalog tables available")
+
+        try:
+            result = trigger_sql_query(query, tables, max_rows)
+            return SqlQueryResult(**result)
+        except RuntimeError as e:
+            return SqlQueryResult(error=str(e))
+
+    def save_sql_query_as_flow(
+        self,
+        query: str,
+        name: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        used_tables: list[str] | None = None,
+    ) -> int:
+        """Create a registered flow from a SQL query.
+
+        Builds a flow YAML with catalog_reader nodes (one per used table)
+        connected to a single sql_query node, saves it, and registers it.
+
+        Returns the registration ID.
+        """
+        import json
+
+        from flowfile_core.flowfile.utils import create_unique_id
+
+        used_tables = used_tables or []
+        flow_id = create_unique_id()
+
+        # Build nodes
+        nodes = []
+        reader_node_ids = []
+
+        for i, table_name in enumerate(used_tables):
+            table = self.repo.get_table_by_name(table_name)
+            if table is None:
+                continue
+            node_id = i + 1
+            reader_node_ids.append(node_id)
+            nodes.append({
+                "id": node_id,
+                "type": "catalog_reader",
+                "is_start_node": True,
+                "x_position": 100,
+                "y_position": 100 + i * 150,
+                "input_ids": [],
+                "outputs": [len(used_tables) + 1],
+                "setting_input": {
+                    "catalog_table_id": table.id,
+                    "catalog_table_name": table.name,
+                },
+            })
+
+        # SQL query node
+        sql_node_id = len(used_tables) + 1
+        nodes.append({
+            "id": sql_node_id,
+            "type": "sql_query",
+            "is_start_node": len(reader_node_ids) == 0,
+            "x_position": 400,
+            "y_position": 200,
+            "input_ids": reader_node_ids,
+            "outputs": [],
+            "setting_input": {
+                "sql_query_input": {"sql_code": query},
+            },
+        })
+
+        flow_data = {
+            "flowfile_version": "0.6.3",
+            "flowfile_id": flow_id,
+            "flowfile_name": name,
+            "flowfile_settings": {
+                "flow_id": flow_id,
+                "name": name,
+                "description": description or "",
+                "execution_mode": "Performance",
+            },
+            "nodes": nodes,
+        }
+
+        # Save flow file
+        from shared.storage_config import storage
+
+        flows_dir = storage.user_data_directory / "flows"
+        flows_dir.mkdir(parents=True, exist_ok=True)
+        flow_path = flows_dir / f"{name.replace(' ', '_')}_{flow_id}.json"
+        flow_path.write_text(json.dumps(flow_data, indent=2), encoding="utf-8")
+
+        # Register in catalog
+        flow = self.register_flow(
+            name=name,
+            flow_path=str(flow_path),
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+        )
+        return flow.id

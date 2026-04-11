@@ -300,4 +300,19 @@ export interface SchedulerStatus {
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules";
+export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules" | "sql";
+
+// ============================================================================
+// SQL Query types
+// ============================================================================
+
+export interface SqlQueryResult {
+  columns: string[];
+  dtypes: string[];
+  rows: any[][];
+  total_rows: number;
+  truncated: boolean;
+  execution_time_ms: number;
+  used_tables: string[];
+  error: string | null;
+}

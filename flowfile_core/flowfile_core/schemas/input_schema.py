@@ -1247,6 +1247,20 @@ class NodePolarsCode(NodeMultiInput):
         return first_line
 
 
+class NodeSqlQuery(NodeMultiInput):
+    """Settings for a node that executes a SQL query against connected data sources."""
+
+    sql_query_input: transform_schema.SqlQueryInput
+
+    def get_default_description(self) -> str:
+        """Describes the SQL query snippet."""
+        code = self.sql_query_input.sql_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
+
+
 class NotebookCell(BaseModel):
     """A single cell in the notebook editor.
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <circle cx="100" cy="100" r="85" fill="#5B6ABF" />
+  <text x="100" y="95" font-family="Arial" font-size="42" font-weight="bold" text-anchor="middle" fill="#FFFFFF">SQL</text>
+  <path d="M60 115 L140 115" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+  <path d="M65 135 L115 135" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" opacity="0.7" />
+  <path d="M70 150 L125 150" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" opacity="0.5" />
+</svg>

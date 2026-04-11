@@ -33,7 +33,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_database_connection,
 )
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
+    FlowDataEngine,
+    execute_polars_code,
+    execute_sql_query,
+)
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
@@ -1302,6 +1306,33 @@ class FlowGraph:
             polars_code_parser.validate_code(node_polars_code.polars_code_input.polars_code)
         except Exception as e:
             node = self.get_node(node_id=node_polars_code.node_id)
+            node.results.errors = str(e)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_sql_query(self, node_sql_query: input_schema.NodeSqlQuery):
+        """Adds a node that executes a SQL query against connected data sources.
+
+        Args:
+            node_sql_query: The settings for the SQL query node.
+        """
+
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            return execute_sql_query(*flowfile_tables, sql_code=node_sql_query.sql_query_input.sql_code)
+
+        self.add_node_step(
+            node_id=node_sql_query.node_id,
+            function=_func,
+            node_type="sql_query",
+            setting_input=node_sql_query,
+            input_node_ids=node_sql_query.depending_on_ids,
+        )
+
+        try:
+            from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
+
+            validate_sql_query(node_sql_query.sql_query_input.sql_code)
+        except Exception as e:
+            node = self.get_node(node_id=node_sql_query.node_id)
             node.results.errors = str(e)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
