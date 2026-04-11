@@ -358,6 +358,19 @@ def kernel_manager_with_core():
         pytest.skip(f"Kernel + Core could not be started: {exc}")
 
 
+@pytest.fixture(params=["local", "remote"])
+def execution_location(request):
+    """Parametrize a test across local and remote execution modes.
+
+    Tests receive this fixture as a parameter, and pytest runs them once per
+    param. The `remote` variant is skipped automatically when no worker is
+    running, so this is safe for contributors without a worker.
+    """
+    if request.param == "remote" and not is_worker_running():
+        pytest.skip("Worker not running")
+    return request.param
+
+
 @pytest.fixture
 def cleanup_global_artifacts():
     """Clean up global artifacts before and after each test.

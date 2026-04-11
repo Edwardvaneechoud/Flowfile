@@ -117,8 +117,8 @@ def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flo
     graph.add_node_promise(node_promise)
 
 
-def get_group_by_flow():
-    graph = create_graph()
+def get_group_by_flow(execution_location: Literal['local', 'remote'] = 'remote'):
+    graph = create_graph(execution_location=execution_location)
     # breakpoint()
     input_data = (FlowDataEngine.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
@@ -147,11 +147,12 @@ def test_create_flowfile_handler():
     assert handler._flows == {}, 'Flow should be empty'
 
 
-def test_import_flow():
+def test_import_flow(execution_location):
     handler = create_flowfile_handler()
     flow_path = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/read_csv.flowfile"
     flow_id = handler.import_flow(flow_path)
     flow = handler.get_flow(flow_id)
+    flow.flow_settings.execution_location = execution_location
     run_results = flow.run_graph()
     handle_run_info(run_results)
 
@@ -171,8 +172,8 @@ def test_add_node_promise_for_manual_input():
     assert len(graph.nodes) == 1, 'There should be 1 node in the graph'
 
 
-def test_add_two_input_nodes():
-    graph = create_graph()
+def test_add_two_input_nodes(execution_location):
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'}], node_id=1)
     add_manual_input(graph, data=[{'name': 'Jane', 'city': 'Los Angeles'}], node_id=2)
     run_info = graph.run_graph()
@@ -189,8 +190,8 @@ def test_add_manual_input(raw_data):
     assert not graph.get_node(1).has_input, 'Node should not have input'
 
 
-def test_update_manual_input(raw_data):
-    graph = create_graph()
+def test_update_manual_input(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
     graph = add_node_promise_for_manual_input(graph)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
                                               raw_data_format=input_schema.RawData.from_pylist(raw_data))
@@ -215,8 +216,8 @@ def test_get_schema(raw_data):
     assert ['name', 'city'] == columns, 'Columns should be name and city'
 
 
-def test_run_graph(raw_data):
-    graph = create_graph()
+def test_run_graph(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, data=raw_data)
     graph.run_graph()
     node = graph.get_node(1)
@@ -260,8 +261,8 @@ def test_connect_node(raw_data):
     assert graph.get_node(2).node_inputs.main_inputs[0] == graph.get_node(1), 'Node 2 should have node 1 as input'
 
 
-def test_running_unique(raw_data):
-    graph = create_graph()
+def test_running_unique(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, data=raw_data)
     node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type='unique')
     graph.add_node_promise(node_promise)
@@ -292,6 +293,8 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
     self.execute_remote(node_logger=flow_logger.get_node_logger(1))
 
 
+# Remote-only: Performance vs Development timing differential is only meaningful
+# when work is offloaded to the worker. In local mode both paths run in-process.
 def test_running_performance_mode():
     graph = create_graph(execution_location='remote')  # Ensure remote execution
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
@@ -318,8 +321,8 @@ def test_running_performance_mode():
     assert slow.node_step_result[1].run_time > fast.node_step_result[1].run_time, 'Performance mode should be faster'
 
 
-def test_adding_graph_solver():
-    graph = create_graph()
+def test_adding_graph_solver(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'from': 'a', 'to': 'b'}, {'from': 'b', 'to': 'c'}, {'from': 'g', 'to': 'd'}]
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, 'graph_solver', 2)
@@ -334,8 +337,8 @@ def test_adding_graph_solver():
     output_data.assert_equal(expected_data)
 
 
-def test_add_formula_no_type():
-    graph = create_graph()
+def test_add_formula_no_type(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -361,8 +364,8 @@ def test_add_formula_no_type():
     resulting_data.assert_equal(expected_data)
 
 
-def test_add_formula_with_type():
-    graph = create_graph()
+def test_add_formula_with_type(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'val': 2},
                   {'val': 4},
                   {'val': 1}]
@@ -387,8 +390,8 @@ def test_add_formula_with_type():
     resulting_data.assert_equal(expected_data)
 
 
-def test_add_fuzzy_match():
-    graph = create_graph()
+def test_add_fuzzy_match(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -449,8 +452,8 @@ def test_add_fuzzy_match_lcoal():
     output_data.assert_equal(expected_data)
 
 
-def test_add_record_count():
-    graph = create_graph()
+def test_add_record_count(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -501,8 +504,8 @@ def test_add_read_excel():
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
 
-def get_dependency_example():
-    graph = create_graph()
+def get_dependency_example(execution_location: Literal['local', 'remote'] = 'remote'):
+    graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'},
             {'name': 'Jane', 'city': 'Los Angeles'},
             {'name': 'Edward', 'city': 'Chicago'},
@@ -538,8 +541,8 @@ def ensure_excel_is_read_from_arrow_object():
     graph.get_node(1).get_resulting_data()
 
 
-def test_add_record_id():
-    graph = create_graph()
+def test_add_record_id(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -560,8 +563,8 @@ def test_add_record_id():
     output_data.assert_equal(expected_data)
 
 
-def test_copy_add_record_id():
-    graph = create_graph()
+def test_copy_add_record_id(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -586,20 +589,20 @@ def test_copy_add_record_id():
     output_data.assert_equal(expected_data)
 
 
-def test_copy_from_other_flow():
+def test_copy_from_other_flow(execution_location):
     FLOW_ID_TO_COPY = 1
     NODE_ID_TO_COPY = 1
     NEW_FLOW_ID = 2
     NEW_NODE_ID = 44
 
 
-    flow_1 = create_graph(FLOW_ID_TO_COPY)
+    flow_1 = create_graph(FLOW_ID_TO_COPY, execution_location=execution_location)
 
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
     add_manual_input(flow_1, data=input_data, node_id=NODE_ID_TO_COPY)
-    flow_2 = create_graph(flow_id=NEW_FLOW_ID)
+    flow_2 = create_graph(flow_id=NEW_FLOW_ID, execution_location=execution_location)
     copied_info = input_schema.NodePromise(node_type= 'manual_input', node_id=NEW_NODE_ID, flow_id=2)
     node_to_copy = flow_1.get_node(NODE_ID_TO_COPY)
     flow_2.copy_node(new_node_settings=copied_info,
@@ -617,8 +620,8 @@ def test_copy_from_other_flow():
     flow_2.get_node(NEW_NODE_ID).get_resulting_data().assert_equal(node_to_copy.get_resulting_data())
 
 
-def test_add_and_run_group_by():
-    graph = get_group_by_flow()
+def test_add_and_run_group_by(execution_location):
+    graph = get_group_by_flow(execution_location=execution_location)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
     assert set(predicted_df.columns) == {'groups',
                                          'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
@@ -628,8 +631,8 @@ def test_add_and_run_group_by():
     handle_run_info(run_info)
 
 
-def test_add_and_run_group_by_string():
-    graph = create_graph()
+def test_add_and_run_group_by_string(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = (FlowDataEngine.create_random(100)
                   .apply_flowfile_formula('to_string(random_int(0, 40))', 'groups')
                   .apply_flowfile_formula('to_string(random_int(0, 10))', 'vals')
@@ -649,8 +652,8 @@ def test_add_and_run_group_by_string():
     handle_run_info(run_info)
 
 
-def test_add_pivot():
-    graph = create_graph()
+def test_add_pivot(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = (FlowDataEngine.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -706,8 +709,8 @@ def test_schema_callback_in_graph():
     result_data.assert_equal(expected_data)
 
 
-def test_add_pivot_string_count():
-    graph = create_graph()
+def test_add_pivot_string_count(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = (FlowDataEngine.create_random(10000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
@@ -728,8 +731,8 @@ def test_add_pivot_string_count():
     handle_run_info(run_info)
 
 
-def test_add_pivot_string_concat():
-    graph = create_graph()
+def test_add_pivot_string_concat(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = (FlowDataEngine.create_random(10000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
@@ -749,8 +752,8 @@ def test_add_pivot_string_concat():
     handle_run_info(run_info)
 
 
-def test_try_add_to_big_pivot():
-    graph = create_graph()
+def test_try_add_to_big_pivot(execution_location):
+    graph = create_graph(execution_location=execution_location)
     graph.execution_mode = 'Performance'
     input_data = (FlowDataEngine.create_random(10000)
                   .add_record_id(record_id_settings=transform_schema.RecordIdInput(output_column_name='groups'))
@@ -777,8 +780,8 @@ def test_try_add_to_big_pivot():
         raise ValueError('There should be a warning')
 
 
-def test_add_cross_join():
-    graph = create_graph()
+def test_add_cross_join(execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'}]
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, 'cross_join', 2)
@@ -808,7 +811,7 @@ def test_add_cross_join():
     output_data.assert_equal(expected_data)
 
 
-def test_read_excel():
+def test_read_excel(execution_location):
     settings = {
         'flow_id': 1,
         'node_id': 1,
@@ -838,7 +841,7 @@ def test_read_excel():
             }
         }
     }
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
     graph.add_read(input_file)
@@ -847,7 +850,7 @@ def test_read_excel():
     assert graph.get_node(1).get_resulting_data().count() == 1000, 'There should be 1000 records'
 
 
-def test_read_csv():
+def test_read_csv(execution_location):
     settings = {
         'flow_id': 1,
         'node_id': 1,
@@ -881,7 +884,7 @@ def test_read_csv():
             }
         }
     }
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
     graph.add_read(input_file)
@@ -890,13 +893,13 @@ def test_read_csv():
     assert graph.get_node(1).get_resulting_data().count() == 1000, 'There should be 1000 records'
 
 
-def test_read_parquet():
+def test_read_parquet(execution_location):
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 421.8727272727273,
                 'pos_y': 224.52727272727273, 'is_setup': True, 'description': '', 'node_type': 'read',
                 'received_file': {'name': 'fake_data.parquet',
                                   'path': 'flowfile_core/tests/support_files/data/fake_data.parquet',
                                   'file_type': 'parquet'}}
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
     graph.add_read(input_file)
@@ -939,46 +942,13 @@ def test_read_handle_complex_data_types():
     handle_run_info(run_info)
 
 
-def test_write_csv():
-    settings = {
-        'flow_id': 1,
-        'node_id': 2,
-        'cache_results': False,
-        'pos_x': 596.8727272727273,
-        'pos_y': 518.3272727272728,
-        'is_setup': True,
-        'description': '',
-        'output_settings': {
-            'name': 'output_data.csv',
-            'directory': 'flowfile_core/tests/support_files/data',
-            'file_type': 'csv',
-            'fields': [],
-            'write_mode': 'overwrite',
-            'table_settings': {
-                'file_type': 'csv',
-                'delimiter': ',',
-                'encoding': 'utf-8',
-            },
-        },
-    }
-    graph = create_graph()
-    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
-    add_node_promise_on_type(graph, 'output', 2)
-    output_file = input_schema.NodeOutput(**settings)
-    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    add_connection(graph, connection)
-    graph.add_output(output_file)
-    run_info = graph.run_graph()
-    handle_run_info(run_info)
-
-
-def test_filter():
+def test_filter(execution_location):
     settings = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'pos_x': 864.533596836909,
                 'pos_y': 592.7749104575811, 'is_setup': True, 'description': '', 'depending_on_id': -1,
                 'filter_input': {'advanced_filter': "[ID] = '50000'",
                                  'basic_filter': {'field': '', 'filter_type': '', 'filter_value': ''},
                                  'filter_type': 'advanced'}}
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'ID': 'eduward'}, {'ID': 'edward'}, {'ID': 'courtney'}])
     add_node_promise_on_type(graph, 'filter', 2)
     filter_settings = input_schema.NodeFilter(**settings)
@@ -1001,8 +971,8 @@ def test_analytics_processor(raw_data):
         raise ValueError(f'Error in get_graphic_walker_input: {str(e)}')
 
 
-def test_analytics_processor_after_run(raw_data):
-    graph = create_graph()
+def test_analytics_processor_after_run(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, raw_data)
     add_node_promise_on_type(graph, 'explore_data', 2, 1)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1015,16 +985,17 @@ def test_analytics_processor_after_run(raw_data):
         raise ValueError(f'Error in get_graphic_walker_input: {str(e)}')
 
 
-def test_text_to_rows():
+def test_text_to_rows(execution_location):
     handler = create_flowfile_handler()
     graph_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/text_to_rows.flowfile")
     graph = handler.get_flow(graph_id)
+    graph.flow_settings.execution_location = execution_location
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
 
-def test_polars_code():
-    graph = create_graph()
+def test_polars_code(execution_location):
+    graph = create_graph(execution_location=execution_location)
     file_path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/fake_data.parquet")
     # Add read node with test data
     read_node = input_schema.NodeRead(
@@ -1079,8 +1050,8 @@ def get_join_data(how: str = 'inner'):
             'auto_keep_left': True}
 
 
-def test_add_join():
-    graph = create_graph()
+def test_add_join(execution_location):
+    graph = create_graph(execution_location=execution_location)
     # graph.flow_settings.execution_mode = 'Performance'
     left_data = [{"name": "eduward"},
                  {"name": "edward"},
@@ -1101,10 +1072,10 @@ def test_add_join():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_add_database_reader():
+def test_add_database_reader(execution_location):
 
     ensure_password_is_available()
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'database_reader', 1)
     database_connection = input_schema.DatabaseConnection(database_type='postgresql',
                                                           username='testuser',
@@ -1130,8 +1101,8 @@ def test_add_database_reader():
     assert lf.count() > 0, 'Should be able to get data frame after running'
 
 
-def test_add_database_reader_sqllite(sqlite_db):
-    graph = create_graph()
+def test_add_database_reader_sqllite(sqlite_db, execution_location):
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'database_reader', 1)
     conn_str = f"sqlite:///{sqlite_db}"
     database_connection = input_schema.DatabaseConnection(database_type='sqlite',
@@ -1155,8 +1126,8 @@ def test_add_database_reader_sqllite(sqlite_db):
     assert lf.count() > 0, 'Should be able to get data frame after running'
 
 
-def test_add_database_writer_sqlite(sqlite_db):
-    graph = create_graph()
+def test_add_database_writer_sqlite(sqlite_db, execution_location):
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
     add_node_promise_on_type(graph, 'database_writer', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1195,9 +1166,9 @@ def test_add_database_writer_sqlite(sqlite_db):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_add_database_reader_from_stored_database():
+def test_add_database_reader_from_stored_database(execution_location):
     ensure_password_is_available()
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_node_promise_on_type(graph, 'database_reader', 1)
     # Ensure the database connection is stored
     database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
@@ -1235,9 +1206,9 @@ def test_add_database_reader_from_stored_database():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_add_database_writer():
+def test_add_database_writer(execution_location):
     ensure_password_is_available()
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
     add_node_promise_on_type(graph, 'database_writer', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1275,9 +1246,9 @@ def test_add_database_writer():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_add_database_no_schema_writer():
+def test_add_database_no_schema_writer(execution_location):
     ensure_password_is_available()
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
     add_node_promise_on_type(graph, 'database_writer', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1315,8 +1286,8 @@ def test_add_database_no_schema_writer():
     assert lf.count() > 0, 'Should be able to get data frame after running'
 
 
-def test_empty_manual_input_should_run():
-    graph = get_group_by_flow() # create a random graph with working stuff in it
+def test_empty_manual_input_should_run(execution_location):
+    graph = get_group_by_flow(execution_location=execution_location) # create a random graph with working stuff in it
     r = graph.run_graph()
     if not r.success:
         raise 'Cannot start the test'
@@ -1428,14 +1399,14 @@ def test_schema_callback_cloud_read_gcs(flow_logger):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
-def test_add_cloud_writer(flow_logger):
+def test_add_cloud_writer(flow_logger, execution_location):
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
     read_settings = cloud_ss.CloudStorageWriteSettings(
         resource_path="s3://flowfile-test/flow_graph_data.parquet",
         file_format="parquet",
         connection_name=conn.connection_name
     )
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{'name': 'eduward', 'city': "a"},
                                   {'name': 'edward', 'city': "a"},
                                   {'name': 'courtney', 'city': "a"}])
@@ -1463,14 +1434,14 @@ def test_add_cloud_writer(flow_logger):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
-def test_add_cloud_writer_adls(flow_logger):
+def test_add_cloud_writer_adls(flow_logger, execution_location):
     conn = ensure_adls_cloud_storage_connection_is_available_and_get_connection()
     write_settings = cloud_ss.CloudStorageWriteSettings(
         resource_path="az://flowfile-test/flow_graph_data.parquet",
         file_format="parquet",
         connection_name=conn.connection_name,
     )
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
                                   {"name": "edward", "city": "a"},
                                   {"name": "courtney", "city": "a"}])
@@ -1484,14 +1455,14 @@ def test_add_cloud_writer_adls(flow_logger):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
-def test_add_cloud_writer_gcs(flow_logger):
+def test_add_cloud_writer_gcs(flow_logger, execution_location):
     conn = ensure_gcs_cloud_storage_connection_is_available_and_get_connection()
     write_settings = cloud_ss.CloudStorageWriteSettings(
         resource_path="gs://flowfile-test/flow_graph_data.parquet",
         file_format="parquet",
         connection_name=conn.connection_name,
     )
-    graph = create_graph()
+    graph = create_graph(execution_location=execution_location)
     add_manual_input(graph, data=[{"name": "eduward", "city": "a"},
                                   {"name": "edward", "city": "a"},
                                   {"name": "courtney", "city": "a"}])
@@ -1505,11 +1476,12 @@ def test_add_cloud_writer_gcs(flow_logger):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_complex_cloud_write_scenario():
+def test_complex_cloud_write_scenario(execution_location):
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
     flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)
+    graph.flow_settings.execution_location = execution_location
     node = graph.get_node(3)
     example_data = node.get_table_example(True)
     assert example_data.number_of_columns == 4
@@ -1640,8 +1612,8 @@ def test_changes_execution_mode(flow_logger):
     assert "flowfile_core/tests/support_files/data/fake_data.csv" in explain_node_2
 
 
-def test_fuzzy_match_schema_predict(flow_logger):
-    graph = create_graph()
+def test_fuzzy_match_schema_predict(flow_logger, execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -1683,8 +1655,8 @@ def test_fuzzy_match_schema_predict(flow_logger):
     assert result.columns == predicted_data.columns
 
 
-def test_fuzzy_match_schema_predict_no_selection(flow_logger):
-    graph = create_graph()
+def test_fuzzy_match_schema_predict_no_selection(flow_logger, execution_location):
+    graph = create_graph(execution_location=execution_location)
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -1710,88 +1682,14 @@ def test_fuzzy_match_schema_predict_no_selection(flow_logger):
     assert result.columns == predicted_data.columns
 
 
+# Local-only: the assertions about Performance mode "no data available" and
+# "no run with current setup" rely on how Performance mode caches data
+# in-process. In remote mode the formula node runs as LOCAL_WITH_SAMPLING
+# which populates has_run_with_current_setup, invalidating the test's
+# assertions. (Before parameterization this test was hardcoded to local.)
 def test_no_data_available_performance_with_cache():
 
-    graph = get_dependency_example()
-    graph.flow_settings.execution_location = "remote"
-    graph.flow_settings.execution_mode = "Performance"
-    graph.run_graph()
-    graph.add_formula(
-        input_schema.NodeFormula(
-            flow_id=1,
-            node_id=3,
-            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
-                                                    function="titlecase([city])"),
-        )
-    )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
-
-    #  Initial graph to test with
-
-    node = graph.get_node(3)
-    first_table_example = node.get_table_example(True)
-    assert len(first_table_example.data) == 0, 'Since running in performance mode there is no data expected'
-    assert not first_table_example.has_example_data, \
-        'Since performance mode does not trigger explicit run of the example data, it should not have example data'
-    assert not first_table_example.has_run_with_current_setup, "There should be no run with current setup"
-
-    # Trigger a fetch operation for our data
-    data=graph.trigger_fetch_node(3)
-    graph.get_run_info()
-    after_fetch_table_example = node.get_table_example(True)
-    assert len(after_fetch_table_example.data) > 0, "There should be data after fetch operation"
-    assert after_fetch_table_example.has_example_data, "There should be example data after fetch operation"
-    assert after_fetch_table_example.has_run_with_current_setup, "There should be a run with current setup after fetch operation"
-    after_fetch_data = [row["titleCity"] for row in after_fetch_table_example.data]
-
-    graph.add_formula(
-        input_schema.NodeFormula(
-            flow_id=1,
-            node_id=3,
-            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
-                                                    function="lowercase([city])"),
-        )
-    )
-
-    after_change_before_run_table_example = node.get_table_example(True)
-    assert len(after_change_before_run_table_example.data) > 0, "There should be data after fetch operation"
-    assert after_change_before_run_table_example.has_example_data, "There should be example data after fetch operation"
-    assert not after_change_before_run_table_example.has_run_with_current_setup, "After change there should be no run with current setup"
-    after_fetch_after_change_data = [row["titleCity"] for row in after_change_before_run_table_example.data]
-    assert after_fetch_data == after_fetch_after_change_data, 'Data should be the same after change without run'
-
-    # Validate that the impact of running the graph again
-    graph.run_graph()
-
-    after_change_after_run_table_example = node.get_table_example(True)
-    assert len(after_change_after_run_table_example.data) == 0, 'Since running in performance mode there is no data expected'
-    assert not after_change_after_run_table_example.has_example_data, \
-        'Since performance mode does not trigger explicit run of the example data, it should not have example data'
-    assert not after_change_after_run_table_example.has_run_with_current_setup, "There should be no run with current setup"
-
-    # Fetch again
-
-    graph.trigger_fetch_node(3)
-    after_change_and_fetch_table_example = node.get_table_example(True)
-    assert len(after_change_and_fetch_table_example.data) > 0, "There should be data after fetch operation"
-    assert after_change_and_fetch_table_example.has_example_data, "There should be example data after fetch operation"
-    assert after_change_and_fetch_table_example.has_run_with_current_setup, \
-        "There should be a run with current setup after fetch operation"
-    after_second_fetch_data = [row["titleCity"] for row in after_change_and_fetch_table_example.data]
-
-    assert after_second_fetch_data != after_fetch_data, 'Data should be different after run'
-
-    # Run again
-    graph.run_graph()
-
-    # Fetch again
-    graph.trigger_fetch_node(3)
-
-
-def test_no_data_available_performance_with_cache():
-
-    graph = get_dependency_example()
-    graph.flow_settings.execution_location = "local"
+    graph = get_dependency_example(execution_location="local")
     graph.flow_settings.execution_mode = "Performance"
     graph.run_graph()
     graph.add_formula(
@@ -1864,9 +1762,8 @@ def test_no_data_available_performance_with_cache():
     graph.trigger_fetch_node(3)
 
 
-def test_fetch_after_run_performance():
-    graph = get_dependency_example()
-    graph.flow_settings.execution_location = "remote"
+def test_fetch_after_run_performance(execution_location):
+    graph = get_dependency_example(execution_location=execution_location)
     graph.flow_settings.execution_mode = "Performance"
     graph.add_formula(
         input_schema.NodeFormula(
@@ -1885,13 +1782,12 @@ def test_fetch_after_run_performance():
     assert len(example_data.data) > 0, "There should be data after fetch operation"
 
 
-def test_fetch_before_run_debug():
+def test_fetch_before_run_debug(execution_location):
     """
     Test scenario in which the graph is set to debug mode, and a node is fetched before run, and afterwards,
     without changes to the node, the graph is run. The data should still be available after the run.
     """
-    graph = get_dependency_example()
-    graph.flow_settings.execution_location = "remote"
+    graph = get_dependency_example(execution_location=execution_location)
     graph.flow_settings.execution_mode = "Development"
     graph.add_formula(
         input_schema.NodeFormula(
@@ -2065,42 +1961,155 @@ class TestDatabaseReaderExecution:
 
 
 class TestOutputExecution:
-    """Test output node (CSV write) in both local and remote execution modes."""
+    """Test output node (CSV/Excel/Parquet write) in both local and remote execution modes."""
+
+    @staticmethod
+    def _build_output_graph(tmp_dir: str, file_name: str, file_type: str,
+                            execution_location: str, write_mode: str = "overwrite",
+                            sheet_name: str | None = None):
+        table_settings = {
+            "file_type": file_type,
+            "delimiter": ",",
+            "encoding": "utf-8",
+        }
+        if file_type == "excel":
+            table_settings["sheet_name"] = sheet_name or "Sheet1"
+        settings = {
+            "flow_id": 1,
+            "node_id": 2,
+            "cache_results": False,
+            "pos_x": 0,
+            "pos_y": 0,
+            "is_setup": True,
+            "description": "",
+            "output_settings": {
+                "name": file_name,
+                "directory": tmp_dir,
+                "file_type": file_type,
+                "fields": [],
+                "write_mode": write_mode,
+                "table_settings": table_settings,
+            },
+        }
+        graph = create_graph(execution_location=execution_location)
+        add_manual_input(
+            graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+        )
+        add_node_promise_on_type(graph, "output", 2)
+        output_file = input_schema.NodeOutput(**settings)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+        graph.add_output(output_file)
+        return graph
 
     def test_write_csv(self, execution_location):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            settings = {
-                "flow_id": 1,
-                "node_id": 2,
-                "cache_results": False,
-                "pos_x": 0,
-                "pos_y": 0,
-                "is_setup": True,
-                "description": "",
-                "output_settings": {
-                    "name": "output_data.csv",
-                    "directory": tmp_dir,
-                    "file_type": "csv",
-                    "fields": [],
-                    "write_mode": "overwrite",
-                    "table_settings": {
-                        "file_type": "csv",
-                        "delimiter": ",",
-                        "encoding": "utf-8",
-                    },
-                },
-            }
-            graph = create_graph(execution_location=execution_location)
-            add_manual_input(
-                graph, data=[{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.csv", "csv", execution_location
             )
-            add_node_promise_on_type(graph, "output", 2)
-            output_file = input_schema.NodeOutput(**settings)
-            connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-            add_connection(graph, connection)
-            graph.add_output(output_file)
             run_info = graph.run_graph()
             handle_run_info(run_info)
             output_path = os.path.join(tmp_dir, "output_data.csv")
             assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_csv_with_eager_dataframe(self, execution_location):
+        """Force the output node's input data to be an eager DataFrame (not lazy)
+        so the csv write falls back to `DataFrame.write_csv` instead of `sink_csv`.
+
+        This exercises the fallback path in `local_write_output`, which hits a
+        different Polars API than the sink_csv path."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_eager.csv", "csv", execution_location
+            )
+            # Run the upstream chain first so node 1 has resulting data, then
+            # force it from lazy → eager so the output node receives a
+            # DataFrame rather than a LazyFrame.
+            upstream = graph.get_node(1)
+            upstream_data = upstream.get_resulting_data()
+            upstream_data.lazy = False
+            assert not upstream_data.lazy, (
+                "precondition: upstream must be eager to exercise the write_csv fallback"
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_eager.csv")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_parquet(self, execution_location):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.parquet", "parquet", execution_location
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.parquet")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+    def test_write_excel(self, execution_location):
+        """Excel has no sink_excel method so local_write_output always falls
+        back to collecting into a DataFrame and calling `write_excel`."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            graph = self._build_output_graph(
+                tmp_dir, "output_data.xlsx", "excel", execution_location,
+                sheet_name="Sheet1",
+            )
+            run_info = graph.run_graph()
+            handle_run_info(run_info)
+            output_path = os.path.join(tmp_dir, "output_data.xlsx")
+            assert os.path.exists(output_path), f"Output file not created at {output_path}"
+
+
+class TestLocalWriteOutputUnit:
+    """Direct unit tests for `local_write_output` — exercises every branch of
+    the write path (sink_* vs fallback to collect().write_*) so that regressions
+    in either branch are caught regardless of flow-level data-laziness
+    heuristics.
+
+    These tests are local-only by construction: `local_write_output` is the
+    local code path, and there's no remote equivalent to parametrize against.
+    """
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_csv(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.csv")
+            utils.local_write_output(
+                data, data_type="csv", path=path, write_mode="overwrite", delimiter=","
+            )
+            assert os.path.exists(path), f"csv not written for shape={shape}"
+            reloaded = pl.read_csv(path)
+            assert reloaded.shape == (3, 2)
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_parquet(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.parquet")
+            utils.local_write_output(
+                data, data_type="parquet", path=path, write_mode="overwrite"
+            )
+            assert os.path.exists(path), f"parquet not written for shape={shape}"
+            reloaded = pl.read_parquet(path)
+            assert reloaded.shape == (3, 2)
+
+    @pytest.mark.parametrize("shape", ["lazy", "eager"])
+    def test_excel(self, shape: str):
+        from flowfile_core.flowfile.flow_data_engine import utils
+        import polars as pl
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        data = df.lazy() if shape == "lazy" else df
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, f"out_{shape}.xlsx")
+            utils.local_write_output(
+                data, data_type="excel", path=path, write_mode="overwrite", sheet_name="Sheet1"
+            )
+            assert os.path.exists(path), f"excel not written for shape={shape}"
 
