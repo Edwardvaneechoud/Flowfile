@@ -86,6 +86,7 @@ from flowfile_frame import (
     read_kafka,
     read_parquet,
     scan_csv,
+    read_excel,
     scan_csv_from_cloud_storage,
     scan_delta,
     scan_json_from_cloud_storage,
@@ -97,6 +98,8 @@ from flowfile_frame import (
 )
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
+LazyFrame = FlowFrame
+DataFrame = FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.selectors import (
     all_,
@@ -129,6 +132,7 @@ __all__ = [
     "FullCloudStorageConnection",
     # Main creation functions
     "read_csv",
+    "read_excel",
     "read_parquet",
     "read_kafka",
     "from_dict",

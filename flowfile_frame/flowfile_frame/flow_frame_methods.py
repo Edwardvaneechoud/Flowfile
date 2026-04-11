@@ -429,6 +429,64 @@ def read_parquet(
     )
 
 
+def read_excel(
+    source,
+    *,
+    sheet_name: str | None = None,
+    has_header: bool = True,
+    flow_graph: FlowGraph = None,
+    description: str = None,
+    convert_to_absolute_path: bool = True,
+) -> FlowFrame:
+    """
+    Read an Excel file into a FlowFrame.
+
+    Args:
+        source: Path to Excel file
+        sheet_name: Name of the sheet to read (reads first sheet if None)
+        has_header: Whether the first row contains column headers
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the Excel data
+    """
+    if "~" in source:
+        os.path.expanduser(source)
+    node_id = generate_node_id()
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+
+    flow_id = flow_graph.flow_id
+
+    received_table = input_schema.ReceivedTable(
+        file_type="excel",
+        path=source,
+        name=Path(source).name,
+        table_settings=input_schema.InputExcelTable(sheet_name=sheet_name, has_headers=has_header),
+    )
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
+
+    read_node = input_schema.NodeRead(
+        flow_id=flow_id,
+        node_id=node_id,
+        received_file=received_table,
+        pos_x=100,
+        pos_y=100,
+        is_setup=True,
+        description=description,
+    )
+
+    flow_graph.add_read(read_node)
+
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
 def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) -> FlowFrame:
     """
     Create a FlowFrame from a dictionary or list of dictionaries.

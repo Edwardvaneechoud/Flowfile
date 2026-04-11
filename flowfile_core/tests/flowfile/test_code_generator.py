@@ -1413,7 +1413,7 @@ def test_union_multiple_dataframes(export_func):
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: custom polars_code nodes use pl.LazyFrame which is not available via ff")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 def test_custom_polars_code(export_func):
     """Test custom Polars code node with single input"""
@@ -1482,7 +1482,7 @@ polars_test_cases = [
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: custom polars_code nodes use pl.LazyFrame which is not available via ff")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 @pytest.mark.parametrize("polars_code, test_id", polars_test_cases)
 def test_code(polars_code, test_id, export_func):
@@ -1541,7 +1541,7 @@ def test_formula_with_string(export_func):
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: custom polars_code nodes use pl.LazyFrame which is not available via ff")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 def test_custom_polars_code_multiple_inputs(export_func):
     """Test custom Polars code node with multiple inputs"""
@@ -1589,12 +1589,11 @@ def test_custom_polars_code_multiple_inputs(export_func):
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: custom polars_code nodes use pl.LazyFrame which is not available via ff")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 def test_custom_polars_no_inputs(export_func):
     """Test custom Polars code node with multiple inputs"""
     flow = create_basic_flow()
-
     # Add custom code that uses both inputs
     polars_code_node = input_schema.NodePolarsCode(
         flow_id=1,
@@ -2481,7 +2480,7 @@ def test_parquet_read(export_func):
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: ff.read_excel does not exist yet")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 def test_excel_read(export_func):
     """Test reading Excel files"""
@@ -2603,13 +2602,12 @@ def test_flow_with_disconnected_nodes(export_func):
 
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
-    pytest.param(export_flow_to_flowframe, marks=pytest.mark.xfail(reason="FlowFrame code gen: custom polars_code nodes use pl.LazyFrame which is not available via ff")),
+    export_flow_to_flowframe,
 ], ids=["polars", "flowframe"])
 def test_custom_code_with_assignment(export_func):
     """Test custom Polars code that includes variable assignments"""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-
     # Add custom code with assignments
     polars_code_node = input_schema.NodePolarsCode(
         flow_id=1,

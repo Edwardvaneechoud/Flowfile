@@ -1973,6 +1973,63 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             self._add_code(")")
             self._add_code("")
 
+    def _handle_polars_code(
+        self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle custom Polars code nodes for FlowFrame.
+
+        Replaces pl. references with ff. and uses ff.FlowFrame in type hints.
+        """
+        code = settings.polars_code_input.polars_code.strip()
+        # Replace polars references with flowfile equivalents
+        code = code.replace("pl.", "ff.")
+        code = code.replace("ff.LazyFrame", "ff.FlowFrame")
+        code = code.replace("ff.DataFrame", "ff.FlowFrame")
+
+        # Determine function parameters based on number of inputs
+        if len(input_vars) == 0:
+            params = ""
+            args = ""
+        elif len(input_vars) == 1:
+            params = "input_df: ff.FlowFrame"
+            input_df = list(input_vars.values())[0]
+            args = input_df
+        else:
+            param_list = []
+            arg_list = []
+            i = 1
+            for key in sorted(input_vars.keys()):
+                if key.startswith("main"):
+                    param_list.append(f"input_df_{i}: ff.FlowFrame")
+                    arg_list.append(input_vars[key])
+                    i += 1
+            params = ", ".join(param_list)
+            args = ", ".join(arg_list)
+
+        is_expression = "output_df" not in code
+
+        self._add_code("# Custom Polars code")
+        self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
+
+        if is_expression:
+            self._add_code(f"    return {code}")
+        else:
+            for line in code.split("\n"):
+                if line.strip():
+                    self._add_code(f"    {line}")
+
+            if "return" not in code:
+                lines = [line.strip() for line in code.split("\n") if line.strip() and "=" in line]
+                if lines:
+                    last_assignment = lines[-1]
+                    if "=" in last_assignment:
+                        output_var = last_assignment.split("=")[0].strip()
+                        self._add_code(f"    return {output_var}")
+
+        self._add_code("")
+        self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
+        self._add_code("")
+
     def _handle_fuzzy_match(
         self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
     ) -> None:

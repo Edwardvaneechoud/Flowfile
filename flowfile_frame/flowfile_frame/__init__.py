@@ -92,11 +92,14 @@ from flowfile_frame.expr import (  # noqa: F401
 
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame  # noqa: F401
+LazyFrame = FlowFrame  # Alias for compatibility with generated code
+DataFrame = FlowFrame  # Alias for compatibility with generated code
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
     from_raw_data,
     read_csv,
+    read_excel,
     read_parquet,
     scan_csv,
     scan_csv_from_cloud_storage,
