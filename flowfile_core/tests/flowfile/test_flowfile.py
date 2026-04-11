@@ -1682,9 +1682,14 @@ def test_fuzzy_match_schema_predict_no_selection(flow_logger, execution_location
     assert result.columns == predicted_data.columns
 
 
-def test_no_data_available_performance_with_cache(execution_location):
+# Local-only: the assertions about Performance mode "no data available" and
+# "no run with current setup" rely on how Performance mode caches data
+# in-process. In remote mode the formula node runs as LOCAL_WITH_SAMPLING
+# which populates has_run_with_current_setup, invalidating the test's
+# assertions. (Before parameterization this test was hardcoded to local.)
+def test_no_data_available_performance_with_cache():
 
-    graph = get_dependency_example(execution_location=execution_location)
+    graph = get_dependency_example(execution_location="local")
     graph.flow_settings.execution_mode = "Performance"
     graph.run_graph()
     graph.add_formula(
