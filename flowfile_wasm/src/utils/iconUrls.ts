@@ -16,6 +16,7 @@ import groupBy from '../assets/icons/group_by.png'
 import pivot from '../assets/icons/pivot.png'
 import unpivot from '../assets/icons/unpivot.png'
 import view from '../assets/icons/view.png'
+import exploreData from '../assets/icons/explore_data.png'
 import output from '../assets/icons/output.png'
 import externalData from '../assets/icons/external_data.svg'
 import externalOutput from '../assets/icons/external_output.svg'
@@ -34,6 +35,7 @@ export const iconUrls: Record<string, string> = {
   'pivot.png': pivot,
   'unpivot.png': unpivot,
   'view.png': view,
+  'explore_data.png': exploreData,
   'output.png': output,
   'external_data.svg': externalData,
   'external_output.svg': externalOutput,
