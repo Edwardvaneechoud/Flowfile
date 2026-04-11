@@ -575,50 +575,34 @@ def handle_run_info(run_info: RunInformation):
         raise ValueError(f'Graph should run successfully:\n{errors}')
 
 
-def test_execution_complex_flow_remote_development(complex_elaborate_flow: FlowGraph):
+def test_execution_complex_flow_development(complex_elaborate_flow: FlowGraph, execution_location):
     """Test executing the complex flow to ensure all nodes run without error."""
     complex_elaborate_flow.flow_settings.execution_mode = "Development"
-    complex_elaborate_flow.flow_settings.execution_location = "remote"
+    complex_elaborate_flow.flow_settings.execution_location = execution_location
     # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
 
 
-def test_execution_complex_flow_remote_performance(complex_elaborate_flow: FlowGraph):
+def test_execution_complex_flow_performance(complex_elaborate_flow: FlowGraph, execution_location):
     """Test executing the complex flow to ensure all nodes run without error."""
     complex_elaborate_flow.flow_settings.execution_mode = "Performance"
-    complex_elaborate_flow.flow_settings.execution_location = "remote"
+    complex_elaborate_flow.flow_settings.execution_location = execution_location
     # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
 
 
-def test_execution_complex_flow_local_performance(complex_elaborate_flow: FlowGraph):
-    """Test executing the complex flow to ensure all nodes run without error."""
-    complex_elaborate_flow.flow_settings.execution_mode = "Performance"
-    complex_elaborate_flow.flow_settings.execution_location = "local"
-    # Execute the entire flow
-    results = complex_elaborate_flow.run_graph()
-    handle_run_info(results)
-
-
-def test_execution_complex_flow_local_development(complex_elaborate_flow: FlowGraph):
-    """Test executing the complex flow to ensure all nodes run without error."""
-    complex_elaborate_flow.flow_settings.execution_mode = "Development"
-    complex_elaborate_flow.flow_settings.execution_location = "local"
-    # Execute the entire flow
-    results = complex_elaborate_flow.run_graph()
-    handle_run_info(results)
-
-
-def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph):
+def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph, execution_location):
     main_path = find_parent_directory('Flowfile')
     complex_elaborate_flow.flow_settings.execution_mode = "Performance"
+    complex_elaborate_flow.flow_settings.execution_location = execution_location
     complex_elaborate_flow.save_flow(main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"tmp"/"complex_elaborate_flow.yaml")
     from flowfile_core.flowfile.handler import FlowfileHandler
     handler = FlowfileHandler()
     flow_id = handler.import_flow(flow_path=main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"tmp"/"complex_elaborate_flow.yaml")
     flow = handler.get_flow(flow_id)
+    flow.flow_settings.execution_location = execution_location
     flow.run_graph()
 
 
