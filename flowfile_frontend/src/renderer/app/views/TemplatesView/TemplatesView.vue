@@ -97,10 +97,10 @@ const handleUseTemplate = async (templateId: string) => {
 
   creatingTemplateId.value = templateId;
   try {
-    ElMessage.info("Creating flow from template...");
+    ElMessage.info({ message: "Creating flow from template...", duration: 1500 });
     const flowId = await TemplatesApi.createFromTemplate(templateId);
     nodeStore.setFlowId(flowId);
-    ElMessage.success("Flow created successfully!");
+    ElMessage.success({ message: "Flow created successfully!", duration: 1500 });
     router.push({ name: "designer" });
   } catch (error) {
     console.error("Failed to create flow from template:", error);

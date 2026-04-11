@@ -75,22 +75,31 @@ from flowfile_frame import (
     del_cloud_storage_connection,
     del_database_connection,
     from_dict,
+    from_raw_data,
     get_all_available_cloud_storage_connections,
     get_all_available_database_connections,
     get_database_connection_by_name,
+    read_catalog_table,
     read_csv,
     read_database,
+    read_from_cloud_storage,
+    read_kafka,
     read_parquet,
     scan_csv,
+    read_excel,
     scan_csv_from_cloud_storage,
     scan_delta,
     scan_json_from_cloud_storage,
     scan_parquet,
     scan_parquet_from_cloud_storage,
+    write_catalog_table,
     write_database,
+    write_to_cloud_storage,
 )
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
+LazyFrame = FlowFrame
+DataFrame = FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.selectors import (
     all_,
@@ -123,8 +132,13 @@ __all__ = [
     "FullCloudStorageConnection",
     # Main creation functions
     "read_csv",
+    "read_excel",
     "read_parquet",
+    "read_kafka",
     "from_dict",
+    "from_raw_data",
+    "read_catalog_table",
+    "write_catalog_table",
     "concat",
     "scan_csv",
     "scan_parquet",
@@ -139,7 +153,9 @@ __all__ = [
     "create_cloud_storage_connection_if_not_exists",
     # Database functions
     "read_database",
+    "read_from_cloud_storage",
     "write_database",
+    "write_to_cloud_storage",
     "create_database_connection",
     "create_database_connection_if_not_exists",
     "del_database_connection",

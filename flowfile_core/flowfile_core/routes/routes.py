@@ -40,7 +40,11 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
+from flowfile_core.flowfile.code_generator.code_generator import (
+    UnsupportedNodeError,
+    export_flow_to_flowframe,
+    export_flow_to_polars,
+)
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
     get_all_database_connections_interface,
@@ -745,7 +749,23 @@ def get_generated_code(flow_id: int) -> str:
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
-    return export_flow_to_polars(flow)
+    try:
+        return export_flow_to_polars(flow)
+    except UnsupportedNodeError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/editor/code_to_flowframe", tags=[], response_model=str)
+def get_generated_flowframe_code(flow_id: int) -> str:
+    """Generates and returns a Python script with FlowFrame code representing the flow."""
+    flow_id = int(flow_id)
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    try:
+        return export_flow_to_flowframe(flow)
+    except UnsupportedNodeError as e:
+        raise HTTPException(422, str(e))
 
 
 @router.post("/editor/create_flow/", tags=["editor"])

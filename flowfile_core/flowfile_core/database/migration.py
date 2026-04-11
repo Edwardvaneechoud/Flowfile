@@ -134,7 +134,7 @@ def _migrate_table(
 
     with new_engine.connect() as new_conn:
         for i in range(0, len(rows), BATCH_SIZE):
-            batch = [dict(zip(common_columns, row)) for row in rows[i : i + BATCH_SIZE]]
+            batch = [dict(zip(common_columns, row, strict=False)) for row in rows[i : i + BATCH_SIZE]]
             new_conn.execute(insert_sql, batch)
         new_conn.commit()
 

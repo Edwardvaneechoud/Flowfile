@@ -859,7 +859,7 @@ def test_fuzzy_match():
     fuzzy_match_input = FuzzyMapping("street", threshold_score=40)
 
     # Fuzzy match on name
-    result = left_data.fuzzy_match(right_data, [fuzzy_match_input]).collect()
+    result = left_data.fuzzy_join(right_data, [fuzzy_match_input]).collect()
 
     expected_df = pl.DataFrame({
         'id': [1, 4, 3, 2],

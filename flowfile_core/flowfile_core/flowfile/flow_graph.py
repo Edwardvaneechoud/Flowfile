@@ -33,7 +33,6 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_database_connection,
 )
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
@@ -1592,12 +1591,13 @@ class FlowGraph:
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
-            for left_select in join_settings.join_input.left_select.renames:
+            join_input = deepcopy(join_settings.join_input)
+            for left_select in join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
-            for right_select in join_settings.join_input.right_select.renames:
+            for right_select in join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
             return main.join(
-                join_input=join_settings.join_input,
+                join_input=join_input,
                 auto_generate_selection=join_settings.auto_generate_selection,
                 verify_integrity=False,
                 other=right,
@@ -1937,7 +1937,7 @@ class FlowGraph:
         if (
             input_nodes is not None
             or function.__name__ in ("placeholder", "analysis_preparation")
-            or node_type in ("cloud_storage_reader", "polars_lazy_frame", "input_data")
+            or node_type in ("cloud_storage_reader", "catalog_reader", "polars_lazy_frame", "input_data")
         ):
             if not existing_node:
                 node = FlowNode(
@@ -2383,7 +2383,6 @@ class FlowGraph:
         node_type = "kafka_source"
         kafka_settings = node_kafka_source.kafka_settings
 
-        # Resolve connection and build consumer config
         with get_db_context() as db:
             db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, node_kafka_source.user_id)
             if db_conn is None:

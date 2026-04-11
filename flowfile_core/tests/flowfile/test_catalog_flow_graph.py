@@ -27,11 +27,6 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_con
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _cleanup():
     """Remove all catalog / flow-registration rows so tests start clean."""
     with get_db_context() as db:
