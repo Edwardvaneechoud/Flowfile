@@ -868,7 +868,7 @@ class FlowGraphCodeConverter:
         self._add_code("")
 
     @staticmethod
-    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: list[FuzzyMapping]) -> str:
+    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: list[FuzzyMapping], prefix: str = "") -> str:
         # TODO(FlowFrame): FuzzyMapping fields containing Polars Expr objects
         # (e.g. threshold_expr) are serialized via repr, producing invalid code like
         # `pl.lit(<Expr ['len()'] at 0x...>)`. Need to convert Expr objects to their
@@ -876,7 +876,7 @@ class FlowGraphCodeConverter:
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
             output_str += (
-                f"FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
+                f"{prefix}FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
                 f" right_col='{fuzzy_mapping.right_col}', "
                 f"threshold_score={fuzzy_mapping.threshold_score}, "
                 f"fuzzy_type='{fuzzy_mapping.fuzzy_type}')"
@@ -1683,6 +1683,19 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import polars as pl")
 
+    def _handle_catalog_reader(
+        self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Catalog Reader is not supported for standalone Polars code. Use FlowFrame export."""
+        self.unsupported_nodes.append(
+            (
+                settings.node_id,
+                "catalog_reader",
+                "Catalog Reader requires a FlowFrame and is not supported by Polars code generation. "
+                "Please use FlowFrame code generation instead.",
+            )
+        )
+
     def _handle_catalog_writer(
         self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -1960,6 +1973,34 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             self._add_code(")")
             self._add_code("")
 
+    def _handle_fuzzy_match(
+        self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle fuzzy match nodes using FlowFrame's native fuzzy_join method."""
+        fuzzy_match_handler = transform_schema.FuzzyMatchInputManager(settings.join_input)
+        left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
+        right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
+
+        if left_df == right_df:
+            right_df = "df_right"
+            self._add_code(f"{right_df} = {left_df}")
+
+        if fuzzy_match_handler.left_select.has_drop_cols():
+            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
+            self._add_code(f"{left_df} = {left_df}.drop({left_drop_cols})")
+        if fuzzy_match_handler.right_select.has_drop_cols():
+            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
+            self._add_code(f"{right_df} = {right_df}.drop({right_drop_cols})")
+
+        fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(
+            fuzzy_match_handler.join_mapping, prefix="ff."
+        )
+        self._add_code(
+            f"{var_name} = {left_df}.fuzzy_join(\n"
+            f"       {right_df},\n"
+            f"       fuzzy_mappings={fuzzy_join_mapping_settings}\n"
+            f"       )"
+        )
 
 
 def export_flow_to_polars(flow_graph: FlowGraph) -> str:

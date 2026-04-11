@@ -3932,6 +3932,8 @@ def test_fuzzy_match_with_multiple_columns(export_func):
             "from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs",
             "fuzzy_match_dfs("
         )
+    elif export_func is export_flow_to_flowframe:
+        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -4084,6 +4086,8 @@ def test_fuzzy_match_jaro_winkler(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code, "fuzzy_type='jaro_winkler'")
         verify_code_contains(code, "threshold_score=0.8")
+    elif export_func is export_flow_to_flowframe:
+        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
     verify_if_execute(code)
 
 
@@ -4417,7 +4421,7 @@ def test_union_relaxed_vs_strict(export_func):
 
 def test_catalog_reader_by_table_name():
     """Test catalog reader code generation with a table name."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4427,7 +4431,7 @@ def test_catalog_reader_by_table_name():
         catalog_table_name="my_table",
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter.node_var_mapping[1] = "df_1"
     converter.last_node_var = "df_1"
     converter._handle_catalog_reader(catalog_reader, "df_1", {})
@@ -4435,12 +4439,11 @@ def test_catalog_reader_by_table_name():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(code_output, "ff.read_catalog_table(", '"my_table"')
     assert "import flowfile as ff" in converter.imports
-    assert ").data" in code_output
 
 
 def test_catalog_reader_with_namespace_and_version():
     """Test catalog reader code generation with namespace and delta version."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4452,7 +4455,7 @@ def test_catalog_reader_with_namespace_and_version():
         delta_version=3,
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter.node_var_mapping[1] = "df_1"
     converter.last_node_var = "df_1"
     converter._handle_catalog_reader(catalog_reader, "df_1", {})
@@ -4465,7 +4468,7 @@ def test_catalog_reader_with_namespace_and_version():
 
 def test_catalog_reader_missing_table_name_adds_to_unsupported():
     """Test that catalog reader with no table name or ID is added to unsupported nodes."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4474,7 +4477,7 @@ def test_catalog_reader_missing_table_name_adds_to_unsupported():
         node_id=1,
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter._handle_catalog_reader(catalog_reader, "df_1", {})
 
     assert len(converter.unsupported_nodes) == 1
@@ -4488,7 +4491,7 @@ def test_catalog_reader_missing_table_name_adds_to_unsupported():
 
 def test_catalog_writer_overwrite_mode():
     """Test catalog writer code generation with overwrite mode."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4502,7 +4505,7 @@ def test_catalog_writer_overwrite_mode():
         ),
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter.node_var_mapping[2] = "df_2"
     converter.last_node_var = "df_2"
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
@@ -4517,7 +4520,7 @@ def test_catalog_writer_overwrite_mode():
 
 def test_catalog_writer_upsert_with_merge_keys():
     """Test catalog writer code generation with upsert mode and merge keys."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4534,7 +4537,7 @@ def test_catalog_writer_upsert_with_merge_keys():
         ),
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter.node_var_mapping[2] = "df_2"
     converter.last_node_var = "df_2"
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
@@ -4548,7 +4551,7 @@ def test_catalog_writer_upsert_with_merge_keys():
 
 def test_catalog_writer_missing_table_name_adds_to_unsupported():
     """Test that catalog writer with no table name is added to unsupported nodes."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4561,7 +4564,7 @@ def test_catalog_writer_missing_table_name_adds_to_unsupported():
         ),
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     assert len(converter.unsupported_nodes) == 1
@@ -4570,7 +4573,7 @@ def test_catalog_writer_missing_table_name_adds_to_unsupported():
 
 def test_catalog_writer_pass_through():
     """Test that catalog writer generates pass-through assignment."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
 
@@ -4583,7 +4586,7 @@ def test_catalog_writer_pass_through():
         ),
     )
 
-    converter = FlowGraphToPolarsConverter(flow)
+    converter = FlowGraphToFlowFrameConverter(flow)
     converter.node_var_mapping[2] = "df_2"
     converter.last_node_var = "df_2"
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
@@ -4669,7 +4672,7 @@ def test_catalog_reader_code_executes():
     flow.add_catalog_reader(reader)
 
     # Export and execute the generated code
-    code = export_flow_to_polars(flow)
+    code = export_flow_to_flowframe(flow)
     result = get_result_from_generated_code(code)
     if hasattr(result, "collect"):
         result = result.collect()
@@ -4709,7 +4712,7 @@ def test_catalog_writer_code_executes():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     # Export and execute the generated code
-    code = export_flow_to_polars(flow)
+    code = export_flow_to_flowframe(flow)
     verify_if_execute(code)
 
     # Verify the table was written to the catalog
@@ -4749,7 +4752,7 @@ def test_catalog_round_trip_code_generation():
     write_flow.add_catalog_writer(writer)
     add_connection(write_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-    write_code = export_flow_to_polars(write_flow)
+    write_code = export_flow_to_flowframe(write_flow)
     verify_if_execute(write_code)
 
     # Step 2: Read it back via generated code
@@ -4764,7 +4767,7 @@ def test_catalog_round_trip_code_generation():
     )
     read_flow.add_catalog_reader(reader)
 
-    read_code = export_flow_to_polars(read_flow)
+    read_code = export_flow_to_flowframe(read_flow)
     result = get_result_from_generated_code(read_code)
     if hasattr(result, "collect"):
         result = result.collect()

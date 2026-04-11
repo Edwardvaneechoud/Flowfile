@@ -1363,6 +1363,93 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
+    def write_excel(
+        self,
+        path: str | os.PathLike,
+        *,
+        worksheet: str = "Sheet1",
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **kwargs: Any,
+    ) -> FlowFrame:
+        """
+        Write the data to an Excel file.
+
+        Args:
+            path: Path or filename for the Excel file.
+            worksheet: Name of the worksheet, defaults to 'Sheet1'.
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.DataFrame.write_excel.
+                      If any extra kwargs are provided, a Polars Code node will be created
+                      instead of a standard Output node.
+
+        Returns:
+            Self for method chaining (new FlowFrame pointing to the output node).
+        """
+        new_node_id = generate_node_id()
+        is_path_input = isinstance(path, str | os.PathLike)
+        if isinstance(path, os.PathLike):
+            file_str = str(path)
+        elif isinstance(path, str):
+            file_str = path
+        else:
+            file_str = path
+            is_path_input = False
+        if "~" in file_str:
+            file_str = os.path.expanduser(file_str)
+        file_name = file_str.split(os.sep)[-1] if is_path_input else "output.xlsx"
+
+        use_polars_code = bool(kwargs) or not is_path_input
+        output_settings = input_schema.OutputSettings(
+            file_type="excel",
+            name=file_name,
+            directory=file_str if is_path_input else str(file_str),
+            table_settings=input_schema.OutputExcelTable(sheet_name=worksheet),
+        )
+        if is_path_input:
+            try:
+                output_settings.set_absolute_filepath()
+                if convert_to_absolute_path:
+                    output_settings.directory = output_settings.abs_file_path
+            except Exception as e:
+                logger.warning(f"Could not determine absolute path for {file_str}: {e}")
+
+        if not use_polars_code:
+            node_output = input_schema.NodeOutput(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                output_settings=output_settings,
+                depending_on_id=self.node_id,
+                description=description,
+            )
+            self.flow_graph.add_output(node_output)
+        else:
+            if not is_path_input:
+                raise TypeError(
+                    f"Input 'path' must be a string or Path-like object when using advanced "
+                    f"write_excel options (kwargs={kwargs}), got {type(path)}."
+                    " File-like objects are not supported with the Polars Code fallback."
+                )
+
+            path_arg_repr = repr(output_settings.directory)
+
+            all_kwargs_for_code = {
+                "worksheet": worksheet,
+                **kwargs,
+            }
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in all_kwargs_for_code.items())
+
+            args_str = f"{path_arg_repr}"
+            if kwargs_repr:
+                args_str += f", {kwargs_repr}"
+
+            code = f"input_df.collect().write_excel({args_str})"
+            logger.debug(f"Generated Polars Code: {code}")
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
     def write_parquet_to_cloud_storage(
         self,
         path: str,
@@ -2358,7 +2445,7 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
-    def fuzzy_match(
+    def fuzzy_join(
         self,
         other: FlowFrame,
         fuzzy_mappings: list[FuzzyMapping],
