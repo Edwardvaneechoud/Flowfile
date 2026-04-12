@@ -3,26 +3,10 @@
 from pathlib import Path
 
 import polars as pl
-import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
 
 from flowfile_worker.funcs import execute_sql_query
 from shared.storage_config import storage
-
-
-def _write_df_as_delta(df: pl.DataFrame, path: str) -> None:
-    """Write a Polars DataFrame as a Delta table, handling Arrow type compat."""
-    arrow_table = df.to_arrow()
-    # Cast large_string -> utf8 for deltalake compatibility
-    new_fields = []
-    for field in arrow_table.schema:
-        if field.type == pa.large_utf8():
-            new_fields.append(pa.field(field.name, pa.utf8()))
-        else:
-            new_fields.append(field)
-    arrow_table = arrow_table.cast(pa.schema(new_fields))
-    write_deltalake(path, arrow_table)
 
 
 @pytest.fixture(autouse=True)
@@ -47,13 +31,14 @@ def delta_tables():
         "name": ["Alice", "Bob", "Charlie"],
         "city": ["NYC", "LA", "NYC"],
     })
-    _write_df_as_delta(df1, str(catalog_dir / "customers"))
+    breakpoint()
+    df1.write_delta(str(catalog_dir / "customers"))
     df2 = pl.DataFrame({
         "order_id": [10, 20, 30, 40],
         "customer_id": [1, 2, 1, 3],
         "amount": [100.0, 200.0, 150.0, 300.0],
     })
-    _write_df_as_delta(df2, str(catalog_dir / "orders"))
+    df2.write_delta(str(catalog_dir / "orders"))
 
     return {"customers": "customers", "orders": "orders"}
 
