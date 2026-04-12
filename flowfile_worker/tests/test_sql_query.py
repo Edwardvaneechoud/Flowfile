@@ -31,7 +31,6 @@ def delta_tables():
         "name": ["Alice", "Bob", "Charlie"],
         "city": ["NYC", "LA", "NYC"],
     })
-    breakpoint()
     df1.write_delta(str(catalog_dir / "customers"))
     df2 = pl.DataFrame({
         "order_id": [10, 20, 30, 40],
