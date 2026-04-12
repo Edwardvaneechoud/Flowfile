@@ -285,10 +285,10 @@ onMounted(() => {
 .sql-error {
   padding: 12px 16px;
   margin: 8px 12px;
-  background: #fef0f0;
-  border: 1px solid #fde2e2;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
   border-radius: 4px;
-  color: #f56c6c;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
