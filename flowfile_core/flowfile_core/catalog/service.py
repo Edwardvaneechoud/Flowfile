@@ -178,6 +178,12 @@ class CatalogService:
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         produced_tables = self.repo.list_tables_for_flow(flow.id)
         read_tables = self.repo.list_read_tables_for_flow(flow.id)
+        fe = os.path.exists(flow.flow_path) if flow.flow_path else False
+        if not fe:
+            logger.warning(
+                "Registered flow %s (id=%d) references missing file: %s",
+                flow.name, flow.id, flow.flow_path,
+            )
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -192,7 +198,7 @@ class CatalogService:
             run_count=run_count,
             last_run_at=last_run.started_at if last_run else None,
             last_run_success=last_run.success if last_run else None,
-            file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+            file_exists=fe,
             artifact_count=artifact_count,
             tables_produced=[
                 CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
@@ -223,6 +229,12 @@ class CatalogService:
             run_count, last_run = run_stats.get(flow.id, (0, None))
             produced = tables_by_flow.get(flow.id, [])
             read = read_tables_by_flow.get(flow.id, [])
+            fe = os.path.exists(flow.flow_path) if flow.flow_path else False
+            if not fe:
+                logger.warning(
+                    "Registered flow %s (id=%d) references missing file: %s",
+                    flow.name, flow.id, flow.flow_path,
+                )
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -238,7 +250,7 @@ class CatalogService:
                     run_count=run_count,
                     last_run_at=last_run.started_at if last_run else None,
                     last_run_success=last_run.success if last_run else None,
-                    file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+                    file_exists=fe,
                     artifact_count=artifact_counts.get(flow.id, 0),
                     tables_produced=[
                         CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
@@ -889,13 +901,19 @@ class CatalogService:
         if user_id is not None:
             is_fav = self.repo.get_table_favorite(user_id, table.id) is not None
 
+        fe = table_exists(table.file_path) if table.file_path else False
+        if not fe:
+            logger.warning(
+                "Catalog table %s (id=%d) references missing file: %s",
+                table.name, table.id, table.file_path,
+            )
         return CatalogTableOut(
             id=table.id,
             name=table.name,
             namespace_id=table.namespace_id,
             description=table.description,
             owner_id=table.owner_id,
-            file_exists=table_exists(table.file_path) if table.file_path else False,
+            file_exists=fe,
             is_favorite=is_fav,
             schema_columns=columns,
             row_count=table.row_count,
@@ -936,6 +954,12 @@ class CatalogService:
             readers = self.repo.list_readers_for_table(table.id)
             read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
+            fe = table_exists(table.file_path) if table.file_path else False
+            if not fe:
+                logger.warning(
+                "Catalog table %s (id=%d) references missing file: %s",
+                table.name, table.id, table.file_path,
+            )
             result.append(
                 CatalogTableOut(
                     id=table.id,
@@ -943,7 +967,7 @@ class CatalogService:
                     namespace_id=table.namespace_id,
                     description=table.description,
                     owner_id=table.owner_id,
-                    file_exists=table_exists(table.file_path) if table.file_path else False,
+                    file_exists=fe,
                     is_favorite=table.id in fav_ids,
                     schema_columns=columns,
                     row_count=table.row_count,

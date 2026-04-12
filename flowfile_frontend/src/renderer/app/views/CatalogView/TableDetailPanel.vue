@@ -13,7 +13,11 @@
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
       <div class="header-actions">
-        <button class="action-btn-lg" @click="emit('queryTable', table.name)">
+        <button
+          class="action-btn-lg"
+          :disabled="!table.file_exists"
+          @click="emit('queryTable', table.name)"
+        >
           <i class="fa-solid fa-code"></i>
           Query table
         </button>
@@ -32,6 +36,26 @@
         >
           <i class="fa-solid fa-trash"></i>
           Delete
+        </button>
+      </div>
+    </div>
+
+    <!-- File missing banner -->
+    <div v-if="!table.file_exists" class="missing-banner">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <div>
+        <strong>Table data not found</strong>
+        <p>
+          The data file for this table no longer exists on disk. Previews and queries will not work
+          until the data is regenerated or the table is re-registered.
+        </p>
+        <button
+          v-if="table.source_run_id"
+          class="btn btn-sm btn-primary recovery-btn"
+          @click="emit('recoverFromRun', table.source_run_id!)"
+        >
+          <i class="fa-solid fa-arrow-rotate-left"></i>
+          Recover source flow from snapshot
         </button>
       </div>
     </div>
@@ -246,6 +270,7 @@ const emit = defineEmits([
   "navigateToFlow",
   "selectVersion",
   "queryTable",
+  "recoverFromRun",
 ]);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
@@ -677,6 +702,52 @@ function formatCell(value: any): string {
 
 .version-banner-link:hover {
   color: var(--color-primary-dark, #1d4ed8);
+}
+
+/* ========== Missing File Banner ========== */
+.missing-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-primary);
+}
+
+.missing-banner > i {
+  color: var(--color-warning);
+  font-size: var(--font-size-lg);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.missing-banner strong {
+  font-size: var(--font-size-sm);
+  display: block;
+  margin-bottom: var(--spacing-1);
+}
+
+.missing-banner p {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.recovery-btn {
+  margin-top: var(--spacing-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.action-btn-lg:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* ========== States ========== */

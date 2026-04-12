@@ -57,6 +57,8 @@
           @register-flow="$emit('registerFlow', $event)"
           @register-table="$emit('registerTable', $event)"
           @create-schema="$emit('createSchema', $event)"
+          @delete-table="$emit('deleteTable', $event)"
+          @delete-flow="$emit('deleteFlow', $event)"
         />
       </div>
 
@@ -92,6 +94,13 @@
                 @click="$emit('toggleFavorite', flow.id)"
               >
                 <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+              </button>
+              <button
+                class="action-btn delete-btn"
+                title="Delete flow"
+                @click="$emit('deleteFlow', flow.id)"
+              >
+                <i class="fa-solid fa-trash"></i>
               </button>
               <span
                 v-if="flow.last_run_success !== null"
@@ -153,7 +162,12 @@
           >
             <i class="fa-solid fa-table table-icon"></i>
             <span class="table-name">{{ table.name }}</span>
-            <span v-if="table.row_count !== null" class="table-rows">
+            <i
+              v-if="table.file_exists === false"
+              class="fa-solid fa-triangle-exclamation missing-icon"
+              title="Table data file not found on disk"
+            ></i>
+            <span v-if="table.file_exists !== false && table.row_count !== null" class="table-rows">
               {{ formatRowCount(table.row_count) }} rows
             </span>
             <div class="flow-actions" @click.stop>
@@ -164,6 +178,13 @@
                 @click="$emit('toggleTableFavorite', table.id)"
               >
                 <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+              </button>
+              <button
+                class="action-btn delete-btn"
+                title="Delete table"
+                @click="$emit('deleteTable', table.id)"
+              >
+                <i class="fa-solid fa-trash"></i>
               </button>
             </div>
           </div>
@@ -207,6 +228,8 @@ defineEmits([
   "registerFlow",
   "registerTable",
   "createSchema",
+  "deleteTable",
+  "deleteFlow",
 ]);
 
 function formatRowCount(n: number | null): string {
@@ -588,6 +611,11 @@ const totalFlows = computed(() => {
   font-size: 11px;
   color: var(--color-warning);
   flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  color: var(--color-danger) !important;
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent) !important;
 }
 
 /* ========== Artifact Items ========== */

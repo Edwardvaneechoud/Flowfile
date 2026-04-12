@@ -99,6 +99,8 @@
               @register-flow="openRegisterFlow($event)"
               @register-table="openRegisterTable($event)"
               @create-schema="openCreateSchema($event)"
+              @delete-table="handleDeleteTable($event)"
+              @delete-flow="handleDeleteFlow($event)"
             />
           </div>
         </div>
@@ -150,6 +152,7 @@
           @navigate-to-flow="navigateToFlow($event)"
           @select-version="catalogStore.selectVersion($event)"
           @query-table="handleQueryTable($event)"
+          @recover-from-run="openRunSnapshot($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -170,6 +173,7 @@
           @run-flow="handleRunFlow"
           @cancel-flow-run="handleCancelFlowRun"
           @select-schedule="selectSchedule"
+          @recover-from-snapshot="openRunSnapshot($event)"
         />
         <!-- Run history overview -->
         <RunOverviewPanel
