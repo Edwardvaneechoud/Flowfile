@@ -637,3 +637,168 @@ class TestCatalogRoundTrip:
         # Verify actual values
         names = sorted(result_df["name"].to_list())
         assert names == ["Alice", "Bob", "Charlie"]
+
+
+# ---------------------------------------------------------------------------
+# Catalog SQL reader tests
+# ---------------------------------------------------------------------------
+
+
+class TestCatalogSqlReader:
+    """Test that catalog_reader nodes with sql_query execute SQL against catalog Delta tables."""
+
+    _tmp_dirs: list = []
+
+    @classmethod
+    def teardown_method(cls):
+        import shutil
+
+        for d in cls._tmp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+        cls._tmp_dirs.clear()
+
+    @classmethod
+    def _register_delta_table(cls, ns_id: int, table_name: str, data: list[dict]) -> int:
+        """Write a Delta table and register it in the catalog. Returns the table id."""
+        import tempfile
+
+        tmp_dir = tempfile.mkdtemp()
+        cls._tmp_dirs.append(tmp_dir)
+        delta_path = os.path.join(tmp_dir, table_name)
+        pl.DataFrame(data).write_delta(delta_path)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            table_out = svc.register_table_from_data(
+                name=table_name,
+                table_path=delta_path,
+                owner_id=1,
+                namespace_id=ns_id,
+                storage_format="delta",
+            )
+        return table_out.id
+
+    def test_sql_query_simple_select(self):
+        """A catalog_reader with sql_query should execute SQL against catalog Delta tables."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "people", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT * FROM people",
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 3
+        assert set(result_df.columns) == {"name", "age", "city"}
+
+    def test_sql_query_with_filter(self):
+        """SQL query with a WHERE clause should return filtered results."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "people_filter", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT name, age FROM people_filter WHERE age > 28",
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 2
+        assert set(result_df.columns) == {"name", "age"}
+        names = sorted(result_df["name"].to_list())
+        assert names == ["Alice", "Charlie"]
+
+    def test_sql_query_join_two_tables(self):
+        """SQL query that JOINs two catalog tables."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "customers_sql", [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+        ])
+        self._register_delta_table(ns_id, "orders_sql", [
+            {"customer_id": 1, "amount": 100},
+            {"customer_id": 2, "amount": 200},
+            {"customer_id": 1, "amount": 150},
+        ])
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query=(
+                "SELECT c.name, SUM(o.amount) AS total "
+                "FROM customers_sql c "
+                "JOIN orders_sql o ON c.id = o.customer_id "
+                "GROUP BY c.name"
+            ),
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 2
+        assert "name" in result_df.columns
+        assert "total" in result_df.columns
+
+    def test_sql_query_description(self):
+        """NodeCatalogReader with sql_query should return SQL-based description."""
+        reader = input_schema.NodeCatalogReader(
+            flow_id=1,
+            node_id=1,
+            sql_query="SELECT * FROM my_table WHERE id > 10",
+        )
+        assert reader.get_default_description().startswith("SQL: SELECT")
+
+    def test_sql_query_invalid_sql_sets_error(self):
+        """Invalid SQL should store a validation error on the node without crashing."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "dummy_table", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELEC * FORM people",  # intentionally broken SQL
+        )
+        graph.add_catalog_reader(reader)
+
+        node = graph.get_node(1)
+        assert node.results.errors is not None
+
+    def test_sql_query_no_tables_raises(self):
+        """When no Delta tables exist, executing the SQL node should raise ValueError."""
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT 1",
+        )
+        graph.add_catalog_reader(reader)
+
+        with pytest.raises(AssertionError, match="No Delta catalog tables"):
+            _run_graph(graph)

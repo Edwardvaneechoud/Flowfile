@@ -132,7 +132,7 @@ const nodeOutput = ref<NodeOutput | null>(null);
 const dataLoaded = ref(false);
 
 // Use the standardized node settings composable
-const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeOutput,
 });
 const showFileSelectionModal = ref(false);

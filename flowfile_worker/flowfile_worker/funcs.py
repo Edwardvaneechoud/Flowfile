@@ -620,6 +620,64 @@ def materialize_catalog_table_task(
             progress.value = -1
 
 
+def execute_sql_query(query: str, tables: dict[str, str], max_rows: int = 10_000) -> dict:
+    """Execute a SQL query against Delta catalog tables using pl.SQLContext.
+
+    *tables* is a mapping of logical table name -> directory name.  The
+    directory name is resolved under the catalog tables directory using
+    ``_validate_catalog_path``.  Only tables actually referenced in the
+    query plan are reported in *used_tables*.
+
+    Returns a dict matching the SqlQueryResponse schema.
+    """
+    import re
+    import time
+
+    start = time.perf_counter()
+
+    ctx = pl.SQLContext()
+    registered_names: list[str] = []
+
+    for name, dir_name in tables.items():
+        p = _validate_catalog_path(dir_name)
+        if not p.is_dir() or not (p / "_delta_log").is_dir():
+            raise ValueError(f"Table '{name}' is not a valid Delta table")
+        ctx.register(name, pl.scan_delta(str(p)))
+        registered_names.append(name)
+
+    result_lf = ctx.execute(query)
+
+    # Determine which registered tables were actually used via the query plan
+    plan = result_lf.explain()
+    used_tables = [name for name in registered_names if re.search(r"\b" + re.escape(name) + r"\b", plan)]
+
+    # Collect with row limit
+    schema = result_lf.collect_schema()
+    columns = list(schema.keys())
+    dtypes = [str(d) for d in schema.values()]
+
+    total_df = result_lf.select(pl.len()).collect()
+    total_rows = total_df.item()
+
+    truncated = total_rows > max_rows
+    df = result_lf.head(max_rows).collect()
+
+    rows_data = df.to_dicts()
+    rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    return {
+        "columns": columns,
+        "dtypes": dtypes,
+        "rows": rows,
+        "total_rows": total_rows,
+        "truncated": truncated,
+        "execution_time_ms": round(elapsed_ms, 1),
+        "used_tables": used_tables,
+    }
+
+
 def read_table_metadata(table_name: str, storage_format: str = "delta") -> dict:
     """Read schema, row_count, column_count, size_bytes from a table on disk.
 

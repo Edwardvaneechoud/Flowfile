@@ -18,10 +18,7 @@
             <span class="material-icons tab-icon">account_tree</span>
             <span class="tab-name">{{ flow.name }}</span>
           </div>
-          <span
-            class="material-icons close-icon"
-            @click.stop="confirmCloseTab(flow.flow_id)"
-          >
+          <span class="material-icons close-icon" @click.stop="confirmCloseTab(flow.flow_id)">
             close
           </span>
         </div>

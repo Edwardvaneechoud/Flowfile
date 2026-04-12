@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, defineProps, defineExpose, toRaw } from "v
 
 // Types only - these don't add to bundle size
 import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/dist/interfaces";
+import { ISegmentKey } from "@kanaries/graphic-walker/dist/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/dist/store/visualSpecStore";
 
 interface VueGWProps {
@@ -11,6 +12,8 @@ interface VueGWProps {
   specList?: IChart[];
   appearance?: IGWProps["appearance"];
   themeKey?: IGWProps["themeKey"];
+  /** Which segment tab to show initially: "data" or "vis" (default: "vis") */
+  defaultTab?: "data" | "vis";
 }
 
 const props = defineProps<VueGWProps>();
@@ -80,6 +83,20 @@ onMounted(async () => {
     const componentProps = getReactProps();
     reactRootInstance.render(React.createElement(GraphicWalker, componentProps));
     isLoading.value = false;
+
+    // Set the default tab if specified
+    if (props.defaultTab) {
+      const tab = props.defaultTab;
+      const checkStore = setInterval(() => {
+        const store = internalStoreRef.value?.current;
+        if (store && typeof store.setSegmentKey === "function") {
+          store.setSegmentKey(tab as ISegmentKey);
+          clearInterval(checkStore);
+        }
+      }, 50);
+      // Stop checking after 3 seconds
+      setTimeout(() => clearInterval(checkStore), 3000);
+    }
   } catch (e) {
     console.error("[VueGW] Error mounting GraphicWalker:", e);
     loadError.value = e instanceof Error ? e.message : "Failed to load";

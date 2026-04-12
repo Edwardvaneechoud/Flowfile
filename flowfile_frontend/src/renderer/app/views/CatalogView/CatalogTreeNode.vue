@@ -57,6 +57,8 @@
           @register-flow="$emit('registerFlow', $event)"
           @register-table="$emit('registerTable', $event)"
           @create-schema="$emit('createSchema', $event)"
+          @delete-table="$emit('deleteTable', $event)"
+          @delete-flow="$emit('deleteFlow', $event)"
         />
       </div>
 
@@ -92,6 +94,13 @@
                 @click="$emit('toggleFavorite', flow.id)"
               >
                 <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+              </button>
+              <button
+                class="action-btn delete-btn"
+                title="Delete flow"
+                @click="$emit('deleteFlow', flow.id)"
+              >
+                <i class="fa-solid fa-trash"></i>
               </button>
               <span
                 v-if="flow.last_run_success !== null"
@@ -153,9 +162,11 @@
           >
             <i class="fa-solid fa-table table-icon"></i>
             <span class="table-name">{{ table.name }}</span>
-            <span v-if="table.row_count !== null" class="table-rows">
-              {{ formatRowCount(table.row_count) }} rows
-            </span>
+            <i
+              v-if="table.file_exists === false"
+              class="fa-solid fa-triangle-exclamation missing-icon"
+              title="Table data file not found on disk"
+            ></i>
             <div class="flow-actions" @click.stop>
               <button
                 class="action-btn star-btn"
@@ -164,6 +175,13 @@
                 @click="$emit('toggleTableFavorite', table.id)"
               >
                 <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+              </button>
+              <button
+                class="action-btn delete-btn"
+                title="Delete table"
+                @click="$emit('deleteTable', table.id)"
+              >
+                <i class="fa-solid fa-trash"></i>
               </button>
             </div>
           </div>
@@ -207,14 +225,9 @@ defineEmits([
   "registerFlow",
   "registerTable",
   "createSchema",
+  "deleteTable",
+  "deleteFlow",
 ]);
-
-function formatRowCount(n: number | null): string {
-  if (n === null) return "0";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
   if (node.flows.some((f) => f.id === flowId)) return true;
@@ -590,6 +603,11 @@ const totalFlows = computed(() => {
   flex-shrink: 0;
 }
 
+.delete-btn:hover {
+  color: var(--color-danger) !important;
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent) !important;
+}
+
 /* ========== Artifact Items ========== */
 .tree-artifact {
   display: flex;
@@ -678,16 +696,5 @@ const totalFlows = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.table-rows {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  background: var(--color-background-tertiary);
-  padding: 0 5px;
-  border-radius: var(--border-radius-sm);
-  line-height: 18px;
-  flex-shrink: 0;
-  font-family: var(--font-family-mono);
 }
 </style>

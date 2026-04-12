@@ -2344,6 +2344,27 @@ class FlowDataEngine:
         return cls(external_fetcher.get_result())
 
 
+def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDataEngine:
+    """Executes a SQL query on one or more FlowDataEngine objects using pl.SQLContext.
+
+    Input FlowDataEngine objects are registered as named tables:
+    - Single input: registered as ``input_1``
+    - Multiple inputs: registered as ``input_1``, ``input_2``, etc.
+
+    Args:
+        *flowfile_tables: A variable number of FlowDataEngine objects.
+        sql_code: The SQL query to execute.
+
+    Returns:
+        A new FlowDataEngine instance containing the query result.
+    """
+    ctx = pl.SQLContext()
+    for i, flowfile_table in enumerate(flowfile_tables):
+        ctx.register(f"input_{i + 1}", flowfile_table.data_frame)
+    result_lf = ctx.execute(sql_code)
+    return FlowDataEngine(result_lf)
+
+
 def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowDataEngine:
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 

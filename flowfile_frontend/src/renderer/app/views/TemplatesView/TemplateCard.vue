@@ -15,7 +15,13 @@
         <span v-for="tag in template.tags" :key="tag" class="template-card__tag">{{ tag }}</span>
       </div>
     </div>
-    <el-button type="primary" size="small" class="template-card__button" :loading="loading" @click="$emit('use-template', template.template_id)">
+    <el-button
+      type="primary"
+      size="small"
+      class="template-card__button"
+      :loading="loading"
+      @click="$emit('use-template', template.template_id)"
+    >
       <span class="material-icons" style="font-size: 16px; margin-right: 4px">play_arrow</span>
       Use Template
     </el-button>

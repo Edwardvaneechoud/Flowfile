@@ -1124,8 +1124,14 @@ class NodeCatalogReader(NodeBase):
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
+    sql_query: str | None = None
 
     def get_default_description(self) -> str:
+        if self.sql_query:
+            first_line = self.sql_query.strip().split("\n")[0]
+            if len(first_line) > 80:
+                first_line = first_line[:77] + "..."
+            return f"SQL: {first_line}"
         if self.catalog_table_name:
             suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
             return f"Catalog: {self.catalog_table_name}{suffix}"
@@ -1241,6 +1247,20 @@ class NodePolarsCode(NodeMultiInput):
     def get_default_description(self) -> str:
         """Describes the Polars code snippet."""
         code = self.polars_code_input.polars_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
+
+
+class NodeSqlQuery(NodeMultiInput):
+    """Settings for a node that executes a SQL query against connected data sources."""
+
+    sql_query_input: transform_schema.SqlQueryInput
+
+    def get_default_description(self) -> str:
+        """Describes the SQL query snippet."""
+        code = self.sql_query_input.sql_code
         first_line = code.strip().split("\n")[0] if code else ""
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."

@@ -259,6 +259,39 @@ class DeltaTableHistory(BaseModel):
     history: list[DeltaVersionCommit] = Field(default_factory=list)
 
 
+# ==================== SQL Query Schemas ====================
+
+
+class SqlQueryRequest(BaseModel):
+    """Request to execute a SQL query against catalog Delta tables."""
+
+    query: str
+    max_rows: int = 10_000
+
+
+class SqlQueryResult(BaseModel):
+    """Result of a SQL query execution."""
+
+    columns: list[str] = Field(default_factory=list)
+    dtypes: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    execution_time_ms: float = 0.0
+    used_tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class SaveQueryAsFlowRequest(BaseModel):
+    """Request to save a SQL query as a registered flow."""
+
+    query: str
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    used_tables: list[str] = Field(default_factory=list)
+
+
 # ==================== Catalog Overview ====================
 
 

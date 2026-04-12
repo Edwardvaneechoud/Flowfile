@@ -60,6 +60,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_delta_history,
     trigger_delta_version_preview,
     trigger_read_table_metadata,
+    trigger_sql_query,
 )
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -78,6 +79,7 @@ from flowfile_core.schemas.catalog_schema import (
     GlobalArtifactOut,
     NamespaceTree,
     PaginatedFlowRuns,
+    SqlQueryResult,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
 from shared.delta_utils import format_delta_timestamp, make_json_safe
@@ -176,6 +178,12 @@ class CatalogService:
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         produced_tables = self.repo.list_tables_for_flow(flow.id)
         read_tables = self.repo.list_read_tables_for_flow(flow.id)
+        fe = os.path.exists(flow.flow_path) if flow.flow_path else False
+        if not fe:
+            logger.warning(
+                "Registered flow %s (id=%d) references missing file: %s",
+                flow.name, flow.id, flow.flow_path,
+            )
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -190,7 +198,7 @@ class CatalogService:
             run_count=run_count,
             last_run_at=last_run.started_at if last_run else None,
             last_run_success=last_run.success if last_run else None,
-            file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+            file_exists=fe,
             artifact_count=artifact_count,
             tables_produced=[
                 CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
@@ -221,6 +229,12 @@ class CatalogService:
             run_count, last_run = run_stats.get(flow.id, (0, None))
             produced = tables_by_flow.get(flow.id, [])
             read = read_tables_by_flow.get(flow.id, [])
+            fe = os.path.exists(flow.flow_path) if flow.flow_path else False
+            if not fe:
+                logger.warning(
+                    "Registered flow %s (id=%d) references missing file: %s",
+                    flow.name, flow.id, flow.flow_path,
+                )
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -236,7 +250,7 @@ class CatalogService:
                     run_count=run_count,
                     last_run_at=last_run.started_at if last_run else None,
                     last_run_success=last_run.success if last_run else None,
-                    file_exists=os.path.exists(flow.flow_path) if flow.flow_path else False,
+                    file_exists=fe,
                     artifact_count=artifact_counts.get(flow.id, 0),
                     tables_produced=[
                         CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
@@ -887,13 +901,19 @@ class CatalogService:
         if user_id is not None:
             is_fav = self.repo.get_table_favorite(user_id, table.id) is not None
 
+        fe = table_exists(table.file_path) if table.file_path else False
+        if not fe:
+            logger.warning(
+                "Catalog table %s (id=%d) references missing file: %s",
+                table.name, table.id, table.file_path,
+            )
         return CatalogTableOut(
             id=table.id,
             name=table.name,
             namespace_id=table.namespace_id,
             description=table.description,
             owner_id=table.owner_id,
-            file_exists=table_exists(table.file_path) if table.file_path else False,
+            file_exists=fe,
             is_favorite=is_fav,
             schema_columns=columns,
             row_count=table.row_count,
@@ -934,6 +954,12 @@ class CatalogService:
             readers = self.repo.list_readers_for_table(table.id)
             read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
+            fe = table_exists(table.file_path) if table.file_path else False
+            if not fe:
+                logger.warning(
+                "Catalog table %s (id=%d) references missing file: %s",
+                table.name, table.id, table.file_path,
+            )
             result.append(
                 CatalogTableOut(
                     id=table.id,
@@ -941,7 +967,7 @@ class CatalogService:
                     namespace_id=table.namespace_id,
                     description=table.description,
                     owner_id=table.owner_id,
-                    file_exists=table_exists(table.file_path) if table.file_path else False,
+                    file_exists=fe,
                     is_favorite=table.id in fav_ids,
                     schema_columns=columns,
                     row_count=table.row_count,
@@ -1978,3 +2004,131 @@ class CatalogService:
             favorite_tables=fav_tables,
             active_runs=active_runs,
         )
+
+    # ------------------------------------------------------------------ #
+    # SQL Query
+    # ------------------------------------------------------------------ #
+
+    def resolve_all_delta_tables(self) -> dict[str, str]:
+        """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
+        tables = self.repo.list_tables()
+        return {
+            table.name: Path(table.file_path).name
+            for table in tables
+            if is_delta_table(Path(table.file_path))
+        }
+
+    def execute_sql_query(self, query: str, max_rows: int = 10_000) -> SqlQueryResult:
+        """Execute a SQL query against all Delta catalog tables via the worker."""
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+            UnsafeSQLError,
+            validate_sql_query,
+        )
+
+        try:
+            validate_sql_query(query)
+        except UnsafeSQLError as e:
+            return SqlQueryResult(error=str(e))
+
+        table_map = self.resolve_all_delta_tables()
+        if not table_map:
+            return SqlQueryResult(error="No Delta catalog tables available")
+
+        try:
+            result = trigger_sql_query(query, table_map, max_rows)
+            return SqlQueryResult(**result)
+        except RuntimeError as e:
+            return SqlQueryResult(error=str(e))
+
+    def save_sql_query_as_flow(
+        self,
+        query: str,
+        name: str,
+        owner_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        used_tables: list[str] | None = None,
+    ) -> int:
+        """Create a registered flow from a SQL query.
+
+        Builds a flow YAML with catalog_reader nodes (one per used table)
+        connected to a single sql_query node, saves it, and registers it.
+
+        Returns the registration ID.
+        """
+        import json
+
+        from flowfile_core.flowfile.utils import create_unique_id
+
+        used_tables = used_tables or []
+        flow_id = create_unique_id()
+
+        # Build nodes
+        nodes = []
+        reader_node_ids = []
+
+        for i, table_name in enumerate(used_tables):
+            table = self.repo.get_table_by_name(table_name)
+            if table is None:
+                continue
+            node_id = i + 1
+            reader_node_ids.append(node_id)
+            nodes.append({
+                "id": node_id,
+                "type": "catalog_reader",
+                "is_start_node": True,
+                "x_position": 100,
+                "y_position": 100 + i * 150,
+                "input_ids": [],
+                "outputs": [len(used_tables) + 1],
+                "setting_input": {
+                    "catalog_table_id": table.id,
+                    "catalog_table_name": table.name,
+                },
+            })
+
+        # SQL query node
+        sql_node_id = len(used_tables) + 1
+        nodes.append({
+            "id": sql_node_id,
+            "type": "sql_query",
+            "is_start_node": len(reader_node_ids) == 0,
+            "x_position": 400,
+            "y_position": 200,
+            "input_ids": reader_node_ids,
+            "outputs": [],
+            "setting_input": {
+                "sql_query_input": {"sql_code": query},
+            },
+        })
+
+        flow_data = {
+            "flowfile_version": "0.6.3",
+            "flowfile_id": flow_id,
+            "flowfile_name": name,
+            "flowfile_settings": {
+                "flow_id": flow_id,
+                "name": name,
+                "description": description or "",
+                "execution_mode": "Performance",
+            },
+            "nodes": nodes,
+        }
+
+        # Save flow file
+        from shared.storage_config import storage
+
+        flows_dir = storage.user_data_directory / "flows"
+        flows_dir.mkdir(parents=True, exist_ok=True)
+        flow_path = flows_dir / f"{name.replace(' ', '_')}_{flow_id}.json"
+        flow_path.write_text(json.dumps(flow_data, indent=2), encoding="utf-8")
+
+        # Register in catalog
+        flow = self.register_flow(
+            name=name,
+            flow_path=str(flow_path),
+            owner_id=owner_id,
+            namespace_id=namespace_id,
+            description=description,
+        )
+        return flow.id
