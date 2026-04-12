@@ -33,7 +33,10 @@
       <el-button @click="loadTemplates">Retry</el-button>
     </div>
 
-    <div v-else-if="filteredTemplates.length === 0 && selectedCategory !== 'All'" class="templates-view__empty">
+    <div
+      v-else-if="filteredTemplates.length === 0 && selectedCategory !== 'All'"
+      class="templates-view__empty"
+    >
       <p>No {{ selectedCategory }} templates found.</p>
     </div>
 

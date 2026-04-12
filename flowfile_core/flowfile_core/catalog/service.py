@@ -1985,15 +1985,10 @@ class CatalogService:
     # SQL Query
     # ------------------------------------------------------------------ #
 
-    def resolve_all_delta_table_paths(self) -> dict[str, str]:
-        """Build a {name: file_path} mapping for all Delta catalog tables."""
+    def resolve_all_delta_table_names(self) -> list[str]:
+        """Return names of all Delta catalog tables."""
         tables = self.repo.list_tables()
-        result: dict[str, str] = {}
-        for table in tables:
-            path = Path(table.file_path)
-            if is_delta_table(path):
-                result[table.name] = table.file_path
-        return result
+        return [table.name for table in tables if is_delta_table(Path(table.file_path))]
 
     def execute_sql_query(self, query: str, max_rows: int = 10_000) -> SqlQueryResult:
         """Execute a SQL query against all Delta catalog tables via the worker."""
@@ -2007,12 +2002,12 @@ class CatalogService:
         except UnsafeSQLError as e:
             return SqlQueryResult(error=str(e))
 
-        tables = self.resolve_all_delta_table_paths()
-        if not tables:
+        table_names = self.resolve_all_delta_table_names()
+        if not table_names:
             return SqlQueryResult(error="No Delta catalog tables available")
 
         try:
-            result = trigger_sql_query(query, tables, max_rows)
+            result = trigger_sql_query(query, table_names, max_rows)
             return SqlQueryResult(**result)
         except RuntimeError as e:
             return SqlQueryResult(error=str(e))

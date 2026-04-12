@@ -10,6 +10,7 @@ import VueGraphicWalker from "../../components/nodes/node-types/elements/explore
 import type {
   IMutField,
   IRow,
+  ISemanticType,
 } from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/interfaces";
 import type { SqlQueryResult } from "../../types";
 
@@ -17,7 +18,7 @@ const props = defineProps<{
   result: SqlQueryResult;
 }>();
 
-function getSemanticType(dtype: string): string {
+function getSemanticType(dtype: string): ISemanticType {
   const d = dtype.toLowerCase();
   if (
     d.includes("utf8") ||

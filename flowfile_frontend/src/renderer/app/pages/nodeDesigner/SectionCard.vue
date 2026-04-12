@@ -59,7 +59,7 @@
 import type { DesignerSection } from "./types";
 import { getComponentIcon } from "./constants";
 
-const props = defineProps<{
+defineProps<{
   section: DesignerSection;
   isSelected: boolean;
   selectedComponentIndex: number | null;

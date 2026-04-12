@@ -36,22 +36,8 @@
 
     <!-- Results Section -->
     <div v-if="result || error" class="sql-results-section">
-      <!-- Result Tabs -->
-      <div class="result-tabs">
-        <button
-          class="result-tab"
-          :class="{ active: resultTab === 'grid' }"
-          @click="resultTab = 'grid'"
-        >
-          <i class="fa-solid fa-table"></i> Results
-        </button>
-        <button
-          class="result-tab"
-          :class="{ active: resultTab === 'explore' }"
-          @click="resultTab = 'explore'"
-        >
-          <i class="fa-solid fa-chart-bar"></i> Explore
-        </button>
+      <!-- Result Info -->
+      <div class="result-header">
         <span v-if="result && !result.error" class="result-info">
           {{ result.total_rows.toLocaleString() }} rows
           <span v-if="result.truncated"> (showing {{ result.rows.length.toLocaleString() }})</span>
@@ -68,13 +54,8 @@
         {{ error || result?.error }}
       </div>
 
-      <!-- Grid results -->
-      <div v-else-if="resultTab === 'grid'" class="result-content">
-        <SqlResultsGrid :result="result!" />
-      </div>
-
       <!-- Explore results -->
-      <div v-else-if="resultTab === 'explore'" class="result-content">
+      <div v-else class="result-content">
         <SqlExplorePanel :result="result!" />
       </div>
     </div>
@@ -115,7 +96,6 @@ import { sql } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
-import SqlResultsGrid from "./SqlResultsGrid.vue";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
 import type { SqlQueryResult } from "../../types";
 
@@ -139,7 +119,6 @@ watch(
 const executing = ref(false);
 const result = ref<SqlQueryResult | null>(null);
 const error = ref<string | null>(null);
-const resultTab = ref<"grid" | "explore">("grid");
 const editorView = ref<EditorView | null>(null);
 
 // Query history (localStorage)
@@ -284,37 +263,15 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.result-tabs {
+.result-header {
   display: flex;
   align-items: center;
-  gap: 4px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--color-border-light, #e4e7ed);
   background: var(--color-background-secondary, #f5f7fa);
 }
 
-.result-tab {
-  padding: 4px 10px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--color-text-secondary, #606266);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.result-tab.active {
-  background: var(--color-primary-light, #ecf5ff);
-  color: var(--color-primary, #409eff);
-  font-weight: 600;
-}
-
-.result-tab:hover:not(.active) {
-  background: var(--color-background-hover, #f0f0f0);
-}
-
 .result-info {
-  margin-left: auto;
   font-size: 12px;
   color: var(--color-text-secondary, #909399);
 }
