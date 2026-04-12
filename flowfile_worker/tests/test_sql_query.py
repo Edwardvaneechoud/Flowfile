@@ -1,35 +1,46 @@
 """Tests for the SQL query execution in the worker."""
 
-import tempfile
 from pathlib import Path
 
 import polars as pl
 import pytest
 
 from flowfile_worker.funcs import execute_sql_query
+from shared.storage_config import storage
+
+
+@pytest.fixture(autouse=True)
+def _setup_storage(tmp_path: Path):
+    """Point storage at tmp_path so catalog_tables_directory is inside tmp_path."""
+    old_base, old_user = storage._base_dir, storage._user_data_dir
+    storage._base_dir = tmp_path
+    storage._user_data_dir = tmp_path
+    storage.catalog_tables_directory.mkdir(parents=True, exist_ok=True)
+    yield
+    storage._base_dir = old_base
+    storage._user_data_dir = old_user
 
 
 @pytest.fixture
-def delta_tables(tmp_path):
-    """Create two temporary Delta tables for testing."""
-    t1_path = tmp_path / "customers"
-    t2_path = tmp_path / "orders"
+def delta_tables():
+    """Create two Delta tables inside the catalog directory."""
+    catalog_dir = storage.catalog_tables_directory
 
     df1 = pl.DataFrame({
         "id": [1, 2, 3],
         "name": ["Alice", "Bob", "Charlie"],
         "city": ["NYC", "LA", "NYC"],
     })
-    df1.write_delta(str(t1_path))
+    df1.write_delta(str(catalog_dir / "customers"))
 
     df2 = pl.DataFrame({
         "order_id": [10, 20, 30, 40],
         "customer_id": [1, 2, 1, 3],
         "amount": [100.0, 200.0, 150.0, 300.0],
     })
-    df2.write_delta(str(t2_path))
+    df2.write_delta(str(catalog_dir / "orders"))
 
-    return {"customers": str(t1_path), "orders": str(t2_path)}
+    return ["customers", "orders"]
 
 
 def test_simple_select(delta_tables):
@@ -82,15 +93,6 @@ def test_invalid_sql(delta_tables):
     """Test that invalid SQL raises an exception."""
     with pytest.raises(Exception):
         execute_sql_query("THIS IS NOT SQL", delta_tables)
-
-
-def test_non_delta_path_rejected(tmp_path):
-    """Test that a non-Delta path is rejected."""
-    bad_path = tmp_path / "not_delta"
-    bad_path.mkdir()
-
-    with pytest.raises(ValueError, match="not a valid Delta table"):
-        execute_sql_query("SELECT 1", {"bad": str(bad_path)})
 
 
 def test_used_tables_only_referenced(delta_tables):
