@@ -179,12 +179,12 @@ def trigger_catalog_materialize(
 
 def trigger_sql_query(
     query: str,
-    tables: list[str],
+    tables: dict[str, str],
     max_rows: int = 10_000,
 ) -> dict:
     """Ask the worker to execute a SQL query against Delta catalog tables.
 
-    *tables* is a list of table names (paths are resolved by the worker).
+    *tables* is a mapping of table name -> file path.
     Returns the parsed JSON response dict.
     """
     payload = {"query": query, "tables": tables, "max_rows": max_rows}
