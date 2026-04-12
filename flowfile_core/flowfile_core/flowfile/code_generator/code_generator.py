@@ -1264,7 +1264,7 @@ class FlowGraphCodeConverter:
         self._add_code(f'{var_name} = ff.read_catalog_sql("""')
         for line in sql_code.split("\n"):
             self._add_code(line)
-        self._add_code(f'""")')
+        self._add_code('""")')
         self._add_code("")
 
     def _handle_catalog_writer(
