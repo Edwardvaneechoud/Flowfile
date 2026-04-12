@@ -697,5 +697,4 @@ const totalFlows = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 </style>

@@ -3,18 +3,10 @@
     <div class="main-part">
       <!-- Mode toggle -->
       <div class="mode-toggle">
-        <button
-          class="mode-btn"
-          :class="{ active: mode === 'table' }"
-          @click="switchMode('table')"
-        >
+        <button class="mode-btn" :class="{ active: mode === 'table' }" @click="switchMode('table')">
           <i class="fa-solid fa-table"></i> Table
         </button>
-        <button
-          class="mode-btn"
-          :class="{ active: mode === 'sql' }"
-          @click="switchMode('sql')"
-        >
+        <button class="mode-btn" :class="{ active: mode === 'sql' }" @click="switchMode('sql')">
           <i class="fa-solid fa-code"></i> SQL
         </button>
       </div>
@@ -82,7 +74,11 @@
           <div v-if="selectedTableMeta.schema_columns.length > 0" class="schema-preview">
             <label class="catalog-label">Schema</label>
             <div class="schema-list">
-              <div v-for="col in selectedTableMeta.schema_columns" :key="col.name" class="schema-col">
+              <div
+                v-for="col in selectedTableMeta.schema_columns"
+                :key="col.name"
+                class="schema-col"
+              >
                 <span class="col-name">{{ col.name }}</span>
                 <span class="col-type">{{ col.dtype }}</span>
               </div>
@@ -174,7 +170,10 @@ const tableSchema = computed(() => {
   return schema;
 });
 
-const extensions = computed(() => [sql({ schema: tableSchema.value, upperCaseKeywords: true }), oneDark]);
+const extensions = computed(() => [
+  sql({ schema: tableSchema.value, upperCaseKeywords: true }),
+  oneDark,
+]);
 
 const filteredTables = computed(() => {
   if (nodeData.value?.catalog_namespace_id == null) return allTables.value;

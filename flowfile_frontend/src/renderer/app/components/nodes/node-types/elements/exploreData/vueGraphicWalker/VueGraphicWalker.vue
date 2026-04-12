@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, defineProps, defineExpose, toRaw } from "v
 
 // Types only - these don't add to bundle size
 import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/dist/interfaces";
+import { ISegmentKey } from "@kanaries/graphic-walker/dist/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/dist/store/visualSpecStore";
 
 interface VueGWProps {
@@ -89,7 +90,7 @@ onMounted(async () => {
       const checkStore = setInterval(() => {
         const store = internalStoreRef.value?.current;
         if (store && typeof store.setSegmentKey === "function") {
-          store.setSegmentKey(tab);
+          store.setSegmentKey(tab as ISegmentKey);
           clearInterval(checkStore);
         }
       }, 50);
