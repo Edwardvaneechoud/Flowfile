@@ -167,9 +167,6 @@
               class="fa-solid fa-triangle-exclamation missing-icon"
               title="Table data file not found on disk"
             ></i>
-            <span v-if="table.file_exists !== false && table.row_count !== null" class="table-rows">
-              {{ formatRowCount(table.row_count) }} rows
-            </span>
             <div class="flow-actions" @click.stop>
               <button
                 class="action-btn star-btn"
@@ -231,13 +228,6 @@ defineEmits([
   "deleteTable",
   "deleteFlow",
 ]);
-
-function formatRowCount(n: number | null): string {
-  if (n === null) return "0";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
   if (node.flows.some((f) => f.id === flowId)) return true;
@@ -708,14 +698,4 @@ const totalFlows = computed(() => {
   text-overflow: ellipsis;
 }
 
-.table-rows {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  background: var(--color-background-tertiary);
-  padding: 0 5px;
-  border-radius: var(--border-radius-sm);
-  line-height: 18px;
-  flex-shrink: 0;
-  font-family: var(--font-family-mono);
-}
 </style>

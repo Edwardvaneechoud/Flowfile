@@ -763,6 +763,7 @@ export interface NodeCatalogReader extends NodeBase {
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
+  sql_query: string | null;
 }
 
 export interface NodeInputData extends NodeBase {

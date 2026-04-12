@@ -1229,6 +1229,11 @@ class FlowGraphCodeConverter:
         self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
         self.imports.add("import flowfile as ff")
+
+        if settings.sql_query:
+            self._handle_catalog_sql_reader(settings, var_name)
+            return
+
         table_name = settings.catalog_table_name
         table_id = settings.catalog_table_id
 
@@ -1249,6 +1254,17 @@ class FlowGraphCodeConverter:
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
         self._add_code(f"){suffix}")
+        self._add_code("")
+
+    def _handle_catalog_sql_reader(
+        self, settings: input_schema.NodeCatalogReader, var_name: str
+    ) -> None:
+        sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
+        self._add_code("# SQL query against catalog tables")
+        self._add_code(f'{var_name} = ff.read_catalog_sql("""')
+        for line in sql_code.split("\n"):
+            self._add_code(line)
+        self._add_code(f'""")')
         self._add_code("")
 
     def _handle_catalog_writer(
@@ -1687,14 +1703,14 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Catalog Reader is not supported for standalone Polars code. Use FlowFrame export."""
-        self.unsupported_nodes.append(
-            (
-                settings.node_id,
-                "catalog_reader",
-                "Catalog Reader requires a FlowFrame and is not supported by Polars code generation. "
-                "Please use FlowFrame code generation instead.",
-            )
+        msg = (
+            "Catalog SQL Reader requires FlowFrame code generation. "
+            "Please use FlowFrame code generation instead."
+            if settings.sql_query
+            else "Catalog Reader requires a FlowFrame and is not supported by Polars code generation. "
+            "Please use FlowFrame code generation instead."
         )
+        self.unsupported_nodes.append((settings.node_id, "catalog_reader", msg))
 
     def _handle_catalog_writer(
         self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]

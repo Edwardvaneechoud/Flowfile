@@ -2063,9 +2063,70 @@ class FlowGraph:
         """Adds a node that reads a table from the catalog.
 
         Resolves the catalog table by ID (or name + namespace) and reads
-        the materialized Parquet file.
+        the materialized Parquet file.  When ``sql_query`` is set, executes
+        the SQL against all catalog Delta tables instead.
         """
 
+        if node_catalog_reader.sql_query:
+            self._add_catalog_sql_reader(node_catalog_reader)
+        else:
+            self._add_catalog_table_reader(node_catalog_reader)
+
+    def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
+        """Execute a SQL query against all catalog Delta tables."""
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
+
+        sql_code = node_catalog_reader.sql_query
+
+        # Resolve all catalog Delta tables
+        table_paths: dict[str, str] = {}
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                seen_names: set[str] = set()
+                for t in repo.list_tables():
+                    if is_delta_table(Path(t.file_path)):
+                        if t.name in seen_names:
+                            logger.warning(
+                                "Duplicate table name %r in catalog SQL context for node %s; "
+                                "later entry will overwrite the earlier one",
+                                t.name,
+                                node_catalog_reader.node_id,
+                            )
+                        seen_names.add(t.name)
+                        table_paths[t.name] = t.file_path
+        except Exception:
+            logger.warning(
+                "Could not resolve catalog tables for SQL node %s",
+                node_catalog_reader.node_id,
+                exc_info=True,
+            )
+
+        def _func() -> FlowDataEngine:
+            if not table_paths:
+                raise ValueError("No Delta catalog tables available to query")
+            ctx = pl.SQLContext()
+            for name, path in table_paths.items():
+                ctx.register(name, pl.scan_delta(path))
+            return FlowDataEngine(ctx.execute(sql_code))
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+        )
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
+
+        try:
+            validate_sql_query(sql_code)
+        except Exception as e:
+            node.results.errors = str(e)
+
+    def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
+        """Read a single table from the catalog (original behavior)."""
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None
         try:

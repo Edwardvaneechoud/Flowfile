@@ -64,7 +64,7 @@
     <div v-else class="sql-empty-state">
       <i class="fa-solid fa-database empty-icon"></i>
       <h3>SQL Editor</h3>
-      <p>Write SQL queries against your catalog Delta tables. Press Ctrl+Enter to run.</p>
+      <p>Write SQL queries against your catalog tables. Press Ctrl+Enter to run.</p>
     </div>
 
     <!-- Query History -->
