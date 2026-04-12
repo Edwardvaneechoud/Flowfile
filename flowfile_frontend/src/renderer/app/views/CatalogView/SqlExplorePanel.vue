@@ -1,6 +1,6 @@
 <template>
   <div class="sql-explore-panel">
-    <VueGraphicWalker :data="gwData" :fields="gwFields" />
+    <VueGraphicWalker :data="gwData" :fields="gwFields" default-tab="data" />
   </div>
 </template>
 

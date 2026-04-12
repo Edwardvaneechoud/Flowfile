@@ -207,7 +207,7 @@ class DeltaVersionPreviewResponse(BaseModel):
 
 class SqlQueryRequest(BaseModel):
     query: str
-    tables: dict[str, str]  # mapping of table name -> file path
+    tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
 
 

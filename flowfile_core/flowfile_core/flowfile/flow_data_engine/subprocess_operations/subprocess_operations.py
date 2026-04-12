@@ -184,7 +184,7 @@ def trigger_sql_query(
 ) -> dict:
     """Ask the worker to execute a SQL query against Delta catalog tables.
 
-    *tables* is a mapping of table name -> file path.
+    *tables* is a mapping of logical table name -> directory name.
     Returns the parsed JSON response dict.
     """
     payload = {"query": query, "tables": tables, "max_rows": max_rows}

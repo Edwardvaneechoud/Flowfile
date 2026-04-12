@@ -2010,9 +2010,13 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of table name -> file path for all Delta catalog tables."""
+        """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
         tables = self.repo.list_tables()
-        return {table.name: table.file_path for table in tables if is_delta_table(Path(table.file_path))}
+        return {
+            table.name: Path(table.file_path).name
+            for table in tables
+            if is_delta_table(Path(table.file_path))
+        }
 
     def execute_sql_query(self, query: str, max_rows: int = 10_000) -> SqlQueryResult:
         """Execute a SQL query against all Delta catalog tables via the worker."""

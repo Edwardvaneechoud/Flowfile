@@ -623,8 +623,10 @@ def materialize_catalog_table_task(
 def execute_sql_query(query: str, tables: dict[str, str], max_rows: int = 10_000) -> dict:
     """Execute a SQL query against Delta catalog tables using pl.SQLContext.
 
-    *tables* is a mapping of table name -> file path.  Only tables actually
-    referenced in the query plan are reported in *used_tables*.
+    *tables* is a mapping of logical table name -> directory name.  The
+    directory name is resolved under the catalog tables directory using
+    ``_validate_catalog_path``.  Only tables actually referenced in the
+    query plan are reported in *used_tables*.
 
     Returns a dict matching the SqlQueryResponse schema.
     """
@@ -636,8 +638,8 @@ def execute_sql_query(query: str, tables: dict[str, str], max_rows: int = 10_000
     ctx = pl.SQLContext()
     registered_names: list[str] = []
 
-    for name, file_path in tables.items():
-        p = Path(file_path)
+    for name, dir_name in tables.items():
+        p = _validate_catalog_path(dir_name)
         if not p.is_dir() or not (p / "_delta_log").is_dir():
             raise ValueError(f"Table '{name}' is not a valid Delta table")
         ctx.register(name, pl.scan_delta(str(p)))
