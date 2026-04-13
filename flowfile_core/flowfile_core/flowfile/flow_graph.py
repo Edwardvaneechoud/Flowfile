@@ -2076,6 +2076,7 @@ class FlowGraph:
         """Execute a SQL query against all catalog tables (physical + virtual)."""
         import io as _io
 
+
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
 
         sql_code = node_catalog_reader.sql_query
@@ -2142,6 +2143,7 @@ class FlowGraph:
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
         """Read a single table from the catalog (physical or virtual)."""
         import io as _io
+
 
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None

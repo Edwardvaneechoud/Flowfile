@@ -663,6 +663,7 @@ def execute_sql_query(
             ctx.register(name, lf)
             registered_names.append(name)
 
+
     result_lf = ctx.execute(query)
 
     # Determine which registered tables were actually used via the query plan

@@ -946,6 +946,7 @@ class CatalogService:
                 producer.flow_path if producer else None
             )
 
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
@@ -988,6 +989,7 @@ class CatalogService:
             read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
             fe = self._check_file_exists(table)
+
 
             result.append(
                 CatalogTableOut(
@@ -2234,6 +2236,7 @@ class CatalogService:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
         import base64
         import io
+
 
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
