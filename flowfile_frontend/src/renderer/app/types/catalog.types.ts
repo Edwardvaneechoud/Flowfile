@@ -296,6 +296,7 @@ export interface CatalogStats {
   total_table_favorites: number;
   total_artifacts: number;
   total_tables: number;
+  total_virtual_tables: number;
   total_schedules: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];

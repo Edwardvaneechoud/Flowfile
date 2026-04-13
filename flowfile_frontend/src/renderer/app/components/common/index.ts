@@ -4,6 +4,8 @@ export { default as DraggableItem } from "./DraggableItem/DraggableItem.vue";
 export { default as LayoutControls } from "./DraggableItem/layoutControls.vue";
 export { default as ContextMenu } from "./ContextMenu/ContextMenu.vue";
 
+export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";
+
 // Re-export types and utilities
 export * from "./DraggableItem/stateStore";
 export * from "./FileBrowser/types";

@@ -167,6 +167,12 @@
             ></i>
             <i v-else class="fa-solid fa-table table-icon"></i>
             <span class="table-name">{{ table.name }}</span>
+            <span
+              v-if="table.table_type === 'virtual'"
+              class="table-virtual-badge"
+              title="Virtual Flow Table"
+              >virtual</span
+            >
             <i
               v-if="table.table_type !== 'virtual' && table.file_exists === false"
               class="fa-solid fa-triangle-exclamation missing-icon"
@@ -696,6 +702,17 @@ const totalFlows = computed(() => {
 
 .tree-table .virtual-icon {
   color: var(--el-color-primary, var(--color-primary));
+}
+
+.table-virtual-badge {
+  font-size: 10px;
+  color: var(--el-color-primary, var(--color-primary));
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 16px;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
 }
 
 .tree-table .table-name {

@@ -1057,12 +1057,12 @@ class CatalogService:
         for table in tables:
             columns = self._parse_schema_columns(table)
             source_registration_name = self._resolve_flow_name(table.source_registration_id)
+            producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
 
             readers = self.repo.list_readers_for_table(table.id)
             read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
             fe = self._check_file_exists(table)
-
 
             result.append(
                 CatalogTableOut(
@@ -1081,6 +1081,10 @@ class CatalogService:
                     source_registration_name=source_registration_name,
                     source_run_id=table.source_run_id,
                     read_by_flows=read_by_flows,
+                    table_type=getattr(table, "table_type", "physical"),
+                    producer_registration_id=table.producer_registration_id,
+                    producer_registration_name=producer_registration_name,
+                    is_optimized=getattr(table, "is_optimized", None),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -1840,6 +1844,9 @@ class CatalogService:
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+
+        if not table.file_path:
+            return DeltaTableHistory(current_version=0, history=[])
 
         data_path = Path(table.file_path)
         if not is_delta_table(data_path):

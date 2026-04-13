@@ -332,6 +332,18 @@
         </div>
         <div class="info-card">
           <div class="info-card-header">
+            <i class="fa-solid fa-bolt"></i>
+            <h4>Virtual Flow Tables</h4>
+          </div>
+          <p>
+            Virtual flow tables do not store data on disk. When queried, they execute a registered
+            flow on-demand to produce results. They appear with a
+            <strong>bolt</strong> icon and a <strong>virtual</strong> badge in the catalog tree.
+            Optimized virtual tables can push query predicates into the flow for faster execution.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
             <i class="fa-solid fa-calendar-days"></i>
             <h4>Schedules</h4>
           </div>
