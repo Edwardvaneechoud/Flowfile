@@ -38,6 +38,11 @@
                 <i class="fa-solid fa-table"></i>
               </button>
             </el-tooltip>
+            <el-tooltip content="Create virtual table" placement="bottom" :show-after="400">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateVirtualTable = true">
+                <i class="fa-solid fa-bolt"></i>
+              </button>
+            </el-tooltip>
             <el-tooltip content="Register flow" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="openRegisterFlowGlobal">
                 <i class="fa-solid fa-file-circle-plus"></i>
@@ -261,6 +266,13 @@
       @close="showRegisterTable = false"
     />
 
+    <CreateVirtualTableModal
+      :visible="showCreateVirtualTable"
+      :namespace-id="registerTableNamespaceId"
+      :default-namespace-id="defaultNamespaceId"
+      @close="showCreateVirtualTable = false"
+    />
+
     <CreateScheduleModal
       :visible="showCreateSchedule"
       :flows="catalogStore.allFlows"
@@ -356,6 +368,7 @@ import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
+import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import type {
   CatalogTab,
@@ -419,6 +432,7 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+const showCreateVirtualTable = ref(false);
 const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
 

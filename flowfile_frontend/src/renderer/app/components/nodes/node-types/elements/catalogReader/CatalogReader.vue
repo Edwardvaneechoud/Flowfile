@@ -45,7 +45,16 @@
               :key="table.id"
               :label="table.name"
               :value="table.id"
-            />
+            >
+              <i
+                :class="
+                  table.table_type === 'virtual'
+                    ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
+                    : 'fa-solid fa-table catalog-option-icon'
+                "
+              ></i>
+              {{ table.name }}
+            </el-option>
           </el-select>
         </div>
 
@@ -310,7 +319,9 @@ async function loadCatalogData() {
         });
       }
     }
-    allTables.value = collectTablesFromTree(tree).filter((t) => t.file_exists);
+    allTables.value = collectTablesFromTree(tree).filter(
+      (t) => t.file_exists || t.table_type === "virtual",
+    );
   } catch {
     // Catalog not available
   }
@@ -378,6 +389,16 @@ defineExpose({
 </script>
 
 <style scoped>
+.catalog-option-icon {
+  margin-right: 6px;
+  font-size: 12px;
+  color: var(--color-success);
+}
+
+.virtual-option-icon {
+  color: var(--el-color-primary, var(--color-primary));
+}
+
 .main-part {
   display: flex;
   flex-direction: column;

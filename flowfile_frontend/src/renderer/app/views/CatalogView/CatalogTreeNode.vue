@@ -156,14 +156,19 @@
             class="tree-table"
             :class="{
               selected: selectedTableId === table.id,
-              'file-missing': table.file_exists === false,
+              'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
             }"
             @click.stop="$emit('selectTable', table.id)"
           >
-            <i class="fa-solid fa-table table-icon"></i>
+            <i
+              v-if="table.table_type === 'virtual'"
+              class="fa-solid fa-bolt table-icon virtual-icon"
+              title="Virtual Flow Table"
+            ></i>
+            <i v-else class="fa-solid fa-table table-icon"></i>
             <span class="table-name">{{ table.name }}</span>
             <i
-              v-if="table.file_exists === false"
+              v-if="table.table_type !== 'virtual' && table.file_exists === false"
               class="fa-solid fa-triangle-exclamation missing-icon"
               title="Table data file not found on disk"
             ></i>
@@ -687,6 +692,10 @@ const totalFlows = computed(() => {
   color: var(--color-success);
   font-size: var(--font-size-sm);
   flex-shrink: 0;
+}
+
+.tree-table .virtual-icon {
+  color: var(--el-color-primary, var(--color-primary));
 }
 
 .tree-table .table-name {

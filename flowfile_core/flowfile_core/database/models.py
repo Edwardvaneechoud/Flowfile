@@ -1,6 +1,6 @@
 from typing import Literal
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -312,7 +312,7 @@ class GlobalArtifact(Base):
 # ==================== Catalog Tables ====================
 
 
-class CatalogTable(Base):
+class CatalogTable(Base):  # TODO: Should have a pydantic implementation as well as an interface
     """A materialized data table registered in the catalog.
 
     When a user registers a table, its data is materialized as a Delta table
@@ -328,8 +328,9 @@ class CatalogTable(Base):
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Storage: path to the materialized table (Delta directory or legacy Parquet file)
-    file_path = Column(String, nullable=False)
+    # Storage: path to the materialized table (Delta directory or legacy Parquet file).
+    # Nullable for optimized virtual tables that have no physical storage.
+    file_path = Column(String, nullable=True)
     storage_format = Column(String, nullable=False, default="delta")  # "delta" or "parquet"
 
     # Schema metadata (JSON array of {name, dtype} objects)
@@ -341,6 +342,12 @@ class CatalogTable(Base):
     # Lineage: which flow produced this table
     source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
+
+    # Virtual Flow Table fields (NULL for physical tables)
+    table_type = Column(String, nullable=False, default="physical", server_default="physical")
+    producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    serialized_lazy_frame = Column(LargeBinary, nullable=True)  #  TODO Should be hashed
+    is_optimized = Column(Boolean, nullable=True, default=False)
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)

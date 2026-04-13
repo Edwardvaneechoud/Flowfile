@@ -98,9 +98,16 @@
           class="item-row clickable"
           @click="$emit('viewTable', table.id)"
         >
-          <i class="fa-solid fa-table item-icon"></i>
+          <i
+            :class="
+              table.table_type === 'virtual'
+                ? 'fa-solid fa-bolt item-icon virtual-item-icon'
+                : 'fa-solid fa-table item-icon'
+            "
+          ></i>
           <span class="item-name">{{ table.name }}</span>
-          <span class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
+          <span v-if="table.table_type === 'virtual'" class="item-meta">virtual</span>
+          <span v-else class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
         </div>
       </div>
     </div>
@@ -429,6 +436,10 @@ function toggleSection(section: Section) {
   width: 16px;
   text-align: center;
   flex-shrink: 0;
+}
+
+.virtual-item-icon {
+  color: var(--el-color-primary, var(--color-primary));
 }
 
 .item-icon.fav {

@@ -7,7 +7,9 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
+import io
 
+import polars as pl
 import json
 import logging
 import os
@@ -876,24 +878,57 @@ class CatalogService:
     # Catalog table operations
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _parse_schema_columns(table: CatalogTable) -> list[ColumnSchema]:
+        """Parse the JSON-encoded column schema from a catalog table."""
+        if not table.schema_json:
+            return []
+        try:
+            raw = json.loads(table.schema_json)
+            return [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return []
+
+    def _resolve_flow_name(self, registration_id: int | None) -> str | None:
+        """Look up a flow registration name by id, returning None when absent."""
+        if not registration_id:
+            return None
+        reg = self.repo.get_flow(registration_id)
+        return reg.name if reg else None
+
+    def _check_file_exists(self, table: CatalogTable) -> bool:
+        """Determine whether the backing data for a table is available."""
+        is_virtual = getattr(table, "table_type", "physical") == "virtual"
+        if is_virtual:
+            return True
+        fe = table_exists(table.file_path) if table.file_path else False
+        if not fe:
+            logger.warning(
+                "Catalog table %s (id=%d) references missing file: %s",
+                table.name, table.id, table.file_path,
+            )
+        return fe
+
+    @staticmethod
+    def _compute_laziness_blockers(producer_file_path: str | None) -> list[str] | None:
+        """Compute laziness blockers for a virtual table from its producer flow."""
+        if not producer_file_path:
+            return None
+        try:
+            from flowfile_core.flowfile.flow_graph import FlowGraph
+
+            fg = FlowGraph.load_from_file(producer_file_path)
+            _, reasons = fg.check_flow_laziness()
+            return reasons
+        except Exception:
+            return None
+
     def _table_to_out(self, table: CatalogTable, user_id: int | None = None) -> CatalogTableOut:
         """Convert a CatalogTable ORM instance to its Pydantic output schema."""
-        columns: list[ColumnSchema] = []
-        if table.schema_json:
-            try:
-                raw = json.loads(table.schema_json)
-                columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
+        columns = self._parse_schema_columns(table)
+        source_registration_name = self._resolve_flow_name(table.source_registration_id)
+        producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
 
-        # Resolve source flow name if linked
-        source_registration_name: str | None = None
-        if table.source_registration_id:
-            reg = self.repo.get_flow(table.source_registration_id)
-            if reg is not None:
-                source_registration_name = reg.name
-
-        # Resolve flows that read from this table
         readers = self.repo.list_readers_for_table(table.id)
         read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
@@ -901,12 +936,16 @@ class CatalogService:
         if user_id is not None:
             is_fav = self.repo.get_table_favorite(user_id, table.id) is not None
 
-        fe = table_exists(table.file_path) if table.file_path else False
-        if not fe:
-            logger.warning(
-                "Catalog table %s (id=%d) references missing file: %s",
-                table.name, table.id, table.file_path,
+        fe = self._check_file_exists(table)
+
+        is_virtual = getattr(table, "table_type", "physical") == "virtual"
+        laziness_blockers: list[str] | None = None
+        if is_virtual and table.producer_registration_id:
+            producer = self.repo.get_flow(table.producer_registration_id)
+            laziness_blockers = self._compute_laziness_blockers(
+                producer.flow_path if producer else None
             )
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
@@ -923,6 +962,11 @@ class CatalogService:
             source_registration_name=source_registration_name,
             source_run_id=table.source_run_id,
             read_by_flows=read_by_flows,
+            table_type=getattr(table, "table_type", "physical"),
+            producer_registration_id=table.producer_registration_id,
+            producer_registration_name=producer_registration_name,
+            is_optimized=getattr(table, "is_optimized", None),
+            laziness_blockers=laziness_blockers,
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -937,29 +981,14 @@ class CatalogService:
 
         result: list[CatalogTableOut] = []
         for table in tables:
-            columns: list[ColumnSchema] = []
-            if table.schema_json:
-                try:
-                    raw = json.loads(table.schema_json)
-                    columns = [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
-
-            source_registration_name: str | None = None
-            if table.source_registration_id:
-                reg = self.repo.get_flow(table.source_registration_id)
-                if reg is not None:
-                    source_registration_name = reg.name
+            columns = self._parse_schema_columns(table)
+            source_registration_name = self._resolve_flow_name(table.source_registration_id)
 
             readers = self.repo.list_readers_for_table(table.id)
             read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
 
-            fe = table_exists(table.file_path) if table.file_path else False
-            if not fe:
-                logger.warning(
-                "Catalog table %s (id=%d) references missing file: %s",
-                table.name, table.id, table.file_path,
-            )
+            fe = self._check_file_exists(table)
+
             result.append(
                 CatalogTableOut(
                     id=table.id,
@@ -1462,6 +1491,9 @@ class CatalogService:
     def delete_table(self, table_id: int) -> None:
         """Delete a catalog table and its materialized storage (Delta dir or Parquet file).
 
+        Virtual tables have no physical storage for the optimized case, so
+        only metadata is removed.
+
         Raises
         ------
         TableNotFoundError
@@ -1474,14 +1506,164 @@ class CatalogService:
         file_path = table.file_path
         self.repo.delete_table(table_id)
 
-        try:
-            storage_path = Path(file_path)
-            if storage_path.exists():
-                delete_table_storage(storage_path)
-        except OSError:
-            logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
+        # Only clean up physical storage for non-virtual tables that have a file_path
+        if file_path:
+            try:
+                storage_path = Path(file_path)
+                if storage_path.exists():
+                    delete_table_storage(storage_path)
+            except OSError:
+                logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
 
-    def get_table_preview(self, table_id: int, limit: int = 100, version: int | None = None) -> CatalogTablePreview:
+    # ------------------------------------------------------------------ #
+    # Virtual Flow Table operations
+    # ------------------------------------------------------------------ #
+
+    def create_virtual_flow_table(
+        self,
+        name: str,
+        owner_id: int,
+        producer_registration_id: int,
+        namespace_id: int | None = None,
+        description: str | None = None,
+        serialized_lazy_frame: bytes | None = None,
+        is_optimized: bool = False,
+    ) -> CatalogTableOut:
+        """Create a virtual flow table (non-materialized catalog entry).
+
+        Raises
+        ------
+        FlowNotFoundError
+            If the producer flow doesn't exist.
+        NamespaceNotFoundError
+            If the namespace doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        """
+        # Validate producer flow
+        producer = self.repo.get_flow(producer_registration_id)
+        if producer is None:
+            raise FlowNotFoundError(flow_id=producer_registration_id)
+
+        # Validate namespace
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        # Check name uniqueness
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(table_name=name, namespace_id=namespace_id)
+
+        table = CatalogTable(
+            name=name,
+            namespace_id=namespace_id,
+            description=description,
+            owner_id=owner_id,
+            file_path=None,
+            storage_format="delta",
+            table_type="virtual",
+            producer_registration_id=producer_registration_id,
+            serialized_lazy_frame=serialized_lazy_frame,
+            is_optimized=is_optimized,
+        )
+        table = self.repo.create_table(table)
+        return self._table_to_out(table)
+
+    def update_virtual_flow_table(
+        self,
+        table_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        namespace_id: int | None = None,
+        producer_registration_id: int | None = None,
+        serialized_lazy_frame: bytes | None = None,
+        is_optimized: bool | None = None,
+    ) -> CatalogTableOut:
+        """Update a virtual flow table's metadata or producer.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist or is not virtual.
+        FlowNotFoundError
+            If the new producer flow doesn't exist.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None or getattr(table, "table_type", "physical") != "virtual":
+            raise TableNotFoundError(table_id=table_id)
+
+        if name is not None:
+            table.name = name
+        if description is not None:
+            table.description = description
+        if namespace_id is not None:
+            table.namespace_id = namespace_id
+        if producer_registration_id is not None:
+            producer = self.repo.get_flow(producer_registration_id)
+            if producer is None:
+                raise FlowNotFoundError(flow_id=producer_registration_id)
+            table.producer_registration_id = producer_registration_id
+        if serialized_lazy_frame is not None:
+            table.serialized_lazy_frame = serialized_lazy_frame  # TODO: Should be hashed
+        if is_optimized is not None:
+            table.is_optimized = is_optimized
+
+        table = self.repo.update_table(table)
+        return self._table_to_out(table)
+
+    def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None) -> pl.LazyFrame:
+        """Resolve a virtual flow table to a LazyFrame.
+
+        For optimized tables, deserializes the stored LazyFrame directly.
+        For non-optimized tables, triggers flow execution via the worker
+        and returns a LazyFrame reading the IPC result.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist or is not virtual.
+        ValueError
+            If the virtual table cannot be resolved.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None or getattr(table, "table_type", "physical") != "virtual":
+            raise TableNotFoundError(table_id=table_id)
+
+        if table.is_optimized and table.serialized_lazy_frame:
+            return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+
+        # Non-optimized path: load the producer flow and execute it
+        if not table.producer_registration_id:
+            raise ValueError(f"Virtual table {table.name} has no producer flow")
+
+        producer = self.repo.get_flow(table.producer_registration_id)
+        if producer is None:
+            raise FlowNotFoundError(flow_id=table.producer_registration_id)
+
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        flow = open_flow(Path(producer.flow_path), user_id=user_id)
+        flow.run_graph()
+        selected_node = None
+        for node in flow.nodes:
+            if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
+                selected_node = node
+        if selected_node is None:
+            raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
+
+        if selected_node.results.errors:
+            raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
+
+        flowframe = selected_node.get_resulting_data()
+        if flowframe is None or flowframe.data_frame is None:
+            raise ValueError(f"No data produced for table '{table.name}'")
+
+        df = flowframe.data_frame
+        return df if isinstance(df, pl.LazyFrame) else df.lazy()
+
+    def get_table_preview(self, table_id: int, limit: int = 100, version: int | None = None, user_id: int | None = None) -> CatalogTablePreview:
         """Read the first N rows from the materialized table (Delta or Parquet).
 
         When *version* is provided and the table is a Delta table, reads from
@@ -1495,6 +1677,24 @@ class CatalogService:
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+
+        if getattr(table, "table_type", "physical") == "virtual":
+            try:
+                lf = self.resolve_virtual_flow_table(table_id, user_id=user_id)
+                df = lf.head(limit).collect()
+                columns = df.columns
+                dtypes = [str(dt) for dt in df.dtypes]
+                rows_data = df.to_dicts()
+                rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+                return CatalogTablePreview(
+                    columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
+                )
+            except Exception:
+                logger.warning("Could not resolve virtual table %d for preview", table_id, exc_info=True)
+                return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+
+        if not table.file_path:
+            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
         data_path = Path(table.file_path)
         if not table_exists(data_path):
@@ -2015,11 +2215,26 @@ class CatalogService:
         return {
             table.name: Path(table.file_path).name
             for table in tables
-            if is_delta_table(Path(table.file_path))
+            if table.file_path and is_delta_table(Path(table.file_path))
         }
 
-    def execute_sql_query(self, query: str, max_rows: int = 10_000) -> SqlQueryResult:
-        """Execute a SQL query against all Delta catalog tables via the worker."""
+    def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
+        """Return Delta table name->dir mapping + virtual table name->id mapping."""
+        tables = self.repo.list_tables()
+        delta_map: dict[str, str] = {}
+        virtual_map: dict[str, int] = {}
+        for table in tables:
+            if table.table_type == "virtual":
+                virtual_map[table.name] = table.id
+            elif table.file_path and is_delta_table(Path(table.file_path)):
+                delta_map[table.name] = Path(table.file_path).name
+        return delta_map, virtual_map
+
+    def execute_sql_query(self, query: str, max_rows: int = 10_000, user_id: int | None = None) -> SqlQueryResult:
+        """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
+        import base64
+        import io
+
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -2030,12 +2245,23 @@ class CatalogService:
         except UnsafeSQLError as e:
             return SqlQueryResult(error=str(e))
 
-        table_map = self.resolve_all_delta_tables()
-        if not table_map:
-            return SqlQueryResult(error="No Delta catalog tables available")
+        delta_map, virtual_map = self.resolve_all_queryable_tables()
+        if not delta_map and not virtual_map:
+            return SqlQueryResult(error="No catalog tables available")
+
+        # Resolve virtual tables to IPC bytes so the worker can register them
+        virtual_ipc: dict[str, str] = {}
+        for vname, vid in virtual_map.items():
+            try:
+                lf = self.resolve_virtual_flow_table(vid, user_id=user_id)
+                buf = io.BytesIO()
+                lf.collect().write_ipc(buf)
+                virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                logger.warning("Could not resolve virtual table %r for SQL", vname)
 
         try:
-            result = trigger_sql_query(query, table_map, max_rows)
+            result = trigger_sql_query(query, delta_map, max_rows, virtual_ipc=virtual_ipc or None)
             return SqlQueryResult(**result)
         except RuntimeError as e:
             return SqlQueryResult(error=str(e))

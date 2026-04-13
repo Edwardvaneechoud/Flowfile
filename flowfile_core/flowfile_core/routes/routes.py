@@ -742,6 +742,16 @@ def get_flow(flow_id: int):
     return result
 
 
+@router.get("/editor/laziness_check", tags=["editor"])
+def check_flow_laziness(flow_id: int):
+    """Check whether a flow supports fully lazy execution for virtual tables."""
+    flow = flow_file_handler.get_flow(int(flow_id))
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    is_lazy, reasons = flow.check_flow_laziness()
+    return {"is_optimizable": is_lazy, "blockers": reasons}
+
+
 @router.get("/editor/code_to_polars", tags=[], response_model=str)
 def get_generated_code(flow_id: int) -> str:
     """Generates and returns a Python script with Polars code representing the flow."""
@@ -1154,6 +1164,8 @@ def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_curr
     )
 
     if is_new_path:
+        # TODO: THIS LOGIC SHOULD BE PLACED SOMEWHERE ELSE. Perhaps as FlowGraph method
+        # TODO: via the Flowfilehandler
         user_id = current_user.id if current_user else None
         old_flow_id = flow.flow_id
         new_flow_id = create_unique_id()

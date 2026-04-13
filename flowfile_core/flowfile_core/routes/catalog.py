@@ -72,6 +72,8 @@ from flowfile_core.schemas.catalog_schema import (
     SqlQueryRequest,
     SqlQueryResult,
     TableFavoriteOut,
+    VirtualFlowTableCreate,
+    VirtualFlowTableUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import storage
@@ -83,20 +85,10 @@ router = APIRouter(
 )
 
 
-# ---------------------------------------------------------------------------
-# Dependency injection
-# ---------------------------------------------------------------------------
-
-
 def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
     """FastAPI dependency that provides a configured ``CatalogService``."""
     repo = SQLAlchemyCatalogRepository(db)
     return CatalogService(repo)
-
-
-# ---------------------------------------------------------------------------
-# Namespace CRUD
-# ---------------------------------------------------------------------------
 
 
 @router.get("/namespaces", response_model=list[NamespaceOut])
@@ -179,11 +171,6 @@ def get_default_namespace_id(
 ):
     """Return the ID of the default 'default' schema under 'General'."""
     return service.get_default_namespace_id()
-
-
-# ---------------------------------------------------------------------------
-# Flow Registration CRUD
-# ---------------------------------------------------------------------------
 
 
 @router.get("/flows", response_model=list[FlowRegistrationOut])
@@ -270,11 +257,6 @@ def list_flow_artifacts(
         return service.list_artifacts_for_flow(flow_id)
     except FlowNotFoundError:
         raise HTTPException(404, "Flow not found") from None
-
-
-# ---------------------------------------------------------------------------
-# Run History
-# ---------------------------------------------------------------------------
 
 
 @router.get("/runs", response_model=PaginatedFlowRuns)
@@ -551,7 +533,7 @@ def get_table_preview(
     data from that specific historical version.
     """
     try:
-        return service.get_table_preview(table_id, limit=limit, version=version)
+        return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
     except TableNotFoundError:
         raise HTTPException(404, "Catalog table not found") from None
 
@@ -608,6 +590,91 @@ def remove_table_favorite(
 
 
 # ---------------------------------------------------------------------------
+# Virtual Flow Tables
+# ---------------------------------------------------------------------------
+
+
+@router.post("/virtual-tables", response_model=CatalogTableOut, status_code=201)
+def create_virtual_flow_table(
+    body: VirtualFlowTableCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a virtual flow table (non-materialized catalog entry)."""
+    try:
+        table_out = service.create_virtual_flow_table(
+            name=body.name,
+            owner_id=current_user.id,
+            producer_registration_id=body.producer_registration_id,
+            namespace_id=body.namespace_id,
+            description=body.description,
+        )
+    except FlowNotFoundError:
+        raise HTTPException(404, "Producer flow not found") from None
+    except NamespaceNotFoundError:
+        raise HTTPException(404, "Namespace not found") from None
+    except TableExistsError:
+        raise HTTPException(409, "A table with this name already exists in this namespace") from None
+
+    # Compute laziness blockers from the producer flow
+    flow_reg = service.repo.get_flow(body.producer_registration_id)
+    blockers = CatalogService._compute_laziness_blockers(flow_reg.flow_path if flow_reg else None)
+    if blockers:
+        table_out.laziness_blockers = blockers
+
+    return table_out
+
+
+@router.put("/virtual-tables/{table_id}", response_model=CatalogTableOut)
+def update_virtual_flow_table(
+    table_id: int,
+    body: VirtualFlowTableUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Update a virtual flow table's metadata or producer."""
+    try:
+        return service.update_virtual_flow_table(
+            table_id=table_id,
+            name=body.name,
+            description=body.description,
+            namespace_id=body.namespace_id,
+            producer_registration_id=body.producer_registration_id,
+        )
+    except TableNotFoundError:
+        raise HTTPException(404, "Virtual table not found") from None
+    except FlowNotFoundError:
+        raise HTTPException(404, "Producer flow not found") from None
+
+
+@router.post("/virtual-tables/{table_id}/resolve")
+def resolve_virtual_flow_table(
+    table_id: int,
+    limit: int = Query(100, ge=1, le=10000),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Resolve a virtual flow table and return a preview of the result."""
+    try:
+        lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
+        import polars as pl
+
+        df = lf.head(limit).collect()
+        return {
+            "columns": df.columns,
+            "dtypes": [str(dt) for dt in df.dtypes],
+            "rows": df.rows(),
+            "total_rows": df.height,
+        }
+    except TableNotFoundError:
+        raise HTTPException(404, "Virtual table not found") from None
+    except FlowNotFoundError:
+        raise HTTPException(404, "Producer flow not found") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+# ---------------------------------------------------------------------------
 # SQL Query
 # ---------------------------------------------------------------------------
 
@@ -615,10 +682,11 @@ def remove_table_favorite(
 @router.post("/sql/execute", response_model=SqlQueryResult)
 def execute_sql_query(
     body: SqlQueryRequest,
+    current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Execute a SQL query against Delta catalog tables."""
-    return service.execute_sql_query(query=body.query, max_rows=body.max_rows)
+    return service.execute_sql_query(query=body.query, max_rows=body.max_rows, user_id=current_user.id)
 
 
 @router.post("/sql/save-as-flow")

@@ -744,7 +744,7 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
-export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete";
+export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete" | "virtual";
 
 export interface CatalogWriteSettings {
   table_name: string;

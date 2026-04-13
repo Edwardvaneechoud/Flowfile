@@ -2073,27 +2073,32 @@ class FlowGraph:
             self._add_catalog_table_reader(node_catalog_reader)
 
     def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
-        """Execute a SQL query against all catalog Delta tables."""
+        """Execute a SQL query against all catalog tables (physical + virtual)."""
+        import io as _io
+
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
 
         sql_code = node_catalog_reader.sql_query
 
-        # Resolve all catalog Delta tables
+        # Resolve all catalog tables (physical Delta + virtual)
         table_paths: dict[str, str] = {}
+        virtual_tables: dict[str, tuple[bool, bytes | None, int]] = {}
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 seen_names: set[str] = set()
                 for t in repo.list_tables():
-                    if is_delta_table(Path(t.file_path)):
-                        if t.name in seen_names:
-                            logger.warning(
-                                "Duplicate table name %r in catalog SQL context for node %s; "
-                                "later entry will overwrite the earlier one",
-                                t.name,
-                                node_catalog_reader.node_id,
-                            )
-                        seen_names.add(t.name)
+                    if t.name in seen_names:
+                        logger.warning(
+                            "Duplicate table name %r in catalog SQL context for node %s; "
+                            "later entry will overwrite the earlier one",
+                            t.name,
+                            node_catalog_reader.node_id,
+                        )
+                    seen_names.add(t.name)
+                    if t.table_type == "virtual":
+                        virtual_tables[t.name] = (t.is_optimized, t.serialized_lazy_frame, t.id)
+                    elif t.file_path and is_delta_table(Path(t.file_path)):
                         table_paths[t.name] = t.file_path
         except Exception:
             logger.warning(
@@ -2103,11 +2108,20 @@ class FlowGraph:
             )
 
         def _func() -> FlowDataEngine:
-            if not table_paths:
-                raise ValueError("No Delta catalog tables available to query")
+            if not table_paths and not virtual_tables:
+                raise ValueError("No catalog tables available to query")
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 ctx.register(name, pl.scan_delta(path))
+            for name, (is_opt, ser_lf, tid) in virtual_tables.items():
+                if is_opt and ser_lf:
+                    ctx.register(name, pl.LazyFrame.deserialize(_io.BytesIO(ser_lf)))
+                else:
+                    with get_db_context() as db2:
+                        repo2 = SQLAlchemyCatalogRepository(db2)
+                        svc2 = CatalogService(repo2)
+                        lf = svc2.resolve_virtual_flow_table(tid)
+                        ctx.register(name, lf)
             return FlowDataEngine(ctx.execute(sql_code))
 
         self.add_node_step(
@@ -2126,25 +2140,66 @@ class FlowGraph:
             node.results.errors = str(e)
 
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
-        """Read a single table from the catalog (original behavior)."""
+        """Read a single table from the catalog (physical or virtual)."""
+        import io as _io
+
         # Resolve catalog table metadata ahead of time so we can build a schema callback.
         file_path: str | None = None
+        table_type: str = "physical"
+        serialized_lf: bytes | None = None
+        is_optimized: bool = False
         try:
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 svc = CatalogService(repo)
-                file_path = svc.resolve_table_file_path(
-                    table_id=node_catalog_reader.catalog_table_id,
-                    table_name=node_catalog_reader.catalog_table_name,
-                    namespace_id=node_catalog_reader.catalog_namespace_id,
-                )
+
+                # Try to get the full table record for virtual table detection
+                table_record = None
+                if node_catalog_reader.catalog_table_id:
+                    table_record = repo.get_table(node_catalog_reader.catalog_table_id)
+                elif node_catalog_reader.catalog_table_name:
+                    table_record = repo.get_table_by_name(
+                        node_catalog_reader.catalog_table_name,
+                        node_catalog_reader.catalog_namespace_id,
+                    )
+
+                if table_record is not None:
+                    table_type = getattr(table_record, "table_type", "physical")
+                    if table_type == "virtual":
+                        is_optimized = bool(getattr(table_record, "is_optimized", False))
+                        serialized_lf = getattr(table_record, "serialized_lazy_frame", None)
+                    else:
+                        file_path = table_record.file_path
+                else:
+                    file_path = svc.resolve_table_file_path(
+                        table_id=node_catalog_reader.catalog_table_id,
+                        table_name=node_catalog_reader.catalog_table_name,
+                        namespace_id=node_catalog_reader.catalog_namespace_id,
+                    )
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
 
         resolved_path = file_path
         delta_version = node_catalog_reader.delta_version
+        _table_type = table_type
+        _serialized_lf = serialized_lf
+        _is_optimized = is_optimized
+        _catalog_table_id = node_catalog_reader.catalog_table_id
 
         def _func() -> FlowDataEngine:
+            if _table_type == "virtual":
+                if _is_optimized and _serialized_lf:
+                    # Optimized: deserialize stored LazyFrame directly
+                    return FlowDataEngine(pl.LazyFrame.deserialize(_io.BytesIO(_serialized_lf)))
+                else:
+                    # Non-optimized: resolve via service (executes the producer flow)
+                    with get_db_context() as db:
+                        repo = SQLAlchemyCatalogRepository(db)
+                        svc = CatalogService(repo)
+                        lf = svc.resolve_virtual_flow_table(_catalog_table_id)
+                        return FlowDataEngine(lf)
+
+            # Physical table path (unchanged)
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
             if is_delta_table(resolved_path):
@@ -2166,12 +2221,57 @@ class FlowGraph:
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
-        """Adds a node that writes its input to the catalog as a Delta table."""
+        """Adds a node that writes its input to the catalog as a Delta table or virtual table."""
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
+
+            # --- Virtual table mode: register without materializing ---
+            if settings.write_mode == "virtual":
+                import io as _io
+
+                reg_id = self._flow_settings.source_registration_id
+                if not reg_id:
+                    raise ValueError(
+                        "Cannot create a virtual table: this flow is not linked to a catalog registration. "
+                        "Open the flow from the catalog, or register it first."
+                    )
+
+                writer_node = self.get_node(node_catalog_writer.node_id)
+                is_lazy, _reasons = writer_node.check_upstream_laziness()
+
+                serialized_lf: bytes | None = None
+                if is_lazy:
+                    buf = _io.BytesIO()
+                    df.data_frame.serialize(buf)
+                    serialized_lf = buf.getvalue()
+
+                with get_db_context() as db:
+                    repo = SQLAlchemyCatalogRepository(db)
+                    svc = CatalogService(repo)
+                    existing_vt = repo.get_virtual_table_by_producer(reg_id)
+                    if existing_vt:
+                        svc.update_virtual_flow_table(
+                            table_id=existing_vt.id,
+                            name=settings.table_name or None,
+                            description=settings.description,
+                            serialized_lazy_frame=serialized_lf,
+                            is_optimized=is_lazy,
+                        )
+                    else:
+                        svc.create_virtual_flow_table(
+                            name=settings.table_name,
+                            owner_id=node_catalog_writer.user_id or 1,
+                            producer_registration_id=reg_id,
+                            namespace_id=settings.namespace_id,
+                            description=settings.description,
+                            serialized_lazy_frame=serialized_lf,
+                            is_optimized=is_lazy,
+                        )
+                return df
+
             catalog_dir = storage.catalog_tables_directory
             catalog_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2906,6 +3006,34 @@ class FlowGraph:
         """Gets a list of all FlowNode objects in the graph."""
 
         return list(self._node_db.values())
+
+    def check_flow_laziness(self) -> tuple[bool, list[str]]:
+        """Check whether the flow supports lazy execution for virtual tables.
+
+        Finds all catalog-writer nodes in the graph and checks whether their
+        upstream dependencies are fully lazy.  Only the nodes that actually
+        feed into a catalog writer matter — unrelated branches (e.g. an
+        Explore Data node on a separate path) are ignored.
+
+        Returns a tuple of (is_optimizable, reasons_if_not).
+        """
+        catalog_writers = [n for n in self.nodes if n.node_type == "catalog_writer"]
+        if not catalog_writers:
+            # No catalog writer → nothing to optimise; treat as non-lazy
+            return (False, ["No catalog writer node found in the flow"])
+
+        all_reasons: list[str] = []
+        for writer in catalog_writers:
+            _, reasons = writer.check_upstream_laziness()
+            all_reasons.extend(reasons)
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for r in all_reasons:
+            if r not in seen:
+                seen.add(r)
+                unique.append(r)
+        return (len(unique) == 0, unique)
 
     @property
     def execution_mode(self) -> schemas.ExecutionModeLiteral:

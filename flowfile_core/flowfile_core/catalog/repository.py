@@ -175,6 +175,12 @@ class CatalogRepository(Protocol):
 
     def count_all_tables(self) -> int: ...
 
+    # -- Virtual table helpers -----------------------------------------------
+
+    def list_virtual_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
+
+    def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None: ...
+
     # -- Table Favorites -----------------------------------------------------
 
     def get_table_favorite(self, user_id: int, table_id: int) -> TableFavorite | None: ...
@@ -584,6 +590,21 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_tables(self) -> int:
         return self._db.query(CatalogTable).count()
+
+    # -- Virtual table helpers -----------------------------------------------
+
+    def list_virtual_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
+        q = self._db.query(CatalogTable).filter(CatalogTable.table_type == "virtual")
+        if namespace_id is not None:
+            q = q.filter(CatalogTable.namespace_id == namespace_id)
+        return q.order_by(CatalogTable.name).all()
+
+    def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None:
+        return (
+            self._db.query(CatalogTable)
+            .filter_by(table_type="virtual", producer_registration_id=registration_id)
+            .first()
+        )
 
     # -- Table Favorites -----------------------------------------------------
 

@@ -800,5 +800,5 @@ class TestCatalogSqlReader:
         )
         graph.add_catalog_reader(reader)
 
-        with pytest.raises(AssertionError, match="No Delta catalog tables"):
+        with pytest.raises(AssertionError, match="No catalog tables available to query"):
             _run_graph(graph)

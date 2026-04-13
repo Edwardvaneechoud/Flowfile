@@ -1097,7 +1097,7 @@ class CatalogWriteSettings(BaseModel):
     table_name: str = ""
     namespace_id: int | None = None
     description: str | None = None
-    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite"
+    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
     merge_keys: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
