@@ -30,7 +30,6 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowRun
 
 # File handling
 from flowfile_core.fileExplorer.funcs import (
@@ -40,6 +39,7 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.catalog_helpers import auto_register_flow, resolve_source_registration_id
 from flowfile_core.flowfile.code_generator.code_generator import (
     UnsupportedNodeError,
     export_flow_to_flowframe,
@@ -58,7 +58,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
-from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
@@ -78,64 +77,6 @@ def get_node_model(setting_name_ref: str):
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
     return None
-
-
-def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > default) if it exists.
-
-    Failures are logged at info level since users may wonder why some flows
-    don't appear in the catalog.
-    """
-    if user_id is None or flow_path is None:
-        return
-    try:
-        with get_db_context() as db:
-            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
-            if general is None:
-                logger.info("Auto-registration skipped: 'General' catalog namespace not found")
-                return
-            default_schema = db.query(CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
-            if default_schema is None:
-                logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
-                return
-            existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            if existing:
-                return  # Already registered, silent success
-            reg = FlowRegistration(
-                name=name or Path(flow_path).stem,
-                flow_path=flow_path,
-                namespace_id=default_schema.id,
-                owner_id=user_id,
-            )
-            db.add(reg)
-            db.commit()
-            logger.info(f"Auto-registered flow '{reg.name}' in default namespace")
-    except Exception:
-        logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
-
-
-def _resolve_source_registration_id(flow) -> None:
-    """Resolve and set source_registration_id on a flow from the catalog registration.
-
-    Looks up the flow_registrations table by flow_path and stamps the
-    registration ID onto the in-memory flow settings so it is available
-    for run tracking and kernel nodes without needing to re-resolve later.
-    """
-    if getattr(flow.flow_settings, "source_registration_id", None) is not None:
-        return
-    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-    if not flow_path:
-        return
-    try:
-        with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            if reg:
-                try:
-                    flow.flow_settings.source_registration_id = reg.id
-                except (AttributeError, ValueError):
-                    object.__setattr__(flow.flow_settings, "source_registration_id", reg.id)
-    except Exception:
-        logger.info(f"Could not resolve source_registration_id for '{flow_path}' (non-critical)", exc_info=True)
 
 
 @router.post("/upload/")
@@ -291,7 +232,7 @@ def _run_and_track(flow, user_id: int | None):
 
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
-    _resolve_source_registration_id(flow)
+    resolve_source_registration_id(flow)
     logger.debug(
         f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
     )
@@ -358,14 +299,11 @@ def _run_and_track(flow, user_id: int | None):
             )
         else:
             # Fallback: create the full record if phase 1 failed
-            duration = None
-            if run_info.start_time and run_info.end_time:
-                duration = (run_info.end_time - run_info.start_time).total_seconds()
-
             with get_db_context() as db:
                 reg_id = getattr(flow.flow_settings, "source_registration_id", None)
                 flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-                db_run = FlowRun(
+                service = CatalogService(SQLAlchemyCatalogRepository(db))
+                service.create_completed_run(
                     registration_id=reg_id,
                     flow_name=flow_name,
                     flow_path=flow_path,
@@ -375,13 +313,10 @@ def _run_and_track(flow, user_id: int | None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     number_of_nodes=run_info.number_of_nodes,
-                    duration_seconds=duration,
                     run_type=run_info.run_type,
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )
-                db.add(db_run)
-                db.commit()
     except Exception as exc:
         logger.error(
             f"Failed to update run record for flow '{flow_name}'. "
@@ -802,8 +737,8 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
     flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
+        auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+        resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1141,8 +1076,8 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow_id = flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(validated_path, flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
+        auto_register_flow(validated_path, flow.flow_settings.name, user_id)
+        resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1164,32 +1099,16 @@ def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_curr
     )
 
     if is_new_path:
-        # TODO: THIS LOGIC SHOULD BE PLACED SOMEWHERE ELSE. Perhaps as FlowGraph method
-        # TODO: via the Flowfilehandler
         user_id = current_user.id if current_user else None
-        old_flow_id = flow.flow_id
-        new_flow_id = create_unique_id()
+        return flow_file_handler.save_as_flow(
+            flow_id=flow_id,
+            new_path=flow_path,
+            user_id=user_id,
+            on_catalog_register=auto_register_flow,
+            on_resolve_registration=resolve_source_registration_id,
+        )
 
-        # 1. Clear old catalog link and assign new flow identity
-        flow.flow_settings.source_registration_id = None
-        flow.flow_id = new_flow_id  # updates flow + child nodes + settings
-
-        # 2. Save to the new path (updates flow.flow_settings.path)
-        flow.save_flow(flow_path=flow_path)
-
-        # 3. Re-key in handler: remove old entry, register under new id
-        flow_file_handler.rekey_flow(old_flow_id, new_flow_id, user_id)
-
-        # 4. Create catalog registration for the new path and resolve
-        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
-
-        # 5. Re-save to persist the correct source_registration_id in YAML
-        flow.save_flow(flow_path=flow_path)
-
-        return new_flow_id
-
-    _resolve_source_registration_id(flow)
+    resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
     return flow_id
 
@@ -1464,5 +1383,5 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
+        auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
     return flow_id

@@ -14,6 +14,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -337,8 +338,6 @@ def open_run_snapshot(
         parsed = json.loads(snapshot_data)
         suffix = ".json"
     except (json.JSONDecodeError, TypeError):
-        import yaml
-
         parsed = yaml.safe_load(snapshot_data)
         suffix = ".yaml"
 
@@ -347,8 +346,6 @@ def open_run_snapshot(
     if suffix == ".json":
         snapshot_data = json.dumps(parsed)
     else:
-        import yaml
-
         snapshot_data = yaml.dump(parsed)
 
     # Write to the flows temp directory (safe location for import)
@@ -657,8 +654,6 @@ def resolve_virtual_flow_table(
     """Resolve a virtual flow table and return a preview of the result."""
     try:
         lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
-        import polars as pl
-
         df = lf.head(limit).collect()
         return {
             "columns": df.columns,

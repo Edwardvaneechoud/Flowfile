@@ -181,6 +181,8 @@ class CatalogRepository(Protocol):
 
     def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None: ...
 
+    def count_virtual_tables(self) -> int: ...
+
     # -- Table Favorites -----------------------------------------------------
 
     def get_table_favorite(self, user_id: int, table_id: int) -> TableFavorite | None: ...
@@ -605,6 +607,9 @@ class SQLAlchemyCatalogRepository:
             .filter_by(table_type="virtual", producer_registration_id=registration_id)
             .first()
         )
+
+    def count_virtual_tables(self) -> int:
+        return self._db.query(CatalogTable).filter(CatalogTable.table_type == "virtual").count()
 
     # -- Table Favorites -----------------------------------------------------
 

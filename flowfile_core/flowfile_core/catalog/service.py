@@ -7,17 +7,19 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
-import io
 
-import polars as pl
+import base64
+import io
 import json
 import logging
 import os
+import signal
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import polars as pl
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
 
@@ -90,6 +92,13 @@ from shared.subprocess_utils import spawn_flow_subprocess
 logger = logging.getLogger(__name__)
 
 
+def _should_offload() -> bool:
+    """Return True when heavy I/O should be delegated to the worker process."""
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    return OFFLOAD_TO_WORKER
+
+
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
     """Convert raw deltalake history dicts into typed ``DeltaVersionCommit`` models."""
     return [
@@ -135,9 +144,7 @@ class CatalogService:
         Offloads the work to the worker process when available.  Only falls
         back to local I/O when the worker is not running.
         """
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-        if OFFLOAD_TO_WORKER:
+        if _should_offload():
             try:
                 data = trigger_read_table_metadata(Path(table_path).name, storage_format)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
@@ -762,6 +769,72 @@ class CatalogService:
         if node_results_json is not None:
             run.node_results_json = node_results_json
         return self.repo.update_run(run)
+
+    def create_completed_run(
+        self,
+        registration_id: int | None,
+        flow_name: str,
+        flow_path: str | None,
+        user_id: int,
+        started_at: datetime | None,
+        ended_at: datetime | None,
+        success: bool,
+        nodes_completed: int,
+        number_of_nodes: int,
+        run_type: str = "in_designer_run",
+        node_results_json: str | None = None,
+        flow_snapshot: str | None = None,
+    ) -> FlowRun:
+        """Record a fully completed run in one step (fallback when start_run was skipped)."""
+        duration = None
+        if started_at and ended_at:
+            duration = (ended_at - started_at).total_seconds()
+        run = FlowRun(
+            registration_id=registration_id,
+            flow_name=flow_name,
+            flow_path=flow_path,
+            user_id=user_id,
+            started_at=started_at,
+            ended_at=ended_at,
+            success=success,
+            nodes_completed=nodes_completed,
+            number_of_nodes=number_of_nodes,
+            duration_seconds=duration,
+            run_type=run_type,
+            node_results_json=node_results_json,
+            flow_snapshot=flow_snapshot,
+        )
+        return self.repo.create_run(run)
+
+    def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
+        """Register a flow in the default namespace (General > default) if not already registered.
+
+        Returns the registration on success, or None if the default namespace
+        does not exist or the flow is already registered.
+        """
+        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        if general is None:
+            logger.info("Auto-registration skipped: 'General' catalog namespace not found")
+            return None
+        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
+        if default_schema is None:
+            logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
+            return None
+        existing = self.repo.get_flow_by_path(flow_path)
+        if existing:
+            return None  # already registered
+        reg = FlowRegistration(
+            name=name or Path(flow_path).stem,
+            flow_path=flow_path,
+            namespace_id=default_schema.id,
+            owner_id=user_id,
+        )
+        return self.repo.create_flow(reg)
+
+    def resolve_registration_id(self, flow_path: str) -> int | None:
+        """Look up the registration ID for a flow by its file path."""
+        reg = self.repo.get_flow_by_path(flow_path)
+        return reg.id if reg else None
 
     def get_run_snapshot(self, run_id: int) -> str:
         """Return the flow snapshot text for a run.
@@ -1530,6 +1603,7 @@ class CatalogService:
         description: str | None = None,
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
+        schema_json: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialized catalog entry).
 
@@ -1569,6 +1643,7 @@ class CatalogService:
             producer_registration_id=producer_registration_id,
             serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
+            schema_json=schema_json,
         )
         table = self.repo.create_table(table)
         return self._table_to_out(table)
@@ -1582,6 +1657,7 @@ class CatalogService:
         producer_registration_id: int | None = None,
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
+        schema_json: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer.
 
@@ -1611,6 +1687,8 @@ class CatalogService:
             table.serialized_lazy_frame = serialized_lazy_frame  # TODO: Should be hashed
         if is_optimized is not None:
             table.is_optimized = is_optimized
+        if schema_json is not None:
+            table.schema_json = schema_json
 
         table = self.repo.update_table(table)
         return self._table_to_out(table)
@@ -1665,11 +1743,12 @@ class CatalogService:
         df = flowframe.data_frame
         return df if isinstance(df, pl.LazyFrame) else df.lazy()
 
-    def get_table_preview(self, table_id: int, limit: int = 100, version: int | None = None, user_id: int | None = None) -> CatalogTablePreview:
-        """Read the first N rows from the materialized table (Delta or Parquet).
+    def get_table_preview(
+        self, table_id: int, limit: int = 100, version: int | None = None, user_id: int | None = None,
+    ) -> CatalogTablePreview:
+        """Read the first N rows from a catalog table.
 
-        When *version* is provided and the table is a Delta table, reads from
-        that specific historical version via the worker.
+        Dispatches to the appropriate helper based on table type and version.
 
         Raises
         ------
@@ -1681,20 +1760,28 @@ class CatalogService:
             raise TableNotFoundError(table_id=table_id)
 
         if getattr(table, "table_type", "physical") == "virtual":
-            try:
-                lf = self.resolve_virtual_flow_table(table_id, user_id=user_id)
-                df = lf.head(limit).collect()
-                columns = df.columns
-                dtypes = [str(dt) for dt in df.dtypes]
-                rows_data = df.to_dicts()
-                rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-                return CatalogTablePreview(
-                    columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
-                )
-            except Exception:
-                logger.warning("Could not resolve virtual table %d for preview", table_id, exc_info=True)
-                return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+            return self._get_virtual_table_preview(table, limit, user_id)
 
+        return self._get_physical_table_preview(table, limit, version)
+
+    def _get_virtual_table_preview(self, table: CatalogTable, limit: int, user_id: int | None) -> CatalogTablePreview:
+        """Resolve a virtual flow table and return a preview of the collected result."""
+        try:
+            lf = self.resolve_virtual_flow_table(table.id, user_id=user_id)
+            df = lf.head(limit).collect()
+            columns = df.columns
+            dtypes = [str(dt) for dt in df.dtypes]
+            rows_data = df.to_dicts()
+            rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+            return CatalogTablePreview(
+                columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
+            )
+        except Exception:
+            logger.warning("Could not resolve virtual table %d for preview", table.id, exc_info=True)
+            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+
+    def _get_physical_table_preview(self, table: CatalogTable, limit: int, version: int | None) -> CatalogTablePreview:
+        """Read a preview from a physical (Delta or Parquet) catalog table."""
         if not table.file_path:
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
@@ -1702,7 +1789,6 @@ class CatalogService:
         if not table_exists(data_path):
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
-        # Version-specific preview for Delta tables
         if version is not None and is_delta_table(data_path):
             return self._get_delta_version_preview(data_path, version, limit)
 
@@ -1725,10 +1811,8 @@ class CatalogService:
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
         table_path = str(data_path)
-        if OFFLOAD_TO_WORKER:
+        if _should_offload():
             try:
                 return trigger_delta_version_preview(data_path.name, version, limit)
             except Exception:
@@ -1761,10 +1845,8 @@ class CatalogService:
         if not is_delta_table(data_path):
             return DeltaTableHistory(current_version=0, history=[])
 
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
         table_path = str(data_path)
-        if OFFLOAD_TO_WORKER:
+        if _should_offload():
             try:
                 return trigger_delta_history(data_path.name, limit)
             except Exception:
@@ -1776,10 +1858,6 @@ class CatalogService:
         current_version = dt.version()
         history = _parse_delta_history(raw_history)
         return DeltaTableHistory(current_version=current_version, history=history)
-
-    # ------------------------------------------------------------------ #
-    # Table Favorites
-    # ------------------------------------------------------------------ #
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to user's favourites (idempotent).
@@ -1820,10 +1898,6 @@ class CatalogService:
             if table is not None:
                 tables.append(table)
         return self._bulk_enrich_tables(tables, user_id)
-
-    # ------------------------------------------------------------------ #
-    # Schedule operations
-    # ------------------------------------------------------------------ #
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
         """Convert a FlowSchedule ORM instance to its Pydantic output schema, populating trigger table info."""
@@ -2131,9 +2205,6 @@ class CatalogService:
         RunNotFoundError
             If the run doesn't exist.
         """
-        import os
-        import signal
-
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
@@ -2172,6 +2243,7 @@ class CatalogService:
         total_table_favs = self.repo.count_table_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
         total_tables = self.repo.count_all_tables()
+        total_virtual_tables = self.repo.count_virtual_tables()
         total_schedules = self.repo.count_schedules()
 
         recent_runs_raw = self.repo.list_runs(limit=10, offset=0)
@@ -2200,6 +2272,7 @@ class CatalogService:
             total_table_favorites=total_table_favs,
             total_artifacts=total_artifacts,
             total_tables=total_tables,
+            total_virtual_tables=total_virtual_tables,
             total_schedules=total_schedules,
             recent_runs=recent_out,
             favorite_flows=fav_flows,
@@ -2234,10 +2307,6 @@ class CatalogService:
 
     def execute_sql_query(self, query: str, max_rows: int = 10_000, user_id: int | None = None) -> SqlQueryResult:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
-        import base64
-        import io
-
-
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,

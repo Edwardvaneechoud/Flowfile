@@ -393,6 +393,7 @@ class CatalogStats(BaseModel):
     total_table_favorites: int = 0
     total_artifacts: int = 0
     total_tables: int = 0
+    total_virtual_tables: int = 0
     total_schedules: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)

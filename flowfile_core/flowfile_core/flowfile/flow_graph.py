@@ -2250,6 +2250,10 @@ class FlowGraph:
                     df.data_frame.serialize(buf)
                     serialized_lf = buf.getvalue()
 
+                schema_json = json.dumps(
+                    [{"name": c.column_name, "dtype": c.data_type} for c in df.schema]
+                )
+
                 with get_db_context() as db:
                     repo = SQLAlchemyCatalogRepository(db)
                     svc = CatalogService(repo)
@@ -2261,6 +2265,7 @@ class FlowGraph:
                             description=settings.description,
                             serialized_lazy_frame=serialized_lf,
                             is_optimized=is_lazy,
+                            schema_json=schema_json,
                         )
                     else:
                         svc.create_virtual_flow_table(
@@ -2271,6 +2276,7 @@ class FlowGraph:
                             description=settings.description,
                             serialized_lazy_frame=serialized_lf,
                             is_optimized=is_lazy,
+                            schema_json=schema_json,
                         )
                 return df
 

@@ -312,7 +312,7 @@ class GlobalArtifact(Base):
 # ==================== Catalog Tables ====================
 
 
-class CatalogTable(Base):  # TODO: Should have a pydantic implementation as well as an interface
+class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interface: catalog/repository.py
     """A materialized data table registered in the catalog.
 
     When a user registers a table, its data is materialized as a Delta table
