@@ -1041,6 +1041,7 @@ class CatalogService:
             producer_registration_name=producer_registration_name,
             is_optimized=getattr(table, "is_optimized", None),
             laziness_blockers=laziness_blockers,
+            sql_query=getattr(table, "sql_query", None),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -1085,6 +1086,7 @@ class CatalogService:
                     producer_registration_id=table.producer_registration_id,
                     producer_registration_name=producer_registration_name,
                     is_optimized=getattr(table, "is_optimized", None),
+                    sql_query=getattr(table, "sql_query", None),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -1703,10 +1705,200 @@ class CatalogService:
 
         return self._table_to_out(table)
 
+    # ------------------------------------------------------------------ #
+    # Query-based Virtual Table operations
+    # ------------------------------------------------------------------ #
+
+    def create_query_virtual_table(
+        self,
+        name: str,
+        owner_id: int,
+        sql_query: str,
+        namespace_id: int | None = None,
+        description: str | None = None,
+    ) -> CatalogTableOut:
+        """Create a query-based virtual table from a SQL expression.
+
+        The SQL is validated and executed once to derive the output schema.
+
+        Raises
+        ------
+        NamespaceNotFoundError
+            If the namespace doesn't exist.
+        TableExistsError
+            If a table with this name already exists in the namespace.
+        ValueError
+            If the SQL query is invalid or fails to execute.
+        """
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+            UnsafeSQLError,
+            validate_sql_query,
+        )
+
+        try:
+            validate_sql_query(sql_query)
+        except UnsafeSQLError as e:
+            raise ValueError(str(e)) from e
+
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(table_name=name, namespace_id=namespace_id)
+
+        # Execute the query once to derive schema
+        result = self.execute_sql_query(sql_query, max_rows=1)
+        if result.error:
+            raise ValueError(f"SQL query failed: {result.error}")
+
+        schema_list = [{"name": c, "dtype": d} for c, d in zip(result.columns, result.dtypes, strict=False)]
+        schema_json = json.dumps(schema_list) if schema_list else None
+
+        table = CatalogTable(
+            name=name,
+            namespace_id=namespace_id,
+            description=description,
+            owner_id=owner_id,
+            file_path=None,
+            storage_format="delta",
+            table_type="virtual",
+            producer_registration_id=None,
+            serialized_lazy_frame=None,
+            is_optimized=False,
+            sql_query=sql_query,
+            schema_json=schema_json,
+            column_count=len(schema_list),
+        )
+        table = self.repo.create_table(table)
+        return self._table_to_out(table)
+
+    def update_query_virtual_table(
+        self,
+        table_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        namespace_id: int | None = None,
+        sql_query: str | None = None,
+    ) -> CatalogTableOut:
+        """Update a query-based virtual table.
+
+        If sql_query changes, re-derives the schema.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist or is not a query-based virtual table.
+        ValueError
+            If the new SQL query is invalid or fails.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None or getattr(table, "table_type", "physical") != "virtual":
+            raise TableNotFoundError(table_id=table_id)
+        if not getattr(table, "sql_query", None):
+            raise TableNotFoundError(table_id=table_id)
+
+        if name is not None:
+            table.name = name
+        if description is not None:
+            table.description = description
+        if namespace_id is not None:
+            table.namespace_id = namespace_id
+        if sql_query is not None:
+            from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+                UnsafeSQLError,
+                validate_sql_query,
+            )
+
+            try:
+                validate_sql_query(sql_query)
+            except UnsafeSQLError as e:
+                raise ValueError(str(e)) from e
+
+            result = self.execute_sql_query(sql_query, max_rows=1)
+            if result.error:
+                raise ValueError(f"SQL query failed: {result.error}")
+
+            schema_list = [{"name": c, "dtype": d} for c, d in zip(result.columns, result.dtypes, strict=False)]
+            table.sql_query = sql_query
+            table.schema_json = json.dumps(schema_list) if schema_list else None
+            table.column_count = len(schema_list)
+
+        table = self.repo.update_table(table)
+
+        try:
+            self._fire_table_trigger_schedules(table.id, table.updated_at)
+        except Exception:
+            logger.exception("Failed to fire push triggers for query virtual table %s", table.id)
+
+        return self._table_to_out(table)
+
+    def resolve_query_virtual_table(
+        self,
+        table_id: int,
+        user_id: int | None = None,
+        _visited: set[int] | None = None,
+        _depth: int = 0,
+    ) -> pl.LazyFrame:
+        """Resolve a query-based virtual table by executing its stored SQL.
+
+        Builds a pl.SQLContext with all other catalog tables and executes the
+        stored SQL query. Guards against circular references via _visited set.
+
+        Raises
+        ------
+        TableNotFoundError
+            If the table doesn't exist or has no sql_query.
+        ValueError
+            If circular reference or recursion limit is hit.
+        """
+        if _depth > 5:
+            raise ValueError("Query virtual table recursion limit exceeded (depth > 5)")
+        if _visited is None:
+            _visited = set()
+        if table_id in _visited:
+            raise ValueError(f"Circular reference detected in query virtual table {table_id}")
+        _visited.add(table_id)
+
+        table = self.repo.get_table(table_id)
+        if table is None or not getattr(table, "sql_query", None):
+            raise TableNotFoundError(table_id=table_id)
+
+        # Build SQL context with all other catalog tables
+        ctx = pl.SQLContext()
+        for t in self.repo.list_tables():
+            if t.id == table_id:
+                continue  # skip self
+            if t.table_type == "virtual":
+                if getattr(t, "sql_query", None):
+                    # Nested query virtual table
+                    try:
+                        nested_lf = self.resolve_query_virtual_table(
+                            t.id, user_id=user_id, _visited=_visited, _depth=_depth + 1,
+                        )
+                        ctx.register(t.name, nested_lf)
+                    except Exception:
+                        logger.warning("Could not resolve nested query virtual table %r", t.name)
+                elif t.is_optimized and t.serialized_lazy_frame:
+                    ctx.register(t.name, pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame)))
+                elif t.producer_registration_id:
+                    try:
+                        lf = self.resolve_virtual_flow_table(t.id, user_id=user_id)
+                        ctx.register(t.name, lf)
+                    except Exception:
+                        logger.warning("Could not resolve flow virtual table %r", t.name)
+            elif t.file_path and is_delta_table(Path(t.file_path)):
+                ctx.register(t.name, pl.scan_delta(t.file_path))
+
+        return ctx.execute(table.sql_query)
+
     def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
         For optimized tables, deserializes the stored LazyFrame directly.
+        For query-based virtual tables, delegates to resolve_query_virtual_table.
         For non-optimized tables, triggers flow execution via the worker
         and returns a LazyFrame reading the IPC result.
 
@@ -1720,6 +1912,10 @@ class CatalogService:
         table = self.repo.get_table(table_id)
         if table is None or getattr(table, "table_type", "physical") != "virtual":
             raise TableNotFoundError(table_id=table_id)
+
+        # Query-based virtual table: delegate to SQL resolver
+        if getattr(table, "sql_query", None):
+            return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
         if table.is_optimized and table.serialized_lazy_frame:
             return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
@@ -1770,9 +1966,29 @@ class CatalogService:
             raise TableNotFoundError(table_id=table_id)
 
         if getattr(table, "table_type", "physical") == "virtual":
+            if getattr(table, "sql_query", None):
+                return self._get_query_virtual_table_preview(table, limit, user_id)
             return self._get_virtual_table_preview(table, limit, user_id)
 
         return self._get_physical_table_preview(table, limit, version)
+
+    def _get_query_virtual_table_preview(
+        self, table: CatalogTable, limit: int, user_id: int | None,
+    ) -> CatalogTablePreview:
+        """Resolve a query-based virtual table and return a preview."""
+        try:
+            lf = self.resolve_query_virtual_table(table.id, user_id=user_id)
+            df = lf.head(limit).collect()
+            columns = df.columns
+            dtypes = [str(dt) for dt in df.dtypes]
+            rows_data = df.to_dicts()
+            rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+            return CatalogTablePreview(
+                columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
+            )
+        except Exception:
+            logger.warning("Could not resolve query virtual table %d for preview", table.id, exc_info=True)
+            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
     def _get_virtual_table_preview(self, table: CatalogTable, limit: int, user_id: int | None) -> CatalogTablePreview:
         """Resolve a virtual flow table and return a preview of the collected result."""

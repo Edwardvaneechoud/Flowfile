@@ -93,6 +93,7 @@ nav:
         - Output Nodes: users/visual-editor/nodes/output.md
       - Features:
         - Catalog: users/visual-editor/catalog.md
+        - Virtual Tables: users/visual-editor/virtual-tables.md
         - Schedules: users/visual-editor/schedules.md
         - Connections: users/visual-editor/connections.md
         - Kernel Execution: users/visual-editor/kernels.md

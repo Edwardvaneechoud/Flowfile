@@ -15,7 +15,12 @@
             "
           ></i>
           <h2>{{ table.name }}</h2>
-          <span v-if="table.table_type === 'virtual'" class="virtual-badge">Virtual</span>
+          <span
+            v-if="table.table_type === 'virtual' && table.sql_query"
+            class="virtual-badge sql-virtual-badge"
+            >SQL Virtual</span
+          >
+          <span v-else-if="table.table_type === 'virtual'" class="virtual-badge">Virtual</span>
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
@@ -117,7 +122,7 @@
           <span class="meta-link-text">{{ table.source_registration_name }}</span>
         </span>
       </div>
-      <div v-if="table.table_type === 'virtual'" class="meta-card">
+      <div v-if="table.table_type === 'virtual' && !table.sql_query" class="meta-card">
         <span class="meta-label">Optimization</span>
         <span class="meta-value" :class="table.is_optimized ? 'optimized-badge' : ''">
           {{ table.is_optimized ? "Optimized" : "Standard" }}
@@ -146,6 +151,12 @@
         <span class="meta-label">Version</span>
         <span class="meta-value">{{ tableHistory.current_version }}</span>
       </div>
+    </div>
+
+    <!-- SQL Definition (query-based virtual tables) -->
+    <div v-if="table.table_type === 'virtual' && table.sql_query" class="section">
+      <h3>SQL Definition</h3>
+      <pre class="sql-definition">{{ table.sql_query }}</pre>
     </div>
 
     <!-- Version History (physical tables only) -->
@@ -404,6 +415,11 @@ function formatCell(value: any): string {
   padding: 2px 8px;
   border-radius: var(--border-radius-sm, 4px);
   line-height: 1.4;
+}
+
+.sql-virtual-badge {
+  color: var(--el-color-success, #67c23a);
+  background: var(--el-color-success-light-9, rgba(103, 194, 58, 0.1));
 }
 
 .optimized-badge {
@@ -850,6 +866,22 @@ function formatCell(value: any): string {
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+}
+
+/* ========== SQL Definition ========== */
+.sql-definition {
+  background: var(--color-background-secondary, #f5f7fa);
+  border: 1px solid var(--color-border-light, #e4e7ed);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-3) var(--spacing-4);
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-sm, 13px);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-primary);
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 /* ========== Modal (read-by list items) ========== */

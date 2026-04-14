@@ -173,6 +173,7 @@ export interface CatalogTable {
   producer_registration_name: string | null;
   is_optimized: boolean | null;
   laziness_blockers: string[] | null;
+  sql_query: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -202,6 +203,13 @@ export interface VirtualFlowTableUpdate {
   description?: string;
   namespace_id?: number | null;
   producer_registration_id?: number | null;
+}
+
+export interface QueryVirtualTableCreate {
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+  sql_query: string;
 }
 
 export interface CatalogTablePreview {

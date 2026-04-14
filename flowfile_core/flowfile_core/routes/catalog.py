@@ -68,6 +68,8 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
     NamespaceUpdate,
     PaginatedFlowRuns,
+    QueryVirtualTableCreate,
+    QueryVirtualTableUpdate,
     SaveQueryAsFlowRequest,
     SchedulerStatusOut,
     SqlQueryRequest,
@@ -665,6 +667,56 @@ def resolve_virtual_flow_table(
         raise HTTPException(404, "Virtual table not found") from None
     except FlowNotFoundError:
         raise HTTPException(404, "Producer flow not found") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+# ---------------------------------------------------------------------------
+# Query-based Virtual Tables
+# ---------------------------------------------------------------------------
+
+
+@router.post("/query-virtual-tables", response_model=CatalogTableOut, status_code=201)
+def create_query_virtual_table(
+    body: QueryVirtualTableCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a query-based virtual table from a SQL expression."""
+    try:
+        return service.create_query_virtual_table(
+            name=body.name,
+            owner_id=current_user.id,
+            sql_query=body.sql_query,
+            namespace_id=body.namespace_id,
+            description=body.description,
+        )
+    except NamespaceNotFoundError:
+        raise HTTPException(404, "Namespace not found") from None
+    except TableExistsError:
+        raise HTTPException(409, "A table with this name already exists in this namespace") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.put("/query-virtual-tables/{table_id}", response_model=CatalogTableOut)
+def update_query_virtual_table(
+    table_id: int,
+    body: QueryVirtualTableUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Update a query-based virtual table."""
+    try:
+        return service.update_query_virtual_table(
+            table_id=table_id,
+            name=body.name,
+            description=body.description,
+            namespace_id=body.namespace_id,
+            sql_query=body.sql_query,
+        )
+    except TableNotFoundError:
+        raise HTTPException(404, "Query virtual table not found") from None
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 

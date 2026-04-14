@@ -22,6 +22,7 @@ import type {
   NamespaceTree,
   NamespaceUpdate,
   PaginatedFlowRuns,
+  QueryVirtualTableCreate,
   SchedulerStatus,
   SqlQueryResult,
   VirtualFlowTableCreate,
@@ -256,6 +257,13 @@ export class CatalogApi {
       null,
       { params: { limit } },
     );
+    return response.data;
+  }
+
+  // ====== Query-based Virtual Tables ======
+
+  static async createQueryVirtualTable(body: QueryVirtualTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/query-virtual-tables", body);
     return response.data;
   }
 

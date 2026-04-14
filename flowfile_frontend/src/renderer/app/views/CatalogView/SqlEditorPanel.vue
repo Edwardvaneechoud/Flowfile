@@ -6,6 +6,15 @@
         <i v-if="!executing" class="fa-solid fa-play" style="margin-right: 4px"></i>
         Run (Ctrl+Enter)
       </el-button>
+      <el-button
+        type="success"
+        size="small"
+        :disabled="!canSaveAsVirtual"
+        @click="showSaveDialog = true"
+      >
+        <i class="fa-solid fa-bolt" style="margin-right: 4px"></i>
+        Save as Virtual Table
+      </el-button>
       <div class="toolbar-spacer"></div>
       <label class="limit-label">
         Limit:
@@ -84,16 +93,69 @@
         </div>
       </details>
     </div>
+
+    <!-- Save as Virtual Table Dialog -->
+    <el-dialog v-model="showSaveDialog" title="Save as Virtual Table" width="440px" append-to-body>
+      <div class="save-dialog-body">
+        <div class="save-dialog-info">
+          <i class="fa-solid fa-bolt"></i>
+          <span>
+            This saves your SQL query as a virtual table. When read, the query is re-executed
+            against the catalog.
+          </span>
+        </div>
+        <el-form label-position="top" @submit.prevent="saveAsVirtualTable">
+          <el-form-item label="Table name" required>
+            <el-input v-model="saveForm.name" placeholder="my_virtual_table" />
+          </el-form-item>
+          <el-form-item label="Catalog / Schema">
+            <el-select
+              v-model="saveForm.namespaceId"
+              placeholder="Select namespace"
+              clearable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="ns in schemaNamespaces"
+                :key="ns.id"
+                :label="ns.label"
+                :value="ns.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Description">
+            <el-input
+              v-model="saveForm.description"
+              placeholder="Optional description"
+              type="textarea"
+              :rows="2"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="showSaveDialog = false">Cancel</el-button>
+        <el-button
+          type="primary"
+          :disabled="!saveForm.name.trim()"
+          :loading="savingVirtual"
+          @click="saveAsVirtualTable"
+        >
+          Save
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import { EditorView, keymap } from "@codemirror/view";
 import { Extension, Prec } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
 import { sql } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import SqlExplorePanel from "./SqlExplorePanel.vue";
@@ -212,6 +274,57 @@ async function runQuery() {
     error.value = e?.response?.data?.detail ?? e?.message ?? "Unknown error";
   } finally {
     executing.value = false;
+  }
+}
+
+// Save as Virtual Table
+const showSaveDialog = ref(false);
+const savingVirtual = ref(false);
+const saveForm = reactive({
+  name: "",
+  namespaceId: null as number | null,
+  description: "",
+});
+
+const canSaveAsVirtual = computed(() => result.value !== null && !result.value.error);
+
+const schemaNamespaces = computed(() => {
+  const items: { id: number; label: string }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      items.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
+    }
+  }
+  return items;
+});
+
+watch(showSaveDialog, (val) => {
+  if (val) {
+    saveForm.name = "";
+    saveForm.description = "";
+    saveForm.namespaceId = null;
+  }
+});
+
+async function saveAsVirtualTable() {
+  const trimmedName = saveForm.name.trim();
+  if (!trimmedName) return;
+
+  savingVirtual.value = true;
+  try {
+    await CatalogApi.createQueryVirtualTable({
+      name: trimmedName,
+      sql_query: queryText.value.trim(),
+      namespace_id: saveForm.namespaceId,
+      description: saveForm.description.trim() || null,
+    });
+    ElMessage.success(`Virtual table "${trimmedName}" created`);
+    showSaveDialog.value = false;
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadAllTables()]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to create virtual table");
+  } finally {
+    savingVirtual.value = false;
   }
 }
 
@@ -371,5 +484,29 @@ onMounted(() => {
   flex-shrink: 0;
   margin-left: 8px;
   color: var(--color-text-secondary, #909399);
+}
+
+.save-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.save-dialog-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--el-color-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--el-color-primary) 25%, transparent);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--el-color-primary);
+  line-height: 1.5;
+}
+
+.save-dialog-info i {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 </style>

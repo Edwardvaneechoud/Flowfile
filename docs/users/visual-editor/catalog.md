@@ -2,8 +2,7 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog provides a namespace hierarchy for managing flows,
-tracking run history, registering data tables, and sharing artifacts across flows.
+The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with SQL, sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
 
 <!-- PLACEHOLDER: Screenshot of the full Catalog view showing the sidebar tree and stats panel -->
 ![Catalog overview](../../assets/images/guides/catalog/catalog-overview.png)
@@ -20,15 +19,19 @@ Click the **Catalog** icon in the left sidebar menu to open the Catalog page.
 
 ## Dashboard
 
-When no item is selected, the Catalog shows an overview dashboard with:
+When no item is selected, the Catalog shows an overview dashboard with key metrics and quick-access panels.
 
 | Metric | Description |
 |--------|-------------|
 | **Registered Flows** | Flows tracked in the catalog |
 | **Total Runs** | Number of flow executions recorded |
-| **Tables** | Materialized data tables |
-| **Favorites** | Your bookmarked flows |
+| **Tables** | Catalog tables (physical + virtual) |
+| **Virtual Tables** | [Virtual flow tables](virtual-tables.md) that resolve on demand |
+| **Favorites** | Your bookmarked flows and tables |
+| **Artifacts** | [Global artifacts](#global-artifacts) published by flows |
 | **Schedules** | Configured [schedules](schedules.md) for automated flow execution |
+
+The dashboard also shows **recent runs**, **favorite flows**, and **favorite tables** for quick navigation.
 
 ![Dashboard stats](../../assets/images/guides/catalog/catalog-stats.png)
 
@@ -52,7 +55,7 @@ Flows, tables, and artifacts are always registered under a **schema**.
 3. Enter a name and optional description
 4. Click **Create**
 
-A default catalog and schema are created automatically on first use.
+A default catalog (`General`) and schema (`default`) are created automatically on first use.
 
 ---
 
@@ -63,7 +66,7 @@ The sidebar offers four tabs:
 | Tab | Description |
 |-----|-------------|
 | **Catalog** | Browse the namespace tree with flows, tables, and artifacts |
-| **Favorites** | Your starred flows for quick access |
+| **Favorites** | Your starred flows and tables for quick access |
 | **Run History** | Chronological list of all flow executions |
 | **Schedules** | Manage automated flow schedules — see [Schedules](schedules.md) |
 
@@ -71,7 +74,7 @@ The sidebar offers four tabs:
 
 ## Registering Flows
 
-Register a flow to enable run tracking, artifact lineage, and catalog table production.
+Register a flow to enable run tracking, artifact lineage, catalog table production, and [virtual tables](virtual-tables.md).
 
 1. Navigate to the desired schema in the tree
 2. Click **Register Flow**
@@ -83,6 +86,9 @@ Register a flow to enable run tracking, artifact lineage, and catalog table prod
 ![Register flow](../../assets/images/guides/catalog/register-flow.png)
 
 *Registering a flow file under a catalog schema*
+
+!!! tip "Auto-registration"
+    When you open or import a flow in the designer, it is automatically registered in the default namespace (`General > default`) if it isn't already. You don't need to manually register every flow — just the ones you want to organize into specific namespaces.
 
 ### Flow Detail Panel
 
@@ -116,7 +122,7 @@ Every execution of a registered flow is recorded with:
 | **Started / Ended** | Timestamps |
 | **Duration** | Execution time in seconds |
 | **Nodes Completed** | Progress (`completed / total`) |
-| **Run Type** | How the flow was triggered |
+| **Run Type** | How the flow was triggered (manual, scheduled, table trigger) |
 | **Flow Snapshot** | YAML snapshot of the flow version at run time |
 
 ### Run Detail Panel
@@ -137,12 +143,17 @@ Click a run to see its full detail:
 
 ## Catalog Tables
 
-Register materialized data tables in the catalog for reuse across flows.
+Register data tables in the catalog for reuse across flows. Catalog tables come in two types:
+
+| Type | Icon | Description |
+|------|------|-------------|
+| **Physical** | <i class="fa-solid fa-table"></i> | Data materialized as a Delta table on disk — fast reads, version history, full schema preservation |
+| **Virtual** | <i class="fa-solid fa-bolt"></i> | No data on disk — executes a producer flow on demand to produce results. See [Virtual Flow Tables](virtual-tables.md) |
 
 !!! tip "Recommended: Register tables via a flow"
-    It is recommended to register tables via a flow, as it supports more source types and ensures the table is interpreted exactly how you want it.
+    Use a [Catalog Writer](nodes/output.md#catalog-writer) node in your flow for the best experience. It supports more source types, ensures correct data interpretation, and enables lineage tracking.
 
-### Registering a Table
+### Registering a Physical Table
 
 1. Navigate to a schema in the tree
 2. Click **Register Table**
@@ -150,9 +161,15 @@ Register materialized data tables in the catalog for reuse across flows.
 4. Enter a name
 5. Click **Register**
 
+The file is materialized as a Delta table and registered with full metadata.
+
 ![Register table](../../assets/images/guides/catalog/register-table.png)
 
 *Registering a new catalog table from a data file*
+
+### Creating a Virtual Table
+
+Click the **bolt icon** button in the catalog toolbar to create a virtual table directly. Select a producer flow and namespace, and the virtual table is ready. See [Virtual Flow Tables](virtual-tables.md) for the full guide.
 
 ### Table Detail Panel
 
@@ -161,7 +178,16 @@ Click a table to view:
 - **Metadata**: name, namespace, row count, column count, file size, creation date
 - **Schema**: column names and data types
 - **Data Preview**: scrollable preview of the first 100 rows
+- **Lineage**: source flow, producing flow, and consumer flows (see [Lineage](#lineage))
+- **Favorite** toggle (star icon) to bookmark the table
 - **Delete** button with confirmation
+
+For virtual tables, the detail panel also shows:
+
+- **Table type**: "virtual" badge
+- **Producer flow**: the registered flow that produces this table
+- **Optimization status**: whether the table uses optimized or standard resolution
+- **Laziness blockers**: if not optimized, which nodes prevent lazy execution
 
 ![Table detail](../../assets/images/guides/catalog/table-detail.png)
 
@@ -169,27 +195,41 @@ Click a table to view:
 
 ### Using Catalog Tables in Flows
 
-Use the **Catalog Reader** input node to read a catalog table and the **Catalog Writer** output node to write results back. See [Input Nodes](nodes/input.md#catalog-reader) and [Output Nodes](nodes/output.md#catalog-writer).
+Use the **Catalog Reader** input node to read a catalog table (physical or virtual) and the **Catalog Writer** output node to write results back. See [Input Nodes](nodes/input.md#catalog-reader) and [Output Nodes](nodes/output.md#catalog-writer).
 
-### Lineage
+---
 
-The catalog tracks which flows produce and consume each table:
+## Lineage
 
-- **Source**: which registered flow and run created the table
-- **Consumers**: which flows read from the table via Catalog Reader nodes
+The catalog tracks full data lineage — which flows produce and consume each table:
 
-### How Storage Works
+| Relationship | Description |
+|---|---|
+| **Source flow** | The registered flow (and specific run) that created or last wrote to the table |
+| **Producer flow** | For [virtual tables](virtual-tables.md): the flow that produces data on demand |
+| **Consumer flows** | Flows that read from this table via Catalog Reader nodes |
 
-When you register a table — either by adding it directly in the catalog or by writing to it via a [Catalog Writer](nodes/output.md#catalog-writer) node in a flow — it is **stored as a Parquet file**. This ensures consistent, efficient storage with full schema preservation.
+This lineage graph enables powerful automation: when a table is updated, any [table trigger schedule](schedules.md#table-trigger) watching it fires automatically, creating reactive data pipelines.
+
+---
+
+## How Storage Works
+
+### Physical Tables — Delta Format
+
+When you register a table or write via a [Catalog Writer](nodes/output.md#catalog-writer) node, the data is **materialized as a Delta table**. Delta provides:
+
+- **Version history** — every write creates a new version, enabling time-travel queries
+- **Schema evolution** — columns can be added or modified across versions
+- **ACID transactions** — writes are atomic and consistent
+- **Efficient storage** — columnar Parquet files with metadata tracking
 
 **Materialization process:**
 
-1. The source file (CSV, TSV, TXT, Excel, or Parquet) is read by the worker service using Polars
-2. The data is written as a single Parquet file to the catalog storage directory
-3. Metadata is extracted from the materialized file: row count, column count, file size, and column schema (names + Polars data types)
-4. A database record is created linking the table name, namespace, and file path
-
-**Supported source format:** Parquet (`.parquet`)
+1. The source data is processed by the worker service using Polars
+2. The data is written as a Delta table to the catalog storage directory
+3. Metadata is extracted: row count, column count, file size, and column schema (names + Polars data types)
+4. A database record links the table name, namespace, and file path
 
 **Storage location:**
 
@@ -198,16 +238,76 @@ When you register a table — either by adding it directly in the catalog or by 
 | Desktop / local | `~/.flowfile/catalog_tables/` |
 | Docker | `/data/user/catalog_tables/` (mapped via `FLOWFILE_USER_DATA_DIR`) |
 
-**File naming:** Each Parquet file is named `{table_name}_{uuid}.parquet` (e.g., `sales_data_a3f1b2c4.parquet`). The UUID suffix ensures uniqueness even when multiple tables share similar names.
+**File naming:** Each Delta table directory is named `{table_name}_{uuid}` (e.g., `sales_data_a3f1b2c4/`). The UUID suffix ensures uniqueness even when multiple tables share similar names.
 
 !!! info "Flat storage"
-    Namespaces (catalogs and schemas) are a **logical hierarchy** stored in the database — not filesystem directories. All materialized Parquet files live in a single flat directory. Table name uniqueness is enforced per namespace, so two schemas can each have a table called `customers` without conflict.
+    Namespaces (catalogs and schemas) are a **logical hierarchy** stored in the database — not filesystem directories. All Delta table directories live in a single flat storage directory. Table name uniqueness is enforced per namespace, so two schemas can each have a table called `customers` without conflict.
+
+### Virtual Tables — No Storage
+
+Virtual tables store **no data on disk**. The catalog entry holds only metadata (name, schema, producer flow reference) and, for optimized tables, a serialized Polars `LazyFrame`. See [Virtual Flow Tables](virtual-tables.md) for details.
+
+---
+
+## Delta Table History
+
+Physical catalog tables stored in Delta format maintain a full version history. You can browse historical versions and preview data at any point in time.
+
+### Viewing History
+
+In the table detail panel, the **History** section shows:
+
+- **Current version** number
+- **Version list** with timestamps, operation types, and metadata
+- **Preview at version** — select any historical version to see the data as it was at that point
+
+This is especially useful for auditing changes, debugging data quality issues, and understanding how a table evolved over time.
+
+!!! info "Delta versioning is only available for physical tables"
+    Virtual tables have no physical storage and therefore no version history. If you need historical snapshots, use a physical table.
+
+---
+
+## SQL Editor
+
+Query your catalog tables directly using SQL — no need to build a flow for quick ad-hoc analysis.
+
+### Opening the SQL Editor
+
+Click the **SQL** button in the catalog toolbar to open the SQL editor panel.
+
+### Writing Queries
+
+All catalog tables (both physical and [virtual](virtual-tables.md)) are automatically registered in the SQL context by their table name. You can query, join, filter, and aggregate across any combination of tables:
+
+```sql
+-- Simple query
+SELECT * FROM customers WHERE region = 'Europe' LIMIT 100
+
+-- Join across catalog tables
+SELECT o.order_id, c.name, o.total
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE o.total > 1000
+
+-- Aggregate virtual and physical tables together
+SELECT category, SUM(amount) as total
+FROM sales_summary    -- virtual table
+GROUP BY category
+```
+
+!!! tip "SQL dialect"
+    The SQL editor uses the [Polars SQL context](https://docs.pola.rs/user-guide/sql/intro/), which supports standard SQL syntax including `SELECT`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `UNION`, subqueries, and window functions.
+
+### Save as Flow
+
+After writing a query, you can click **Save as Flow** to convert it into a visual flow with a Catalog Reader (SQL) node — useful for making ad-hoc queries into repeatable, schedulable pipelines.
 
 ---
 
 ## Favorites
 
-**Favorite** a flow (star icon) to bookmark it in the Favorites tab for quick access. Favorites are per-user and can be toggled from the flow detail panel or inline in the tree.
+**Favorite** a flow or table (star icon) to bookmark it in the **Favorites** tab for quick access. Favorites are per-user and can be toggled from detail panels or inline in the tree.
 
 ---
 
@@ -221,8 +321,11 @@ Click an artifact in the tree to view its versions, metadata, and producing flow
 
 ## Related Documentation
 
-- [Schedules](schedules.md) — Automating flow execution with schedules
+- [Virtual Flow Tables](virtual-tables.md) — Non-materialized tables with on-demand resolution
+- [Schedules](schedules.md) — Automating flow execution with schedules and table triggers
 - [Kernel Execution](kernels.md) — Publishing global artifacts from Python code
 - [Input Nodes](nodes/input.md#catalog-reader) — Catalog Reader node
-- [Output Nodes](nodes/output.md#catalog-writer) — Catalog Writer node
-- [Building Flows](building-flows.md) — Creating workflows
+- [Output Nodes](nodes/output.md#catalog-writer) — Catalog Writer node (physical and virtual modes)
+- [Building Flows](building-flows.md) — Creating workflows in the visual editor
+- [Reading Data (Python API)](../python-api/reference/reading-data.md#catalog-reading) — `read_catalog_table()` and `read_catalog_sql()`
+- [Writing Data (Python API)](../python-api/reference/writing-data.md#catalog-writing) — `write_catalog_table()` with virtual mode

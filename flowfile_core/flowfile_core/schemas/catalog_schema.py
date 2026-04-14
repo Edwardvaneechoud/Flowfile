@@ -214,6 +214,20 @@ class VirtualFlowTableUpdate(BaseModel):
     producer_registration_id: int | None = None
 
 
+class QueryVirtualTableCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    sql_query: str
+
+
+class QueryVirtualTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+
+
 class ColumnSchema(BaseModel):
     name: str
     dtype: str
@@ -247,6 +261,7 @@ class CatalogTableOut(BaseModel):
     producer_registration_name: str | None = None
     is_optimized: bool | None = None
     laziness_blockers: list[str] | None = None
+    sql_query: str | None = None
     created_at: datetime
     updated_at: datetime
 
