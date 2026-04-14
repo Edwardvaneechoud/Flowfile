@@ -12,6 +12,7 @@ This module is a thin HTTP adapter: it delegates all business logic to
 
 import json
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 import yaml
@@ -94,6 +95,68 @@ def get_catalog_service(db: Session = Depends(get_db)) -> CatalogService:
     return CatalogService(repo)
 
 
+# ---------------------------------------------------------------------------
+# Exception → HTTP mapping
+# ---------------------------------------------------------------------------
+
+_CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
+    NamespaceNotFoundError: (404, "Namespace not found"),
+    NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
+    NestingLimitError: (422, "Cannot nest deeper than catalog -> schema"),
+    NamespaceNotEmptyError: (422, "Cannot delete namespace with children or flows"),
+    FlowNotFoundError: (404, "Flow not found"),
+    FlowHasArtifactsError: (409, None),
+    FlowAlreadyRunningError: (409, "Flow already has an active run"),
+    TableNotFoundError: (404, "Catalog table not found"),
+    TableExistsError: (409, "A table with this name already exists in this namespace"),
+    RunNotFoundError: (404, "Run not found"),
+    ScheduleNotFoundError: (404, "Schedule not found"),
+    FavoriteNotFoundError: (404, "Favorite not found"),
+    FollowNotFoundError: (404, "Follow not found"),
+    TableFavoriteNotFoundError: (404, "Table favorite not found"),
+    NoSnapshotError: (422, "No flow snapshot available for this run"),
+    ValueError: (422, None),
+}
+
+_HANDLED_EXCEPTIONS = tuple(_CATALOG_EXCEPTION_MAP.keys())
+
+
+def handle_catalog_exceptions(**overrides: str):
+    """Decorator that maps domain exceptions to ``HTTPException`` responses.
+
+    Default messages come from ``_CATALOG_EXCEPTION_MAP``.  Pass keyword
+    arguments of the form ``ExceptionClassName="custom message"`` to
+    override the default for a specific exception within one endpoint.
+    """
+
+    # Pre-build a name→type lookup for the overrides
+    override_map: dict[type[Exception], str] = {}
+    if overrides:
+        name_to_type = {cls.__name__: cls for cls in _CATALOG_EXCEPTION_MAP}
+        for name, msg in overrides.items():
+            if name in name_to_type:
+                override_map[name_to_type[name]] = msg
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except _HANDLED_EXCEPTIONS as exc:
+                for exc_type in type(exc).__mro__:
+                    if exc_type in _CATALOG_EXCEPTION_MAP:
+                        status_code, default_msg = _CATALOG_EXCEPTION_MAP[exc_type]
+                        msg = override_map.get(exc_type, default_msg)
+                        if msg is None:
+                            msg = str(exc)
+                        raise HTTPException(status_code, msg) from None
+                raise  # unreachable but keeps linters happy
+
+        return wrapper
+
+    return decorator
+
+
 @router.get("/namespaces", response_model=list[NamespaceOut])
 def list_namespaces(
     parent_id: int | None = None,
@@ -104,54 +167,42 @@ def list_namespaces(
 
 
 @router.post("/namespaces", response_model=NamespaceOut, status_code=201)
+@handle_catalog_exceptions(NamespaceNotFoundError="Parent namespace not found")
 def create_namespace(
     body: NamespaceCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Create a catalog (level 0) or schema (level 1) namespace."""
-    try:
-        return service.create_namespace(
-            name=body.name,
-            owner_id=current_user.id,
-            parent_id=body.parent_id,
-            description=body.description,
-        )
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Parent namespace not found") from None
-    except NamespaceExistsError:
-        raise HTTPException(409, "Namespace with this name already exists at this level") from None
-    except NestingLimitError:
-        raise HTTPException(422, "Cannot nest deeper than catalog -> schema") from None
+    return service.create_namespace(
+        name=body.name,
+        owner_id=current_user.id,
+        parent_id=body.parent_id,
+        description=body.description,
+    )
 
 
 @router.put("/namespaces/{namespace_id}", response_model=NamespaceOut)
+@handle_catalog_exceptions()
 def update_namespace(
     namespace_id: int,
     body: NamespaceUpdate,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.update_namespace(
-            namespace_id=namespace_id,
-            name=body.name,
-            description=body.description,
-        )
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
+    return service.update_namespace(
+        namespace_id=namespace_id,
+        name=body.name,
+        description=body.description,
+    )
 
 
 @router.delete("/namespaces/{namespace_id}", status_code=204)
+@handle_catalog_exceptions()
 def delete_namespace(
     namespace_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.delete_namespace(namespace_id)
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
-    except NamespaceNotEmptyError:
-        raise HTTPException(422, "Cannot delete namespace with children or flows") from None
+    service.delete_namespace(namespace_id)
 
 
 @router.get("/namespaces/tree", response_model=list[NamespaceTree])
@@ -186,80 +237,68 @@ def list_flows(
 
 
 @router.post("/flows", response_model=FlowRegistrationOut, status_code=201)
+@handle_catalog_exceptions()
 def register_flow(
     body: FlowRegistrationCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.register_flow(
-            name=body.name,
-            flow_path=body.flow_path,
-            owner_id=current_user.id,
-            namespace_id=body.namespace_id,
-            description=body.description,
-        )
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
+    return service.register_flow(
+        name=body.name,
+        flow_path=body.flow_path,
+        owner_id=current_user.id,
+        namespace_id=body.namespace_id,
+        description=body.description,
+    )
 
 
 @router.get("/flows/{flow_id}", response_model=FlowRegistrationOut)
+@handle_catalog_exceptions()
 def get_flow(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.get_flow(registration_id=flow_id, user_id=current_user.id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
+    return service.get_flow(registration_id=flow_id, user_id=current_user.id)
 
 
 @router.put("/flows/{flow_id}", response_model=FlowRegistrationOut)
+@handle_catalog_exceptions()
 def update_flow(
     flow_id: int,
     body: FlowRegistrationUpdate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.update_flow(
-            registration_id=flow_id,
-            requesting_user_id=current_user.id,
-            name=body.name,
-            description=body.description,
-            namespace_id=body.namespace_id,
-        )
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
+    return service.update_flow(
+        registration_id=flow_id,
+        requesting_user_id=current_user.id,
+        name=body.name,
+        description=body.description,
+        namespace_id=body.namespace_id,
+    )
 
 
 @router.delete("/flows/{flow_id}", status_code=204)
+@handle_catalog_exceptions()
 def delete_flow(
     flow_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.delete_flow(registration_id=flow_id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
-    except FlowHasArtifactsError as e:
-        raise HTTPException(409, str(e)) from e
+    service.delete_flow(registration_id=flow_id)
 
 
 @router.get(
     "/flows/{flow_id}/artifacts",
     response_model=list[GlobalArtifactOut],
 )
+@handle_catalog_exceptions()
 def list_flow_artifacts(
     flow_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List all active artifacts produced by a registered flow."""
-    try:
-        return service.list_artifacts_for_flow(flow_id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
+    return service.list_artifacts_for_flow(flow_id)
 
 
 @router.get("/runs", response_model=PaginatedFlowRuns)
@@ -277,15 +316,13 @@ def list_runs(
 
 
 @router.get("/runs/{run_id}", response_model=FlowRunDetail)
+@handle_catalog_exceptions()
 def get_run_detail(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Get a single run including the YAML snapshot of the flow version that ran."""
-    try:
-        return service.get_run_detail(run_id)
-    except RunNotFoundError:
-        raise HTTPException(404, "Run not found") from None
+    return service.get_run_detail(run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -294,15 +331,13 @@ def get_run_detail(
 
 
 @router.get("/runs/{run_id}/log")
+@handle_catalog_exceptions()
 def get_run_log(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Return the log content for a scheduled run."""
-    try:
-        run = service.get_run_detail(run_id)
-    except RunNotFoundError:
-        raise HTTPException(404, "Run not found") from None
+    run = service.get_run_detail(run_id)
 
     if run.run_type not in ("scheduled", "manual"):
         raise HTTPException(404, "Logs are only available for scheduled/manual runs")
@@ -320,18 +355,14 @@ def get_run_log(
 
 
 @router.post("/runs/{run_id}/open")
+@handle_catalog_exceptions()
 def open_run_snapshot(
     run_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Write the run's flow snapshot to a temp file and import it into the designer."""
-    try:
-        snapshot_data = service.get_run_snapshot(run_id)
-    except RunNotFoundError:
-        raise HTTPException(404, "Run not found") from None
-    except NoSnapshotError:
-        raise HTTPException(422, "No flow snapshot available for this run") from None
+    snapshot_data = service.get_run_snapshot(run_id)
 
     # Parse snapshot and assign a new unique flow_id so the imported
     # snapshot opens as a separate tab instead of overwriting an
@@ -377,27 +408,23 @@ def list_favorites(
 
 
 @router.post("/flows/{flow_id}/favorite", response_model=FavoriteOut, status_code=201)
+@handle_catalog_exceptions()
 def add_favorite(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.add_favorite(user_id=current_user.id, registration_id=flow_id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
+    return service.add_favorite(user_id=current_user.id, registration_id=flow_id)
 
 
 @router.delete("/flows/{flow_id}/favorite", status_code=204)
+@handle_catalog_exceptions()
 def remove_favorite(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.remove_favorite(user_id=current_user.id, registration_id=flow_id)
-    except FavoriteNotFoundError:
-        raise HTTPException(404, "Favorite not found") from None
+    service.remove_favorite(user_id=current_user.id, registration_id=flow_id)
 
 
 # ---------------------------------------------------------------------------
@@ -414,27 +441,23 @@ def list_following(
 
 
 @router.post("/flows/{flow_id}/follow", response_model=FollowOut, status_code=201)
+@handle_catalog_exceptions()
 def add_follow(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.add_follow(user_id=current_user.id, registration_id=flow_id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
+    return service.add_follow(user_id=current_user.id, registration_id=flow_id)
 
 
 @router.delete("/flows/{flow_id}/follow", status_code=204)
+@handle_catalog_exceptions()
 def remove_follow(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.remove_follow(user_id=current_user.id, registration_id=flow_id)
-    except FollowNotFoundError:
-        raise HTTPException(404, "Follow not found") from None
+    service.remove_follow(user_id=current_user.id, registration_id=flow_id)
 
 
 # ---------------------------------------------------------------------------
@@ -453,72 +476,61 @@ def list_tables(
 
 
 @router.post("/tables", response_model=CatalogTableOut, status_code=201)
+@handle_catalog_exceptions()
 def register_table(
     body: CatalogTableCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Register a new table by materializing a source file as Parquet."""
-    try:
-        validated_path = validate_path_under_cwd(body.file_path)
-        return service.register_table(
-            name=body.name,
-            file_path=validated_path,
-            owner_id=current_user.id,
-            namespace_id=body.namespace_id,
-            description=body.description,
-        )
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
-    except TableExistsError:
-        raise HTTPException(409, "A table with this name already exists in this namespace") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    validated_path = validate_path_under_cwd(body.file_path)
+    return service.register_table(
+        name=body.name,
+        file_path=validated_path,
+        owner_id=current_user.id,
+        namespace_id=body.namespace_id,
+        description=body.description,
+    )
 
 
 @router.get("/tables/{table_id}", response_model=CatalogTableOut)
+@handle_catalog_exceptions()
 def get_table(
     table_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.get_table(table_id, user_id=current_user.id)
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    return service.get_table(table_id, user_id=current_user.id)
 
 
 @router.put("/tables/{table_id}", response_model=CatalogTableOut)
+@handle_catalog_exceptions()
 def update_table(
     table_id: int,
     body: CatalogTableUpdate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.update_table(
-            table_id=table_id,
-            name=body.name,
-            description=body.description,
-            namespace_id=body.namespace_id,
-        )
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    return service.update_table(
+        table_id=table_id,
+        name=body.name,
+        description=body.description,
+        namespace_id=body.namespace_id,
+    )
 
 
 @router.delete("/tables/{table_id}", status_code=204)
+@handle_catalog_exceptions()
 def delete_table(
     table_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.delete_table(table_id)
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    service.delete_table(table_id)
 
 
 @router.get("/tables/{table_id}/preview", response_model=CatalogTablePreview)
+@handle_catalog_exceptions()
 def get_table_preview(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
@@ -531,13 +543,11 @@ def get_table_preview(
     When ``version`` is provided and the table is a Delta table, returns
     data from that specific historical version.
     """
-    try:
-        return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
 
 
 @router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)
+@handle_catalog_exceptions()
 def get_table_history(
     table_id: int,
     limit: int | None = Query(None),
@@ -545,10 +555,7 @@ def get_table_history(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Return version history for a Delta catalog table."""
-    try:
-        return service.get_table_history(table_id, limit=limit)
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    return service.get_table_history(table_id, limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -565,27 +572,23 @@ def list_table_favorites(
 
 
 @router.post("/tables/{table_id}/favorite", response_model=TableFavoriteOut, status_code=201)
+@handle_catalog_exceptions()
 def add_table_favorite(
     table_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.add_table_favorite(user_id=current_user.id, table_id=table_id)
-    except TableNotFoundError:
-        raise HTTPException(404, "Catalog table not found") from None
+    return service.add_table_favorite(user_id=current_user.id, table_id=table_id)
 
 
 @router.delete("/tables/{table_id}/favorite", status_code=204)
+@handle_catalog_exceptions()
 def remove_table_favorite(
     table_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
-    except TableFavoriteNotFoundError:
-        raise HTTPException(404, "Table favorite not found") from None
+    service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
 
 
 # ---------------------------------------------------------------------------
@@ -594,26 +597,20 @@ def remove_table_favorite(
 
 
 @router.post("/virtual-tables", response_model=CatalogTableOut, status_code=201)
+@handle_catalog_exceptions(FlowNotFoundError="Producer flow not found")
 def create_virtual_flow_table(
     body: VirtualFlowTableCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Create a virtual flow table (non-materialized catalog entry)."""
-    try:
-        table_out = service.create_virtual_flow_table(
-            name=body.name,
-            owner_id=current_user.id,
-            producer_registration_id=body.producer_registration_id,
-            namespace_id=body.namespace_id,
-            description=body.description,
-        )
-    except FlowNotFoundError:
-        raise HTTPException(404, "Producer flow not found") from None
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
-    except TableExistsError:
-        raise HTTPException(409, "A table with this name already exists in this namespace") from None
+    table_out = service.create_virtual_flow_table(
+        name=body.name,
+        owner_id=current_user.id,
+        producer_registration_id=body.producer_registration_id,
+        namespace_id=body.namespace_id,
+        description=body.description,
+    )
 
     # Compute laziness blockers from the producer flow
     flow_reg = service.repo.get_flow(body.producer_registration_id)
@@ -625,6 +622,7 @@ def create_virtual_flow_table(
 
 
 @router.put("/virtual-tables/{table_id}", response_model=CatalogTableOut)
+@handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
 def update_virtual_flow_table(
     table_id: int,
     body: VirtualFlowTableUpdate,
@@ -632,21 +630,17 @@ def update_virtual_flow_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Update a virtual flow table's metadata or producer."""
-    try:
-        return service.update_virtual_flow_table(
-            table_id=table_id,
-            name=body.name,
-            description=body.description,
-            namespace_id=body.namespace_id,
-            producer_registration_id=body.producer_registration_id,
-        )
-    except TableNotFoundError:
-        raise HTTPException(404, "Virtual table not found") from None
-    except FlowNotFoundError:
-        raise HTTPException(404, "Producer flow not found") from None
+    return service.update_virtual_flow_table(
+        table_id=table_id,
+        name=body.name,
+        description=body.description,
+        namespace_id=body.namespace_id,
+        producer_registration_id=body.producer_registration_id,
+    )
 
 
 @router.post("/virtual-tables/{table_id}/resolve")
+@handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
 def resolve_virtual_flow_table(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
@@ -654,21 +648,14 @@ def resolve_virtual_flow_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Resolve a virtual flow table and return a preview of the result."""
-    try:
-        lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
-        df = lf.head(limit).collect()
-        return {
-            "columns": df.columns,
-            "dtypes": [str(dt) for dt in df.dtypes],
-            "rows": df.rows(),
-            "total_rows": df.height,
-        }
-    except TableNotFoundError:
-        raise HTTPException(404, "Virtual table not found") from None
-    except FlowNotFoundError:
-        raise HTTPException(404, "Producer flow not found") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
+    df = lf.head(limit).collect()
+    return {
+        "columns": df.columns,
+        "dtypes": [str(dt) for dt in df.dtypes],
+        "rows": df.rows(),
+        "total_rows": df.height,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -677,29 +664,24 @@ def resolve_virtual_flow_table(
 
 
 @router.post("/query-virtual-tables", response_model=CatalogTableOut, status_code=201)
+@handle_catalog_exceptions()
 def create_query_virtual_table(
     body: QueryVirtualTableCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Create a query-based virtual table from a SQL expression."""
-    try:
-        return service.create_query_virtual_table(
-            name=body.name,
-            owner_id=current_user.id,
-            sql_query=body.sql_query,
-            namespace_id=body.namespace_id,
-            description=body.description,
-        )
-    except NamespaceNotFoundError:
-        raise HTTPException(404, "Namespace not found") from None
-    except TableExistsError:
-        raise HTTPException(409, "A table with this name already exists in this namespace") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    return service.create_query_virtual_table(
+        name=body.name,
+        owner_id=current_user.id,
+        sql_query=body.sql_query,
+        namespace_id=body.namespace_id,
+        description=body.description,
+    )
 
 
 @router.put("/query-virtual-tables/{table_id}", response_model=CatalogTableOut)
+@handle_catalog_exceptions(TableNotFoundError="Query virtual table not found")
 def update_query_virtual_table(
     table_id: int,
     body: QueryVirtualTableUpdate,
@@ -707,18 +689,13 @@ def update_query_virtual_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Update a query-based virtual table."""
-    try:
-        return service.update_query_virtual_table(
-            table_id=table_id,
-            name=body.name,
-            description=body.description,
-            namespace_id=body.namespace_id,
-            sql_query=body.sql_query,
-        )
-    except TableNotFoundError:
-        raise HTTPException(404, "Query virtual table not found") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    return service.update_query_virtual_table(
+        table_id=table_id,
+        name=body.name,
+        description=body.description,
+        namespace_id=body.namespace_id,
+        sql_query=body.sql_query,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -786,103 +763,79 @@ def list_schedules(
 
 
 @router.post("/schedules", response_model=FlowScheduleOut, status_code=201)
+@handle_catalog_exceptions(TableNotFoundError="Trigger table not found")
 def create_schedule(
     body: FlowScheduleCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.create_schedule(
-            registration_id=body.registration_id,
-            owner_id=current_user.id,
-            schedule_type=body.schedule_type,
-            interval_seconds=body.interval_seconds,
-            trigger_table_id=body.trigger_table_id,
-            trigger_table_ids=body.trigger_table_ids,
-            enabled=body.enabled,
-            name=body.name,
-            description=body.description,
-        )
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
-    except TableNotFoundError:
-        raise HTTPException(404, "Trigger table not found") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    return service.create_schedule(
+        registration_id=body.registration_id,
+        owner_id=current_user.id,
+        schedule_type=body.schedule_type,
+        interval_seconds=body.interval_seconds,
+        trigger_table_id=body.trigger_table_id,
+        trigger_table_ids=body.trigger_table_ids,
+        enabled=body.enabled,
+        name=body.name,
+        description=body.description,
+    )
 
 
 @router.get("/schedules/{schedule_id}", response_model=FlowScheduleOut)
+@handle_catalog_exceptions()
 def get_schedule(
     schedule_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.get_schedule(schedule_id)
-    except ScheduleNotFoundError:
-        raise HTTPException(404, "Schedule not found") from None
+    return service.get_schedule(schedule_id)
 
 
 @router.put("/schedules/{schedule_id}", response_model=FlowScheduleOut)
+@handle_catalog_exceptions()
 def update_schedule(
     schedule_id: int,
     body: FlowScheduleUpdate,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        return service.update_schedule(
-            schedule_id=schedule_id,
-            enabled=body.enabled,
-            interval_seconds=body.interval_seconds,
-            name=body.name,
-            description=body.description,
-        )
-    except ScheduleNotFoundError:
-        raise HTTPException(404, "Schedule not found") from None
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+    return service.update_schedule(
+        schedule_id=schedule_id,
+        enabled=body.enabled,
+        interval_seconds=body.interval_seconds,
+        name=body.name,
+        description=body.description,
+    )
 
 
 @router.delete("/schedules/{schedule_id}", status_code=204)
+@handle_catalog_exceptions()
 def delete_schedule(
     schedule_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    try:
-        service.delete_schedule(schedule_id)
-    except ScheduleNotFoundError:
-        raise HTTPException(404, "Schedule not found") from None
+    service.delete_schedule(schedule_id)
 
 
 @router.post("/flows/{flow_id}/run", response_model=FlowRunOut)
+@handle_catalog_exceptions()
 def run_flow_now(
     flow_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Trigger a registered flow immediately without needing a schedule."""
-    try:
-        return service.run_flow_now(registration_id=flow_id, user_id=current_user.id)
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
-    except FlowAlreadyRunningError:
-        raise HTTPException(409, "Flow already has an active run") from None
+    return service.run_flow_now(registration_id=flow_id, user_id=current_user.id)
 
 
 @router.post("/schedules/{schedule_id}/run-now", response_model=FlowRunOut)
+@handle_catalog_exceptions()
 def trigger_schedule_now(
     schedule_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Manually trigger a scheduled flow immediately."""
-    try:
-        return service.trigger_schedule_now(schedule_id=schedule_id, user_id=current_user.id)
-    except ScheduleNotFoundError:
-        raise HTTPException(404, "Schedule not found") from None
-    except FlowNotFoundError:
-        raise HTTPException(404, "Flow not found") from None
-    except FlowAlreadyRunningError:
-        raise HTTPException(409, "Flow already has an active run") from None
+    return service.trigger_schedule_now(schedule_id=schedule_id, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -900,16 +853,14 @@ def list_active_runs(
 
 
 @router.post("/runs/{run_id}/cancel", status_code=204)
+@handle_catalog_exceptions()
 def cancel_run(
     run_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Cancel a running flow by marking it as failed."""
-    try:
-        service.cancel_run(run_id)
-    except RunNotFoundError:
-        raise HTTPException(404, "Run not found") from None
+    service.cancel_run(run_id)
 
 
 # ---------------------------------------------------------------------------

@@ -32,14 +32,25 @@ from flowfile_core.flowfile.flow_graph import (
     add_connection,
 )
 from flowfile_core.schemas import input_schema
-
-from conftest import (
+from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
+)
+from tests.flowfile.conftest import (
     add_test_manual_input as _add_manual_input,
+)
+from tests.flowfile.conftest import (
     catalog_cleanup as _cleanup,
+)
+from tests.flowfile.conftest import (
     create_test_flow_registration as _create_flow_registration,
+)
+from tests.flowfile.conftest import (
     create_test_graph as _create_graph,
+)
+from tests.flowfile.conftest import (
     create_test_namespace as _create_namespace,
+)
+from tests.flowfile.conftest import (
     run_test_graph as _run_graph,
 )
 
@@ -325,9 +336,7 @@ class TestCatalogWriter:
 
         # Read link should still exist and point to the same table ID
         with get_db_context() as db:
-            link = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=reg_id
-            ).first()
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
             # Table should still be valid
             table = db.get(CatalogTable, table_id)
@@ -455,9 +464,7 @@ class TestSyncCatalogReadLinks:
 
         # Verify the read link was created
         with get_db_context() as db:
-            link = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=reg_id
-            ).first()
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
 
         os.unlink(save_path)
@@ -656,15 +663,23 @@ class TestCatalogSqlReader:
     def test_sql_query_join_two_tables(self):
         """SQL query that JOINs two catalog tables."""
         ns_id = _create_namespace()
-        self._register_delta_table(ns_id, "customers_sql", [
-            {"id": 1, "name": "Alice"},
-            {"id": 2, "name": "Bob"},
-        ])
-        self._register_delta_table(ns_id, "orders_sql", [
-            {"customer_id": 1, "amount": 100},
-            {"customer_id": 2, "amount": 200},
-            {"customer_id": 1, "amount": 150},
-        ])
+        self._register_delta_table(
+            ns_id,
+            "customers_sql",
+            [
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"},
+            ],
+        )
+        self._register_delta_table(
+            ns_id,
+            "orders_sql",
+            [
+                {"customer_id": 1, "amount": 100},
+                {"customer_id": 2, "amount": 200},
+                {"customer_id": 1, "amount": 150},
+            ],
+        )
 
         graph = _create_graph()
         promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")

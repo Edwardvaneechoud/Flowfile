@@ -17,22 +17,34 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
-    CatalogTable,
     FlowRegistration,
     FlowSchedule,
 )
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
-
-from conftest import (
+from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
+)
+from tests.flowfile.conftest import (
     add_test_catalog_writer as _add_catalog_writer,
+)
+from tests.flowfile.conftest import (
     add_test_manual_input as _add_manual_input,
+)
+from tests.flowfile.conftest import (
     catalog_cleanup as _cleanup,
+)
+from tests.flowfile.conftest import (
     create_test_flow_registration as _create_flow_registration,
+)
+from tests.flowfile.conftest import (
     create_test_graph as _create_graph,
+)
+from tests.flowfile.conftest import (
     create_test_namespace as _create_namespace,
+)
+from tests.flowfile.conftest import (
     run_test_graph as _run_graph,
 )
 
@@ -593,15 +605,12 @@ class TestVirtualTableTriggerFiring:
             db.add(schedule)
             db.commit()
             db.refresh(schedule)
-            schedule_id = schedule.id
-
         # Update the virtual table and check that _fire_table_trigger_schedules is called
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
 
             fired_tables = []
-            original_fire = svc._fire_table_trigger_schedules
 
             def mock_fire(table_id, table_updated_at):
                 fired_tables.append(table_id)
