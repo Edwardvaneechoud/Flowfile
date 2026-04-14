@@ -2,11 +2,6 @@
 
 Create catalog tables that store **no data on disk**. When queried, a virtual table executes its producer flow on demand — delivering always-fresh results with zero storage overhead.
 
-<!-- PLACEHOLDER: Screenshot of a virtual table in the catalog tree with bolt icon and "virtual" badge -->
-![Virtual table in catalog](../../../assets/images/guides/catalog/virtual-table-overview.png)
-
-*A virtual table in the catalog tree, marked with a bolt icon and "virtual" badge*
-
 ---
 
 ## Why Virtual Tables?
@@ -66,11 +61,6 @@ Add a **Catalog Writer** node to your flow and switch to virtual mode.
    - **Green checkmark**: your flow is fully lazy — the virtual table will be *optimized*
    - **Yellow warning**: some nodes prevent lazy execution — the table will use *standard* resolution (see [Laziness Blockers](#laziness-blockers))
 5. Save and run the flow
-
-<!-- PLACEHOLDER: Screenshot of the Catalog Writer node with the Virtual Table tab active, showing the laziness check result -->
-![Catalog Writer virtual tab](../../../assets/images/guides/catalog/catalog-writer-virtual-tab.png)
-
-*The Catalog Writer node with the Virtual Table tab selected, showing an optimized laziness check*
 
 !!! warning "Flow must be registered"
     Virtual tables require the flow to be registered in the catalog. If the flow isn't registered yet, the virtual write will fail with an error. Open the flow from the catalog, or register it first via the [catalog page](index.md#registering-flows).
@@ -141,11 +131,6 @@ This path is slower because it executes the entire producer flow, but it guarant
 
 When the Catalog Writer's Virtual Table tab shows a yellow warning, it lists the specific **laziness blockers** — the nodes in your pipeline that prevent optimization.
 
-<!-- PLACEHOLDER: Screenshot of the laziness blockers warning in the Catalog Writer virtual tab -->
-![Laziness blockers](../../../assets/images/guides/catalog/laziness-blockers.png)
-
-*Laziness blockers showing which nodes prevent optimization*
-
 Each blocker identifies:
 
 - The **node name** and **ID** (e.g., "Node 'Pivot data' (id=3) is eager")
@@ -163,11 +148,6 @@ Virtual tables integrate seamlessly into the catalog ecosystem.
 ### Reading in Flows
 
 Use the **Catalog Reader** node to read a virtual table, just like a physical one. Virtual tables appear in the table dropdown with a **bolt icon** to distinguish them.
-
-<!-- PLACEHOLDER: Screenshot of the Catalog Reader dropdown showing virtual tables with bolt icons -->
-![Catalog Reader with virtual tables](../../../assets/images/guides/catalog/catalog-reader-virtual.png)
-
-*The Catalog Reader table selector showing both physical and virtual tables*
 
 When the flow runs, the Catalog Reader resolves the virtual table automatically:
 

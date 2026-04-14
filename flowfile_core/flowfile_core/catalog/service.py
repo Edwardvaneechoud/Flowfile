@@ -112,6 +112,27 @@ def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
     ]
 
 
+def _format_polars_preview(lf: pl.LazyFrame, limit: int) -> CatalogTablePreview:
+    """Convert a Polars LazyFrame to a CatalogTablePreview."""
+    df = lf.head(limit).collect()
+    columns = df.columns
+    dtypes = [str(dt) for dt in df.dtypes]
+    rows_data = df.to_dicts()
+    rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+    return CatalogTablePreview(columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height)
+
+
+def _format_pyarrow_preview(pa_table, total_rows: int | None = None) -> CatalogTablePreview:
+    """Convert a PyArrow table to a CatalogTablePreview."""
+    columns = pa_table.column_names
+    dtypes = [str(field.type) for field in pa_table.schema]
+    rows_data = pa_table.to_pylist()
+    rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
+    return CatalogTablePreview(
+        columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows if total_rows is not None else len(rows_data)
+    )
+
+
 class CatalogService:
     """Coordinates all catalog business logic.
 
@@ -127,6 +148,19 @@ class CatalogService:
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
+
+    def _validate_table_registration(self, name: str, namespace_id: int | None) -> None:
+        """Check that the namespace exists and the table name is unique.
+
+        Raises NamespaceNotFoundError or TableExistsError on validation failure.
+        """
+        if namespace_id is not None:
+            ns = self.repo.get_namespace(namespace_id)
+            if ns is None:
+                raise NamespaceNotFoundError(namespace_id=namespace_id)
+        existing = self.repo.get_table_by_name(name, namespace_id)
+        if existing is not None:
+            raise TableExistsError(name=name, namespace_id=namespace_id)
 
     @dataclass(frozen=True)
     class CatalogMaterializationResult:
@@ -1161,14 +1195,7 @@ class CatalogService:
         TableExistsError
             If a table with this name already exists in the namespace.
         """
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(name=name, namespace_id=namespace_id)
+        self._validate_table_registration(name, namespace_id)
 
         materialized = self._materialize_table_with_worker(
             source_file_path=file_path,
@@ -1224,14 +1251,7 @@ class CatalogService:
         TableExistsError
             If a table with this name already exists in the namespace.
         """
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(name=name, namespace_id=namespace_id)
+        self._validate_table_registration(name, namespace_id)
 
         if schema is not None and row_count is not None and size_bytes is not None:
             # Fast path: caller already computed metadata (from worker)
@@ -1406,33 +1426,13 @@ class CatalogService:
                 logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
                 continue
 
-            now = datetime.now(timezone.utc)
-            run = FlowRun(
-                registration_id=flow.id,
-                flow_name=flow.name,
-                flow_path=flow.flow_path,
-                user_id=schedule.owner_id,
-                started_at=now,
-                number_of_nodes=0,
-                run_type="scheduled",
-                schedule_id=schedule.id,
-            )
-            run = self.repo.create_run(run)
-
-            schedule.last_triggered_at = now
+            schedule.last_triggered_at = datetime.now(timezone.utc)
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 
-            pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
-            if pid is not None:
-                run.pid = pid
-                self.repo.update_run(run)
+            run = self._spawn_flow_run(flow, user_id=schedule.owner_id, run_type="scheduled", schedule_id=schedule.id)
+            if run.pid is not None:
                 launched += 1
-            else:
-                logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
-                run.ended_at = datetime.now(timezone.utc)
-                run.success = False
-                self.repo.update_run(run)
 
         return launched
 
@@ -1628,15 +1628,7 @@ class CatalogService:
             raise FlowNotFoundError(flow_id=producer_registration_id)
 
         # Validate namespace
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-
-        # Check name uniqueness
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(table_name=name, namespace_id=namespace_id)
+        self._validate_table_registration(name, namespace_id)
 
         table = CatalogTable(
             name=name,
@@ -1740,14 +1732,7 @@ class CatalogService:
         except UnsafeSQLError as e:
             raise ValueError(str(e)) from e
 
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(table_name=name, namespace_id=namespace_id)
+        self._validate_table_registration(name, namespace_id)
 
         # Execute the query once to derive schema
         result = self.execute_sql_query(sql_query, max_rows=1)
@@ -1978,14 +1963,7 @@ class CatalogService:
         """Resolve a query-based virtual table and return a preview."""
         try:
             lf = self.resolve_query_virtual_table(table.id, user_id=user_id)
-            df = lf.head(limit).collect()
-            columns = df.columns
-            dtypes = [str(dt) for dt in df.dtypes]
-            rows_data = df.to_dicts()
-            rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-            return CatalogTablePreview(
-                columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
-            )
+            return _format_polars_preview(lf, limit)
         except Exception:
             logger.warning("Could not resolve query virtual table %d for preview", table.id, exc_info=True)
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
@@ -1994,14 +1972,7 @@ class CatalogService:
         """Resolve a virtual flow table and return a preview of the collected result."""
         try:
             lf = self.resolve_virtual_flow_table(table.id, user_id=user_id)
-            df = lf.head(limit).collect()
-            columns = df.columns
-            dtypes = [str(dt) for dt in df.dtypes]
-            rows_data = df.to_dicts()
-            rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-            return CatalogTablePreview(
-                columns=columns, dtypes=dtypes, rows=rows, total_rows=df.height,
-            )
+            return _format_polars_preview(lf, limit)
         except Exception:
             logger.warning("Could not resolve virtual table %d for preview", table.id, exc_info=True)
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
@@ -2022,18 +1993,7 @@ class CatalogService:
             pa_table = read_delta_preview(str(data_path), n_rows=limit)
         else:
             pa_table = read_top_n(str(data_path), n=limit)
-        columns = pa_table.column_names
-        dtypes = [str(field.type) for field in pa_table.schema]
-        rows_data = pa_table.to_pylist()
-
-        rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-
-        return CatalogTablePreview(
-            columns=columns,
-            dtypes=dtypes,
-            rows=rows,
-            total_rows=table.row_count or len(rows_data),
-        )
+        return _format_pyarrow_preview(pa_table, total_rows=table.row_count)
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
@@ -2047,11 +2007,7 @@ class CatalogService:
         dt = DeltaTable(table_path, version=version)
         dataset = dt.to_pyarrow_dataset()
         pa_table = dataset.head(limit)
-        columns = pa_table.column_names
-        dtypes = [str(field.type) for field in pa_table.schema]
-        rows_data = pa_table.to_pylist()
-        rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-        return CatalogTablePreview(columns=columns, dtypes=dtypes, rows=rows, total_rows=len(rows))
+        return _format_pyarrow_preview(pa_table)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table.
@@ -2307,6 +2263,40 @@ class CatalogService:
 
         return spawn_flow_subprocess(flow_path, run_id)
 
+    def _spawn_flow_run(
+        self,
+        flow: FlowRegistration,
+        user_id: int,
+        run_type: str,
+        schedule_id: int | None = None,
+    ) -> FlowRun:
+        """Create a FlowRun record and spawn the subprocess.
+
+        On spawn failure the run is marked as failed immediately.
+        """
+        now = datetime.now(timezone.utc)
+        run = FlowRun(
+            registration_id=flow.id,
+            flow_name=flow.name,
+            flow_path=flow.flow_path,
+            user_id=user_id,
+            started_at=now,
+            number_of_nodes=0,
+            run_type=run_type,
+            schedule_id=schedule_id,
+        )
+        run = self.repo.create_run(run)
+
+        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
+        if pid is not None:
+            run.pid = pid
+        else:
+            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+            run.ended_at = datetime.now(timezone.utc)
+            run.success = False
+        self.repo.update_run(run)
+        return run
+
     def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
         """Trigger a registered flow immediately without a schedule.
 
@@ -2324,28 +2314,7 @@ class CatalogService:
         if self.repo.has_active_run(registration_id):
             raise FlowAlreadyRunningError(registration_id=registration_id)
 
-        now = datetime.now(timezone.utc)
-        run = FlowRun(
-            registration_id=flow.id,
-            flow_name=flow.name,
-            flow_path=flow.flow_path,
-            user_id=user_id,
-            started_at=now,
-            number_of_nodes=0,
-            run_type="manual",
-        )
-        run = self.repo.create_run(run)
-
-        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
-        if pid is not None:
-            run.pid = pid
-            self.repo.update_run(run)
-        else:
-            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
-            run.ended_at = datetime.now(timezone.utc)
-            run.success = False
-            self.repo.update_run(run)
-
+        run = self._spawn_flow_run(flow, user_id=user_id, run_type="manual")
         return self._run_to_out(run)
 
     def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
@@ -2372,30 +2341,7 @@ class CatalogService:
         if self.repo.has_active_run(schedule.registration_id):
             raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
 
-        # Create a run record before spawning
-        now = datetime.now(timezone.utc)
-        run = FlowRun(
-            registration_id=flow.id,
-            flow_name=flow.name,
-            flow_path=flow.flow_path,
-            user_id=user_id,
-            started_at=now,
-            number_of_nodes=0,
-            run_type="on_demand",
-            schedule_id=schedule.id,
-        )
-        run = self.repo.create_run(run)
-
-        pid = self._spawn_flow_subprocess(flow.flow_path, run.id)
-        if pid is not None:
-            run.pid = pid
-            self.repo.update_run(run)
-        else:
-            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
-            run.ended_at = datetime.now(timezone.utc)
-            run.success = False
-            self.repo.update_run(run)
-
+        run = self._spawn_flow_run(flow, user_id=user_id, run_type="on_demand", schedule_id=schedule.id)
         return self._run_to_out(run)
 
     # ------------------------------------------------------------------ #

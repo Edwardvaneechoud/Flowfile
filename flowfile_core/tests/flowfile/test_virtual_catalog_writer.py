@@ -17,16 +17,24 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
-    CatalogNamespace,
     CatalogTable,
-    CatalogTableReadLink,
     FlowRegistration,
     FlowSchedule,
 )
-from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
+
+from conftest import (
+    CATALOG_SAMPLE_DATA as SAMPLE_DATA,
+    add_test_catalog_writer as _add_catalog_writer,
+    add_test_manual_input as _add_manual_input,
+    catalog_cleanup as _cleanup,
+    create_test_flow_registration as _create_flow_registration,
+    create_test_graph as _create_graph,
+    create_test_namespace as _create_namespace,
+    run_test_graph as _run_graph,
+)
 
 
 @pytest.fixture()
@@ -131,127 +139,11 @@ def eager_virtual_table_id() -> int:
     return table.id
 
 
-def _cleanup():
-    """Remove all catalog / flow-registration rows so tests start clean."""
-    with get_db_context() as db:
-        db.query(CatalogTableReadLink).delete()
-        db.query(FlowSchedule).delete()
-        db.query(CatalogTable).delete()
-        db.query(FlowRegistration).delete()
-        db.query(CatalogNamespace).delete()
-        db.commit()
-
-
 @pytest.fixture(autouse=True)
 def clean_state():
     _cleanup()
     yield
     _cleanup()
-
-
-def _create_namespace():
-    """Create a two-level namespace hierarchy and return the schema-level id."""
-    with get_db_context() as db:
-        cat = CatalogNamespace(name="TestCat", level=0, owner_id=1)
-        db.add(cat)
-        db.commit()
-        db.refresh(cat)
-        schema = CatalogNamespace(name="TestSch", level=1, parent_id=cat.id, owner_id=1)
-        db.add(schema)
-        db.commit()
-        db.refresh(schema)
-        return schema.id
-
-
-def _create_flow_registration(namespace_id: int, name: str = "test_flow", path: str = "/tmp/test.yaml"):
-    """Insert a FlowRegistration row and return its id."""
-    with get_db_context() as db:
-        reg = FlowRegistration(
-            name=name,
-            flow_path=path,
-            namespace_id=namespace_id,
-            owner_id=1,
-        )
-        db.add(reg)
-        db.commit()
-        db.refresh(reg)
-        return reg.id
-
-
-def _create_graph(
-    flow_id: int = 1,
-    source_registration_id: int | None = None,
-    execution_location: str = "local",
-) -> FlowGraph:
-    """Create a FlowGraph with optional source_registration_id."""
-    handler = FlowfileHandler()
-    settings = schemas.FlowSettings(
-        flow_id=flow_id,
-        name="test_flow",
-        path=".",
-        execution_mode="Development",
-        execution_location=execution_location,
-        source_registration_id=source_registration_id,
-    )
-    handler.register_flow(settings)
-    return handler.get_flow(flow_id)
-
-
-def _add_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1):
-    """Add a manual input node with the given data."""
-    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
-    graph.add_node_promise(promise)
-    manual = input_schema.NodeManualInput(
-        flow_id=graph.flow_id,
-        node_id=node_id,
-        raw_data_format=input_schema.RawData.from_pylist(data),
-    )
-    graph.add_manual_input(manual)
-
-
-def _add_catalog_writer(
-    graph: FlowGraph,
-    node_id: int,
-    depending_on_id: int,
-    table_name: str,
-    namespace_id: int,
-    write_mode: str = "overwrite",
-    user_id: int = 1,
-):
-    """Add a catalog writer node and connect it to its input."""
-    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_writer")
-    graph.add_node_promise(promise)
-    writer = input_schema.NodeCatalogWriter(
-        flow_id=graph.flow_id,
-        node_id=node_id,
-        depending_on_id=depending_on_id,
-        catalog_write_settings=input_schema.CatalogWriteSettings(
-            table_name=table_name,
-            namespace_id=namespace_id,
-            write_mode=write_mode,
-        ),
-        user_id=user_id,
-    )
-    graph.add_catalog_writer(writer)
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=depending_on_id, to_id=node_id))
-
-
-def _run_graph(graph: FlowGraph) -> RunInformation:
-    run_info = graph.run_graph()
-    if not run_info.success:
-        errors = []
-        for step in run_info.node_step_result:
-            if not step.success:
-                errors.append(f"node {step.node_id}: {step.error}")
-        raise AssertionError("Graph execution failed:\n" + "\n".join(errors))
-    return run_info
-
-
-SAMPLE_DATA = [
-    {"name": "Alice", "age": 30, "city": "Amsterdam"},
-    {"name": "Bob", "age": 25, "city": "Berlin"},
-    {"name": "Charlie", "age": 35, "city": "Copenhagen"},
-]
 
 
 class TestVirtualCatalogWriter:

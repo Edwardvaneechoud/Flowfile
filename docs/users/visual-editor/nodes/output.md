@@ -122,7 +122,7 @@ The **Database Writer** node saves processed data to a database table. It suppor
 
 | Mode | Description |
 |------|-------------|
-| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
+| **Reference** | Use a saved connection from the [Connection Manager](../catalog/connections.md) (recommended) |
 | **Inline** | Enter connection credentials directly in the node settings |
 
 #### **Settings:**
@@ -197,11 +197,6 @@ Materializes data as a Delta table with full schema metadata, row count, and lin
 #### **Virtual Table Mode**
 
 Switch to the **Virtual Table** tab to create a [virtual flow table](../catalog/virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow.
-
-<!-- PLACEHOLDER: Screenshot of the Catalog Writer virtual table tab with laziness check -->
-![Catalog Writer virtual tab](../../../assets/images/guides/nodes/catalog-writer-virtual-tab.png)
-
-*The Virtual Table tab showing a laziness check result*
 
 When you select the Virtual Table tab, Flowfile automatically checks whether your pipeline supports **optimized resolution**:
 

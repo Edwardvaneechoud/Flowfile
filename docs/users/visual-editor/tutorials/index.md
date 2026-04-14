@@ -20,5 +20,5 @@ Convert visual pipelines into executable Python code.
 ## Reference Documentation
 
 - [Docker](../../deployment/docker.md) - Docker deployment
-- [Secrets](../../secrets.md) - Encrypted credential storage
+- [Secrets](../catalog/secrets.md) - Encrypted credential storage
 - [Settings](../settings.md) - Theme and user management

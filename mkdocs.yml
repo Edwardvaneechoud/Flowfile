@@ -96,8 +96,9 @@ nav:
         - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
         - Schedules: users/visual-editor/catalog/schedules.md
         - SQL Editor: users/visual-editor/catalog/sql-editor.md
+        - Connections: users/visual-editor/catalog/connections.md
+        - Secrets & Encryption: users/visual-editor/catalog/secrets.md
       - Features:
-        - Connections: users/visual-editor/connections.md
         - Kernel Execution: users/visual-editor/kernels.md
         - Node Designer: users/visual-editor/node-designer.md
       - Tutorials:
@@ -127,8 +128,6 @@ nav:
       - Tutorials:
         - Overview: users/python-api/tutorials/index.md
         - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
-
-    - Secrets & Encryption: users/secrets.md
 
   - Deployment:
     - Overview: users/deployment/index.md

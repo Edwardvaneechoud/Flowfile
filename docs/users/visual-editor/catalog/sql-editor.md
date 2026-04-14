@@ -8,11 +8,6 @@ Query your catalog tables directly using SQL — no need to build a flow for qui
 
 Click the **SQL** button in the catalog toolbar to open the SQL editor panel.
 
-<!-- PLACEHOLDER: Screenshot of the SQL Editor panel in the catalog -->
-![SQL Editor](../../../assets/images/guides/catalog/sql-editor.png)
-
-*The SQL Editor panel with query input and results grid*
-
 ---
 
 ## Writing Queries
