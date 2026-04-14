@@ -151,7 +151,7 @@ For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-c
 
 ### Catalog Writer
 
-The **Catalog Writer** node saves data as a table in the [Catalog](../catalog.md). It supports two modes: **physical** (materialized as a Delta table on disk) and **virtual** (no data written — resolved on demand). The node uses a tabbed interface to switch between modes.
+The **Catalog Writer** node saves data as a table in the [Catalog](../catalog/index.md). It supports two modes: **physical** (materialized as a Delta table on disk) and **virtual** (no data written — resolved on demand). The node uses a tabbed interface to switch between modes.
 
 #### **Shared Settings:**
 
@@ -196,7 +196,7 @@ Materializes data as a Delta table with full schema metadata, row count, and lin
 
 #### **Virtual Table Mode**
 
-Switch to the **Virtual Table** tab to create a [virtual flow table](../virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow.
+Switch to the **Virtual Table** tab to create a [virtual flow table](../catalog/virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow.
 
 <!-- PLACEHOLDER: Screenshot of the Catalog Writer virtual table tab with laziness check -->
 ![Catalog Writer virtual tab](../../../assets/images/guides/nodes/catalog-writer-virtual-tab.png)
@@ -211,7 +211,7 @@ When you select the Virtual Table tab, Flowfile automatically checks whether you
 !!! warning "Flow registration required"
     Virtual tables require the flow to be registered in the catalog. If the flow isn't registered, the virtual write will fail with an error. Open the flow from the catalog, or register it first.
 
-For the full guide on virtual tables, optimization, and when to use them, see [Virtual Flow Tables](../virtual-tables.md).
+For the full guide on virtual tables, optimization, and when to use them, see [Virtual Flow Tables](../catalog/virtual-tables.md).
 
 ---
 

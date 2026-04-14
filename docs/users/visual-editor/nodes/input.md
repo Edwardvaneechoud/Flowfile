@@ -136,7 +136,7 @@ For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-c
 
 ### Catalog Reader
 
-The **Catalog Reader** node reads a table registered in the [Catalog](../catalog.md). It supports both **physical** tables (Delta/Parquet files) and **[virtual tables](../virtual-tables.md)** (resolved on demand).
+The **Catalog Reader** node reads a table registered in the [Catalog](../catalog/index.md). It supports both **physical** tables (Delta/Parquet files) and **[virtual tables](../catalog/virtual-tables.md)** (resolved on demand).
 
 #### **Settings:**
 
@@ -171,11 +171,11 @@ When you select a virtual table, the Catalog Reader resolves it at run time:
 - **Optimized virtual tables** — the stored execution plan is deserialized instantly, with full Polars query optimization (predicate and projection pushdown)
 - **Standard virtual tables** — the producer flow is executed end-to-end to produce the result
 
-From your flow's perspective, a virtual table behaves identically to a physical one — the resolution happens transparently. For details on optimization and when to use virtual tables, see [Virtual Flow Tables](../virtual-tables.md).
+From your flow's perspective, a virtual table behaves identically to a physical one — the resolution happens transparently. For details on optimization and when to use virtual tables, see [Virtual Flow Tables](../catalog/virtual-tables.md).
 
 #### **SQL Mode**
 
-The Catalog Reader also supports a **SQL mode** where you can write SQL queries against all catalog tables (both physical and virtual). Tables are registered by name in a Polars SQL context, so you can join and query across the entire catalog. See [SQL Editor](../catalog.md#sql-editor) for more details.
+The Catalog Reader also supports a **SQL mode** where you can write SQL queries against all catalog tables (both physical and virtual). Tables are registered by name in a Polars SQL context, so you can join and query across the entire catalog. See [SQL Editor](../catalog/sql-editor.md) for more details.
 
 ---
 [← Node overview](index.md) | [Next: Transform data →](transform.md)

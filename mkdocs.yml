@@ -91,10 +91,12 @@ nav:
         - Combine Nodes: users/visual-editor/nodes/combine.md
         - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
         - Output Nodes: users/visual-editor/nodes/output.md
+      - Catalog:
+        - Overview: users/visual-editor/catalog/index.md
+        - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
+        - Schedules: users/visual-editor/catalog/schedules.md
+        - SQL Editor: users/visual-editor/catalog/sql-editor.md
       - Features:
-        - Catalog: users/visual-editor/catalog.md
-        - Virtual Tables: users/visual-editor/virtual-tables.md
-        - Schedules: users/visual-editor/schedules.md
         - Connections: users/visual-editor/connections.md
         - Kernel Execution: users/visual-editor/kernels.md
         - Node Designer: users/visual-editor/node-designer.md

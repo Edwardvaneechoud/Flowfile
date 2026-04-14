@@ -174,7 +174,7 @@ df = ff.scan_delta(
 
 ## Catalog Reading
 
-Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables. Both physical and [virtual tables](../../visual-editor/virtual-tables.md) are supported.
+Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables. Both physical and [virtual tables](../../visual-editor/catalog/virtual-tables.md) are supported.
 
 ### Read a Table by Name
 
@@ -200,7 +200,7 @@ df = ff.read_catalog_table("my_table", delta_version=5)
 Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
 
 !!! info "Virtual table resolution"
-    When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/virtual-tables.md) for details.
+    When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
 
 ### Query with SQL
 

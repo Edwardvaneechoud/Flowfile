@@ -2,10 +2,10 @@
 
 Organize, track, and govern your data flows and tables in a central catalog.
 
-The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with SQL, sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
+The Catalog is your single pane of glass for managing flows, tracking execution history, registering data tables (physical and [virtual](virtual-tables.md)), querying data with [SQL](sql-editor.md), sharing artifacts across flows, and automating pipelines with [schedules](schedules.md).
 
 <!-- PLACEHOLDER: Screenshot of the full Catalog view showing the sidebar tree and stats panel -->
-![Catalog overview](../../assets/images/guides/catalog/catalog-overview.png)
+![Catalog overview](../../../assets/images/guides/catalog/catalog-overview.png)
 
 *The Catalog page with namespace tree, tabs, and dashboard statistics*
 
@@ -33,7 +33,7 @@ When no item is selected, the Catalog shows an overview dashboard with key metri
 
 The dashboard also shows **recent runs**, **favorite flows**, and **favorite tables** for quick navigation.
 
-![Dashboard stats](../../assets/images/guides/catalog/catalog-stats.png)
+![Dashboard stats](../../../assets/images/guides/catalog/catalog-stats.png)
 
 *Dashboard showing overview metrics*
 
@@ -83,7 +83,7 @@ Register a flow to enable run tracking, artifact lineage, catalog table producti
 5. Click **Register**
 
 <!-- PLACEHOLDER: Screenshot of the Register Flow dialog -->
-![Register flow](../../assets/images/guides/catalog/register-flow.png)
+![Register flow](../../../assets/images/guides/catalog/register-flow.png)
 
 *Registering a flow file under a catalog schema*
 
@@ -102,7 +102,7 @@ Click a registered flow to see its detail panel:
 - **Produced Artifacts** list
 
 <!-- PLACEHOLDER: Screenshot of the Flow Detail Panel -->
-![Flow detail](../../assets/images/guides/catalog/flow-detail.png)
+![Flow detail](../../../assets/images/guides/catalog/flow-detail.png)
 
 *Flow detail panel showing metrics, recent runs, and actions*
 
@@ -135,7 +135,7 @@ Click a run to see its full detail:
 - **Open Snapshot in Designer** button to recreate the flow as it was
 
 <!-- PLACEHOLDER: Screenshot of the Run Detail Panel -->
-![Run detail](../../assets/images/guides/catalog/run-detail.png)
+![Run detail](../../../assets/images/guides/catalog/run-detail.png)
 
 *Run detail showing node results and snapshot*
 
@@ -151,7 +151,7 @@ Register data tables in the catalog for reuse across flows. Catalog tables come 
 | **Virtual** | <i class="fa-solid fa-bolt"></i> | No data on disk — executes a producer flow on demand to produce results. See [Virtual Flow Tables](virtual-tables.md) |
 
 !!! tip "Recommended: Register tables via a flow"
-    Use a [Catalog Writer](nodes/output.md#catalog-writer) node in your flow for the best experience. It supports more source types, ensures correct data interpretation, and enables lineage tracking.
+    Use a [Catalog Writer](../nodes/output.md#catalog-writer) node in your flow for the best experience. It supports more source types, ensures correct data interpretation, and enables lineage tracking.
 
 ### Registering a Physical Table
 
@@ -163,13 +163,13 @@ Register data tables in the catalog for reuse across flows. Catalog tables come 
 
 The file is materialized as a Delta table and registered with full metadata.
 
-![Register table](../../assets/images/guides/catalog/register-table.png)
+![Register table](../../../assets/images/guides/catalog/register-table.png)
 
 *Registering a new catalog table from a data file*
 
 ### Creating a Virtual Table
 
-Click the **bolt icon** button in the catalog toolbar to create a virtual table directly. Select a producer flow and namespace, and the virtual table is ready. See [Virtual Flow Tables](virtual-tables.md) for the full guide.
+Virtual tables can be created in two ways: via a [Catalog Writer node](../nodes/output.md#catalog-writer) in virtual mode (flow-based), or via [Save as Virtual Table](sql-editor.md#save-as-virtual-table) in the SQL Editor (query-based). See [Virtual Flow Tables](virtual-tables.md) for the full guide.
 
 ### Table Detail Panel
 
@@ -189,13 +189,13 @@ For virtual tables, the detail panel also shows:
 - **Optimization status**: whether the table uses optimized or standard resolution
 - **Laziness blockers**: if not optimized, which nodes prevent lazy execution
 
-![Table detail](../../assets/images/guides/catalog/table-detail.png)
+![Table detail](../../../assets/images/guides/catalog/table-detail.png)
 
 *Table detail panel showing schema and data preview*
 
 ### Using Catalog Tables in Flows
 
-Use the **Catalog Reader** input node to read a catalog table (physical or virtual) and the **Catalog Writer** output node to write results back. See [Input Nodes](nodes/input.md#catalog-reader) and [Output Nodes](nodes/output.md#catalog-writer).
+Use the **Catalog Reader** input node to read a catalog table (physical or virtual) and the **Catalog Writer** output node to write results back. See [Input Nodes](../nodes/input.md#catalog-reader) and [Output Nodes](../nodes/output.md#catalog-writer).
 
 ---
 
@@ -217,7 +217,7 @@ This lineage graph enables powerful automation: when a table is updated, any [ta
 
 ### Physical Tables — Delta Format
 
-When you register a table or write via a [Catalog Writer](nodes/output.md#catalog-writer) node, the data is **materialized as a Delta table**. Delta provides:
+When you register a table or write via a [Catalog Writer](../nodes/output.md#catalog-writer) node, the data is **materialized as a Delta table**. Delta provides:
 
 - **Version history** — every write creates a new version, enabling time-travel queries
 - **Schema evolution** — columns can be added or modified across versions
@@ -270,38 +270,7 @@ This is especially useful for auditing changes, debugging data quality issues, a
 
 ## SQL Editor
 
-Query your catalog tables directly using SQL — no need to build a flow for quick ad-hoc analysis.
-
-### Opening the SQL Editor
-
-Click the **SQL** button in the catalog toolbar to open the SQL editor panel.
-
-### Writing Queries
-
-All catalog tables (both physical and [virtual](virtual-tables.md)) are automatically registered in the SQL context by their table name. You can query, join, filter, and aggregate across any combination of tables:
-
-```sql
--- Simple query
-SELECT * FROM customers WHERE region = 'Europe' LIMIT 100
-
--- Join across catalog tables
-SELECT o.order_id, c.name, o.total
-FROM orders o
-JOIN customers c ON o.customer_id = c.id
-WHERE o.total > 1000
-
--- Aggregate virtual and physical tables together
-SELECT category, SUM(amount) as total
-FROM sales_summary    -- virtual table
-GROUP BY category
-```
-
-!!! tip "SQL dialect"
-    The SQL editor uses the [Polars SQL context](https://docs.pola.rs/user-guide/sql/intro/), which supports standard SQL syntax including `SELECT`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `UNION`, subqueries, and window functions.
-
-### Save as Flow
-
-After writing a query, you can click **Save as Flow** to convert it into a visual flow with a Catalog Reader (SQL) node — useful for making ad-hoc queries into repeatable, schedulable pipelines.
+Query catalog tables directly using SQL. See the dedicated [SQL Editor](sql-editor.md) page for full documentation, examples, and the Save as Flow feature.
 
 ---
 
@@ -313,7 +282,7 @@ After writing a query, you can click **Save as Flow** to convert it into a visua
 
 ## Global Artifacts
 
-Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](kernels.md#global-artifacts-catalog) using `flowfile.publish_global()`.
+Global artifacts are Python objects (ML models, DataFrames, configs) persisted in the catalog and accessible from any flow. They are published from [Kernel code](../kernels.md#global-artifacts-catalog) using `flowfile.publish_global()`.
 
 Click an artifact in the tree to view its versions, metadata, and producing flow.
 
@@ -323,9 +292,10 @@ Click an artifact in the tree to view its versions, metadata, and producing flow
 
 - [Virtual Flow Tables](virtual-tables.md) — Non-materialized tables with on-demand resolution
 - [Schedules](schedules.md) — Automating flow execution with schedules and table triggers
-- [Kernel Execution](kernels.md) — Publishing global artifacts from Python code
-- [Input Nodes](nodes/input.md#catalog-reader) — Catalog Reader node
-- [Output Nodes](nodes/output.md#catalog-writer) — Catalog Writer node (physical and virtual modes)
-- [Building Flows](building-flows.md) — Creating workflows in the visual editor
-- [Reading Data (Python API)](../python-api/reference/reading-data.md#catalog-reading) — `read_catalog_table()` and `read_catalog_sql()`
-- [Writing Data (Python API)](../python-api/reference/writing-data.md#catalog-writing) — `write_catalog_table()` with virtual mode
+- [SQL Editor](sql-editor.md) — Ad-hoc SQL queries against catalog tables
+- [Kernel Execution](../kernels.md) — Publishing global artifacts from Python code
+- [Input Nodes](../nodes/input.md#catalog-reader) — Catalog Reader node
+- [Output Nodes](../nodes/output.md#catalog-writer) — Catalog Writer node (physical and virtual modes)
+- [Building Flows](../building-flows.md) — Creating workflows in the visual editor
+- [Reading Data (Python API)](../../python-api/reference/reading-data.md#catalog-reading) — `read_catalog_table()` and `read_catalog_sql()`
+- [Writing Data (Python API)](../../python-api/reference/writing-data.md#catalog-writing) — `write_catalog_table()` with virtual mode

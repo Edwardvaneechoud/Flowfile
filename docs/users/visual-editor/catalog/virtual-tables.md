@@ -3,7 +3,7 @@
 Create catalog tables that store **no data on disk**. When queried, a virtual table executes its producer flow on demand — delivering always-fresh results with zero storage overhead.
 
 <!-- PLACEHOLDER: Screenshot of a virtual table in the catalog tree with bolt icon and "virtual" badge -->
-![Virtual table in catalog](../../assets/images/guides/catalog/virtual-table-overview.png)
+![Virtual table in catalog](../../../assets/images/guides/catalog/virtual-table-overview.png)
 
 *A virtual table in the catalog tree, marked with a bolt icon and "virtual" badge*
 
@@ -57,7 +57,7 @@ There are two ways to create a virtual table.
 
 ### Option 1: Via Catalog Writer Node
 
-The most common approach — add a **Catalog Writer** node to your flow and switch to virtual mode.
+Add a **Catalog Writer** node to your flow and switch to virtual mode.
 
 1. Add a **Catalog Writer** node to your flow and connect it to the upstream data
 2. Enter a **table name** and select a **catalog / schema** namespace
@@ -68,31 +68,28 @@ The most common approach — add a **Catalog Writer** node to your flow and swit
 5. Save and run the flow
 
 <!-- PLACEHOLDER: Screenshot of the Catalog Writer node with the Virtual Table tab active, showing the laziness check result -->
-![Catalog Writer virtual tab](../../assets/images/guides/catalog/catalog-writer-virtual-tab.png)
+![Catalog Writer virtual tab](../../../assets/images/guides/catalog/catalog-writer-virtual-tab.png)
 
 *The Catalog Writer node with the Virtual Table tab selected, showing an optimized laziness check*
 
 !!! warning "Flow must be registered"
-    Virtual tables require the flow to be registered in the catalog. If the flow isn't registered yet, the virtual write will fail with an error. Open the flow from the catalog, or register it first via the [catalog page](catalog.md#registering-flows).
+    Virtual tables require the flow to be registered in the catalog. If the flow isn't registered yet, the virtual write will fail with an error. Open the flow from the catalog, or register it first via the [catalog page](index.md#registering-flows).
 
-### Option 2: Via Catalog View
+### Option 2: Via the SQL Editor
 
-Create a virtual table directly from the catalog without modifying a flow.
+Create a query-based virtual table directly from the catalog's [SQL Editor](sql-editor.md).
 
-1. Open the **Catalog** page
-2. Click the **bolt icon** button in the toolbar (next to "Register Table")
-3. Enter a **table name** and optional description
-4. Select a **catalog / schema** namespace
-5. Select a **producer flow** from the dropdown
+1. Open the **Catalog** page and click the **SQL** button in the toolbar
+2. Write a SQL query against any combination of catalog tables
+3. Click the **Save as Virtual Table** button (bolt icon)
+4. Enter a **table name** and optional description
+5. Select a **catalog / schema** namespace
 6. Click **Create**
 
-<!-- PLACEHOLDER: Screenshot of the Create Virtual Table modal -->
-![Create Virtual Table modal](../../assets/images/guides/catalog/create-virtual-table-modal.png)
+The SQL query is validated, executed once to derive the output schema, and then stored. No data is written to disk — each time the virtual table is read, the query re-executes against the latest catalog data.
 
-*The Create Virtual Table modal with flow selection*
-
-!!! info "Laziness is determined at run time"
-    When you create a virtual table from the catalog view, the laziness check happens when the producer flow runs. The table's optimization status updates automatically after each run.
+!!! info "Query-based vs flow-based"
+    Query-based virtual tables store a SQL query and re-execute it on demand. Flow-based virtual tables (Option 1) store a reference to a producer flow and can be optimized with serialized execution plans. See [SQL Editor — Save as Virtual Table](sql-editor.md#save-as-virtual-table) for more on how query-based resolution works.
 
 ---
 
@@ -145,7 +142,7 @@ This path is slower because it executes the entire producer flow, but it guarant
 When the Catalog Writer's Virtual Table tab shows a yellow warning, it lists the specific **laziness blockers** — the nodes in your pipeline that prevent optimization.
 
 <!-- PLACEHOLDER: Screenshot of the laziness blockers warning in the Catalog Writer virtual tab -->
-![Laziness blockers](../../assets/images/guides/catalog/laziness-blockers.png)
+![Laziness blockers](../../../assets/images/guides/catalog/laziness-blockers.png)
 
 *Laziness blockers showing which nodes prevent optimization*
 
@@ -168,7 +165,7 @@ Virtual tables integrate seamlessly into the catalog ecosystem.
 Use the **Catalog Reader** node to read a virtual table, just like a physical one. Virtual tables appear in the table dropdown with a **bolt icon** to distinguish them.
 
 <!-- PLACEHOLDER: Screenshot of the Catalog Reader dropdown showing virtual tables with bolt icons -->
-![Catalog Reader with virtual tables](../../assets/images/guides/catalog/catalog-reader-virtual.png)
+![Catalog Reader with virtual tables](../../../assets/images/guides/catalog/catalog-reader-virtual.png)
 
 *The Catalog Reader table selector showing both physical and virtual tables*
 
@@ -179,7 +176,7 @@ When the flow runs, the Catalog Reader resolves the virtual table automatically:
 
 ### SQL Queries
 
-Virtual tables are fully queryable via the [SQL Editor](catalog.md#sql-editor). They appear alongside physical Delta tables in the SQL context, so you can join, filter, and aggregate across both types in a single query.
+Virtual tables are fully queryable via the [SQL Editor](sql-editor.md). They appear alongside physical Delta tables in the SQL context, so you can join, filter, and aggregate across both types in a single query.
 
 ```sql
 -- Query a virtual table alongside a physical table
@@ -230,9 +227,10 @@ This enables reactive ETL pipelines:
 
 ## Related Documentation
 
-- [Catalog](catalog.md) — Managing flows, tables, and the catalog hierarchy
-- [Catalog Writer](nodes/output.md#catalog-writer) — Writing data to the catalog (physical and virtual modes)
-- [Catalog Reader](nodes/input.md#catalog-reader) — Reading catalog tables in flows
+- [Catalog](index.md) — Managing flows, tables, and the catalog hierarchy
+- [Catalog Writer](../nodes/output.md#catalog-writer) — Writing data to the catalog (physical and virtual modes)
+- [Catalog Reader](../nodes/input.md#catalog-reader) — Reading catalog tables in flows
 - [Schedules](schedules.md) — Automating flows with table triggers
-- [FlowFrame Design Concepts](../python-api/concepts/design-concepts.md) — Understanding lazy evaluation in Flowfile
-- [Technical Architecture](../../for-developers/architecture.md) — How lazy evaluation powers the execution engine
+- [SQL Editor](sql-editor.md) — Ad-hoc SQL queries against catalog tables
+- [FlowFrame Design Concepts](../../python-api/concepts/design-concepts.md) — Understanding lazy evaluation in Flowfile
+- [Technical Architecture](../../../for-developers/architecture.md) — How lazy evaluation powers the execution engine
