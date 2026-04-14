@@ -1695,6 +1695,12 @@ class CatalogService:
             table.schema_json = schema_json
 
         table = self.repo.update_table(table)
+
+        try:
+            self._fire_table_trigger_schedules(table.id, table.updated_at)
+        except Exception:
+            logger.exception("Failed to fire push triggers for virtual table %s", table.id)
+
         return self._table_to_out(table)
 
     def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None) -> pl.LazyFrame:

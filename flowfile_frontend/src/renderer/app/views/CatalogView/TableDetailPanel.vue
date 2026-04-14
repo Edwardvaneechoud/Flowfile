@@ -286,6 +286,10 @@
           </tbody>
         </table>
       </div>
+      <div v-else-if="table.table_type === 'virtual'" class="empty-state">
+        This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
+        data.
+      </div>
       <div v-else class="empty-state">No data to preview.</div>
     </div>
   </div>

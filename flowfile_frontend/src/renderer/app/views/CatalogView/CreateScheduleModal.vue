@@ -61,7 +61,10 @@
               :key="table.id"
               :label="table.name"
               :value="table.id"
-            />
+            >
+              <span>{{ table.name }}</span>
+              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+            </el-option>
           </el-option-group>
           <el-option-group
             v-if="otherTables.length > 0"
@@ -72,7 +75,10 @@
               :key="table.id"
               :label="table.name"
               :value="table.id"
-            />
+            >
+              <span>{{ table.name }}</span>
+              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+            </el-option>
           </el-option-group>
         </el-select>
         <div v-if="tables.length === 0" class="hint-text">No catalog tables registered yet.</div>
@@ -96,7 +102,10 @@
               :key="table.id"
               :label="table.name"
               :value="table.id"
-            />
+            >
+              <span>{{ table.name }}</span>
+              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+            </el-option>
           </el-option-group>
           <el-option-group
             v-if="otherTables.length > 0"
@@ -107,7 +116,10 @@
               :key="table.id"
               :label="table.name"
               :value="table.id"
-            />
+            >
+              <span>{{ table.name }}</span>
+              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+            </el-option>
           </el-option-group>
         </el-select>
         <div v-if="tables.length === 0" class="hint-text">No catalog tables registered yet.</div>

@@ -665,3 +665,62 @@ class TestFlowRegistrationAttributes:
         assert table_out.table_type == "virtual"
         assert table_out.laziness_blockers is not None
         assert isinstance(table_out.laziness_blockers, list)
+
+
+class TestVirtualTableTriggerFiring:
+    """Test that updating a virtual table fires table_trigger schedules (push path)."""
+
+    def test_update_virtual_table_fires_trigger(self):
+        """When a virtual table is updated via update_virtual_flow_table,
+        any enabled table_trigger schedule watching it should fire."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="producer_flow")
+        downstream_reg_id = _create_flow_registration(ns_id, name="downstream_flow", path="/tmp/downstream.yaml")
+
+        # Create a virtual table
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            table_out = svc.create_virtual_flow_table(
+                name="trigger_test_table",
+                owner_id=1,
+                producer_registration_id=reg_id,
+                namespace_id=ns_id,
+            )
+            table_id = table_out.id
+
+        # Create a table_trigger schedule watching the virtual table
+        with get_db_context() as db:
+            schedule = FlowSchedule(
+                registration_id=downstream_reg_id,
+                schedule_type="table_trigger",
+                trigger_table_id=table_id,
+                enabled=True,
+                owner_id=1,
+            )
+            db.add(schedule)
+            db.commit()
+            db.refresh(schedule)
+            schedule_id = schedule.id
+
+        # Update the virtual table and check that _fire_table_trigger_schedules is called
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+
+            fired_tables = []
+            original_fire = svc._fire_table_trigger_schedules
+
+            def mock_fire(table_id, table_updated_at):
+                fired_tables.append(table_id)
+                # Don't actually spawn a subprocess
+                return 0
+
+            svc._fire_table_trigger_schedules = mock_fire
+
+            svc.update_virtual_flow_table(
+                table_id=table_id,
+                schema_json='[{"name": "x", "dtype": "Int64"}]',
+            )
+
+        assert table_id in fired_tables, "Updating a virtual table should fire table trigger schedules"
