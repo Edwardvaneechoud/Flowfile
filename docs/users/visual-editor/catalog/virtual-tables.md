@@ -168,13 +168,23 @@ WHERE v.score > 0.8
 
 ### Table Triggers
 
-Virtual table updates fire **push-based triggers**, just like physical table updates. When a producer flow runs and updates a virtual table, any [schedule](schedules.md) configured with a table trigger on that virtual table will fire automatically.
+A schedule can fire when a virtual table's producer flow finishes running, instead of (or in addition to) a cron. When Flow A — the producer of Virtual Table `orders_daily` — completes, any schedule with a table trigger on `orders_daily` runs.
 
-This enables reactive ETL pipelines:
+```mermaid
+flowchart LR
+    A[Flow A<br/>producer] -->|completes| T[Table trigger<br/>on orders_daily]
+    T -->|fires| B[Flow B<br/>consumer]
+    B -.->|reads virtual table,<br/>recomputes Flow A's logic| A
+```
 
-1. Flow A produces Virtual Table X
-2. Flow B has a table trigger on Virtual Table X
-3. When Flow A runs, Virtual Table X is updated, which triggers Flow B
+The solid arrows show the **trigger path**; the dotted arrow shows what actually happens to the data when Flow B runs — it recomputes the lineage, which re-executes Flow A's logic. Nothing is pushed or cached.
+
+This is useful when you want to **centralize trigger logic**: if a virtual table has one producer and several consumers that should all refresh together, a table trigger lets the producer's completion drive them, instead of each consumer managing its own cron.
+
+In many cases you won't need it. If a flow runs on its own cadence, a plain schedule is simpler.
+
+!!! note
+    Virtual tables store no data, so a consumer reading the table recomputes its full lineage — including the producer's logic. A table trigger is a scheduling signal, not a data hand-off.
 
 ---
 
