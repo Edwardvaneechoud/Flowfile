@@ -168,18 +168,18 @@ WHERE v.score > 0.8
 
 ### Table Triggers
 
-A schedule can fire when a virtual table's producer flow finishes running, instead of (or in addition to) a cron. When Flow A — the producer of Virtual Table `orders_daily` — completes, any schedule with a table trigger on `orders_daily` runs.
+A schedule can fire when a virtual table's producer flow finishes running, instead of (or in addition to) a cron. When the producer of a virtual table completes, any schedule with a table trigger on that table runs.
+
+This shines when you want to **centralize trigger logic** across a chain or fan-out of flows:
 
 ```mermaid
 flowchart LR
-    A[Flow A<br/>producer] -->|completes| T[Table trigger<br/>on orders_daily]
-    T -->|fires| B[Flow B<br/>consumer]
-    B -.->|reads virtual table,<br/>recomputes Flow A's logic| A
+    A[Flow A<br/>produces table X] -->|fires| B[Flow B<br/>produces table Y]
+    B -->|fires| C[Flow C]
+    B -->|fires| D[Flow D]
 ```
 
-The solid arrows show the **trigger path**; the dotted arrow shows what actually happens to the data when Flow B runs — it recomputes the lineage, which re-executes Flow A's logic. Nothing is pushed or cached.
-
-This is useful when you want to **centralize trigger logic**: if a virtual table has one producer and several consumers that should all refresh together, a table trigger lets the producer's completion drive them, instead of each consumer managing its own cron.
+Instead of Flow C and Flow D each managing their own cron trying to line up after A and B, one `A → B → { C, D }` trigger chain drives the whole graph off a single upstream event.
 
 In many cases you won't need it. If a flow runs on its own cadence, a plain schedule is simpler.
 
