@@ -76,7 +76,11 @@ from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+    BaseSqlSource,
+    SqlSource,
+    validate_sql_query,
+)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -1604,7 +1608,6 @@ class FlowGraph:
         )
 
         try:
-            from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
 
             validate_sql_query(node_sql_query.sql_query_input.sql_code)
         except Exception as e:
@@ -2264,22 +2267,24 @@ class FlowGraph:
         """
 
         if node_catalog_reader.sql_query:
-            self._add_catalog_sql_reader(node_catalog_reader)
+            is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
         else:
-            self._add_catalog_table_reader(node_catalog_reader)
+            is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader)
+        node_catalog_reader.is_virtual_optimized = is_virtual_optimized
 
-    def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
-        """Execute a SQL query against all catalog tables (physical + virtual)."""
+    def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
+        """Execute a SQL query against all catalog tables (physical + virtual).
 
-        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import validate_sql_query
+        Returns:
+            Whether all referenced virtual tables are optimized, or None if no virtual tables.
+        """
 
         sql_code = node_catalog_reader.sql_query
-
         # Resolve all catalog tables (physical Delta + virtual)
         table_paths: dict[str, str] = {}
         virtual_tables: dict[str, tuple[bool, bytes | None, int]] = {}
         try:
-            with get_db_context() as db:
+            with get_db_context() as db:  # TODO: move this to a separate function and return in a named tuple
                 repo = SQLAlchemyCatalogRepository(db)
                 seen_names: set[str] = set()
                 for t in repo.list_tables():
@@ -2312,6 +2317,10 @@ class FlowGraph:
                 ctx.register(name, _resolve_virtual_table(is_opt, ser_lf, tid))
             return FlowDataEngine(ctx.execute(sql_code))
 
+        is_virtual_optimized: bool | None = None
+        if virtual_tables:
+            is_virtual_optimized = all(is_opt for is_opt, _, _ in virtual_tables.values())
+
         self.add_node_step(
             node_id=node_catalog_reader.node_id,
             function=_func,
@@ -2327,19 +2336,24 @@ class FlowGraph:
         except Exception as e:
             node.results.errors = str(e)
 
-    def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader):
-        """Read a single table from the catalog (physical or virtual)."""
+        return is_virtual_optimized
+
+    def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
+        """Read a single table from the catalog (physical or virtual).
+
+        Returns:
+            Whether the virtual table is optimized, or None if not a virtual table.
+        """
 
         file_path: str | None = None
         table_type: str = "physical"
         serialized_lf: bytes | None = None
         is_optimized: bool = False
-        try:
+        try:  # todo: move this to a separate function with a named tuple as output.
             with get_db_context() as db:
                 repo = SQLAlchemyCatalogRepository(db)
                 svc = CatalogService(repo)
 
-                # Try to get the full table record for virtual table detection
                 table_record = None
                 if node_catalog_reader.catalog_table_id:
                     table_record = repo.get_table(node_catalog_reader.catalog_table_id)
@@ -2348,12 +2362,11 @@ class FlowGraph:
                         node_catalog_reader.catalog_table_name,
                         node_catalog_reader.catalog_namespace_id,
                     )
-
                 if table_record is not None:
-                    table_type = getattr(table_record, "table_type", "physical")
+                    table_type = table_record.table_type
                     if table_type == "virtual":
-                        is_optimized = bool(getattr(table_record, "is_optimized", False))
-                        serialized_lf = getattr(table_record, "serialized_lazy_frame", None)
+                        is_optimized = table_record.is_optimized
+                        serialized_lf = table_record.serialized_lazy_frame
                     else:
                         file_path = table_record.file_path
                 else:
@@ -2364,6 +2377,8 @@ class FlowGraph:
                     )
         except Exception:
             logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
+
+        is_virtual_optimized: bool | None = is_optimized if table_type == "virtual" else None
 
         resolved_path = file_path
         delta_version = node_catalog_reader.delta_version
@@ -2394,6 +2409,7 @@ class FlowGraph:
         )
         node = self.get_node(node_catalog_reader.node_id)
         self.add_node_to_starting_list(node)
+        return is_virtual_optimized
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):

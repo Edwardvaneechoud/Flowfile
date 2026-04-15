@@ -623,3 +623,170 @@ class TestVirtualTableTriggerFiring:
             )
 
         assert table_id in fired_tables, "Updating a virtual table should fire table trigger schedules"
+
+
+class TestVirtualTableOptimizationPropagation:
+    """Test that reading a non-optimized virtual table propagates non-optimized status downstream."""
+
+    def test_downstream_virtual_table_not_optimized_when_source_is_not_optimized(self, eager_virtual_table_id):
+        """A flow that reads a non-optimized virtual table and writes a new virtual table
+        should produce a non-optimized output, even when all other nodes are lazy."""
+        ns_id = _create_namespace()
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            flow_path = f.name
+        reg_id = _create_flow_registration(ns_id, name="downstream_eager_flow", path=flow_path)
+        graph = _create_graph(source_registration_id=reg_id)
+
+        # Node 1: catalog reader reading the non-optimized (eager) virtual table
+        promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise_reader)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            catalog_table_id=eager_virtual_table_id,
+        )
+        graph.add_catalog_reader(reader)
+        # Node 2: filter (lazy operation) — should not make the chain optimized
+        promise_filter = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter")
+        graph.add_node_promise(promise_filter)
+        filter_settings = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="name", operator="not_equals", value="Alice"),
+            ),
+        )
+        graph.add_filter(filter_settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        # Node 3: virtual catalog writer
+        _add_catalog_writer(
+            graph,
+            node_id=3,
+            depending_on_id=2,
+            table_name="downstream_eager_virtual",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # The catalog_reader's setting_input should reflect non-optimized source
+        reader_node = graph.get_node(1)
+        assert reader_node.setting_input.is_virtual_optimized is False
+
+        # The downstream writer's upstream laziness check should report non-lazy
+        writer_node = graph.get_node(3)
+        is_lazy, reasons = writer_node.check_upstream_laziness()
+        assert is_lazy is False
+        assert any("non-optimized virtual table" in r for r in reasons)
+        _run_graph(graph)
+
+    def test_downstream_virtual_table_optimized_when_source_is_optimized(self, lazy_virtual_table_id):
+        """A flow that reads an optimized virtual table and writes a new virtual table
+        should produce an optimized output when all nodes are lazy."""
+        ns_id = _create_namespace()
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            flow_path = f.name
+        reg_id = _create_flow_registration(ns_id, name="downstream_lazy_flow", path=flow_path)
+        graph = _create_graph(source_registration_id=reg_id)
+
+        # Node 1: catalog reader reading the optimized (lazy) virtual table
+        promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise_reader)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            catalog_table_id=lazy_virtual_table_id,
+        )
+        graph.add_catalog_reader(reader)
+
+        # Node 2: filter (lazy operation)
+        promise_filter = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter")
+        graph.add_node_promise(promise_filter)
+        filter_settings = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="name", operator="not_equal_to", value="Alice"),
+            ),
+        )
+        graph.add_filter(filter_settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        # Node 3: virtual catalog writer
+        _add_catalog_writer(
+            graph,
+            node_id=3,
+            depending_on_id=2,
+            table_name="downstream_lazy_virtual",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # The catalog_reader's setting_input should reflect optimized source
+        reader_node = graph.get_node(1)
+        assert reader_node.setting_input.is_virtual_optimized is True
+
+        # The downstream writer's upstream laziness check should report all lazy
+        writer_node = graph.get_node(3)
+        is_lazy, reasons = writer_node.check_upstream_laziness()
+        assert is_lazy is True
+        assert reasons == []
+
+    def test_sql_reader_not_optimized_when_source_virtual_table_is_not_optimized(self, eager_virtual_table_id):
+        """A SQL catalog reader referencing a non-optimized virtual table should propagate
+        non-optimized status to downstream virtual writers."""
+        ns_id = _create_namespace()
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            flow_path = f.name
+        reg_id = _create_flow_registration(ns_id, name="downstream_sql_eager_flow", path=flow_path)
+        graph = _create_graph(source_registration_id=reg_id)
+
+        # Node 1: SQL catalog reader querying the non-optimized virtual table
+        promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise_reader)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT * FROM eager_virtual",
+        )
+        graph.add_catalog_reader(reader)
+        breakpoint()
+        # Node 2: filter (lazy operation)
+        promise_filter = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter")
+        graph.add_node_promise(promise_filter)
+        filter_settings = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="name", operator="not_equal_to", value="Alice"),
+            ),
+        )
+        graph.add_filter(filter_settings)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        # Node 3: virtual catalog writer
+        _add_catalog_writer(
+            graph,
+            node_id=3,
+            depending_on_id=2,
+            table_name="downstream_sql_eager_virtual",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # The SQL catalog_reader's setting_input should reflect non-optimized source
+        reader_node = graph.get_node(1)
+        assert reader_node.setting_input.is_virtual_optimized is False
+
+        # The downstream writer's upstream laziness check should report non-lazy
+        writer_node = graph.get_node(3)
+        is_lazy, reasons = writer_node.check_upstream_laziness()
+        assert is_lazy is False
+        assert any("non-optimized virtual table" in r for r in reasons)
+        _run_graph(graph)

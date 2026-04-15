@@ -1897,12 +1897,14 @@ class CatalogService:
         ValueError
             If the virtual table cannot be resolved.
         """
-        table = self.repo.get_table(table_id)
-        if table is None or getattr(table, "table_type", "physical") != "virtual":
-            raise TableNotFoundError(table_id=table_id)
 
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+        table = self.repo.get_table(table_id)
+        if table is None or table.table_type != "virtual":
+            raise TableNotFoundError(table_id=table_id)
         # Query-based virtual table: delegate to SQL resolver
-        if getattr(table, "sql_query", None):
+        if table.sql_query:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
         if table.is_optimized and table.serialized_lazy_frame:
@@ -1916,10 +1918,7 @@ class CatalogService:
         if producer is None:
             raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
-        from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
         flow = open_flow(Path(producer.flow_path), user_id=user_id)
-        flow.run_graph()
         selected_node = None
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
@@ -1934,8 +1933,8 @@ class CatalogService:
         if flowframe is None or flowframe.data_frame is None:
             raise ValueError(f"No data produced for table '{table.name}'")
 
-        df = flowframe.data_frame
-        return df if isinstance(df, pl.LazyFrame) else df.lazy()
+        flowframe.lazy = True
+        return flowframe.data_frame
 
     def get_table_preview(
         self, table_id: int, limit: int = 100, version: int | None = None, user_id: int | None = None,
