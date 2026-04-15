@@ -262,6 +262,8 @@ class CatalogTableOut(BaseModel):
     is_optimized: bool | None = None
     laziness_blockers: list[str] | None = None
     sql_query: str | None = None
+    polars_plan: str | None = None
+    source_table_versions: str | None = None
     created_at: datetime
     updated_at: datetime
 

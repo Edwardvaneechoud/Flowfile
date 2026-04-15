@@ -13,9 +13,42 @@ from pathlib import Path
 import pyarrow as pa
 from deltalake import DeltaTable
 
+from shared.delta_models import SourceTableVersion
 from shared.delta_utils import get_delta_size_bytes
 
 logger = logging.getLogger(__name__)
+
+
+def check_source_versions_current(source_table_versions_json: str | None) -> bool:
+    """Return True if all source delta tables are still at their recorded versions.
+
+    Returns True when no versions are recorded (backward compat for existing virtual tables).
+    Returns False if any source table has been updated, deleted, or is unreadable.
+    """
+    if not source_table_versions_json:
+        return True
+    try:
+        import json
+
+        raw = json.loads(source_table_versions_json)
+        versions = [SourceTableVersion(**entry) for entry in raw]
+    except (ValueError, KeyError, TypeError):
+        logger.warning("Could not parse source_table_versions JSON, treating as stale")
+        return False
+
+    for sv in versions:
+        try:
+            current_version = DeltaTable(sv.file_path, without_files=True).version()
+            if current_version != sv.version:
+                logger.info(
+                    "Source table %d at %s changed: expected version %d, current %d",
+                    sv.table_id, sv.file_path, sv.version, current_version,
+                )
+                return False
+        except Exception:
+            logger.warning("Could not read delta version for source table %d at %s", sv.table_id, sv.file_path)
+            return False
+    return True
 
 
 def is_delta_table(path: str | Path) -> bool:

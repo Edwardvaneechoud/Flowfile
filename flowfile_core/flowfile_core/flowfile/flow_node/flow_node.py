@@ -1192,12 +1192,12 @@ class FlowNode:
 
     def execute_node(
         self,
-        run_location: schemas.ExecutionLocationsLiteral,
-        reset_cache: bool = False,
-        performance_mode: bool = False,
-        retry: bool = True,
-        node_logger: NodeLogger = None,
-        optimize_for_downstream: bool = True,
+            run_location: schemas.ExecutionLocationsLiteral,
+            reset_cache: bool = False,
+            performance_mode: bool = False,
+            retry: bool = True,
+            node_logger: NodeLogger = None,
+            optimize_for_downstream: bool = True,
     ) -> None:
         """Execute the node based on its current state and settings.
 

@@ -360,6 +360,8 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     serialized_lazy_frame = Column(LargeBinary, nullable=True)  #  TODO Should be hashed
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
+    polars_plan = Column(Text, nullable=True)  # Polars explain() plan for optimized virtual tables
+    source_table_versions = Column(Text, nullable=True)  # JSON list of SourceTableVersion for staleness detection
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)

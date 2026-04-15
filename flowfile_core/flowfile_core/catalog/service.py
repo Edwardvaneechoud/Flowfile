@@ -7,7 +7,7 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
-
+from typing import Literal
 import base64
 import io
 import json
@@ -22,8 +22,9 @@ from uuid import uuid4
 import polars as pl
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
-
+from flowfile_core.configs.flow_logger import NodeLogger, FlowLogger
 from flowfile_core.catalog.delta_utils import (
+    check_source_versions_current,
     delete_table_storage,
     get_delta_table_size_bytes,
     is_delta_table,
@@ -96,7 +97,7 @@ def _should_offload() -> bool:
     """Return True when heavy I/O should be delegated to the worker process."""
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
-    return OFFLOAD_TO_WORKER
+    return OFFLOAD_TO_WORKER.value
 
 
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
@@ -366,10 +367,6 @@ class CatalogService:
             created_at=getattr(artifact, "created_at", None),
             updated_at=getattr(artifact, "updated_at", None),
         )
-
-    # ------------------------------------------------------------------ #
-    # Namespace operations
-    # ------------------------------------------------------------------ #
 
     def create_namespace(
         self,
@@ -1079,6 +1076,8 @@ class CatalogService:
             is_optimized=getattr(table, "is_optimized", None),
             laziness_blockers=laziness_blockers,
             sql_query=getattr(table, "sql_query", None),
+            polars_plan=getattr(table, "polars_plan", None),
+            source_table_versions=getattr(table, "source_table_versions", None),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -1124,6 +1123,8 @@ class CatalogService:
                     producer_registration_name=producer_registration_name,
                     is_optimized=getattr(table, "is_optimized", None),
                     sql_query=getattr(table, "sql_query", None),
+                    polars_plan=getattr(table, "polars_plan", None),
+                    source_table_versions=getattr(table, "source_table_versions", None),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -1613,6 +1614,8 @@ class CatalogService:
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
+        polars_plan: str | None = None,
+        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialized catalog entry).
 
@@ -1645,6 +1648,8 @@ class CatalogService:
             serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
+            polars_plan=polars_plan,
+            source_table_versions=source_table_versions,
         )
         table = self.repo.create_table(table)
         return self._table_to_out(table)
@@ -1659,6 +1664,8 @@ class CatalogService:
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
+        polars_plan: str | None = None,
+        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer.
 
@@ -1685,11 +1692,15 @@ class CatalogService:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
         if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame  # TODO: Should be hashed
+            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
             table.schema_json = schema_json
+        if polars_plan is not None:
+            table.polars_plan = polars_plan
+        if source_table_versions is not None:
+            table.source_table_versions = source_table_versions
 
         table = self.repo.update_table(table)
 
@@ -1869,7 +1880,7 @@ class CatalogService:
                         ctx.register(t.name, nested_lf)
                     except Exception:
                         logger.warning("Could not resolve nested query virtual table %r", t.name)
-                elif t.is_optimized and t.serialized_lazy_frame:
+                elif t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
                     ctx.register(t.name, pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame)))
                 elif t.producer_registration_id:
                     try:
@@ -1882,7 +1893,9 @@ class CatalogService:
 
         return ctx.execute(table.sql_query)
 
-    def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None) -> pl.LazyFrame:
+    def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None,
+                                   run_location: Literal["remote", "local"] = None,
+                                   node_logger: NodeLogger = None) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
         For optimized tables, deserializes the stored LazyFrame directly.
@@ -1897,9 +1910,11 @@ class CatalogService:
         ValueError
             If the virtual table cannot be resolved.
         """
-
+        if run_location is None:
+            run_location: Literal["remote", "local"] = "remote" if _should_offload() else "local"
+        if node_logger is None:
+            node_logger = FlowLogger(-1).get_node_logger(-1)
         from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
         table = self.repo.get_table(table_id)
         if table is None or table.table_type != "virtual":
             raise TableNotFoundError(table_id=table_id)
@@ -1908,7 +1923,9 @@ class CatalogService:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
         if table.is_optimized and table.serialized_lazy_frame:
-            return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+            if check_source_versions_current(table.source_table_versions):
+                return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+            logger.info("Source table versions changed for virtual table %r, falling back to flow execution", table.name)
 
         # Non-optimized path: load the producer flow and execute it
         if not table.producer_registration_id:
@@ -1923,8 +1940,11 @@ class CatalogService:
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
                 selected_node = node
+
         if selected_node is None:
             raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
+        selected_node.execute_node(run_location=run_location, reset_cache=True, performance_mode=True,
+                                   optimize_for_downstream=False, node_logger=node_logger)
 
         if selected_node.results.errors:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
@@ -2457,10 +2477,6 @@ class CatalogService:
             active_runs=active_runs,
         )
 
-    # ------------------------------------------------------------------ #
-    # SQL Query
-    # ------------------------------------------------------------------ #
-
     def resolve_all_delta_tables(self) -> dict[str, str]:
         """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
         tables = self.repo.list_tables()
@@ -2488,7 +2504,6 @@ class CatalogService:
             UnsafeSQLError,
             validate_sql_query,
         )
-
         try:
             validate_sql_query(query)
         except UnsafeSQLError as e:
@@ -2498,13 +2513,14 @@ class CatalogService:
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
 
-        # Resolve virtual tables to IPC bytes so the worker can register them
+        # Resolve virtual tables to IPC bytes so the worker can register them # todo: the worker has an endpoint that does exactly this.
         virtual_ipc: dict[str, str] = {}
         for vname, vid in virtual_map.items():
             try:
-                lf = self.resolve_virtual_flow_table(vid, user_id=user_id)
+                lf = self.resolve_virtual_flow_table(vid, user_id=user_id,
+                                                     run_location="remote" if _should_offload() else "local")
                 buf = io.BytesIO()
-                lf.collect().write_ipc(buf)
+                lf.collect().write_ipc(buf)  # TODO: THIS PART IS VERY INEFFICIENT. Why does it have to be written to IPC, why not just put the reference to the lf?
                 virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
             except Exception:
                 logger.warning("Could not resolve virtual table %r for SQL", vname)
