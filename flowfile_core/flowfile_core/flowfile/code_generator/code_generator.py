@@ -1831,7 +1831,9 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         input_df = input_vars.get("main", "df")
 
         if settings.filter_input.is_advanced():
-            self._add_code(f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")')
+            self._add_code(
+                f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")'
+            )
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:

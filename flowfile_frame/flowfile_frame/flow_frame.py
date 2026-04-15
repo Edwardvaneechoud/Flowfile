@@ -1702,7 +1702,8 @@ class FlowFrame:
         return self.data
 
     def _with_flowfile_formula(
-        self, flowfile_formula: str, output_column_name: str, description: str = None, output_column_datatype: str = "Auto"
+        self, flowfile_formula: str, output_column_name: str, description: str = None,
+            output_column_datatype: str = "Auto"
     ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(

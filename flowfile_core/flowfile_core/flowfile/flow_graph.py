@@ -3016,8 +3016,7 @@ class FlowGraph:
         catalog_writers = [n for n in self.nodes if n.node_type == "catalog_writer"]
         if not catalog_writers:
             # No catalog writer → nothing to optimise; treat as non-lazy
-            return (False, ["No catalog writer node found in the flow"])
-
+            return False, ["No catalog writer node found in the flow"]
         all_reasons: list[str] = []
         for writer in catalog_writers:
             _, reasons = writer.check_upstream_laziness()
@@ -3029,7 +3028,7 @@ class FlowGraph:
             if r not in seen:
                 seen.add(r)
                 unique.append(r)
-        return (len(unique) == 0, unique)
+        return len(unique) == 0, unique
 
     @property
     def execution_mode(self) -> schemas.ExecutionModeLiteral:

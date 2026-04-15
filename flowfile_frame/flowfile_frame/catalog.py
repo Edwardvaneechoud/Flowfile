@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-import polars as pl
-
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_frame.flow_frame import FlowFrame

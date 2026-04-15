@@ -697,7 +697,7 @@ def get_generated_code(flow_id: int) -> str:
     try:
         return export_flow_to_polars(flow)
     except UnsupportedNodeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/editor/code_to_flowframe", tags=[], response_model=str)
@@ -710,7 +710,7 @@ def get_generated_flowframe_code(flow_id: int) -> str:
     try:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/editor/create_flow/", tags=["editor"])

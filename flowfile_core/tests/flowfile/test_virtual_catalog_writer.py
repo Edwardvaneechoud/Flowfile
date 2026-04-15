@@ -514,7 +514,6 @@ class TestFlowRegistrationAttributes:
             namespace_id=ns_id,
             write_mode="virtual",
         )
-
         with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
             save_path = f.name
         graph.save_flow(save_path)
@@ -535,7 +534,6 @@ class TestFlowRegistrationAttributes:
         """_table_to_out should populate laziness_blockers for a virtual table
         with a producer_registration_id without raising AttributeError."""
         ns_id = _create_namespace()
-
         # Save a flow to disk so _compute_laziness_blockers can load it
         graph = _create_graph(flow_id=99)
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)

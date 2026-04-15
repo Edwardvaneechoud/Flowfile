@@ -513,7 +513,7 @@ class FlowNode:
             A tuple of (is_lazy, reasons).  ``is_lazy`` is True when every
             upstream node has ``laziness == "lazy"``.
         """
-        visited: set["FlowNode"] = set()
+        visited: set[FlowNode] = set()
         stack = list(self.all_inputs)
         reasons: list[str] = []
         while stack:
@@ -530,7 +530,7 @@ class FlowNode:
                     " — defaulting to non-optimized"
                 )
             stack.extend(current.all_inputs)
-        return (len(reasons) == 0, reasons)
+        return len(reasons) == 0, reasons
 
     def calculate_hash(self, setting_input: Any) -> str:
         """Calculates a hash based on settings and input node hashes.

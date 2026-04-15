@@ -1022,12 +1022,16 @@ class CatalogService:
         if not producer_file_path:
             return None
         try:
-            from flowfile_core.flowfile.flow_graph import FlowGraph
-
-            fg = FlowGraph.load_from_file(producer_file_path)
+            from flowfile_core.flowfile.handler import open_flow
+            fg = open_flow(Path(producer_file_path))
+        except Exception as e:
+            logger.warning(f"Could not open the flow or calculate the laziness: \n {e}")
+            return None
+        try:
             _, reasons = fg.check_flow_laziness()
             return reasons
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not open the flow or calculate the reasons:\n{e}")
             return None
 
     def _table_to_out(self, table: CatalogTable, user_id: int | None = None) -> CatalogTableOut:
@@ -1052,7 +1056,6 @@ class CatalogService:
             laziness_blockers = self._compute_laziness_blockers(
                 producer.flow_path if producer else None
             )
-
 
         return CatalogTableOut(
             id=table.id,

@@ -92,8 +92,6 @@ from flowfile_frame.expr import (  # noqa: F401
 
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame  # noqa: F401
-LazyFrame = FlowFrame  # Alias for compatibility with generated code
-DataFrame = FlowFrame  # Alias for compatibility with generated code
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
     concat,
     from_dict,
@@ -136,8 +134,11 @@ from flowfile_frame.selectors import (  # noqa: F401
     temporal,
     time,
 )
-from flowfile_frame.series import Series  # noqa: F401
-from flowfile_frame.utils import create_flow_graph  # noqa: F401
+from flowfile_frame.series import Series  # noqa: F401 E402
+from flowfile_frame.utils import create_flow_graph  # noqa: F401 E402
+
+LazyFrame = FlowFrame  # Alias for compatibility with generated code
+DataFrame = FlowFrame  # Alias for compatibility with generated code
 
 try:
     __version__ = version("Flowfile")
