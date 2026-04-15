@@ -8,15 +8,12 @@ Create catalog tables that store **no data on disk**. When queried, a virtual ta
 
 Virtual tables change the way you think about catalog data. Instead of materializing every intermediate result to disk, you can expose **computed views** of your data that stay up to date automatically.
 
-| Benefit | Description |
-|---------|-------------|
-| **Zero storage cost** | No Delta files or Parquet files are written. The catalog entry holds only metadata and (when optimized) a serialized execution plan. |
-| **Always-fresh data** | Every time a virtual table is read, it produces results from the latest version of the source data and flow logic. No stale snapshots. |
+| Benefit | Description                                                                                                                                                                                |
+|---------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Zero storage cost** | No files are written. The catalog entry holds only metadata and (when optimized) a serialized execution plan.                                                                              |
+| **Always-fresh data** | Every time a virtual table is read, it produces results from the latest version of the source data and flow logic. No stale snapshots.                                                     |
 | **Automatic optimization** | Flowfile analyzes your pipeline and, when all upstream nodes support lazy execution, serializes the Polars execution plan for instant resolution — with predicate and projection pushdown. |
-| **Full integration** | Virtual tables work everywhere physical tables work: Catalog Reader, SQL queries, table triggers, and schedules. |
-
-!!! tip "When to use virtual tables"
-    Virtual tables are ideal for derived/computed datasets, development exploration, and scenarios where data freshness matters more than query speed. For large datasets, performance-critical queries, or historical snapshots, use physical (materialized) tables instead. See [When to Use Virtual vs Physical](#when-to-use-virtual-vs-physical) for a detailed comparison.
+| **Full integration** | Virtual tables work everywhere physical tables work: Catalog Reader, SQL queries, table triggers, and schedules.                                                                           |
 
 ---
 
@@ -32,19 +29,6 @@ graph LR
     C --> E[Query Results]
     D --> E
 ```
-
-### Physical vs Virtual — At a Glance
-
-| | Physical Table | Virtual Table |
-|---|---|---|
-| **Storage** | Delta table on disk | No file — metadata only |
-| **Data freshness** | Snapshot at write time | Always current |
-| **Read speed** | Instant (file scan) | Instant (optimized) or flow execution (standard) |
-| **Delta versioning** | Yes — full history | No — no physical storage |
-| **Storage cost** | Proportional to data size | Near zero |
-| **Best for** | Large datasets, production, historical queries | Derived views, exploration, real-time freshness |
-
----
 
 ## Creating Virtual Tables
 
@@ -97,14 +81,10 @@ When a flow is fully lazy, Flowfile serializes the Polars `LazyFrame` execution 
 
 Every node type has a fixed laziness classification:
 
-| Classification | Nodes | Behavior |
-|---|---|---|
+| Classification | Nodes | Behavior                                                                      |
+|---|---|-------------------------------------------------------------------------------|
 | **Lazy** | Manual Input, Filter, Select, Formula, Join, Group By, Sort, Add Record ID, Take Sample, Unpivot, Union, Drop Duplicates, Graph Solver, Count Records, Cross Join, Text to Rows, SQL Query, Catalog Reader | Operations are deferred — computation happens only when results are collected |
-| **Eager** | Write Data, External Source, Explore Data, Pivot, Fuzzy Match, Python Script, Database Reader, Database Writer, Cloud Storage Writer, Catalog Writer, Kafka Source | Forces immediate computation — breaks the lazy chain |
-| **Conditional** | Read Data, Polars Code, Cloud Storage Reader | Depends on input format or user code — treated as non-lazy for optimization purposes |
-
-!!! tip "Design for laziness"
-    To get the most out of virtual tables, design your pipeline using lazy nodes. For example, use **Filter** + **Select** + **Group By** instead of a **Pivot** (which is eager). If you need a pivot, consider placing it *after* the virtual table boundary.
+| **Eager** | Write Data, External Source, Explore Data, Pivot, Fuzzy Match, Python Script, Database Reader, Database Writer, Cloud Storage Writer, Catalog Writer, Kafka Source | Forces execution of upstream flow — may breaks the execution plan             |
 
 ### Optimized Resolution
 
@@ -115,8 +95,7 @@ When a virtual table is optimized (`is_optimized = true`):
 3. The query engine applies predicate pushdown, projection pushdown, and other optimizations
 4. Only the needed data is computed
 
-This path is **extremely fast** — comparable to reading a physical table, with the added benefit that results always reflect the current source data.
-
+This path is **extremely fast**. Because the deserialized plan is a `LazyFrame`, Polars can push the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work that the consumer doesn't need never runs in the producer, and results always reflect the current source data.
 ### Standard Resolution
 
 When a virtual table is **not** optimized (eager or conditional nodes upstream):
@@ -174,18 +153,19 @@ This shines when you want to **centralize trigger logic** across a chain or fan-
 
 ```mermaid
 flowchart LR
-    A[Flow A<br/>produces table X] -->|fires| B[Flow B<br/>produces table Y]
+    A[Flow Aproduces table X] -->|fires| B[Flow Bproduces table Y]
     B -->|fires| C[Flow C]
     B -->|fires| D[Flow D]
 ```
 
 Instead of Flow C and Flow D each managing their own cron trying to line up after A and B, one `A → B → { C, D }` trigger chain drives the whole graph off a single upstream event.
 
+**Note:** Because virtual tables recompute their full lineage on read, you could also fan out directly from A — `A → B`, `A → C`, `A → D` — and C and D would still see the effect of B's transformations. Chain vs. fan-out is a choice about *where* to express the trigger edges, not about data flow.
+
 In many cases you won't need it. If a flow runs on its own cadence, a plain schedule is simpler.
 
 !!! note
     Virtual tables store no data, so a consumer reading the table recomputes its full lineage — including the producer's logic. A table trigger is a scheduling signal, not a data hand-off.
-
 ---
 
 ## When to Use Virtual vs Physical
@@ -201,8 +181,6 @@ In many cases you won't need it. If a flow runs on its own cadence, a plain sche
 | Shared across many consumers | **Physical** | Compute once, read many times |
 | Cross-system data landing | **Physical** | Need a stable file for external tools |
 
-!!! tip "Start virtual, promote to physical"
-    A practical workflow: start with virtual tables during development for fast iteration, then switch to physical materialization when you're ready for production. The Catalog Writer's tab makes this a one-click switch.
 
 ---
 
