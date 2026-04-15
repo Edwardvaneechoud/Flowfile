@@ -1628,7 +1628,7 @@ class CatalogService:
         # Validate producer flow
         producer = self.repo.get_flow(producer_registration_id)
         if producer is None:
-            raise FlowNotFoundError(flow_id=producer_registration_id)
+            raise FlowNotFoundError(registration_id=producer_registration_id)
 
         # Validate namespace
         self._validate_table_registration(name, namespace_id)
@@ -1682,7 +1682,7 @@ class CatalogService:
         if producer_registration_id is not None:
             producer = self.repo.get_flow(producer_registration_id)
             if producer is None:
-                raise FlowNotFoundError(flow_id=producer_registration_id)
+                raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
         if serialized_lazy_frame is not None:
             table.serialized_lazy_frame = serialized_lazy_frame  # TODO: Should be hashed
@@ -1914,7 +1914,7 @@ class CatalogService:
 
         producer = self.repo.get_flow(table.producer_registration_id)
         if producer is None:
-            raise FlowNotFoundError(flow_id=table.producer_registration_id)
+            raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
         from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
@@ -2544,7 +2544,7 @@ class CatalogService:
         reader_node_ids = []
 
         for i, table_name in enumerate(used_tables):
-            table = self.repo.get_table_by_name(table_name)
+            table = self.repo.get_table_by_name(table_name, namespace_id)
             if table is None:
                 continue
             node_id = i + 1

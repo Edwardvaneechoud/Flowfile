@@ -67,7 +67,7 @@ class TableExample(BaseModel):
     name: str
     table_schema: list[FileColumn]
     columns: list[str]
-    data: list[dict] | None = {}
+    data: list[dict] | None = None
     has_example_data: bool = False
     has_run_with_current_setup: bool = False
 
