@@ -430,6 +430,19 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             drawer_intro="Read data from a Kafka or Redpanda topic",
             laziness="eager",
         ),
+        NodeTemplate(
+            name="Google Analytics",
+            item="google_analytics_reader",
+            input=0,
+            output=1,
+            node_type="input",
+            transform_type="other",
+            image="google_analytics.svg",
+            node_group="input",
+            drawer_title="Google Analytics",
+            drawer_intro="Load reports from a Google Analytics 4 property",
+            laziness="eager",
+        ),
     ]
     nodes_list.sort(key=lambda x: x.name)
     nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}

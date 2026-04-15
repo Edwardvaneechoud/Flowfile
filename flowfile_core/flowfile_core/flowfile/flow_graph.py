@@ -50,6 +50,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
+    ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
     fetch_kafka_offsets,
 )
@@ -2688,6 +2689,92 @@ class FlowGraph:
         """
         logger.info("Adding sql source")
         self.add_external_source(external_source_input)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_google_analytics_reader(
+        self, node_ga_reader: input_schema.NodeGoogleAnalyticsReader
+    ) -> None:
+        """Adds a node that reads from a Google Analytics 4 property.
+
+        The actual API fetch (OAuth token refresh, ``run_report`` calls,
+        pagination) is offloaded to the worker via ``ExternalGoogleAnalyticsFetcher``,
+        so the core's event loop stays responsive. The ``schema_callback`` is
+        derived locally from the selected metrics/dimensions — no network call
+        is made during schema prediction, keeping downstream nodes lazy.
+        """
+        from flowfile_core.flowfile.database_connection_manager.ga_connections import (
+            get_ga_connection_schema,
+        )
+        from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
+        from flowfile_worker.external_sources.google_analytics_source.models import (
+            GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
+        )
+
+        logger.info("Adding google analytics reader")
+        node_type = "google_analytics_reader"
+        ga_settings = node_ga_reader.google_analytics_settings
+
+        with get_db_context() as db:
+            full_connection = get_ga_connection_schema(
+                db, ga_settings.ga_connection_name, node_ga_reader.user_id
+            )
+            if full_connection is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Google Analytics connection '{ga_settings.ga_connection_name}' not found",
+                )
+
+        # Re-encrypt the service-account JSON with the user's key before handing
+        # it to the worker. The worker reverses this via ``decrypt_secret``.
+        worker_interface = full_connection.get_worker_interface(node_ga_reader.user_id)
+        worker_settings = WorkerGoogleAnalyticsReadSettings(
+            service_account_json_encrypted=worker_interface.service_account_json_encrypted,
+            property_id=ga_settings.property_id,
+            start_date=ga_settings.start_date,
+            end_date=ga_settings.end_date,
+            metrics=ga_settings.metrics,
+            dimensions=ga_settings.dimensions,
+            limit=ga_settings.limit,
+            flowfile_flow_id=node_ga_reader.flow_id,
+            flowfile_node_id=node_ga_reader.node_id,
+        )
+
+        def _func() -> FlowDataEngine:
+            fetcher = ExternalGoogleAnalyticsFetcher(worker_settings, wait_on_completion=False)
+            node._fetch_cached_df = fetcher
+            fl = FlowDataEngine(fetcher.get_result())
+            # Align to the predicted schema so downstream nodes see stable columns
+            # even when the report is empty.
+            fl = fl.align_to_schema(schema_callback())
+            node_ga_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def schema_callback() -> list[FlowfileColumn]:
+            # Pure-Python derivation — no API call.
+            return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
+
+        node = self.get_node(node_ga_reader.node_id)
+        if node:
+            node.schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_ga_reader
+            node.node_settings.cache_results = node_ga_reader.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_ga_reader.node_id,
+                function=_func,
+                setting_input=node_ga_reader,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[node_ga_reader.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_ga_reader.node_id)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:

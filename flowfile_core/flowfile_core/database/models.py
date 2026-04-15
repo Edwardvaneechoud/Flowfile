@@ -398,6 +398,26 @@ class SchedulerLock(Base):
     heartbeat_at = Column(DateTime, default=func.now(), nullable=False)
 
 
+class GoogleAnalyticsConnection(Base):
+    """A Google Analytics 4 connection. The service-account JSON key is stored as
+    a single encrypted Secret, referenced by ``service_account_key_id``.
+    """
+
+    __tablename__ = "google_analytics_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    # Default GA4 property the user typically queries. Optional — nodes can override.
+    default_property_id = Column(String, nullable=True)
+    service_account_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    service_account_key = relationship("Secret", foreign_keys=[service_account_key_id], lazy="joined")
+
+
 class KafkaConnection(Base):
     __tablename__ = "kafka_connections"
 

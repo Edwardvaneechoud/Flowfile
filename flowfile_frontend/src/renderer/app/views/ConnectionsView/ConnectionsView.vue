@@ -10,6 +10,9 @@
       <el-tab-pane label="Kafka" name="kafka">
         <KafkaConnectionView />
       </el-tab-pane>
+      <el-tab-pane label="Google Analytics" name="google_analytics">
+        <GoogleAnalyticsConnectionView />
+      </el-tab-pane>
       <el-tab-pane label="Secrets" name="secrets">
         <SecretsView />
       </el-tab-pane>
@@ -23,12 +26,13 @@ import { useRoute, useRouter } from "vue-router";
 import DatabaseView from "../DatabaseView/DatabaseView.vue";
 import CloudConnectionView from "../CloudConnectionView/CloudConnectionView.vue";
 import KafkaConnectionView from "../KafkaConnectionView/KafkaConnectionView.vue";
+import GoogleAnalyticsConnectionView from "../GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionView.vue";
 import SecretsView from "../SecretsView/SecretsView.vue";
 
 const route = useRoute();
 const router = useRouter();
 
-const validTabs = ["database", "cloud", "kafka", "secrets"] as const;
+const validTabs = ["database", "cloud", "kafka", "google_analytics", "secrets"] as const;
 type TabName = (typeof validTabs)[number];
 
 const STORAGE_KEY = "connections-active-tab";

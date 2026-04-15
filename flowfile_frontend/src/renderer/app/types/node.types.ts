@@ -900,3 +900,18 @@ export interface NodeKafkaSource extends NodeBase {
   kafka_settings: KafkaSourceSettings;
   fields?: MinimalFieldInput[] | null;
 }
+
+export interface GoogleAnalyticsSettings {
+  ga_connection_name: string;
+  property_id: string;
+  start_date: string;
+  end_date: string;
+  metrics: string[];
+  dimensions: string[];
+  limit: number | null;
+}
+
+export interface NodeGoogleAnalyticsReader extends NodeBase {
+  google_analytics_settings: GoogleAnalyticsSettings;
+  fields?: MinimalFieldInput[] | null;
+}
