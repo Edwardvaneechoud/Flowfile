@@ -181,13 +181,17 @@ def trigger_sql_query(
     query: str,
     tables: dict[str, str],
     max_rows: int = 10_000,
+    virtual_ipc: dict[str, str] | None = None,
 ) -> dict:
-    """Ask the worker to execute a SQL query against Delta catalog tables.
+    """Ask the worker to execute a SQL query against catalog tables.
 
     *tables* is a mapping of logical table name -> directory name.
+    *virtual_ipc* is an optional mapping of virtual table name -> base64-encoded IPC bytes.
     Returns the parsed JSON response dict.
     """
-    payload = {"query": query, "tables": tables, "max_rows": max_rows}
+    payload: dict = {"query": query, "tables": tables, "max_rows": max_rows}
+    if virtual_ipc:
+        payload["virtual_tables_ipc"] = virtual_ipc
     response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")

@@ -168,6 +168,12 @@ export interface CatalogTable {
   source_registration_name: string | null;
   source_run_id: number | null;
   read_by_flows: FlowSummary[];
+  table_type: "physical" | "virtual";
+  producer_registration_id: number | null;
+  producer_registration_name: string | null;
+  is_optimized: boolean | null;
+  laziness_blockers: string[] | null;
+  sql_query: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,6 +189,27 @@ export interface CatalogTableUpdate {
   name?: string;
   description?: string;
   namespace_id?: number | null;
+}
+
+export interface VirtualFlowTableCreate {
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+  producer_registration_id: number;
+}
+
+export interface VirtualFlowTableUpdate {
+  name?: string;
+  description?: string;
+  namespace_id?: number | null;
+  producer_registration_id?: number | null;
+}
+
+export interface QueryVirtualTableCreate {
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+  sql_query: string;
 }
 
 export interface CatalogTablePreview {
@@ -277,6 +304,7 @@ export interface CatalogStats {
   total_table_favorites: number;
   total_artifacts: number;
   total_tables: number;
+  total_virtual_tables: number;
   total_schedules: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];

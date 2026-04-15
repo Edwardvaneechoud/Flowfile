@@ -7,8 +7,20 @@
     <div class="detail-header">
       <div class="header-main">
         <div class="header-title">
-          <i class="fa-solid fa-table header-icon"></i>
+          <i
+            :class="
+              table.table_type === 'virtual'
+                ? 'fa-solid fa-bolt header-icon virtual-header-icon'
+                : 'fa-solid fa-table header-icon'
+            "
+          ></i>
           <h2>{{ table.name }}</h2>
+          <span
+            v-if="table.table_type === 'virtual' && table.sql_query"
+            class="virtual-badge sql-virtual-badge"
+            >SQL Virtual</span
+          >
+          <span v-else-if="table.table_type === 'virtual'" class="virtual-badge">Virtual</span>
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
@@ -40,8 +52,8 @@
       </div>
     </div>
 
-    <!-- File missing banner -->
-    <div v-if="!table.file_exists" class="missing-banner">
+    <!-- File missing banner (physical tables only) -->
+    <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Table data not found</strong>
@@ -70,7 +82,7 @@
         <span class="meta-label">Columns</span>
         <span class="meta-value">{{ table.column_count ?? "--" }}</span>
       </div>
-      <div class="meta-card">
+      <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Size</span>
         <span class="meta-value">{{ formatSize(table.size_bytes) }}</span>
       </div>
@@ -78,7 +90,28 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
-      <div v-if="table.source_registration_id && table.source_registration_name" class="meta-card">
+      <div
+        v-if="
+          table.table_type === 'virtual' &&
+          table.producer_registration_id &&
+          table.producer_registration_name
+        "
+        class="meta-card"
+      >
+        <span class="meta-label">Produced by</span>
+        <span
+          class="meta-value meta-link"
+          :title="table.producer_registration_name"
+          @click="emit('navigateToFlow', table.producer_registration_id)"
+        >
+          <i class="fa-solid fa-diagram-project"></i>
+          <span class="meta-link-text">{{ table.producer_registration_name }}</span>
+        </span>
+      </div>
+      <div
+        v-else-if="table.source_registration_id && table.source_registration_name"
+        class="meta-card"
+      >
         <span class="meta-label">Produced by</span>
         <span
           class="meta-value meta-link"
@@ -88,6 +121,21 @@
           <i class="fa-solid fa-diagram-project"></i>
           <span class="meta-link-text">{{ table.source_registration_name }}</span>
         </span>
+      </div>
+      <div v-if="table.table_type === 'virtual' && !table.sql_query" class="meta-card">
+        <span class="meta-label">Optimization</span>
+        <span class="meta-value" :class="table.is_optimized ? 'optimized-badge' : ''">
+          {{ table.is_optimized ? "Optimized" : "Standard" }}
+        </span>
+      </div>
+      <div
+        v-if="table.laziness_blockers && table.laziness_blockers.length > 0"
+        class="laziness-blockers"
+      >
+        <span class="blockers-label">Nodes preventing optimization:</span>
+        <ul class="blocker-list">
+          <li v-for="(reason, i) in table.laziness_blockers" :key="i">{{ reason }}</li>
+        </ul>
       </div>
       <div
         v-if="table.read_by_flows && table.read_by_flows.length > 0"
@@ -105,8 +153,14 @@
       </div>
     </div>
 
-    <!-- Version History -->
-    <div v-if="hasHistory" class="section">
+    <!-- SQL Definition (query-based virtual tables) -->
+    <div v-if="table.table_type === 'virtual' && table.sql_query" class="section">
+      <h3>SQL Definition</h3>
+      <pre class="sql-definition">{{ table.sql_query }}</pre>
+    </div>
+
+    <!-- Version History (physical tables only) -->
+    <div v-if="table.table_type !== 'virtual' && hasHistory" class="section">
       <h3>Version History</h3>
       <div class="version-table-wrapper">
         <table class="styled-table version-table">
@@ -243,6 +297,10 @@
           </tbody>
         </table>
       </div>
+      <div v-else-if="table.table_type === 'virtual'" class="empty-state">
+        This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
+        data.
+      </div>
       <div v-else class="empty-state">No data to preview.</div>
     </div>
   </div>
@@ -343,6 +401,58 @@ function formatCell(value: any): string {
 .header-icon {
   font-size: 20px;
   color: var(--color-primary);
+}
+
+.virtual-header-icon {
+  color: var(--el-color-primary, var(--color-primary));
+}
+
+.virtual-badge {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--el-color-primary, var(--color-primary));
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 2px 8px;
+  border-radius: var(--border-radius-sm, 4px);
+  line-height: 1.4;
+}
+
+.sql-virtual-badge {
+  color: var(--el-color-success, #67c23a);
+  background: var(--el-color-success-light-9, rgba(103, 194, 58, 0.1));
+}
+
+.optimized-badge {
+  color: var(--color-success, #67c23a);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.laziness-blockers {
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-3);
+}
+
+.blockers-label {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-warning, #f59e0b);
+}
+
+.blocker-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.blocker-list li {
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-xs);
 }
 
 .header-title h2 {
@@ -756,6 +866,22 @@ function formatCell(value: any): string {
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+}
+
+/* ========== SQL Definition ========== */
+.sql-definition {
+  background: var(--color-background-secondary, #f5f7fa);
+  border: 1px solid var(--color-border-light, #e4e7ed);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-3) var(--spacing-4);
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-sm, 13px);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-primary);
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 /* ========== Modal (read-by list items) ========== */

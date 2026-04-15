@@ -12,6 +12,7 @@ ExecutionLocationsLiteral = Literal["local", "remote"]
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal["input", "output", "process"]
 TransformTypeLiteral = Literal["narrow", "wide", "other"]
+LazinessLiteral = Literal["lazy", "eager", "conditional"]
 _custom_node_store_cache = None
 
 NODE_TYPE_TO_SETTINGS_CLASS = {
@@ -321,6 +322,7 @@ class NodeTemplate(BaseModel):
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
+    laziness: LazinessLiteral = "eager"
 
 
 class NodeInformation(BaseModel):

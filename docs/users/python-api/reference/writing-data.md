@@ -260,14 +260,17 @@ df.write_delta(
 
 ### Catalog Write Modes
 
-The catalog supports additional write modes beyond overwrite and append:
+The catalog supports these write modes:
 
-- `overwrite` — Replace the entire table
-- `error` — Fail if the table already exists
-- `append` — Add rows to the existing table
-- `upsert` — Insert new rows or update existing rows matched by `merge_keys`
-- `update` — Update only existing rows matched by `merge_keys`
-- `delete` — Delete rows matching `merge_keys`
+| Mode | Description |
+|------|-------------|
+| `overwrite` | Replace the entire table |
+| `error` | Fail if the table already exists |
+| `append` | Add rows to the existing table |
+| `upsert` | Insert new rows or update existing rows matched by `merge_keys` |
+| `update` | Update only existing rows matched by `merge_keys` |
+| `delete` | Delete rows matching `merge_keys` |
+| `virtual` | Create a [virtual table](../../visual-editor/catalog/virtual-tables.md) — no data written to disk |
 
 ```python
 # Upsert: insert or update based on merge keys
@@ -280,6 +283,9 @@ ff.write_catalog_table(
 
 !!! warning "Merge Keys Required"
     The `upsert`, `update`, and `delete` modes require `merge_keys` to be specified.
+
+!!! info "Virtual Mode"
+    The `virtual` write mode creates a catalog entry without materializing data to disk. When the virtual table is read, the producer flow is re-executed on demand. This requires the flow to be registered in the catalog. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
 
 ## Connection Requirements
 

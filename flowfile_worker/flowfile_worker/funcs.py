@@ -620,16 +620,26 @@ def materialize_catalog_table_task(
             progress.value = -1
 
 
-def execute_sql_query(query: str, tables: dict[str, str], max_rows: int = 10_000) -> dict:
-    """Execute a SQL query against Delta catalog tables using pl.SQLContext.
+def execute_sql_query(
+    query: str,
+    tables: dict[str, str],
+    max_rows: int = 10_000,
+    virtual_tables_ipc: dict[str, str] | None = None,
+) -> dict:
+    """Execute a SQL query against catalog tables using pl.SQLContext.
 
     *tables* is a mapping of logical table name -> directory name.  The
     directory name is resolved under the catalog tables directory using
     ``_validate_catalog_path``.  Only tables actually referenced in the
     query plan are reported in *used_tables*.
 
+    *virtual_tables_ipc* is an optional mapping of virtual table name ->
+    base64-encoded IPC bytes for pre-resolved virtual tables.
+
     Returns a dict matching the SqlQueryResponse schema.
     """
+    import base64
+    import io
     import re
     import time
 
@@ -644,6 +654,15 @@ def execute_sql_query(query: str, tables: dict[str, str], max_rows: int = 10_000
             raise ValueError(f"Table '{name}' is not a valid Delta table")
         ctx.register(name, pl.scan_delta(str(p)))
         registered_names.append(name)
+
+    # Register virtual tables from pre-resolved IPC data
+    if virtual_tables_ipc:
+        for name, b64_data in virtual_tables_ipc.items():
+            ipc_bytes = base64.b64decode(b64_data)
+            lf = pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
+            ctx.register(name, lf)
+            registered_names.append(name)
+
 
     result_lf = ctx.execute(query)
 

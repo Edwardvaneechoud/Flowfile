@@ -200,6 +200,34 @@ class CatalogTableUpdate(BaseModel):
     namespace_id: int | None = None
 
 
+class VirtualFlowTableCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    producer_registration_id: int
+
+
+class VirtualFlowTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    producer_registration_id: int | None = None
+
+
+class QueryVirtualTableCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    sql_query: str
+
+
+class QueryVirtualTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+
+
 class ColumnSchema(BaseModel):
     name: str
     dtype: str
@@ -228,6 +256,12 @@ class CatalogTableOut(BaseModel):
     source_registration_name: str | None = None
     source_run_id: int | None = None
     read_by_flows: list["FlowSummary"] = Field(default_factory=list)
+    table_type: str = "physical"
+    producer_registration_id: int | None = None
+    producer_registration_name: str | None = None
+    is_optimized: bool | None = None
+    laziness_blockers: list[str] | None = None
+    sql_query: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -374,6 +408,7 @@ class CatalogStats(BaseModel):
     total_table_favorites: int = 0
     total_artifacts: int = 0
     total_tables: int = 0
+    total_virtual_tables: int = 0
     total_schedules: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)

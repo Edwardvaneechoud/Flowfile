@@ -1,4 +1,5 @@
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -129,6 +130,51 @@ class FlowfileHandler:
             flow.save_flow(flow_path)
         else:
             raise Exception("Flow not found or not accessible by user")
+
+    def save_as_flow(
+        self,
+        flow_id: int,
+        new_path: str,
+        user_id: int | None = None,
+        on_catalog_register: Callable[[str, str, int | None], None] | None = None,
+        on_resolve_registration: Callable | None = None,
+    ) -> int:
+        """Save an existing flow to a new path ("Save As").
+
+        Creates a new flow identity (new flow_id), saves to the new path,
+        re-keys the handler registry, and optionally registers with the
+        catalog via the provided callbacks.
+
+        Returns:
+            The new flow ID.
+        """
+        flow = self.get_flow(flow_id, user_id)
+        if flow is None:
+            raise Exception(f"Flow {flow_id} not found or not accessible by user")
+
+        old_flow_id = flow.flow_id
+        new_flow_id = create_unique_id()
+
+        # 1. Clear old catalog link and assign new flow identity
+        flow.flow_settings.source_registration_id = None
+        flow.flow_id = new_flow_id  # propagates to child nodes + settings
+
+        # 2. Save to the new path (updates flow.flow_settings.path)
+        flow.save_flow(flow_path=new_path)
+
+        # 3. Re-key in handler: remove old entry, register under new id
+        self.rekey_flow(old_flow_id, new_flow_id, user_id)
+
+        # 4. Catalog registration (if callbacks provided)
+        if on_catalog_register is not None:
+            on_catalog_register(new_path, flow.flow_settings.name, user_id)
+        if on_resolve_registration is not None:
+            on_resolve_registration(flow)
+
+        # 5. Re-save to persist the resolved source_registration_id in YAML
+        flow.save_flow(flow_path=new_path)
+
+        return new_flow_id
 
     def add_flow(self, name: str = None, flow_path: str = None, user_id: int | None = None) -> int:
         """

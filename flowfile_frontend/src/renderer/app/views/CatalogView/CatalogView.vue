@@ -38,6 +38,11 @@
                 <i class="fa-solid fa-table"></i>
               </button>
             </el-tooltip>
+            <el-tooltip content="Create virtual table" placement="bottom" :show-after="400">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateVirtualTable = true">
+                <i class="fa-solid fa-bolt"></i>
+              </button>
+            </el-tooltip>
             <el-tooltip content="Register flow" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="openRegisterFlowGlobal">
                 <i class="fa-solid fa-file-circle-plus"></i>
@@ -261,6 +266,13 @@
       @close="showRegisterTable = false"
     />
 
+    <CreateVirtualTableModal
+      :visible="showCreateVirtualTable"
+      :namespace-id="registerTableNamespaceId"
+      :default-namespace-id="defaultNamespaceId"
+      @close="showCreateVirtualTable = false"
+    />
+
     <CreateScheduleModal
       :visible="showCreateSchedule"
       :flows="catalogStore.allFlows"
@@ -320,6 +332,18 @@
         </div>
         <div class="info-card">
           <div class="info-card-header">
+            <i class="fa-solid fa-bolt"></i>
+            <h4>Virtual Flow Tables</h4>
+          </div>
+          <p>
+            Virtual flow tables do not store data on disk. When queried, they execute a registered
+            flow on-demand to produce results. They appear with a
+            <strong>bolt</strong> icon and a <strong>virtual</strong> badge in the catalog tree.
+            Optimized virtual tables can push query predicates into the flow for faster execution.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
             <i class="fa-solid fa-calendar-days"></i>
             <h4>Schedules</h4>
           </div>
@@ -356,6 +380,7 @@ import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
+import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import type {
   CatalogTab,
@@ -419,6 +444,7 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+const showCreateVirtualTable = ref(false);
 const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
 

@@ -209,6 +209,7 @@ class SqlQueryRequest(BaseModel):
     query: str
     tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
+    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64-encoded IPC bytes
 
 
 class SqlQueryResponse(BaseModel):

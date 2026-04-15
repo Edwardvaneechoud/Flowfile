@@ -502,6 +502,36 @@ class FlowNode:
         """
         return self.node_inputs.get_all_inputs()
 
+    def check_upstream_laziness(self) -> tuple[bool, list[str]]:
+        """Check whether all upstream dependencies of this node support lazy execution.
+
+        Walks the DAG backwards from this node (excluding itself) and reports
+        any eager or conditional nodes that would prevent a lazy/optimized
+        execution path.
+
+        Returns:
+            A tuple of (is_lazy, reasons).  ``is_lazy`` is True when every
+            upstream node has ``laziness == "lazy"``.
+        """
+        visited: set[FlowNode] = set()
+        stack = list(self.all_inputs)
+        reasons: list[str] = []
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            laziness = current.node_template.laziness
+            if laziness == "eager":
+                reasons.append(f"Node '{current.node_template.name}' (id={current.node_id}) is eager")
+            elif laziness == "conditional":
+                reasons.append(
+                    f"Node '{current.node_template.name}' (id={current.node_id}) is conditional"
+                    " — defaulting to non-optimized"
+                )
+            stack.extend(current.all_inputs)
+        return len(reasons) == 0, reasons
+
     def calculate_hash(self, setting_input: Any) -> str:
         """Calculates a hash based on settings and input node hashes.
 

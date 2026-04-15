@@ -33,7 +33,12 @@
         <i class="fa-solid fa-table stat-icon"></i>
         <div class="stat-info">
           <span class="stat-value">{{ stats.total_tables }}</span>
-          <span class="stat-label">Tables</span>
+          <span class="stat-label">
+            Tables
+            <span v-if="stats.total_virtual_tables > 0" class="stat-sub">
+              ({{ stats.total_virtual_tables }} virtual)
+            </span>
+          </span>
         </div>
       </div>
       <div
@@ -98,9 +103,16 @@
           class="item-row clickable"
           @click="$emit('viewTable', table.id)"
         >
-          <i class="fa-solid fa-table item-icon"></i>
+          <i
+            :class="
+              table.table_type === 'virtual'
+                ? 'fa-solid fa-bolt item-icon virtual-item-icon'
+                : 'fa-solid fa-table item-icon'
+            "
+          ></i>
           <span class="item-name">{{ table.name }}</span>
-          <span class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
+          <span v-if="table.table_type === 'virtual'" class="virtual-table-badge">virtual</span>
+          <span v-else class="item-meta">{{ formatNumber(table.row_count) }} rows</span>
         </div>
       </div>
     </div>
@@ -428,6 +440,26 @@ function toggleSection(section: Section) {
   font-size: var(--font-size-xs);
   width: 16px;
   text-align: center;
+  flex-shrink: 0;
+}
+
+.virtual-item-icon {
+  color: var(--el-color-primary, var(--color-primary));
+}
+
+.stat-sub {
+  font-weight: var(--font-weight-normal, 400);
+  color: var(--color-text-muted);
+}
+
+.virtual-table-badge {
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--el-color-primary, var(--color-primary));
+  background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+  padding: 1px 6px;
+  border-radius: var(--border-radius-sm);
+  line-height: 16px;
   flex-shrink: 0;
 }
 

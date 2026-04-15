@@ -6,7 +6,7 @@ All connection types and secrets are managed from a single **Connections** page,
 via the **Connections** icon in the left sidebar. Use the tabs to switch between
 **Database**, **Cloud Storage**, **Kafka**, and **Secrets**.
 
-Connections store your credentials securely (passwords are encrypted via [Secrets](../secrets.md))
+Connections store your credentials securely (passwords are encrypted via [Secrets](secrets.md))
 so you can reference them by name in Database Reader, Database Writer, Cloud Storage Reader,
 and Cloud Storage Writer nodes without re-entering credentials each time.
 
@@ -41,12 +41,12 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 4. Click **Update Connection** to save
 
 <!-- should show the new tabbed Connections page with the Database tab active -->
-![Database Connection Manager](../../assets/images/guides/connections/database-manager.png)
+![Database Connection Manager](../../../assets/images/guides/connections/database-manager.png)
 
 *The Connections page showing the Database tab with saved connections*
 
 <!-- should show the Add Database Connection dialog opened from the Database tab -->
-![Create Database Connection](../../assets/images/guides/connections/create-db-connection.png)
+![Create Database Connection](../../../assets/images/guides/connections/create-db-connection.png)
 
 *Creating a new PostgreSQL connection*
 
@@ -60,7 +60,7 @@ In a **Database Reader** or **Database Writer** node:
 
 !!! tip "Reference vs Inline Mode"
     **Reference** mode uses a saved connection (recommended). Credentials are encrypted,
-    reusable, and supported by the [code generator](tutorials/code-generator.md).
+    reusable, and supported by the [code generator](../tutorials/code-generator.md).
 
     **Inline** mode lets you enter credentials directly in the node settings. This is convenient for
     quick tests but credentials are not reusable and inline connections cannot be exported to Python code.
@@ -98,7 +98,7 @@ In a **Database Reader** or **Database Writer** node:
 4. Click **Create Connection**
 
 <!-- should show the new tabbed Connections page with the Cloud Storage tab active -->
-![Cloud Connection Manager](../../assets/images/guides/connections/cloud-manager.png)
+![Cloud Connection Manager](../../../assets/images/guides/connections/cloud-manager.png)
 
 *The Connections page showing the Cloud Storage tab*
 
@@ -106,7 +106,7 @@ In a **Database Reader** or **Database Writer** node:
 
 In a **Cloud Storage Reader** or **Cloud Storage Writer** node, select your saved connection from the dropdown.
 
-For a step-by-step tutorial, see [Manage Cloud Storage](tutorials/cloud-connections.md).
+For a step-by-step tutorial, see [Manage Cloud Storage](../tutorials/cloud-connections.md).
 
 ---
 
@@ -139,7 +139,7 @@ Select your saved Kafka connection when configuring Kafka Reader or Kafka Writer
 
 ## Security
 
-- Passwords and secret keys are stored as encrypted [Secrets](../secrets.md) using Fernet encryption
+- Passwords and secret keys are stored as encrypted [Secrets](secrets.md) using Fernet encryption
 - Connection metadata (host, port, database name) is stored in the local database
 - Credentials are decrypted only at runtime when a flow executes
 - Each user's connections are isolated (Docker multi-user mode)
@@ -148,8 +148,8 @@ Select your saved Kafka connection when configuring Kafka Reader or Kafka Writer
 
 ## Related Documentation
 
-- [Secrets](../secrets.md) — How credential encryption works
-- [Input Nodes: Database Reader](nodes/input.md#database-reader) — Reading from databases
-- [Output Nodes: Database Writer](nodes/output.md#database-writer) — Writing to databases
-- [Tutorial: Connect to PostgreSQL](tutorials/database-connectivity.md)
-- [Tutorial: Manage Cloud Storage](tutorials/cloud-connections.md)
+- [Secrets](secrets.md) — How credential encryption works
+- [Input Nodes: Database Reader](../nodes/input.md#database-reader) — Reading from databases
+- [Output Nodes: Database Writer](../nodes/output.md#database-writer) — Writing to databases
+- [Tutorial: Connect to PostgreSQL](../tutorials/database-connectivity.md)
+- [Tutorial: Manage Cloud Storage](../tutorials/cloud-connections.md)

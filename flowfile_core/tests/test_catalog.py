@@ -24,7 +24,7 @@ from flowfile_core.database.models import (
     ScheduleTriggerTable,
     User,
 )
-from flowfile_core.routes.routes import _auto_register_flow
+from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -453,6 +453,7 @@ class TestStats:
         assert "total_flows" in data
         assert "total_runs" in data
         assert "total_favorites" in data
+        assert "total_virtual_tables" in data
         assert "recent_runs" in data
 
     def test_stats_counts_only_catalogs(self):
@@ -502,7 +503,7 @@ class TestDefaultNamespace:
 
 
 class TestAutoRegisterFlow:
-    """Tests for _auto_register_flow which registers flows in the default namespace."""
+    """Tests for auto_register_flow which registers flows in the default namespace."""
 
     @staticmethod
     def _ensure_default_namespace():
@@ -520,7 +521,7 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
+        auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/auto_reg_test.yaml").first()
@@ -536,8 +537,8 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/dup_auto.yaml", "first", user_id)
-        _auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
+        auto_register_flow("/tmp/dup_auto.yaml", "first", user_id)
+        auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
 
         with get_db_context() as db:
             regs = db.query(FlowRegistration).filter_by(flow_path="/tmp/dup_auto.yaml").all()
@@ -548,7 +549,7 @@ class TestAutoRegisterFlow:
         """Should return early without creating anything when user_id is None."""
         self._ensure_default_namespace()
 
-        _auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
+        auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_user.yaml").first()
@@ -559,7 +560,7 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow(None, "no_path", user_id)
+        auto_register_flow(None, "no_path", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(name="no_path").first()
@@ -569,7 +570,7 @@ class TestAutoRegisterFlow:
         """Should silently do nothing when the default namespace doesn't exist."""
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
+        auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_ns.yaml").first()
@@ -580,7 +581,7 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
+        auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/my_pipeline.yaml").first()

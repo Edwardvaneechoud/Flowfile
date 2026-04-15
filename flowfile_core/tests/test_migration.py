@@ -112,15 +112,23 @@ class TestFreshInstall:
         assert "alembic_version" in tables
 
     def test_stamps_alembic_version(self, tmp_path, monkeypatch):
-        """After fresh install, alembic_version should be at '001'."""
+        """After fresh install, alembic_version should be at the latest head."""
         db_path = tmp_path / "fresh.db"
         _run_migration(db_path, monkeypatch)
+
+        from alembic.script import ScriptDirectory
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        cfg = _get_alembic_config()
+        script = ScriptDirectory.from_config(cfg)
+        expected_head = script.get_current_head()
 
         engine = create_engine(f"sqlite:///{db_path}")
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         engine.dispose()
-        assert version == "001"
+        assert version == expected_head
 
     def test_tables_match_models(self, tmp_path, monkeypatch):
         """The created schema should match the SQLAlchemy model definitions."""

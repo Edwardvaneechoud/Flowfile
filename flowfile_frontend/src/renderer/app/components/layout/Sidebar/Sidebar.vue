@@ -15,26 +15,44 @@
       <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
         <ThemeToggle />
       </div>
+      <div v-if="currentPageHelp" class="footer-btn-wrapper" data-tooltip="Page info">
+        <button class="info-button" @click="showHelp = true">
+          <i class="fa-solid fa-circle-info"></i>
+        </button>
+      </div>
       <div v-if="showLogout" class="footer-btn-wrapper" data-tooltip="Sign out">
         <button class="logout-button" @click="handleLogout">
           <i class="fa-solid fa-right-from-bracket"></i>
         </button>
       </div>
     </div>
+    <PageHelpModal
+      v-if="currentPageHelp"
+      :show="showHelp"
+      v-bind="currentPageHelp"
+      @close="showHelp = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { useRouter } from "vue-router";
+import { computed, ref, watch } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import NavigationRoutes from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
 import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
+import { PageHelpModal } from "../../common";
+import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
+import { designerHelp } from "../../../views/DesignerView/designerHelp";
+import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
+import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
+import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
+import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
 
 // Define the isCollapse prop
 defineProps({
@@ -48,8 +66,33 @@ defineProps({
 defineEmits(["toggle-collapse"]);
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const tutorialStore = useTutorialStore();
+
+// Page help
+const showHelp = ref(false);
+
+const helpByRoute: Record<string, PageHelpContent> = {
+  designer: designerHelp,
+  catalog: catalogHelp,
+  connections: connectionsHelp,
+  templates: templatesHelp,
+  kernelManager: kernelHelp,
+};
+
+const currentPageHelp = computed(() => {
+  const name = route.name as string;
+  return helpByRoute[name] ?? null;
+});
+
+// Close help modal on route change
+watch(
+  () => route.name,
+  () => {
+    showHelp.value = false;
+  },
+);
 
 // Filter routes based on admin status and Electron mode
 const items = computed(() => {
@@ -177,6 +220,37 @@ const handleLogout = () => {
 }
 
 .logout-button i {
+  font-size: var(--font-size-lg);
+}
+
+.info-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.info-button:hover {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.info-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--color-accent);
+}
+
+.info-button i {
   font-size: var(--font-size-lg);
 }
 </style>

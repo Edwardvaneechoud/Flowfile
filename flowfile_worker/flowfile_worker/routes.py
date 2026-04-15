@@ -394,9 +394,12 @@ def create_table(
 
 @router.post("/catalog/sql_query", response_model=models.SqlQueryResponse)
 def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryResponse:
-    """Execute a SQL query against Delta catalog tables."""
+    """Execute a SQL query against catalog tables (physical + virtual)."""
     try:
-        result = funcs.execute_sql_query(payload.query, payload.tables, payload.max_rows)
+        result = funcs.execute_sql_query(
+            payload.query, payload.tables, payload.max_rows,
+            virtual_tables_ipc=payload.virtual_tables_ipc,
+        )
         return models.SqlQueryResponse(**result)
     except ValueError as e:
         return models.SqlQueryResponse(error=str(e))
