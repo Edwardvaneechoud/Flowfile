@@ -120,10 +120,10 @@ The **Database Writer** node saves processed data to a database table. It suppor
 
 #### **Connection Modes:**
 
-| Mode | Description |
-|------|-------------|
-| **Reference** | Use a saved connection from the [Connection Manager](../catalog/connections.md) (recommended) |
-| **Inline** | Enter connection credentials directly in the node settings |
+| Mode | Description                                                                                   |
+|------|-----------------------------------------------------------------------------------------------|
+| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
+| **Inline** | Enter connection credentials directly in the node settings                                    |
 
 #### **Settings:**
 
