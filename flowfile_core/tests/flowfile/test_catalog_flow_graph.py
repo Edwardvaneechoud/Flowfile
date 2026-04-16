@@ -747,11 +747,6 @@ class TestCatalogSqlReader:
             _run_graph(graph)
 
 
-# ---------------------------------------------------------------------------
-# Unit tests for extracted catalog helper functions
-# ---------------------------------------------------------------------------
-
-
 class TestResolveVirtualTable:
     """Test _resolve_virtual_table helper."""
 
@@ -761,8 +756,8 @@ class TestResolveVirtualTable:
         buf = _io.BytesIO()
         lf.serialize(buf)
         serialized = buf.getvalue()
-
-        result = _resolve_virtual_table(is_optimized=True, serialized_lf=serialized, catalog_table_id=-1)
+        result = _resolve_virtual_table(is_optimized=True, serialized_lf=serialized, catalog_table_id=-1,
+                                        run_location="local")
 
         assert isinstance(result, pl.LazyFrame)
         df = result.collect()
@@ -1027,7 +1022,6 @@ class TestHandleVirtualTableWrite:
             catalog_write_settings=input_schema.CatalogWriteSettings(
                 table_name="vw_update_table",
                 namespace_id=ns_id,
-                write_mode="virtual",
             ),
             user_id=1,
         )

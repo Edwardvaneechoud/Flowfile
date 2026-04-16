@@ -328,8 +328,8 @@ def _resolve_virtual_table(
     is_optimized: bool,
     serialized_lf: bytes | None,
     catalog_table_id: int,
-    run_location: Literal["remote", "local"],
-    node_logger: NodeLogger,
+    run_location: Literal["remote", "local"] | None = None,
+    node_logger: NodeLogger = None,
     source_table_versions: str | None = None,
 ) -> pl.LazyFrame:
     """Resolve a virtual table to a LazyFrame.
