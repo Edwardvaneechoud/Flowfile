@@ -41,7 +41,14 @@ class HistoryManager:
     - HistoryEntry uses __slots__ for reduced memory overhead
     """
 
-    __slots__ = ("_config", "_undo_stack", "_redo_stack", "_is_restoring", "_last_snapshot_hash")
+    __slots__ = (
+        "_config",
+        "_undo_stack",
+        "_redo_stack",
+        "_is_restoring",
+        "_last_snapshot_hash",
+        "_saved_snapshot_hash",
+    )
 
     def __init__(self, config: HistoryConfig | None = None):
         """Initialize the HistoryManager.
@@ -54,6 +61,8 @@ class HistoryManager:
         self._redo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._is_restoring: bool = False
         self._last_snapshot_hash: int | None = None
+        # Hash of the flow state at the last save point; used for dirty tracking
+        self._saved_snapshot_hash: int | None = None
 
     @property
     def config(self) -> HistoryConfig:
@@ -372,11 +381,44 @@ class HistoryManager:
         )
 
     def clear(self) -> None:
-        """Clear all history entries."""
+        """Clear all history entries.
+
+        Note: ``_saved_snapshot_hash`` is intentionally preserved here — the
+        save point persists across history clears.
+        """
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._last_snapshot_hash = None
         logger.debug("History cleared")
+
+    def mark_saved(self, flow_graph: "FlowGraph") -> None:
+        """Record the current flow state as the saved baseline.
+
+        Called after a successful save to establish the clean reference point
+        for dirty tracking.
+        """
+        try:
+            snapshot = flow_graph.get_flowfile_data()
+            snapshot_dict = snapshot.model_dump()
+            self._saved_snapshot_hash = CompressedSnapshot._compute_hash(snapshot_dict)
+            logger.debug("History: marked current state as saved")
+        except Exception as e:
+            logger.warning(f"History: failed to mark saved state: {e}")
+
+    def has_unsaved_changes(self, flow_graph: "FlowGraph") -> bool:
+        """Check whether the current flow state differs from the last save point."""
+        try:
+            snapshot = flow_graph.get_flowfile_data()
+            snapshot_dict = snapshot.model_dump()
+            if self._saved_snapshot_hash is None:
+                # Never saved — treat as dirty only if the flow has content
+                return len(snapshot_dict.get("nodes", []) or []) > 0
+            current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
+            return current_hash != self._saved_snapshot_hash
+        except Exception as e:
+            logger.warning(f"History: failed to compute dirty state: {e}")
+            # Fall back to treating flow as dirty so user isn't silently losing work
+            return True
 
     def is_restoring(self) -> bool:
         """Check if a restore operation is currently in progress.

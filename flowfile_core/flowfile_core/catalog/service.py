@@ -841,18 +841,36 @@ class CatalogService:
         return self.repo.create_run(run)
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
-        """Register a flow in the default namespace (General > default) if not already registered.
+        """Register a flow in a default-ish namespace if not already registered.
 
-        Returns the registration on success, or None if the default namespace
-        does not exist or the flow is already registered.
+        Unnamed/quick-created flows (stored under ``unnamed_flows/``) go into
+        ``General > Unnamed Flows``; everything else goes to ``General > Local
+        Flows`` (flows that live on disk, as opposed to catalog-managed flows
+        created via the Catalog tab).  Falls back to ``General > default`` for
+        older catalogs that predate the Local Flows namespace.
+
+        Returns the registration on success, or None if no suitable namespace
+        exists or the flow is already registered.
         """
         general = self.repo.get_namespace_by_name("General", parent_id=None)
         if general is None:
             logger.info("Auto-registration skipped: 'General' catalog namespace not found")
             return None
-        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
-        if default_schema is None:
-            logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
+
+        is_unnamed = "/unnamed_flows/" in flow_path or "\\unnamed_flows\\" in flow_path
+        if is_unnamed:
+            target_ns = self.repo.get_namespace_by_name("Unnamed Flows", parent_id=general.id)
+            if target_ns is None:
+                target_ns = self.ensure_unnamed_flows_namespace()
+        else:
+            target_ns = self.repo.get_namespace_by_name("Local Flows", parent_id=general.id)
+            if target_ns is None:
+                target_ns = self.ensure_local_flows_namespace()
+            if target_ns is None:
+                # Fallback for older catalogs that still only have 'default'
+                target_ns = self.repo.get_namespace_by_name("default", parent_id=general.id)
+        if target_ns is None:
+            logger.info("Auto-registration skipped: no suitable namespace found under 'General'")
             return None
         existing = self.repo.get_flow_by_path(flow_path)
         if existing:
@@ -860,10 +878,55 @@ class CatalogService:
         reg = FlowRegistration(
             name=name or Path(flow_path).stem,
             flow_path=flow_path,
-            namespace_id=default_schema.id,
+            namespace_id=target_ns.id,
             owner_id=user_id,
         )
         return self.repo.create_flow(reg)
+
+    def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
+        """Ensure 'General > Unnamed Flows' namespace exists, creating it if needed.
+
+        Inherits ``owner_id`` from the parent 'General' namespace.  Returns the
+        namespace, or None if the parent 'General' namespace does not exist
+        (e.g. during very early startup before the catalog is seeded).
+        """
+        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        if general is None:
+            logger.info("Cannot ensure 'Unnamed Flows' namespace: parent 'General' not found")
+            return None
+        existing = self.repo.get_namespace_by_name("Unnamed Flows", parent_id=general.id)
+        if existing is not None:
+            return existing
+        ns = CatalogNamespace(
+            name="Unnamed Flows",
+            parent_id=general.id,
+            level=1,
+            description="Quick-created flows that have not yet been named",
+            owner_id=general.owner_id,
+        )
+        return self.repo.create_namespace(ns)
+
+    def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
+        """Ensure 'General > Local Flows' namespace exists, creating it if needed.
+
+        Inherits ``owner_id`` from the parent 'General' namespace.  Returns the
+        namespace, or None if the parent 'General' namespace does not exist.
+        """
+        general = self.repo.get_namespace_by_name("General", parent_id=None)
+        if general is None:
+            logger.info("Cannot ensure 'Local Flows' namespace: parent 'General' not found")
+            return None
+        existing = self.repo.get_namespace_by_name("Local Flows", parent_id=general.id)
+        if existing is not None:
+            return existing
+        ns = CatalogNamespace(
+            name="Local Flows",
+            parent_id=general.id,
+            level=1,
+            description="Flows saved to disk at user-chosen paths",
+            owner_id=general.owner_id,
+        )
+        return self.repo.create_namespace(ns)
 
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""

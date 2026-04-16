@@ -184,6 +184,7 @@ class FlowSettings(FlowGraphConfig):
     is_running: bool = False
     is_canceled: bool = False
     track_history: bool = True
+    has_unsaved_changes: bool = False
 
     @classmethod
     def from_flow_settings_input(cls, flow_graph_config: FlowGraphConfig):

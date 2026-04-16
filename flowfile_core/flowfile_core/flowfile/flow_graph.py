@@ -672,6 +672,10 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
+        # Mark the empty initial state as the saved baseline so an unmodified
+        # flow is not considered dirty.
+        self._history_manager.mark_saved(self)
+
     @property
     def flow_settings(self) -> schemas.FlowSettings:
         return self._flow_settings
@@ -757,6 +761,14 @@ class FlowGraph:
             HistoryState with information about available undo/redo operations.
         """
         return self._history_manager.get_state()
+
+    def mark_as_saved(self) -> None:
+        """Mark the current flow state as the saved baseline (for dirty tracking)."""
+        self._history_manager.mark_saved(self)
+
+    def has_unsaved_changes(self) -> bool:
+        """Return True if the flow has changed since the last save point."""
+        return self._history_manager.has_unsaved_changes(self)
 
     def _execute_with_history(
         self,
@@ -3735,6 +3747,8 @@ class FlowGraph:
 
         self.flow_settings.path = flow_path
         self._sync_catalog_read_links()
+        # Record the current state as the clean baseline for dirty tracking
+        self.mark_as_saved()
 
     def _sync_catalog_read_links(self):
         """Record which catalog tables this flow reads from.

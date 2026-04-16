@@ -496,6 +496,49 @@ class TestDefaultNamespace:
             generals = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).all()
             assert len(generals) == 1
 
+    def test_local_flows_namespace_created_on_init(self):
+        """init_db should seed General > Local Flows for disk-backed flow registration."""
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            assert general is not None
+            local_flows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+            )
+            assert local_flows is not None
+            assert local_flows.level == 1
+
+    def test_local_flows_namespace_idempotent(self):
+        """Running init_db twice shouldn't duplicate the Local Flows namespace."""
+        init_db()
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            local_flows_rows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).all()
+            )
+            assert len(local_flows_rows) == 1
+
+    def test_ensure_local_flows_namespace_creates_when_missing(self):
+        """ensure_local_flows_namespace() self-heals a missing namespace."""
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            # Delete the Local Flows namespace to simulate an older DB
+            local_flows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+            )
+            if local_flows is not None:
+                db.delete(local_flows)
+                db.commit()
+
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            ns = service.ensure_local_flows_namespace()
+            assert ns is not None
+            assert ns.name == "Local Flows"
+            assert ns.parent_id == general.id
+            assert ns.owner_id == general.owner_id
+
 
 # ---------------------------------------------------------------------------
 # Auto-registration tests
@@ -516,8 +559,8 @@ class TestAutoRegisterFlow:
             assert user is not None
             return user.id
 
-    def test_registers_flow_in_default_namespace(self):
-        """A new flow path is registered under General > default."""
+    def test_registers_flow_in_local_flows_namespace(self):
+        """Disk-backed flows land under General > Local Flows by default."""
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
@@ -528,6 +571,58 @@ class TestAutoRegisterFlow:
             assert reg is not None
             assert reg.name == "auto_flow"
             assert reg.owner_id == user_id
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "Local Flows"
+
+    def test_registers_unnamed_flow_in_unnamed_namespace(self):
+        """Quick-created flows (under unnamed_flows/) land in General > Unnamed Flows."""
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        auto_register_flow("/tmp/unnamed_flows/quick_flow.yaml", "quick_flow", user_id)
+
+        with get_db_context() as db:
+            reg = (
+                db.query(FlowRegistration)
+                .filter_by(flow_path="/tmp/unnamed_flows/quick_flow.yaml")
+                .first()
+            )
+            assert reg is not None
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "Unnamed Flows"
+
+    def test_falls_back_to_default_when_local_flows_missing(self):
+        """If the Local Flows namespace is missing (older DBs), fall back to default."""
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        # Remove the Local Flows namespace to simulate a pre-existing DB that
+        # predates this change (and prevent auto-create via ensure_*).
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            local_flows = (
+                db.query(CatalogNamespace)
+                .filter_by(name="Local Flows", parent_id=general.id)
+                .first()
+            )
+            if local_flows is not None:
+                db.delete(local_flows)
+                db.commit()
+
+        # Patch ensure_local_flows_namespace to return None to simulate the
+        # older "default-only" catalog state.
+        original_ensure = CatalogService.ensure_local_flows_namespace
+        CatalogService.ensure_local_flows_namespace = lambda self: None
+        try:
+            auto_register_flow("/tmp/fallback_flow.yaml", "fallback_flow", user_id)
+        finally:
+            CatalogService.ensure_local_flows_namespace = original_ensure
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/fallback_flow.yaml").first()
+            assert reg is not None
             ns = db.get(CatalogNamespace, reg.namespace_id)
             assert ns is not None
             assert ns.name == "default"

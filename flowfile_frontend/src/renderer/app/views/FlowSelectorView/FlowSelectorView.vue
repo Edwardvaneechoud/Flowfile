@@ -125,11 +125,21 @@ const selectFlow = (flowId: number) => {
   }
 };
 
-// Show confirmation dialog before closing tab
-const confirmCloseTab = (flowId: number) => {
+// Show confirmation dialog before closing tab — only if the flow has unsaved changes
+const confirmCloseTab = async (flowId: number) => {
+  // Check backend for dirty state; fall back to prompting if the check fails
+  try {
+    const settings = await FlowApi.getFlowSettings(flowId);
+    if (settings && settings.has_unsaved_changes === false) {
+      emit("close-tab", flowId);
+      return;
+    }
+  } catch (error) {
+    console.warn("Could not check flow dirty state; showing save prompt", error);
+  }
+
   pendingCloseFlowId.value = flowId;
 
-  // Use the exposed open method
   if (saveConfirmationModal.value) {
     saveConfirmationModal.value.open(flowId);
   } else {

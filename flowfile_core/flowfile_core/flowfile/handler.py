@@ -12,10 +12,14 @@ from shared.storage_config import storage
 
 
 def get_flow_save_location(flow_name: str) -> Path:
-    """Gets the initial save location for flow files"""
+    """Gets the initial save location for unnamed / quick-created flow files.
+
+    Persisted under ``~/.flowfile/flows/unnamed_flows`` (not a temp directory)
+    so quick-created flows survive auto-cleanup and remain user-accessible.
+    """
     if ".yaml" not in flow_name and ".yml" not in flow_name:
         flow_name += ".yaml"
-    return storage.temp_directory_for_flows / flow_name
+    return storage.unnamed_flows_directory / flow_name
 
 
 def create_flow_name() -> str:
@@ -205,6 +209,10 @@ class FlowfileHandler:
         flow_exists = os.path.exists(flow.flow_settings.path)
         last_modified_ts = os.path.getmtime(flow.flow_settings.path) if flow_exists else -1
         flow.flow_settings.modified_on = last_modified_ts
+        try:
+            flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
+        except Exception:
+            flow.flow_settings.has_unsaved_changes = False
         return flow.flow_settings
 
     def get_node(self, flow_id: int, node_id: int):

@@ -39,7 +39,11 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.flowfile.catalog_helpers import auto_register_flow, resolve_source_registration_id
+from flowfile_core.flowfile.catalog_helpers import (
+    auto_register_flow,
+    register_flow_in_namespace,
+    resolve_source_registration_id,
+)
 from flowfile_core.flowfile.code_generator.code_generator import (
     UnsupportedNodeError,
     export_flow_to_flowframe,
@@ -131,6 +135,18 @@ async def get_local_files(directory: str) -> list[FileInfo]:
 async def get_default_path() -> str:
     """Returns the default starting path for the file browser (user data directory)."""
     return str(storage.user_data_directory)
+
+
+@router.get("/files/catalog_flows_directory/", response_model=str, tags=["file manager"])
+async def get_catalog_flows_directory() -> str:
+    """Returns the managed flows directory used for catalog-tab saves.
+
+    On local this resolves to ``~/.flowfile/flows``; in Docker mode to
+    ``/data/user/flows``.  The frontend uses this to build the target path
+    for flows saved via the Catalog tab, so they always land in the managed
+    location regardless of where the file browser was last navigated.
+    """
+    return str(storage.flows_directory)
 
 
 @router.get("/files/directory_contents/", response_model=list[FileInfo], tags=["file manager"])
@@ -1082,34 +1098,61 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
 
 
 @router.get("/save_flow", tags=["editor"])
-def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
+def save_flow(
+    flow_id: int,
+    flow_path: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
     """Saves the current state of a flow to a `.yaml`.
+
+    If ``flow_path`` is omitted, the flow is saved silently to its existing path.
 
     When saving to a new path ("Save As"), the flow is treated as a new flow:
     a new flowfile_id is generated, the old handler entry is replaced, and a
     fresh catalog registration is created.  The new flow_id is returned so the
     frontend can switch to it.
+
+    When ``namespace_id`` is provided, the flow is registered in that catalog
+    namespace (instead of the default namespace).
     """
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
+
+    # If no explicit path provided, use the current path (silent save)
+    if flow_path is None:
+        flow_path = current_path
+    if not flow_path:
+        raise HTTPException(422, "No save path specified and flow has no existing path")
+
+    # Normalize using resolve() so symlinks/trailing slashes/./.. don't trigger "Save As"
     is_new_path = (
-        flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
+        bool(current_path) and str(Path(flow_path).resolve()) != str(Path(current_path).resolve())
     )
 
     if is_new_path:
         user_id = current_user.id if current_user else None
+
+        def _register(fp: str, n: str, uid: int | None) -> None:
+            register_flow_in_namespace(fp, n, uid, namespace_id)
+
         return flow_file_handler.save_as_flow(
             flow_id=flow_id,
             new_path=flow_path,
             user_id=user_id,
-            on_catalog_register=auto_register_flow,
+            on_catalog_register=_register,
             on_resolve_registration=resolve_source_registration_id,
         )
 
     resolve_source_registration_id(flow)
-    flow.save_flow(flow_path=flow_path)
+    flow.save_flow(flow_path=flow_path)  # save_flow itself calls mark_as_saved()
+
+    # If namespace_id provided, ensure the flow is registered in that namespace
+    if namespace_id is not None:
+        user_id = current_user.id if current_user else None
+        register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
     return flow_id
 
 
@@ -1124,10 +1167,14 @@ def get_flow_frontend_data(flow_id: int | None = 1):
 
 @router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettings)
 def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettings:
-    """Retrieves the main settings for a flow."""
+    """Retrieves the main settings for a flow (including dirty-state info)."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
+    try:
+        flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
+    except Exception:
+        flow.flow_settings.has_unsaved_changes = False
     return flow.flow_settings
 
 

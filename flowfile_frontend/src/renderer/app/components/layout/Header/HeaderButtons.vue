@@ -4,6 +4,10 @@
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
     </button>
+    <button class="action-btn" data-tutorial="save-as-btn" @click="openSaveAsModal">
+      <span class="material-icons btn-icon">save_as</span>
+      <span class="btn-text">Save As</span>
+    </button>
     <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
       <span class="material-icons btn-icon">folder_open</span>
       <span class="btn-text">Open</span>
@@ -42,38 +46,18 @@
     </el-tooltip>
   </div>
 
-  <el-dialog
-    v-model="modalVisibleForOpen"
-    title="Select or Enter a Flow File"
-    width="70%"
-    custom-class="high-z-index-dialog"
-  >
-    <file-browser
-      :allowed-file-types="FLOWFILE_EXTENSIONS"
-      mode="open"
-      context="flows"
-      :is-visible="modalVisibleForOpen"
-      @file-selected="openFlowAction"
-    />
-  </el-dialog>
+  <open-dialog
+    ref="openDialogRef"
+    v-model:visible="modalVisibleForOpen"
+    @open-flow="handleOpenFromDialog"
+  />
 
-  <el-dialog
-    v-model="modalVisibleForSave"
-    title="Select save location"
-    width="70%"
-    custom-class="high-z-index-dialog"
-  >
-    <file-browser
-      ref="fileBrowserRef"
-      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
-      mode="create"
-      context="flows"
-      :initial-file-path="savePath"
-      :is-visible="modalVisibleForSave"
-      @create-file="saveFlowAction"
-      @overwrite-file="saveFlowAction"
-    />
-  </el-dialog>
+  <save-dialog
+    ref="saveDialogRef"
+    v-model:visible="modalVisibleForSave"
+    :flow-id="nodeStore.flow_id"
+    @save-complete="handleSaveDialogComplete"
+  />
 
   <el-dialog
     v-model="modalVisibleForCreate"
@@ -252,11 +236,12 @@
 import { ref, onMounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 
-import { saveFlow } from "./utils";
+import { saveFlowSilent, isTemporaryPath } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../../common/FileBrowser/fileBrowser.vue";
-import { FileInfo } from "../../common/FileBrowser/types";
-import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
+import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
+import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
+import { ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
@@ -282,7 +267,6 @@ const modalVisibleForQuickCreate = ref(false);
 const modalVisibleForSettings = ref(false);
 
 const flowSettings = ref<FlowSettings | null>(null);
-const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 const quickCreateName = ref<string>("");
 
@@ -369,63 +353,32 @@ const pushFlowSettings = async () => {
   }
 };
 
-const fileBrowserRef = ref<{
-  refresh: () => Promise<void>;
-  handleInitialFileSelection: (filePath?: string) => Promise<void>;
-  loadCurrentDirectory: () => Promise<void>;
-  navigateUpDirectory: () => Promise<void>;
-  selectedFile: FileInfo | null;
+const saveDialogRef = ref<{
+  open: () => Promise<void>;
+  close: () => void;
 } | null>(null);
 
-const saveFlowAction = async (flowPath: string) => {
-  // Check for deprecated .flowfile extension
-  if (flowPath.toLowerCase().endsWith(".flowfile")) {
-    ElMessage.error({
-      message: "The .flowfile format is deprecated. Please use .yaml or .yml instead.",
-      duration: 5000,
-    });
-    return;
-  }
+const openDialogRef = ref<{
+  open: () => void;
+  close: () => void;
+} | null>(null);
 
-  // Validate extension
-  if (!isValidSaveExtension(flowPath)) {
-    ElMessage.error({
-      message: "Invalid file extension. Please use .yaml or .yml",
-      duration: 5000,
-    });
-    return;
+const handleSaveDialogComplete = (flowId: number) => {
+  modalVisibleForSave.value = false;
+  if (flowId && flowId !== nodeStore.flow_id) {
+    // "Save As" produced a new flow identity — switch to it
+    nodeStore.setFlowId(flowId);
+    emit("refreshFlow");
   }
-
-  try {
-    const newFlowId = await saveFlow(nodeStore.flow_id, flowPath);
-    ElMessage.success("Flow saved successfully");
-    modalVisibleForSave.value = false;
-    // "Save As" produces a new flow identity — switch to it
-    if (newFlowId && newFlowId !== nodeStore.flow_id) {
-      nodeStore.setFlowId(newFlowId);
-      emit("refreshFlow");
-    }
-    // Advance tutorial if we're on the "save-flow" step
-    if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
-      setTimeout(() => {
-        tutorialStore.nextStep();
-      }, 300);
-    }
-  } catch (error: any) {
-    ElMessage.error({
-      message: error.message || "Failed to save flow",
-      duration: 5000,
-    });
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
   }
 };
 
-function openFlowAction(inputSelectedFile: FileInfo | null) {
-  if (inputSelectedFile) {
-    emit("openFlow", {
-      message: "Flow opened",
-      flowPath: inputSelectedFile.path,
-    });
-  }
+function handleOpenFromDialog(payload: { message: string; flowPath: string }) {
+  emit("openFlow", payload);
   nodeStore.resetRunResults();
   modalVisibleForOpen.value = false;
 }
@@ -434,9 +387,41 @@ const openSaveModal = async () => {
   const settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
 
-  savePath.value = settings.path;
-  modalVisibleForSave.value = true;
-  await fileBrowserRef.value?.handleInitialFileSelection();
+  // Silent save if flow already has a non-temp path
+  if (settings.path && !isTemporaryPath(settings.path)) {
+    try {
+      await saveFlowSilent(nodeStore.flow_id);
+      ElMessage.success("Flow saved successfully");
+      if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
+        setTimeout(() => {
+          tutorialStore.nextStep();
+        }, 300);
+      }
+    } catch (error: any) {
+      ElMessage.error({
+        message: error.message || "Failed to save flow",
+        duration: 5000,
+      });
+    }
+    return;
+  }
+
+  // First-time save or temp path: open save dialog
+  if (saveDialogRef.value) {
+    await saveDialogRef.value.open();
+  } else {
+    modalVisibleForSave.value = true;
+  }
+};
+
+const openSaveAsModal = async () => {
+  const settings = await getFlowSettings(nodeStore.flow_id);
+  if (!settings) return;
+  if (saveDialogRef.value) {
+    await saveDialogRef.value.open();
+  } else {
+    modalVisibleForSave.value = true;
+  }
 };
 
 const runFlow = () => {

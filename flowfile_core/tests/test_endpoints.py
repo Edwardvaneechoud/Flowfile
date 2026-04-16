@@ -1267,7 +1267,7 @@ def test_editor_create_flow_only_name():
     response = client.post("/editor/create_flow/", params={"name": "test_flow_1"})
     assert response.status_code == 200, "Flow not created"
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert ".flowfile/temp/flows/test_flow_1.yaml" in flow_info.path
+    assert "flows/unnamed_flows/test_flow_1.yaml" in flow_info.path
     assert Path(flow_info.path).exists()
 
 
@@ -1275,7 +1275,7 @@ def test_editor_create_flow_no_params():
     response = client.post("/editor/create_flow/")
     assert response.status_code == 200, "Flow not created"
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert ".flowfile/temp/flows/" in flow_info.path
+    assert "flows/unnamed_flows/" in flow_info.path
     assert Path(flow_info.path).exists()
 
 
@@ -1357,6 +1357,15 @@ def test_directory_contents_in_electron_mode():
     response = client.get("/files/directory_contents/", params={"directory": "/tmp", "include_hidden": False})
     assert response.status_code == 200, "Should be able to browse /tmp in Electron mode"
     assert isinstance(response.json(), list), "Should return a list of file info"
+
+
+def test_catalog_flows_directory_endpoint():
+    """Endpoint returns the managed flows directory used for Catalog-tab saves."""
+    response = client.get("/files/catalog_flows_directory/")
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, str)
+    assert body == str(storage.flows_directory)
 
 
 def test_directory_contents_blocked_outside_sandbox(monkeypatch):
