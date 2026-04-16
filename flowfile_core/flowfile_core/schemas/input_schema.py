@@ -1125,6 +1125,7 @@ class NodeCatalogReader(NodeBase):
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
     sql_query: str | None = None
+    is_virtual_optimized: bool | None = None
 
     def get_default_description(self) -> str:
         if self.sql_query:

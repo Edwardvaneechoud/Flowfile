@@ -159,6 +159,12 @@
       <pre class="sql-definition">{{ table.sql_query }}</pre>
     </div>
 
+    <!-- Polars Query Plan (optimized virtual flow tables) -->
+    <div v-if="table.table_type === 'virtual' && table.polars_plan" class="section">
+      <h3>Polars Query Plan</h3>
+      <pre class="sql-definition">{{ table.polars_plan }}</pre>
+    </div>
+
     <!-- Version History (physical tables only) -->
     <div v-if="table.table_type !== 'virtual' && hasHistory" class="section">
       <h3>Version History</h3>

@@ -7,7 +7,7 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
-
+from typing import Literal
 import base64
 import io
 import json
@@ -22,8 +22,9 @@ from uuid import uuid4
 import polars as pl
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
-
+from flowfile_core.configs.flow_logger import NodeLogger, FlowLogger
 from flowfile_core.catalog.delta_utils import (
+    check_source_versions_current,
     delete_table_storage,
     get_delta_table_size_bytes,
     is_delta_table,
@@ -96,7 +97,7 @@ def _should_offload() -> bool:
     """Return True when heavy I/O should be delegated to the worker process."""
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
-    return OFFLOAD_TO_WORKER
+    return OFFLOAD_TO_WORKER.value
 
 
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
@@ -225,7 +226,9 @@ class CatalogService:
         if not fe:
             logger.warning(
                 "Registered flow %s (id=%d) references missing file: %s",
-                flow.name, flow.id, flow.flow_path,
+                flow.name,
+                flow.id,
+                flow.flow_path,
             )
         return FlowRegistrationOut(
             id=flow.id,
@@ -276,7 +279,9 @@ class CatalogService:
             if not fe:
                 logger.warning(
                     "Registered flow %s (id=%d) references missing file: %s",
-                    flow.name, flow.id, flow.flow_path,
+                    flow.name,
+                    flow.id,
+                    flow.flow_path,
                 )
             result.append(
                 FlowRegistrationOut(
@@ -1075,7 +1080,9 @@ class CatalogService:
         if not fe:
             logger.warning(
                 "Catalog table %s (id=%d) references missing file: %s",
-                table.name, table.id, table.file_path,
+                table.name,
+                table.id,
+                table.file_path,
             )
         return fe
 
@@ -1086,6 +1093,7 @@ class CatalogService:
             return None
         try:
             from flowfile_core.flowfile.handler import open_flow
+
             fg = open_flow(Path(producer_file_path))
         except Exception as e:
             logger.warning(f"Could not open the flow or calculate the laziness: \n {e}")
@@ -1116,9 +1124,7 @@ class CatalogService:
         laziness_blockers: list[str] | None = None
         if is_virtual and table.producer_registration_id:
             producer = self.repo.get_flow(table.producer_registration_id)
-            laziness_blockers = self._compute_laziness_blockers(
-                producer.flow_path if producer else None
-            )
+            laziness_blockers = self._compute_laziness_blockers(producer.flow_path if producer else None)
 
         return CatalogTableOut(
             id=table.id,
@@ -1142,6 +1148,8 @@ class CatalogService:
             is_optimized=getattr(table, "is_optimized", None),
             laziness_blockers=laziness_blockers,
             sql_query=getattr(table, "sql_query", None),
+            polars_plan=getattr(table, "polars_plan", None),
+            source_table_versions=getattr(table, "source_table_versions", None),
             created_at=table.created_at,
             updated_at=table.updated_at,
         )
@@ -1187,6 +1195,8 @@ class CatalogService:
                     producer_registration_name=producer_registration_name,
                     is_optimized=getattr(table, "is_optimized", None),
                     sql_query=getattr(table, "sql_query", None),
+                    polars_plan=getattr(table, "polars_plan", None),
+                    source_table_versions=getattr(table, "source_table_versions", None),
                     created_at=table.created_at,
                     updated_at=table.updated_at,
                 )
@@ -1676,6 +1686,8 @@ class CatalogService:
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
+        polars_plan: str | None = None,
+        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialized catalog entry).
 
@@ -1708,6 +1720,8 @@ class CatalogService:
             serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
+            polars_plan=polars_plan,
+            source_table_versions=source_table_versions,
         )
         table = self.repo.create_table(table)
         return self._table_to_out(table)
@@ -1722,6 +1736,8 @@ class CatalogService:
         serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
+        polars_plan: str | None = None,
+        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer.
 
@@ -1748,11 +1764,15 @@ class CatalogService:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
         if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame  # TODO: Should be hashed
+            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
             table.schema_json = schema_json
+        if polars_plan is not None:
+            table.polars_plan = polars_plan
+        if source_table_versions is not None:
+            table.source_table_versions = source_table_versions
 
         table = self.repo.update_table(table)
 
@@ -1927,12 +1947,19 @@ class CatalogService:
                     # Nested query virtual table
                     try:
                         nested_lf = self.resolve_query_virtual_table(
-                            t.id, user_id=user_id, _visited=_visited, _depth=_depth + 1,
+                            t.id,
+                            user_id=user_id,
+                            _visited=_visited,
+                            _depth=_depth + 1,
                         )
                         ctx.register(t.name, nested_lf)
                     except Exception:
                         logger.warning("Could not resolve nested query virtual table %r", t.name)
-                elif t.is_optimized and t.serialized_lazy_frame:
+                elif (
+                    t.is_optimized
+                    and t.serialized_lazy_frame
+                    and check_source_versions_current(t.source_table_versions)
+                ):
                     ctx.register(t.name, pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame)))
                 elif t.producer_registration_id:
                     try:
@@ -1945,7 +1972,13 @@ class CatalogService:
 
         return ctx.execute(table.sql_query)
 
-    def resolve_virtual_flow_table(self, table_id: int, user_id: int | None = None) -> pl.LazyFrame:
+    def resolve_virtual_flow_table(
+        self,
+        table_id: int,
+        user_id: int | None = None,
+        run_location: Literal["remote", "local"] | None = None,
+        node_logger: NodeLogger | None = None,
+    ) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
         For optimized tables, deserializes the stored LazyFrame directly.
@@ -1960,16 +1993,25 @@ class CatalogService:
         ValueError
             If the virtual table cannot be resolved.
         """
-        table = self.repo.get_table(table_id)
-        if table is None or getattr(table, "table_type", "physical") != "virtual":
-            raise TableNotFoundError(table_id=table_id)
+        if run_location is None:
+            run_location: Literal["remote", "local"] = "remote" if _should_offload() else "local"
+        if node_logger is None:
+            node_logger = FlowLogger(-1).get_node_logger(-1)
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
+        table = self.repo.get_table(table_id)
+        if table is None or table.table_type != "virtual":
+            raise TableNotFoundError(table_id=table_id)
         # Query-based virtual table: delegate to SQL resolver
-        if getattr(table, "sql_query", None):
+        if table.sql_query:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
 
         if table.is_optimized and table.serialized_lazy_frame:
-            return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+            if check_source_versions_current(table.source_table_versions):
+                return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+            logger.info(
+                "Source table versions changed for virtual table %r, falling back to flow execution", table.name
+            )
 
         # Non-optimized path: load the producer flow and execute it
         if not table.producer_registration_id:
@@ -1979,16 +2021,21 @@ class CatalogService:
         if producer is None:
             raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
-        from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
         flow = open_flow(Path(producer.flow_path), user_id=user_id)
-        flow.run_graph()
         selected_node = None
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
                 selected_node = node
+
         if selected_node is None:
             raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
+        selected_node.execute_node(
+            run_location=run_location,
+            reset_cache=True,
+            performance_mode=True,
+            optimize_for_downstream=False,
+            node_logger=node_logger,
+        )
 
         if selected_node.results.errors:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
@@ -1997,11 +2044,15 @@ class CatalogService:
         if flowframe is None or flowframe.data_frame is None:
             raise ValueError(f"No data produced for table '{table.name}'")
 
-        df = flowframe.data_frame
-        return df if isinstance(df, pl.LazyFrame) else df.lazy()
+        flowframe.lazy = True
+        return flowframe.data_frame
 
     def get_table_preview(
-        self, table_id: int, limit: int = 100, version: int | None = None, user_id: int | None = None,
+        self,
+        table_id: int,
+        limit: int = 100,
+        version: int | None = None,
+        user_id: int | None = None,
     ) -> CatalogTablePreview:
         """Read the first N rows from a catalog table.
 
@@ -2024,7 +2075,10 @@ class CatalogService:
         return self._get_physical_table_preview(table, limit, version)
 
     def _get_query_virtual_table_preview(
-        self, table: CatalogTable, limit: int, user_id: int | None,
+        self,
+        table: CatalogTable,
+        limit: int,
+        user_id: int | None,
     ) -> CatalogTablePreview:
         """Resolve a query-based virtual table and return a preview."""
         try:
@@ -2566,7 +2620,9 @@ class CatalogService:
         virtual_ipc: dict[str, str] = {}
         for vname, vid in virtual_map.items():
             try:
-                lf = self.resolve_virtual_flow_table(vid, user_id=user_id)
+                lf = self.resolve_virtual_flow_table(
+                    vid, user_id=user_id, run_location="remote" if _should_offload() else "local"
+                )
                 buf = io.BytesIO()
                 lf.collect().write_ipc(buf)
                 virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
@@ -2612,34 +2668,38 @@ class CatalogService:
                 continue
             node_id = i + 1
             reader_node_ids.append(node_id)
-            nodes.append({
-                "id": node_id,
-                "type": "catalog_reader",
-                "is_start_node": True,
-                "x_position": 100,
-                "y_position": 100 + i * 150,
-                "input_ids": [],
-                "outputs": [len(used_tables) + 1],
-                "setting_input": {
-                    "catalog_table_id": table.id,
-                    "catalog_table_name": table.name,
-                },
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": "catalog_reader",
+                    "is_start_node": True,
+                    "x_position": 100,
+                    "y_position": 100 + i * 150,
+                    "input_ids": [],
+                    "outputs": [len(used_tables) + 1],
+                    "setting_input": {
+                        "catalog_table_id": table.id,
+                        "catalog_table_name": table.name,
+                    },
+                }
+            )
 
         # SQL query node
         sql_node_id = len(used_tables) + 1
-        nodes.append({
-            "id": sql_node_id,
-            "type": "sql_query",
-            "is_start_node": len(reader_node_ids) == 0,
-            "x_position": 400,
-            "y_position": 200,
-            "input_ids": reader_node_ids,
-            "outputs": [],
-            "setting_input": {
-                "sql_query_input": {"sql_code": query},
-            },
-        })
+        nodes.append(
+            {
+                "id": sql_node_id,
+                "type": "sql_query",
+                "is_start_node": len(reader_node_ids) == 0,
+                "x_position": 400,
+                "y_position": 200,
+                "input_ids": reader_node_ids,
+                "outputs": [],
+                "setting_input": {
+                    "sql_query_input": {"sql_code": query},
+                },
+            }
+        )
 
         flow_data = {
             "flowfile_version": "0.6.3",
