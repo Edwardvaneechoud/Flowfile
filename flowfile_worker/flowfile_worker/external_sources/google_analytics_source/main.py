@@ -181,6 +181,19 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
     met_objs = [Metric(name=m) for m in ga_read_settings.metrics]
     date_range = DateRange(start_date=ga_read_settings.start_date, end_date=ga_read_settings.end_date)
 
+    # Translate user-supplied filter specs into dimension_filter / metric_filter.
+    # Done once up front so any bad operator raises immediately, before we
+    # start paginating.
+    from flowfile_worker.external_sources.google_analytics_source.filters import (
+        build_filter_expressions,
+    )
+
+    dimension_filter, metric_filter = build_filter_expressions(
+        ga_read_settings.filters,
+        dimensions=ga_read_settings.dimensions,
+        metrics=ga_read_settings.metrics,
+    )
+
     rows_wanted = ga_read_settings.limit  # ``None`` means unlimited.
     offset = 0
     collected_rows: list[dict[str, str]] = []
@@ -192,14 +205,19 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
             if page_limit <= 0:
                 break
 
-        request = RunReportRequest(
-            property=f"properties/{ga_read_settings.property_id}",
-            dimensions=dim_objs,
-            metrics=met_objs,
-            date_ranges=[date_range],
-            limit=page_limit,
-            offset=offset,
-        )
+        request_kwargs: dict = {
+            "property": f"properties/{ga_read_settings.property_id}",
+            "dimensions": dim_objs,
+            "metrics": met_objs,
+            "date_ranges": [date_range],
+            "limit": page_limit,
+            "offset": offset,
+        }
+        if dimension_filter is not None:
+            request_kwargs["dimension_filter"] = dimension_filter
+        if metric_filter is not None:
+            request_kwargs["metric_filter"] = metric_filter
+        request = RunReportRequest(**request_kwargs)
         response = client.run_report(request)
 
         if not response.rows:

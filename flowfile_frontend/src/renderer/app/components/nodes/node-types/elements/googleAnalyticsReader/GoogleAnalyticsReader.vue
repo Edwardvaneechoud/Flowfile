@@ -59,6 +59,30 @@
           />
         </div>
 
+        <div class="form-group">
+          <label for="ga-range-preset">Quick Range</label>
+          <select
+            id="ga-range-preset"
+            v-model="rangePreset"
+            class="form-control"
+            @change="applyRangePreset"
+          >
+            <option value="custom">Custom...</option>
+            <option value="yesterday">Yesterday only</option>
+            <option value="today">Today so far</option>
+            <option value="last_7">Last 7 days</option>
+            <option value="last_14">Last 14 days</option>
+            <option value="last_28">Last 28 days</option>
+            <option value="last_30">Last 30 days</option>
+            <option value="last_90">Last 90 days</option>
+          </select>
+          <div class="helper-text">
+            <i class="fa-solid fa-info-circle"></i>
+            Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow
+            run evaluates a rolling window against the current date.
+          </div>
+        </div>
+
         <div class="form-row">
           <div class="form-group half">
             <label for="ga-start-date">Start Date</label>
@@ -68,6 +92,7 @@
               type="text"
               class="form-control"
               placeholder="7daysAgo or YYYY-MM-DD"
+              @input="rangePreset = 'custom'"
             />
           </div>
           <div class="form-group half">
@@ -78,6 +103,7 @@
               type="text"
               class="form-control"
               placeholder="yesterday or YYYY-MM-DD"
+              @input="rangePreset = 'custom'"
             />
           </div>
         </div>
@@ -133,6 +159,109 @@
           </div>
         </div>
       </div>
+
+      <!-- Filters -->
+      <div
+        v-if="nodeGaReader.google_analytics_settings.ga_connection_name"
+        class="listbox-wrapper"
+      >
+        <h4 class="section-subtitle">Filters</h4>
+        <div
+          v-if="
+            nodeGaReader.google_analytics_settings.metrics.length === 0 &&
+            nodeGaReader.google_analytics_settings.dimensions.length === 0
+          "
+          class="helper-text"
+        >
+          <i class="fa-solid fa-info-circle"></i>
+          Select at least one metric or dimension before adding filters.
+        </div>
+        <div v-else>
+          <div
+            v-for="(filter, index) in nodeGaReader.google_analytics_settings.filters"
+            :key="index"
+            class="filter-row"
+          >
+            <select
+              :value="filter.field"
+              class="form-control filter-field"
+              @change="onFilterFieldChange(index, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">Field...</option>
+              <optgroup
+                v-if="nodeGaReader.google_analytics_settings.dimensions.length"
+                label="Dimensions"
+              >
+                <option
+                  v-for="dim in nodeGaReader.google_analytics_settings.dimensions"
+                  :key="'dim-' + dim"
+                  :value="dim"
+                >
+                  {{ dim }}
+                </option>
+              </optgroup>
+              <optgroup
+                v-if="nodeGaReader.google_analytics_settings.metrics.length"
+                label="Metrics"
+              >
+                <option
+                  v-for="met in nodeGaReader.google_analytics_settings.metrics"
+                  :key="'met-' + met"
+                  :value="met"
+                >
+                  {{ met }}
+                </option>
+              </optgroup>
+            </select>
+
+            <select v-model="filter.operator" class="form-control filter-operator">
+              <option
+                v-for="op in operatorsFor(filter.field)"
+                :key="op.value"
+                :value="op.value"
+              >
+                {{ op.label }}
+              </option>
+            </select>
+
+            <input
+              v-model="filter.value"
+              type="text"
+              class="form-control filter-value"
+              :placeholder="valuePlaceholderFor(filter.operator)"
+            />
+
+            <button
+              type="button"
+              class="btn btn-icon"
+              title="Case-sensitive match"
+              :class="{ active: filter.case_sensitive }"
+              :disabled="isMetricField(filter.field)"
+              @click="filter.case_sensitive = !filter.case_sensitive"
+            >
+              Aa
+            </button>
+
+            <button
+              type="button"
+              class="btn btn-icon btn-danger"
+              title="Remove filter"
+              @click="removeFilter(index)"
+            >
+              <i class="fa-solid fa-trash-alt"></i>
+            </button>
+          </div>
+
+          <button type="button" class="btn btn-secondary btn-add-filter" @click="addFilter">
+            <i class="fa-solid fa-plus"></i> Add Filter
+          </button>
+          <div class="helper-text">
+            <i class="fa-solid fa-info-circle"></i>
+            Multiple filters on the same kind (dimension or metric) are AND-combined.
+            Use <code>in_list</code> / <code>between</code> with comma-separated values.
+          </div>
+        </div>
+      </div>
     </generic-node-settings>
   </div>
   <code-loader v-else />
@@ -146,7 +275,10 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createNodeGoogleAnalyticsReader } from "./utils";
-import type { NodeGoogleAnalyticsReader } from "../../../../../types/node.types";
+import type {
+  GoogleAnalyticsFilter,
+  NodeGoogleAnalyticsReader,
+} from "../../../../../types/node.types";
 import { fetchGoogleAnalyticsConnections } from "../../../../../views/GoogleAnalyticsConnectionView/api";
 import type { GoogleAnalyticsConnectionInterface } from "../../../../../views/GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionTypes";
 
@@ -175,6 +307,105 @@ const limitModel = computed({
       value === null || Number.isNaN(value) || value === 0 ? null : Number(value);
   },
 });
+
+// --- Date-range presets ----------------------------------------------------
+
+const RANGE_PRESETS: Record<string, { start: string; end: string }> = {
+  yesterday: { start: "yesterday", end: "yesterday" },
+  today: { start: "today", end: "today" },
+  last_7: { start: "7daysAgo", end: "yesterday" },
+  last_14: { start: "14daysAgo", end: "yesterday" },
+  last_28: { start: "28daysAgo", end: "yesterday" },
+  last_30: { start: "30daysAgo", end: "yesterday" },
+  last_90: { start: "90daysAgo", end: "yesterday" },
+};
+
+const rangePreset = ref<string>("custom");
+
+const detectPreset = (start: string, end: string): string => {
+  for (const [key, range] of Object.entries(RANGE_PRESETS)) {
+    if (range.start === start && range.end === end) return key;
+  }
+  return "custom";
+};
+
+const applyRangePreset = () => {
+  if (!nodeGaReader.value) return;
+  if (rangePreset.value === "custom") return;
+  const preset = RANGE_PRESETS[rangePreset.value];
+  if (!preset) return;
+  nodeGaReader.value.google_analytics_settings.start_date = preset.start;
+  nodeGaReader.value.google_analytics_settings.end_date = preset.end;
+};
+
+// --- Filter helpers --------------------------------------------------------
+
+const DIMENSION_OPERATORS = [
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "contains", label: "contains" },
+  { value: "begins_with", label: "begins with" },
+  { value: "ends_with", label: "ends with" },
+  { value: "regex", label: "matches regex" },
+  { value: "in_list", label: "in list" },
+  { value: "not_in_list", label: "not in list" },
+];
+
+const METRIC_OPERATORS = [
+  { value: "equals", label: "=" },
+  { value: "not_equals", label: "≠" },
+  { value: "less_than", label: "<" },
+  { value: "less_equal", label: "≤" },
+  { value: "greater_than", label: ">" },
+  { value: "greater_equal", label: "≥" },
+  { value: "between", label: "between" },
+];
+
+const isMetricField = (field: string): boolean =>
+  !!nodeGaReader.value?.google_analytics_settings.metrics.includes(field);
+
+const isDimensionField = (field: string): boolean =>
+  !!nodeGaReader.value?.google_analytics_settings.dimensions.includes(field);
+
+const operatorsFor = (field: string) => {
+  if (isMetricField(field)) return METRIC_OPERATORS;
+  if (isDimensionField(field)) return DIMENSION_OPERATORS;
+  // Default while no field chosen yet — dimension set is more common.
+  return DIMENSION_OPERATORS;
+};
+
+const valuePlaceholderFor = (operator: string): string => {
+  if (operator === "in_list" || operator === "not_in_list") return "NL, BE, DE";
+  if (operator === "between") return "10, 100";
+  if (operator === "regex") return "^home.*";
+  return "value";
+};
+
+const addFilter = () => {
+  if (!nodeGaReader.value) return;
+  nodeGaReader.value.google_analytics_settings.filters.push({
+    field: "",
+    operator: "equals",
+    value: "",
+    case_sensitive: false,
+  } as GoogleAnalyticsFilter);
+};
+
+const removeFilter = (index: number) => {
+  if (!nodeGaReader.value) return;
+  nodeGaReader.value.google_analytics_settings.filters.splice(index, 1);
+};
+
+const onFilterFieldChange = (index: number, newField: string) => {
+  if (!nodeGaReader.value) return;
+  const filter = nodeGaReader.value.google_analytics_settings.filters[index];
+  filter.field = newField;
+  // Reset operator if the current one isn't valid for the new field's category.
+  const validOps = operatorsFor(newField).map((op) => op.value);
+  if (!validOps.includes(filter.operator)) {
+    filter.operator = "equals";
+  }
+};
 
 const parseCsv = (value: string): string[] =>
   value
@@ -226,6 +457,18 @@ const loadNodeData = async (nodeId: number) => {
       nodeGaReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeGoogleAnalyticsReader(nodeStore.flow_id, nodeId);
+      // Ensure the filters array exists when loading flows saved before the
+      // filters feature shipped.
+      if (nodeGaReader.value && !nodeGaReader.value.google_analytics_settings.filters) {
+        nodeGaReader.value.google_analytics_settings.filters = [];
+      }
+      // Pick the right preset for the restored start/end dates.
+      if (nodeGaReader.value) {
+        rangePreset.value = detectPreset(
+          nodeGaReader.value.google_analytics_settings.start_date,
+          nodeGaReader.value.google_analytics_settings.end_date,
+        );
+      }
     }
     dataLoaded.value = true;
   } catch (error) {
@@ -345,6 +588,65 @@ select.form-control {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Filter builder */
+.filter-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr 1.6fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.filter-field,
+.filter-operator,
+.filter-value {
+  min-width: 0;
+}
+
+.btn-icon {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.btn-icon.active {
+  background: #ebf4ff;
+  border-color: #4299e1;
+  color: #2b6cb0;
+}
+
+.btn-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-icon.btn-danger {
+  color: #c53030;
+}
+
+.btn-add-filter {
+  margin-top: 0.25rem;
+}
+
+code {
+  background: #f7fafc;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  font-size: 0.8em;
+}
+
+@media (max-width: 640px) {
+  .filter-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

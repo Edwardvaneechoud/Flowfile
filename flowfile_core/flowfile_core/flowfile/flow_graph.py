@@ -570,9 +570,7 @@ def _resolve_database_credentials(
     )
     if database_settings.connection_mode == "inline" and not is_sqlite:
         database_connection = database_settings.database_connection
-        encrypted_password = get_encrypted_secret(
-            current_user_id=user_id, secret_name=database_connection.password_ref
-        )
+        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
         if encrypted_password is None:
             raise HTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
@@ -2615,8 +2613,11 @@ class FlowGraph:
                 # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, kafka_result.new_offsets, node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        kafka_result.new_offsets,
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             else:
                 # Remote execution — offload to worker (worker uses commit=False + sidecar)
@@ -2627,8 +2628,11 @@ class FlowGraph:
                 offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
                 if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, offsets_data["new_offsets"], node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        offsets_data["new_offsets"],
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
             # schema (e.g. empty topic or starting at "latest").  Align to
@@ -2691,9 +2695,7 @@ class FlowGraph:
         self.add_external_source(external_source_input)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
-    def add_google_analytics_reader(
-        self, node_ga_reader: input_schema.NodeGoogleAnalyticsReader
-    ) -> None:
+    def add_google_analytics_reader(self, node_ga_reader: input_schema.NodeGoogleAnalyticsReader) -> None:
         """Adds a node that reads from a Google Analytics 4 property.
 
         The actual API fetch (OAuth token refresh, ``run_report`` calls,
@@ -2707,6 +2709,9 @@ class FlowGraph:
         )
         from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
         from flowfile_worker.external_sources.google_analytics_source.models import (
+            GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
+        )
+        from flowfile_worker.external_sources.google_analytics_source.models import (
             GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
         )
 
@@ -2715,9 +2720,7 @@ class FlowGraph:
         ga_settings = node_ga_reader.google_analytics_settings
 
         with get_db_context() as db:
-            full_connection = get_ga_connection_schema(
-                db, ga_settings.ga_connection_name, node_ga_reader.user_id
-            )
+            full_connection = get_ga_connection_schema(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
             if full_connection is None:
                 raise HTTPException(
                     status_code=400,
@@ -2735,6 +2738,15 @@ class FlowGraph:
             metrics=ga_settings.metrics,
             dimensions=ga_settings.dimensions,
             limit=ga_settings.limit,
+            filters=[
+                WorkerGoogleAnalyticsFilter(
+                    field=f.field,
+                    operator=f.operator,
+                    value=f.value,
+                    case_sensitive=f.case_sensitive,
+                )
+                for f in ga_settings.filters
+            ],
             flowfile_flow_id=node_ga_reader.flow_id,
             flowfile_node_id=node_ga_reader.node_id,
         )
@@ -3578,9 +3590,7 @@ class FlowGraph:
             try:
                 callback(success)
             except Exception as e:
-                self.flow_logger.error(
-                    f"Post-execution callback failed for node {n.node_id}: {e}"
-                )
+                self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
     def run_graph(self) -> RunInformation | None:

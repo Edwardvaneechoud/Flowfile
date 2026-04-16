@@ -944,6 +944,34 @@ class NodeExternalSource(NodeBase):
         return self.identifier
 
 
+class GoogleAnalyticsFilter(BaseModel):
+    """A single filter applied to a GA4 dimension or metric.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    auto-routes the filter into either the request's ``dimension_filter`` (for
+    string-typed dimensions) or ``metric_filter`` (for numeric-typed metrics).
+
+    Supported operators — strings (dimensions):
+      - ``equals``, ``not_equals``
+      - ``contains``, ``begins_with``, ``ends_with``
+      - ``regex``  (full regex match)
+      - ``in_list``, ``not_in_list``  (comma-separated ``value``)
+
+    Supported operators — numeric (metrics):
+      - ``equals``, ``not_equals``
+      - ``less_than``, ``less_equal``, ``greater_than``, ``greater_equal``
+      - ``between``  (comma-separated ``"low,high"``)
+
+    Multiple filters on the same kind are AND-combined. String matching is
+    case-insensitive by default (``case_sensitive=False`` below).
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
+
+
 class GoogleAnalyticsSettings(BaseModel):
     """UI settings for a Google Analytics 4 reader node.
 
@@ -960,6 +988,9 @@ class GoogleAnalyticsSettings(BaseModel):
     dimensions: list[str] = Field(default_factory=list)
     # ``None`` means "fetch everything the report returns".
     limit: int | None = None
+    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
+    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
 
 
 class NodeGoogleAnalyticsReader(NodeBase):

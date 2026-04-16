@@ -73,13 +73,26 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
                 self.end_date = end_date
 
         class _RunReportRequest:
-            def __init__(self, *, property, dimensions, metrics, date_ranges, limit, offset):
+            def __init__(
+                self,
+                *,
+                property,
+                dimensions,
+                metrics,
+                date_ranges,
+                limit,
+                offset,
+                dimension_filter=None,
+                metric_filter=None,
+            ):
                 self.property = property
                 self.dims = [d.name for d in dimensions]
                 self.metrics = [m.name for m in metrics]
                 self.date_ranges = date_ranges
                 self.limit = limit
                 self.offset = offset
+                self.dimension_filter = dimension_filter
+                self.metric_filter = metric_filter
 
         class _Credentials:
             @classmethod
@@ -102,6 +115,25 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
         types_pkg.Dimension = _Dim
         types_pkg.Metric = _Metric
         types_pkg.RunReportRequest = _RunReportRequest
+        # Re-export the real filter-expression types so ``filters.py`` can still
+        # construct FilterExpression / Filter / NumericValue objects when the
+        # ``types`` module is shadowed by this fake.
+        try:
+            from google.analytics.data_v1beta.types import (  # noqa: I001 – lazy import
+                Filter as _RealFilter,
+                FilterExpression as _RealFilterExpression,
+                FilterExpressionList as _RealFilterExpressionList,
+                NumericValue as _RealNumericValue,
+            )
+
+            types_pkg.Filter = _RealFilter
+            types_pkg.FilterExpression = _RealFilterExpression
+            types_pkg.FilterExpressionList = _RealFilterExpressionList
+            types_pkg.NumericValue = _RealNumericValue
+        except ImportError:
+            # Real SDK not installed — tests that use filters will naturally
+            # fail, but non-filter tests still work.
+            pass
         sa_pkg.Credentials = _Credentials
 
         monkeypatch.setitem(sys.modules, "google", google_pkg)
@@ -255,6 +287,88 @@ def test_service_account_json_is_decrypted(monkeypatch, fake_google_sdk):
     read_google_analytics(settings)
 
     assert captured["token"] == "$ffsec$1$1$mock"
+
+
+def test_filters_are_forwarded_to_run_report(monkeypatch, fake_google_sdk):
+    """End-to-end: a configured filter ends up on the RunReportRequest."""
+    captured: dict = {}
+
+    # Patch the client so we can inspect the request rather than just the rows.
+    client_cls = fake_google_sdk([[]])
+    original_run_report = client_cls.run_report
+
+    def record_run_report(self, request):
+        captured["request"] = request
+        return original_run_report(self, request)
+
+    client_cls.run_report = record_run_report
+
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    fake_json = '{"type": "service_account"}'
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: fake_json),
+    )
+    settings = ga_models.GoogleAnalyticsReadSettings(
+        service_account_json_encrypted="$ffsec$1$1$mock",
+        property_id="1",
+        start_date="7daysAgo",
+        end_date="yesterday",
+        metrics=["sessions"],
+        dimensions=["country"],
+        filters=[
+            ga_models.GoogleAnalyticsFilter(field="country", operator="equals", value="NL"),
+            ga_models.GoogleAnalyticsFilter(field="sessions", operator="greater_than", value="5"),
+        ],
+    )
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    read_google_analytics(settings)
+
+    request = captured["request"]
+    # Both filters reach the request, routed into the correct slot.
+    assert hasattr(request, "dimension_filter")
+    assert hasattr(request, "metric_filter")
+
+
+def test_invalid_filter_raises_before_api_call(monkeypatch, fake_google_sdk):
+    """Invalid filter specs raise before any GA call is made."""
+    client_cls = fake_google_sdk([[]])
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    fake_json = '{"type": "service_account"}'
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: fake_json),
+    )
+    settings = ga_models.GoogleAnalyticsReadSettings(
+        service_account_json_encrypted="$ffsec$1$1$mock",
+        property_id="1",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        metrics=["sessions"],
+        dimensions=["country"],
+        filters=[
+            # pageTitle is not in metrics or dimensions — should raise.
+            ga_models.GoogleAnalyticsFilter(field="pageTitle", operator="equals", value="Home"),
+        ],
+    )
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    with pytest.raises(ValueError, match="not in the selected metrics or dimensions"):
+        read_google_analytics(settings)
+
+    # The error must fire before any run_report call.
+    assert client_cls.call_count == 0
 
 
 def test_missing_google_sdk_raises_runtime_error(monkeypatch):

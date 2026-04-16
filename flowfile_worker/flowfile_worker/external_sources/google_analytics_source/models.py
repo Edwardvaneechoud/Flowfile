@@ -6,9 +6,22 @@ embedded user id and reuses the same HKDF scheme to recover the plaintext —
 so the service-account JSON is never transmitted unencrypted.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from flowfile_worker.secrets import decrypt_secret
+
+
+class GoogleAnalyticsFilter(BaseModel):
+    """Row-level filter applied to the GA4 report.
+
+    Mirrors ``flowfile_core.schemas.input_schema.GoogleAnalyticsFilter`` — kept
+    local to the worker so this package doesn't depend on ``flowfile_core``.
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
 
 
 class GoogleAnalyticsReadSettings(BaseModel):
@@ -24,6 +37,9 @@ class GoogleAnalyticsReadSettings(BaseModel):
     dimensions: list[str]
     # Maximum number of rows to fetch in total (``None`` = fetch everything).
     limit: int | None = None
+    # Row-level filters, routed into ``dimension_filter`` / ``metric_filter``
+    # by inspecting which of ``dimensions`` / ``metrics`` the ``field`` appears in.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
 
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1
