@@ -40,14 +40,10 @@
             @overwrite-file="handleSaveFlow"
           />
           <div class="catalog-options">
-            <el-checkbox v-model="registerInCatalog">
-              Also register in catalog
-            </el-checkbox>
+            <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
             <div v-if="registerInCatalog" class="namespace-section">
               <label class="namespace-label">Namespace</label>
-              <catalog-namespace-picker
-                v-model="selectedNamespaceId"
-              />
+              <catalog-namespace-picker v-model="selectedNamespaceId" />
             </div>
           </div>
         </div>
@@ -57,24 +53,17 @@
           <div class="catalog-save-form">
             <div class="form-group">
               <label>Flow name</label>
-              <el-input
-                v-model="catalogFlowName"
-                placeholder="my_flow"
-              />
-              <span class="form-hint">File will be saved as <code>{{ catalogFilePath }}</code></span>
+              <el-input v-model="catalogFlowName" placeholder="my_flow" />
+              <span class="form-hint"
+                >File will be saved as <code>{{ catalogFilePath }}</code></span
+              >
             </div>
             <div class="form-group">
               <label>Namespace</label>
-              <catalog-namespace-picker
-                v-model="selectedNamespaceId"
-              />
+              <catalog-namespace-picker v-model="selectedNamespaceId" />
             </div>
             <div class="catalog-save-actions">
-              <el-button
-                type="primary"
-                :disabled="!canSaveToCatalog"
-                @click="handleCatalogSave"
-              >
+              <el-button type="primary" :disabled="!canSaveToCatalog" @click="handleCatalogSave">
                 Save to Catalog
               </el-button>
             </div>
