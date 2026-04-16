@@ -701,8 +701,9 @@ class TestGetTableHistory:
 
             # Disable worker offload so it reads locally
             import flowfile_core.configs.settings
+            from flowfile_core.configs.utils import MutableBool
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
-            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = False
+            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
 
             try:
                 history = svc.get_table_history(table.id)
@@ -800,8 +801,10 @@ class TestGetTablePreviewDelta:
             svc = CatalogService(repo)
 
             import flowfile_core.configs.settings
+            from flowfile_core.configs.utils import MutableBool
+
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
-            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = False
+            flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
             try:
                 preview_v0 = svc.get_table_preview(table.id, version=0)
                 preview_v1 = svc.get_table_preview(table.id, version=1)

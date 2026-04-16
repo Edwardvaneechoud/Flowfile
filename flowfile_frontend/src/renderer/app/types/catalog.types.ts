@@ -174,6 +174,8 @@ export interface CatalogTable {
   is_optimized: boolean | null;
   laziness_blockers: string[] | null;
   sql_query: string | null;
+  polars_plan: string | null;
+  source_table_versions: string | null;
   created_at: string;
   updated_at: string;
 }
