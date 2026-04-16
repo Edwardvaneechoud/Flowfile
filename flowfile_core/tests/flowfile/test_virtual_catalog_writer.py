@@ -492,11 +492,7 @@ class TestCheckUpstreamLaziness:
 
         assert is_lazy is True
         assert reasons == []
-
-
-# ---------------------------------------------------------------------------
-# FlowRegistration attribute tests (regression for file_path → flow_path)
-# ---------------------------------------------------------------------------
+        _run_graph(graph)
 
 
 class TestFlowRegistrationAttributes:
@@ -828,11 +824,12 @@ class TestCheckSourceVersionsCurrent:
             write_delta(df, delta_path, mode="overwrite")
 
             from deltalake import DeltaTable
+
             current_version = DeltaTable(delta_path, without_files=True).version()
 
-            versions_json = json.dumps([
-                SourceTableVersion(table_id=1, file_path=delta_path, version=current_version).model_dump()
-            ])
+            versions_json = json.dumps(
+                [SourceTableVersion(table_id=1, file_path=delta_path, version=current_version).model_dump()]
+            )
             assert check_source_versions_current(versions_json) is True
 
     def test_stale_version_returns_false(self):
@@ -845,9 +842,7 @@ class TestCheckSourceVersionsCurrent:
             write_delta(df, delta_path, mode="overwrite")
 
             # Record version 0
-            versions_json = json.dumps([
-                SourceTableVersion(table_id=1, file_path=delta_path, version=0).model_dump()
-            ])
+            versions_json = json.dumps([SourceTableVersion(table_id=1, file_path=delta_path, version=0).model_dump()])
 
             # Write again to bump version
             write_delta(pl.DataFrame({"x": [4, 5, 6]}), delta_path, mode="overwrite")
@@ -856,9 +851,9 @@ class TestCheckSourceVersionsCurrent:
 
     def test_missing_file_path_returns_false(self):
         """When the delta table path doesn't exist, should return False."""
-        versions_json = json.dumps([
-            SourceTableVersion(table_id=1, file_path="/nonexistent/path", version=0).model_dump()
-        ])
+        versions_json = json.dumps(
+            [SourceTableVersion(table_id=1, file_path="/nonexistent/path", version=0).model_dump()]
+        )
         assert check_source_versions_current(versions_json) is False
 
 

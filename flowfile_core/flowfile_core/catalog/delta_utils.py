@@ -6,6 +6,7 @@ can remain format-agnostic.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -24,12 +25,15 @@ def check_source_versions_current(source_table_versions_json: str | None) -> boo
 
     Returns True when no versions are recorded (backward compat for existing virtual tables).
     Returns False if any source table has been updated, deleted, or is unreadable.
+
+    Note: There is a known TOCTOU (time-of-check-time-of-use) race condition here.
+    A source table could be updated between this staleness check and the actual
+    query execution (collect). This is acceptable for now but means stale reads
+    are possible in rare concurrent-write scenarios.
     """
     if not source_table_versions_json:
         return True
     try:
-        import json
-
         raw = json.loads(source_table_versions_json)
         versions = [SourceTableVersion(**entry) for entry in raw]
     except (ValueError, KeyError, TypeError):
@@ -42,7 +46,10 @@ def check_source_versions_current(source_table_versions_json: str | None) -> boo
             if current_version != sv.version:
                 logger.info(
                     "Source table %d at %s changed: expected version %d, current %d",
-                    sv.table_id, sv.file_path, sv.version, current_version,
+                    sv.table_id,
+                    sv.file_path,
+                    sv.version,
+                    current_version,
                 )
                 return False
         except Exception:

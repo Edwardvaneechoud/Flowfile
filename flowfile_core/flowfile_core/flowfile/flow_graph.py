@@ -372,7 +372,10 @@ def _resolve_catalog_sql_tables(node_id: int | str) -> CatalogSqlTables:
                 seen_names.add(t.name)
                 if t.table_type == "virtual":
                     virtual_tables[t.name] = (
-                        t.is_optimized, t.serialized_lazy_frame, t.id, t.source_table_versions,
+                        t.is_optimized,
+                        t.serialized_lazy_frame,
+                        t.id,
+                        t.source_table_versions,
                     )
                 elif t.file_path and is_delta_table(Path(t.file_path)):
                     table_paths[t.name] = t.file_path
@@ -548,6 +551,8 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     versions: list[SourceTableVersion] = []
     seen_table_ids: set[int] = set()
 
+    # Collect all catalog_reader table IDs first
+    table_ids: list[int] = []
     for node in graph.nodes:
         if node.node_type != "catalog_reader":
             continue
@@ -556,10 +561,13 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
         if not table_id or table_id in seen_table_ids:
             continue
         seen_table_ids.add(table_id)
+        table_ids.append(table_id)
 
-        try:
-            with get_db_context() as db:
-                repo = SQLAlchemyCatalogRepository(db)
+    # Single DB session for all lookups
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            for table_id in table_ids:
                 table_record = repo.get_table(table_id)
                 if table_record is None:
                     continue
@@ -573,14 +581,19 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
                                 seen_table_ids.add(sv.table_id)
                                 versions.append(sv)
                 elif table_record.file_path and is_delta_table(table_record.file_path):
-                    current_version = _DeltaTable(table_record.file_path, without_files=True).version()
-                    versions.append(SourceTableVersion(
-                        table_id=table_id,
-                        file_path=table_record.file_path,
-                        version=current_version,
-                    ))
-        except Exception:
-            logger.warning("Could not collect version for source table %d", table_id, exc_info=True)
+                    try:
+                        current_version = _DeltaTable(table_record.file_path, without_files=True).version()
+                        versions.append(
+                            SourceTableVersion(
+                                table_id=table_id,
+                                file_path=table_record.file_path,
+                                version=current_version,
+                            )
+                        )
+                    except Exception:
+                        logger.warning("Could not read delta version for source table %d", table_id, exc_info=True)
+    except Exception:
+        logger.warning("Could not collect source table versions", exc_info=True)
 
     if not versions:
         return None
@@ -735,9 +748,7 @@ def _resolve_database_credentials(
     )
     if database_settings.connection_mode == "inline" and not is_sqlite:
         database_connection = database_settings.database_connection
-        encrypted_password = get_encrypted_secret(
-            current_user_id=user_id, secret_name=database_connection.password_ref
-        )
+        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
         if encrypted_password is None:
             raise HTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
@@ -1770,7 +1781,6 @@ class FlowGraph:
         )
 
         try:
-
             validate_sql_query(node_sql_query.sql_query_input.sql_code)
         except Exception as e:
             node = self.get_node(node_id=node_sql_query.node_id)
@@ -2453,14 +2463,19 @@ class FlowGraph:
             for name, path in table_paths.items():
                 ctx.register(name, pl.scan_delta(path))
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
-                ctx.register(name, _resolve_virtual_table(is_opt, ser_lf,
-                                                          tid,
-                                                          node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
-                                                          run_location=self.execution_location,
-                                                          source_table_versions=stv,
-                                                          )
-                             )
+                ctx.register(
+                    name,
+                    _resolve_virtual_table(
+                        is_opt,
+                        ser_lf,
+                        tid,
+                        node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
+                        run_location=self.execution_location,
+                        source_table_versions=stv,
+                    ),
+                )
             return FlowDataEngine(ctx.execute(sql_code))
+
         # todo: There are quite some round-trips happening here because the Flowgraph tries to predict the schema.
         is_virtual_optimized: bool | None = None
         if virtual_tables:
@@ -2504,11 +2519,15 @@ class FlowGraph:
 
         def _func() -> FlowDataEngine:
             if _table_type == "virtual":
-                return FlowDataEngine(_resolve_virtual_table(
-                    _is_optimized, _serialized_lf, _catalog_table_id,
-                    node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
-                    run_location=self.execution_location,
-                    source_table_versions=_source_table_versions)
+                return FlowDataEngine(
+                    _resolve_virtual_table(
+                        _is_optimized,
+                        _serialized_lf,
+                        _catalog_table_id,
+                        node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
+                        run_location=self.execution_location,
+                        source_table_versions=_source_table_versions,
+                    )
                 )
 
             if not resolved_path:
@@ -2750,8 +2769,11 @@ class FlowGraph:
                 # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, kafka_result.new_offsets, node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        kafka_result.new_offsets,
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             else:
                 # Remote execution — offload to worker (worker uses commit=False + sidecar)
@@ -2762,8 +2784,11 @@ class FlowGraph:
                 offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
                 if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, offsets_data["new_offsets"], node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        offsets_data["new_offsets"],
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
             # schema (e.g. empty topic or starting at "latest").  Align to
@@ -3627,9 +3652,7 @@ class FlowGraph:
             try:
                 callback(success)
             except Exception as e:
-                self.flow_logger.error(
-                    f"Post-execution callback failed for node {n.node_id}: {e}"
-                )
+                self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
     def run_graph(self) -> RunInformation | None:

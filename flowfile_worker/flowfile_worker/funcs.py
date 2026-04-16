@@ -655,10 +655,10 @@ def execute_sql_query(
         registered_names.append(name)
 
     # Register virtual tables from pre-resolved IPC data
-    if virtual_tables_ipc: # TODO MISSING TESTS FOR This
+    if virtual_tables_ipc:
         for name, b64_data in virtual_tables_ipc.items():
             ipc_bytes = base64.b64decode(b64_data)
-            lf = pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()  # TODO: I think this is not needed. Why not just register the lazyframe?
+            lf = pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
             ctx.register(name, lf)
             registered_names.append(name)
 
