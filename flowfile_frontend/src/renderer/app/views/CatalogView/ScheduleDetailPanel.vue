@@ -149,6 +149,7 @@
         @view-run="$emit('viewRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
         @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+        @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
   </div>
@@ -183,6 +184,7 @@ defineEmits([
   "deleteSchedule",
   "runNow",
   "cancelScheduleRun",
+  "openSnapshot",
 ]);
 
 const isEditingName = ref(false);

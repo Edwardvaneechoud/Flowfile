@@ -122,7 +122,12 @@
         </div>
         <div class="col-nodes">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</div>
         <div class="col-version">
-          <span v-if="run.has_snapshot" class="snapshot-link">
+          <span
+            v-if="run.has_snapshot"
+            class="snapshot-link"
+            title="Open this version in the designer"
+            @click.stop="$emit('openSnapshot', run.id)"
+          >
             <i class="fa-solid fa-code-branch" /> View
           </span>
           <span v-else class="no-snapshot">--</span>
@@ -188,7 +193,7 @@ const props = defineProps<{
 
 const expanded = ref(false);
 
-defineEmits(["viewRun", "viewFlow", "viewScheduleRuns"]);
+defineEmits(["viewRun", "viewFlow", "viewScheduleRuns", "openSnapshot"]);
 
 const catalogStore = useCatalogStore();
 

@@ -1157,6 +1157,58 @@ def save_flow(
     return flow_id
 
 
+@router.get("/save_flow_to_catalog", tags=["editor"])
+def save_flow_to_catalog(
+    flow_id: int,
+    flow_name: str,
+    namespace_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Save a flow into the managed catalog flows directory with a collision-free filename.
+
+    The file is always written to ``{flows_dir}/{flow_id}_{sanitized_name}.yaml`` so
+    two flows with the same user-chosen name in different namespaces cannot overwrite
+    each other. Returns the (possibly new) flow id so the frontend can switch to it.
+    """
+    stem = flow_name.strip()
+    if not stem:
+        raise HTTPException(422, "flow_name must not be empty")
+    stem = Path(stem).name  # strip any path components the client might have sent
+    stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
+    if not stem:
+        raise HTTPException(422, "flow_name must contain more than just an extension")
+
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+
+    filename = f"{flow_id}_{stem}.yaml"
+    flow_path = validate_path_under_cwd(str(storage.flows_directory / filename))
+
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    is_new_path = bool(normalized_current) and flow_path != normalized_current
+
+    user_id = current_user.id if current_user else None
+
+    def _register(fp: str, n: str, uid: int | None) -> None:
+        register_flow_in_namespace(fp, n, uid, namespace_id)
+
+    if is_new_path:
+        return flow_file_handler.save_as_flow(
+            flow_id=flow_id,
+            new_path=flow_path,
+            user_id=user_id,
+            on_catalog_register=_register,
+            on_resolve_registration=resolve_source_registration_id,
+        )
+
+    resolve_source_registration_id(flow)
+    flow.save_flow(flow_path=flow_path)
+    register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+    return flow_id
+
+
 @router.get("/flow_data", tags=["manager"])
 def get_flow_frontend_data(flow_id: int | None = 1):
     """Retrieves the data needed to render the flow graph in the frontend."""

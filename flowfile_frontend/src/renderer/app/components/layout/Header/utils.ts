@@ -45,3 +45,24 @@ export const saveFlowSilent = async (flowId: number): Promise<number> => {
   });
   return response.data as number;
 };
+
+/**
+ * Save a flow into the managed catalog flows directory. The backend builds the
+ * final filename as ``{flow_id}_{flow_name}.yaml`` so two flows with the same
+ * user-chosen name in different namespaces cannot overwrite each other.
+ */
+export const saveFlowToCatalog = async (
+  flowId: number,
+  flowName: string,
+  namespaceId: number,
+): Promise<number> => {
+  const response = await axios.get("/save_flow_to_catalog", {
+    params: {
+      flow_id: flowId,
+      flow_name: flowName,
+      namespace_id: namespaceId,
+    },
+    headers: { accept: "application/json" },
+  });
+  return response.data as number;
+};

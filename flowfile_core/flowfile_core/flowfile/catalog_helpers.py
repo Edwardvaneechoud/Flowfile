@@ -8,12 +8,18 @@ to avoid coupling the handler to the database layer.
 import logging
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
 
 logger = logging.getLogger(__name__)
+
+
+class FlowPathNamespaceCollision(Exception):
+    """Raised when a flow_path already exists under a different namespace."""
 
 
 def auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
@@ -42,8 +48,10 @@ def register_flow_in_namespace(
 ) -> None:
     """Register a flow in a specific namespace, or auto-register if namespace_id is None.
 
-    If the flow is already registered at ``flow_path``, its namespace is updated
-    to ``namespace_id`` (if provided).  Failures are non-critical and logged.
+    If a registration already exists at ``flow_path`` in the same namespace, it is
+    touched/updated.  If one exists in a **different** namespace, raise
+    ``HTTPException(409)`` — normal callers prefix filenames with the flow id so
+    this signals a real bug rather than user error.
     """
     if namespace_id is None:
         auto_register_flow(flow_path, name, user_id)
@@ -55,7 +63,11 @@ def register_flow_in_namespace(
             service = CatalogService(SQLAlchemyCatalogRepository(db))
             existing = service.repo.get_flow_by_path(flow_path)
             if existing:
-                # Update namespace if flow is already registered
+                if existing.namespace_id != namespace_id:
+                    raise FlowPathNamespaceCollision(
+                        f"flow_path '{flow_path}' is already registered under "
+                        f"namespace {existing.namespace_id}; refusing to reassign to {namespace_id}"
+                    )
                 service.update_flow(
                     registration_id=existing.id,
                     requesting_user_id=user_id,
@@ -69,6 +81,8 @@ def register_flow_in_namespace(
                 owner_id=user_id,
             )
             service.repo.create_flow(reg)
+    except FlowPathNamespaceCollision as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
     except Exception:
         logger.info(
             f"Registration in namespace {namespace_id} failed for '{flow_path}' (non-critical)",

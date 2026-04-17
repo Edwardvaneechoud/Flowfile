@@ -66,6 +66,7 @@
           <thead>
             <tr>
               <th>Node</th>
+              <th>Description</th>
               <th>Status</th>
               <th>Duration</th>
               <th>Error</th>
@@ -74,6 +75,9 @@
           <tbody>
             <tr v-for="(nr, idx) in nodeResults" :key="idx">
               <td>{{ nr.node_name || `Node ${nr.node_id}` }}</td>
+              <td class="description-text" :title="nr.description || ''">
+                {{ nr.description || "--" }}
+              </td>
               <td>
                 <span
                   class="status-badge"
@@ -83,7 +87,37 @@
                 </span>
               </td>
               <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : "--" }}</td>
-              <td class="error-text">{{ nr.error || "--" }}</td>
+              <td class="error-text">
+                <el-popover
+                  v-if="nr.error"
+                  placement="left"
+                  :width="640"
+                  trigger="click"
+                  popper-class="error-popover"
+                >
+                  <template #reference>
+                    <span class="error-trigger" :title="'Click to see full error'">
+                      {{ nr.error }}
+                    </span>
+                  </template>
+                  <div class="error-popover-body">
+                    <div class="error-popover-header">
+                      <span class="error-popover-title">
+                        <i class="fa-solid fa-circle-exclamation" /> Error details
+                      </span>
+                      <button
+                        class="error-copy-btn"
+                        title="Copy to clipboard"
+                        @click="copyError(nr.error)"
+                      >
+                        <i class="fa-solid fa-copy" /> Copy
+                      </button>
+                    </div>
+                    <pre class="error-popover-pre">{{ nr.error }}</pre>
+                  </div>
+                </el-popover>
+                <span v-else>--</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -131,6 +165,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRunDetail } from "../../types";
@@ -141,6 +176,15 @@ import {
   getScheduleDisplayName,
   runTypeIcon,
 } from "./catalog-formatters";
+
+async function copyError(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success({ message: "Error copied to clipboard", duration: 1500 });
+  } catch {
+    ElMessage.error("Failed to copy");
+  }
+}
 
 const catalogStore = useCatalogStore();
 
@@ -179,6 +223,7 @@ watch(
 interface NodeResultData {
   node_id: number;
   node_name: string | null;
+  description?: string;
   success: boolean | null;
   error: string;
   run_time: number;
@@ -281,6 +326,32 @@ const formattedSnapshot = computed(() => {
   color: var(--color-text-primary);
 }
 
+/* Override the 3-column width distribution from .styled-table (5 columns here) */
+.results-table th,
+.results-table td {
+  width: auto;
+}
+.results-table th:nth-child(1),
+.results-table td:nth-child(1) {
+  width: 18%;
+}
+.results-table th:nth-child(2),
+.results-table td:nth-child(2) {
+  width: 30%;
+}
+.results-table th:nth-child(3),
+.results-table td:nth-child(3) {
+  width: 10%;
+}
+.results-table th:nth-child(4),
+.results-table td:nth-child(4) {
+  width: 12%;
+}
+.results-table th:nth-child(5),
+.results-table td:nth-child(5) {
+  width: 30%;
+}
+
 .mono {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
@@ -290,6 +361,31 @@ const formattedSnapshot = computed(() => {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-trigger {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--color-border-light);
+  transition: color var(--transition-fast);
+}
+
+.error-trigger:hover {
+  color: var(--color-danger, #d9534f);
+  border-bottom-color: var(--color-danger, #d9534f);
+}
+
+.description-text {
+  font-size: var(--font-size-xs);
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -339,5 +435,76 @@ const formattedSnapshot = computed(() => {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--color-text-primary);
+}
+</style>
+
+<!--
+  Non-scoped styles for the el-popover content. Element Plus teleports
+  the popper to document.body, so scoped `[data-v-*]` selectors do not match.
+-->
+<style>
+.error-popover.el-popover.el-popper {
+  padding: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.error-popover .error-popover-body {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+}
+
+.error-popover .error-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
+  background: var(--color-background-secondary, #f9fafb);
+}
+
+.error-popover .error-popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger, #d9534f);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.error-popover .error-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border-light, #e5e7eb);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: var(--color-text-primary, #111827);
+  transition:
+    background 120ms,
+    border-color 120ms;
+}
+
+.error-popover .error-copy-btn:hover {
+  background: var(--color-background-hover, #f3f4f6);
+  border-color: var(--color-border, #d1d5db);
+}
+
+.error-popover .error-popover-pre {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-family-mono, "SFMono-Regular", Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-primary, #111827);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  flex: 1;
+  background: var(--color-background-primary, #fff);
 }
 </style>

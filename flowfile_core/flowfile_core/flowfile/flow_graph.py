@@ -3291,7 +3291,11 @@ class FlowGraph:
         self.flow_logger.clear_log_file()
         self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
         node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
-        node_result = NodeResult(node_id=flow_node.node_id, node_name=flow_node.name)
+        node_result = NodeResult(
+            node_id=flow_node.node_id,
+            node_name=flow_node.name,
+            description=flow_node.get_node_information().description,
+        )
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         try:
             self.latest_run_info.node_step_result.append(node_result)
@@ -3309,7 +3313,7 @@ class FlowGraph:
                 node_result.is_running = False
             node_result.success = flow_node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
@@ -3319,7 +3323,7 @@ class FlowGraph:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
         finally:
@@ -3453,7 +3457,11 @@ class FlowGraph:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
         """
         node_logger = self.flow_logger.get_node_logger(node.node_id)
-        node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+        node_result = NodeResult(
+            node_id=node.node_id,
+            node_name=node.name,
+            description=node.get_node_information().description,
+        )
 
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
@@ -3503,13 +3511,13 @@ class FlowGraph:
                 return node_result, node
             node_result.success = node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
         except Exception as e:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {node.node_id}: {e}")
 

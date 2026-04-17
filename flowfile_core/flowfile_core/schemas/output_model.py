@@ -10,6 +10,7 @@ class NodeResult(BaseModel):
 
     node_id: int
     node_name: str | None = None
+    description: str = ""
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None

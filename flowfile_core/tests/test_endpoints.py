@@ -462,6 +462,70 @@ def test_save_imported_flow():
     assert created_flow.__name__ == "readable_flow"
 
 
+def test_save_flow_to_catalog_prefixes_filename():
+    """Two flows sharing a user-chosen name save to distinct files and catalog rows."""
+    from flowfile_core.database.models import FlowRegistration
+
+    shared_name = "collision_test_flow"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    path_a = str(base_dir / "catalog_save_a.yaml")
+    path_b = str(base_dir / "catalog_save_b.yaml")
+    remove_flow(path_a)
+    remove_flow(path_b)
+
+    ns_a = client.post("/catalog/namespaces", json={"name": "NsA_collision_endpoint"}).json()
+    ns_b = client.post("/catalog/namespaces", json={"name": "NsB_collision_endpoint"}).json()
+    assert "id" in ns_a and "id" in ns_b, "Namespaces not created"
+
+    flow_id_a = client.post("editor/create_flow", params={"flow_path": path_a}).json()
+    flow_id_b = client.post("editor/create_flow", params={"flow_path": path_b}).json()
+    assert flow_id_a != flow_id_b, "Setup produced duplicate flow ids"
+
+    expected_a = storage.flows_directory / f"{flow_id_a}_{shared_name}.yaml"
+    expected_b = storage.flows_directory / f"{flow_id_b}_{shared_name}.yaml"
+    # Make sure we're not passing the test from stale state
+    for p in (expected_a, expected_b):
+        if p.exists():
+            p.unlink()
+
+    try:
+        resp_a = client.get(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_a, "flow_name": shared_name, "namespace_id": ns_a["id"]},
+        )
+        assert resp_a.status_code == 200, f"First catalog save failed: {resp_a.text}"
+
+        resp_b = client.get(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_b, "flow_name": shared_name, "namespace_id": ns_b["id"]},
+        )
+        assert resp_b.status_code == 200, f"Second catalog save failed: {resp_b.text}"
+
+        assert expected_a.exists(), f"First catalog file missing: {expected_a}"
+        assert expected_b.exists(), f"Second catalog file missing: {expected_b}"
+        assert expected_a != expected_b
+
+        with get_db_context() as db:
+            regs = (
+                db.query(FlowRegistration)
+                .filter(FlowRegistration.flow_path.in_([str(expected_a), str(expected_b)]))
+                .all()
+            )
+            assert len(regs) == 2, f"Expected two registrations, got {len(regs)}"
+            by_path = {r.flow_path: r.namespace_id for r in regs}
+            assert by_path[str(expected_a)] == ns_a["id"]
+            assert by_path[str(expected_b)] == ns_b["id"]
+    finally:
+        for p in (expected_a, expected_b):
+            if p.exists():
+                p.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path.in_([str(expected_a), str(expected_b)])
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_delete_node():
     flow_id = create_flow_with_manual_input_and_select()
     response = client.post("/editor/delete_node", params={"flow_id": flow_id, "node_id": 2})

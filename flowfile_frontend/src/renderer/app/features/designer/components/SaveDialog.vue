@@ -95,7 +95,11 @@ import { ref, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../components/common/FileBrowser/types";
-import { saveFlow, isInternalFlowfilePath } from "../../../components/layout/Header/utils";
+import {
+  saveFlow,
+  saveFlowToCatalog,
+  isInternalFlowfilePath,
+} from "../../../components/layout/Header/utils";
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { getFlowSettings } from "../../../components/nodes/nodeLogic";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
@@ -239,13 +243,14 @@ const handleSaveFlow = async (flowPath: string) => {
 };
 
 const catalogFilePath = computed(() => {
-  // Catalog saves always target the backend-managed flows directory, never
-  // wherever the file browser happens to be.
+  // Display-only preview of the final catalog path. Must mirror the backend
+  // convention in /save_flow_to_catalog (``{flow_id}_{stem}.yaml`` under the
+  // managed flows dir) so the user sees what will actually be written.
   const dir = catalogFlowsDir.value || "~/.flowfile/flows";
-  const name = catalogFlowName.value.trim() || "flow";
+  const raw = catalogFlowName.value.trim() || "flow";
+  const stem = raw.replace(/\.(yaml|yml|json)$/i, "");
   const sep = dir.includes("\\") ? "\\" : "/";
-  const hasExt = /\.(yaml|yml|json)$/i.test(name);
-  return `${dir}${sep}${name}${hasExt ? "" : ".yaml"}`;
+  return `${dir}${sep}${props.flowId}_${stem}.yaml`;
 });
 
 const canSaveToCatalog = computed(() => {
@@ -255,10 +260,10 @@ const canSaveToCatalog = computed(() => {
 const handleCatalogSave = async () => {
   if (!canSaveToCatalog.value) return;
   try {
-    const newFlowId = await saveFlow(
+    const newFlowId = await saveFlowToCatalog(
       props.flowId,
-      catalogFilePath.value,
-      selectedNamespaceId.value ?? undefined,
+      catalogFlowName.value.trim(),
+      selectedNamespaceId.value as number,
     );
     ElMessage.success("Flow saved and registered in catalog");
     isVisible.value = false;
