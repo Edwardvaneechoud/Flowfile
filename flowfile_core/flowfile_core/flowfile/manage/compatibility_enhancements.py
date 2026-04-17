@@ -473,12 +473,10 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if "parameters" not in fs.__dict__:
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "parameters": []})
 
+    if "has_unsaved_changes" not in fs.__dict__:
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "has_unsaved_changes": False})
+
     return flow_storage_obj
-
-
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
 
 
 def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: str):
