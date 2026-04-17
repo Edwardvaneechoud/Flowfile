@@ -379,6 +379,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
             if from_node:
                 to_node.add_node_connection(from_node)
 
+    new_flow.mark_as_saved()
     return new_flow
 
 

@@ -1,25 +1,47 @@
 <template>
   <div class="action-buttons">
-    <button class="action-btn" data-tutorial="save-btn" @click="openSaveModal">
-      <span class="material-icons btn-icon">save</span>
-      <span class="btn-text">Save</span>
-    </button>
-    <button class="action-btn" data-tutorial="save-as-btn" @click="openSaveAsModal">
-      <span class="material-icons btn-icon">save_as</span>
-      <span class="btn-text">Save As</span>
-    </button>
+    <div v-if="hasOpenFlow" class="action-btn-split" data-tutorial="save-btn">
+      <button class="action-btn action-btn--split-main" @click="openSaveModal">
+        <span class="material-icons btn-icon">save</span>
+        <span class="btn-text">Save</span>
+      </button>
+      <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+        <button class="action-btn action-btn--split-caret" aria-label="More save options">
+          <span class="material-icons btn-icon">arrow_drop_down</span>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item data-tutorial="save-as-btn" @click="openSaveAsModal">
+              <span class="material-icons save-as-icon">save_as</span>
+              Save As…
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
     <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
       <span class="material-icons btn-icon">folder_open</span>
       <span class="btn-text">Open</span>
     </button>
-    <button class="action-btn" data-tutorial="create-btn" @click="modalVisibleForCreate = true">
-      <span class="material-icons btn-icon">add_circle_outline</span>
-      <span class="btn-text">Create</span>
-    </button>
-    <button class="action-btn" data-tutorial="quick-create-btn" @click="handleQuickCreateClick">
-      <span class="material-icons btn-icon">flash_on</span>
-      <span class="btn-text">Quick Create</span>
-    </button>
+    <div class="action-btn-split" data-tutorial="quick-create-btn">
+      <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
+        <span class="material-icons btn-icon">add_circle_outline</span>
+        <span class="btn-text">Create</span>
+      </button>
+      <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+        <button class="action-btn action-btn--split-caret" aria-label="More create options">
+          <span class="material-icons btn-icon">arrow_drop_down</span>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item data-tutorial="create-at-location-btn" @click="openCreateDialog">
+              <span class="material-icons save-as-icon">folder_open</span>
+              Create at specific location…
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
     <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
@@ -59,55 +81,11 @@
     @save-complete="handleSaveDialogComplete"
   />
 
-  <el-dialog
-    v-model="modalVisibleForCreate"
-    title="Select save location"
-    width="70%"
-    custom-class="high-z-index-dialog"
-  >
-    <file-browser
-      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
-      mode="create"
-      context="flows"
-      :is-visible="modalVisibleForCreate"
-      @create-file="handleCreateAction"
-      @overwrite-file="handleCreateAction"
-    />
-  </el-dialog>
-
-  <el-dialog
-    v-model="modalVisibleForQuickCreate"
-    title="Create New Flow"
-    width="400px"
-    custom-class="high-z-index-dialog"
-  >
-    <div class="quick-create-modal">
-      <div class="form-group">
-        <label for="flow-name">Flow Name (optional):</label>
-        <el-input
-          id="flow-name"
-          v-model="quickCreateName"
-          placeholder="Leave empty for auto-generated name"
-          clearable
-        />
-      </div>
-      <div class="preview-text">
-        <strong>File will be created as:</strong><br />
-        <code>{{ getPreviewFileName() }}</code>
-      </div>
-    </div>
-    <template #footer>
-      <span class="dialog-footer">
-        <el-button @click="modalVisibleForQuickCreate = false">Cancel</el-button>
-        <el-button
-          type="primary"
-          data-tutorial="create-flow-confirm-btn"
-          @click="handleQuickCreateAction"
-          >Create Flow</el-button
-        >
-      </span>
-    </template>
-  </el-dialog>
+  <create-dialog
+    ref="createDialogRef"
+    v-model:visible="modalVisibleForCreate"
+    @create-complete="handleCreateComplete"
+  />
 
   <el-dialog
     v-model="modalVisibleForSettings"
@@ -233,15 +211,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
-import { saveFlowSilent, isTemporaryPath } from "./utils";
+import { saveFlowSilent } from "./utils";
 import RunButton from "./run.vue";
-import FileBrowser from "../../common/FileBrowser/fileBrowser.vue";
 import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
-import { ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
+import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
@@ -263,23 +240,54 @@ const tutorialStore = useTutorialStore();
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
-const modalVisibleForQuickCreate = ref(false);
 const modalVisibleForSettings = ref(false);
+
+// Save is a no-op when no flow is loaded; hide the button entirely rather
+// than leaving a disabled control in the header.
+const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
-const quickCreateName = ref<string>("");
 
-// Handle Quick Create button click - opens modal and advances tutorial if active
-function handleQuickCreateClick() {
-  modalVisibleForQuickCreate.value = true;
-  // Advance tutorial if we're on the "click-quick-create" step
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "click-quick-create") {
+// Main "Create" click: instant quick-create — flow lands in
+// ~/.flowfile/flows/unnamed_flows/ via the backend's auto-naming, auto-
+// registered in the default catalog namespace. Users who want to pick a
+// location or namespace use the chevron → "Create at specific location…".
+const handleQuickCreate = async () => {
+  try {
+    const createdFlowId = await createFlow(null, null);
+    nodeStore.setFlowId(createdFlowId);
+    emit("refreshFlow");
+    ElMessage.success("Flow created");
+    advanceQuickCreateTutorial();
+  } catch (error) {
+    console.error("Failed to create flow:", error);
+    ElMessage.error("Failed to create flow");
+  }
+};
+
+const openCreateDialog = () => {
+  modalVisibleForCreate.value = true;
+};
+
+const advanceQuickCreateTutorial = () => {
+  if (!tutorialStore.isActive) return;
+  const stepId = tutorialStore.currentStep?.id;
+  if (stepId === "click-quick-create" || stepId === "confirm-create-flow") {
     setTimeout(() => {
       tutorialStore.nextStep();
     }, 200);
   }
-}
+};
+
+const handleCreateComplete = (flowId: number) => {
+  modalVisibleForCreate.value = false;
+  if (flowId) {
+    nodeStore.setFlowId(flowId);
+    emit("refreshFlow");
+  }
+  advanceQuickCreateTutorial();
+};
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
@@ -293,33 +301,7 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
   { key: "remote", label: "Remote" },
 ]);
 
-const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
-
-const isValidSaveExtension = (filePath: string): boolean => {
-  const name = filePath.toLowerCase();
-  return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
-};
-
-// Generate default filename with current datetime
-const generateDefaultFileName = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  const seconds = String(now.getSeconds()).padStart(2, "0");
-
-  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow`;
-};
-
-// Get preview filename for the modal
-const getPreviewFileName = (): string => {
-  if (quickCreateName.value.trim()) {
-    return quickCreateName.value.trim();
-  }
-  return generateDefaultFileName();
-};
+const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
   if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
@@ -370,6 +352,8 @@ const handleSaveDialogComplete = (flowId: number) => {
     // "Save As" produced a new flow identity — switch to it
     nodeStore.setFlowId(flowId);
     emit("refreshFlow");
+  } else {
+    emit("flowSaved", flowId);
   }
   if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
     setTimeout(() => {
@@ -388,10 +372,13 @@ const openSaveModal = async () => {
   const settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
 
-  // Silent save if flow already has a non-temp path
-  if (settings.path && !isTemporaryPath(settings.path)) {
+  // Silent-save whenever the flow has any existing path — including
+  // quick-created flows living in ~/.flowfile/flows/unnamed_flows/, which
+  // are persistent. Relocation is an explicit "Save As…" action.
+  if (settings.path) {
     try {
       await saveFlowSilent(nodeStore.flow_id);
+      emit("flowSaved", nodeStore.flow_id);
       ElMessage.success("Flow saved successfully");
       if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
         setTimeout(() => {
@@ -407,7 +394,7 @@ const openSaveModal = async () => {
     return;
   }
 
-  // First-time save or temp path: open save dialog
+  // No path at all: open the save dialog for first-time placement.
   if (saveDialogRef.value) {
     await saveDialogRef.value.open();
   } else {
@@ -438,37 +425,6 @@ const toggleCodeGenerator = () => {
     setTimeout(() => {
       tutorialStore.nextStep();
     }, 300);
-  }
-};
-
-const handleCreateAction = async (flowPath: string) => {
-  if (!isValidSaveExtension(flowPath)) {
-    ElMessage.error({
-      message: "Invalid file extension. Please use .yaml or .yml",
-      duration: 5000,
-    });
-    return;
-  }
-
-  const createdFlowId = await createFlow(flowPath);
-
-  modalVisibleForCreate.value = false;
-  nodeStore.setFlowId(createdFlowId);
-
-  emit("refreshFlow");
-};
-
-const handleQuickCreateAction = async () => {
-  const fileName = getPreviewFileName();
-  try {
-    const createdFlowId = await createFlow(null, fileName);
-    modalVisibleForQuickCreate.value = false;
-    quickCreateName.value = "";
-    nodeStore.setFlowId(createdFlowId);
-
-    emit("refreshFlow");
-  } catch (error) {
-    console.error("Failed to create quick flow:", error);
   }
 };
 
@@ -506,10 +462,10 @@ watch(
 
 defineExpose({
   loadFlowSettings,
-  openCreateDialog: () => (modalVisibleForCreate.value = true),
-  handleQuickCreateAction,
+  openCreateDialog,
+  handleQuickCreate,
   openOpenDialog: () => (modalVisibleForOpen.value = true),
-  openSaveModal: () => (modalVisibleForSave.value = true),
+  openSaveModal,
   runFlow,
 });
 
@@ -587,6 +543,72 @@ onMounted(async () => {
   padding: var(--spacing-2);
 }
 
+/* Split button: primary action (Save) + caret dropdown (Save As…)
+   Visually presents as one unified control with a divider between halves. */
+.action-btn-split {
+  display: inline-flex;
+  align-items: stretch;
+  height: 34px;
+  box-shadow: var(--shadow-xs);
+  border-radius: var(--border-radius-lg);
+}
+
+.action-btn-split .action-btn {
+  box-shadow: none;
+  height: 34px;
+}
+
+.action-btn--split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+
+.action-btn--split-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--spacing-1);
+  min-width: 24px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text-primary);
+}
+
+.action-btn--split-caret:hover {
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
+}
+
+.action-btn--split-caret:focus {
+  outline: none;
+}
+
+.action-btn--split-caret .btn-icon {
+  font-size: 20px;
+  color: var(--color-text-secondary);
+}
+
+.action-btn--split-caret:hover .btn-icon {
+  color: var(--color-text-primary);
+}
+
+/* When the el-dropdown is open, give the caret a pressed look. */
+.action-btn-split :deep(.el-dropdown--active) .action-btn--split-caret,
+.action-btn-split :deep(.el-tooltip__trigger:focus) .action-btn--split-caret {
+  background-color: var(--color-background-tertiary);
+}
+
+.save-as-icon {
+  font-size: 16px;
+  margin-right: var(--spacing-2);
+  vertical-align: middle;
+}
+
 .settings-modal-content {
   padding: var(--spacing-4);
   font-family: var(--font-family-base);
@@ -633,39 +655,6 @@ onMounted(async () => {
   font-size: var(--font-size-xs, 11px);
   color: var(--color-text-muted, #999);
   line-height: 1.4;
-}
-
-.quick-create-modal {
-  padding: var(--spacing-4) 0;
-}
-
-.quick-create-modal .form-group {
-  margin-bottom: var(--spacing-5);
-}
-
-.quick-create-modal label {
-  display: block;
-  margin-bottom: var(--spacing-2);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-}
-
-.preview-text {
-  padding: var(--spacing-3);
-  background-color: var(--color-background-muted);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-md);
-  color: var(--color-text-secondary);
-}
-
-.preview-text code {
-  background-color: var(--color-background-tertiary);
-  padding: 2px var(--spacing-1-5);
-  border-radius: var(--border-radius-sm);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
 }
 
 .dialog-footer {

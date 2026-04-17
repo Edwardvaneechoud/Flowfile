@@ -1,4 +1,7 @@
 <template>
+  <!-- TODO(ux): switch the dirty-dot color based on the active theme's
+       accent, and consider moving it so it sits adjacent to the close icon
+       on the right instead of inline with the tab name. -->
   <div class="flow-tabs-container">
     <div class="flow-tabs">
       <el-tooltip
@@ -102,11 +105,14 @@ const refreshDirtyState = async (flowId: number | null) => {
 };
 
 // Debounce helper — coalesces rapid mutation events into a single refresh.
+// Captures the flow id at schedule time so a tab-switch mid-debounce doesn't
+// refresh the wrong flow.
 let dirtyRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleDirtyRefresh = () => {
+  const flowId = selectedFlowId.value;
   if (dirtyRefreshTimer) clearTimeout(dirtyRefreshTimer);
   dirtyRefreshTimer = setTimeout(() => {
-    refreshDirtyState(selectedFlowId.value);
+    refreshDirtyState(flowId);
   }, 400);
 };
 
@@ -272,6 +278,7 @@ defineExpose({
   selectedFlowId,
   selectedFlow,
   selectFlow,
+  refreshDirtyState,
 });
 </script>
 

@@ -1,4 +1,7 @@
 <template>
+  <!-- TODO(ux): non-selectable group rows (level 0) should visually differ
+       from selectable schemas (level 1); users currently click them
+       expecting selection and nothing happens. -->
   <div class="ns-tree-item">
     <div
       class="ns-row"

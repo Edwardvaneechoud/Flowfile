@@ -17,9 +17,6 @@ export const isInternalFlowfilePath = (path: string | null | undefined): boolean
   );
 };
 
-/** Back-compat alias: callers previously only cared about the temp/flows case. */
-export const isTemporaryPath = isInternalFlowfilePath;
-
 export const saveFlow = async (
   flowId: number,
   flowPath: string,

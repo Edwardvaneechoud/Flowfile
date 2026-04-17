@@ -1,4 +1,12 @@
 <template>
+  <!-- TODO(ux): add up/down/Enter keyboard navigation to the catalog flow
+       list; it currently only supports click and dblclick.
+       TODO(ux): replace the Unicode ✔/✖/… last-run icons below with Material
+       Icons for visual consistency with the rest of the app.
+       TODO(ux): drop the flow_path column — it's redundant with the selected
+       namespace and eats horizontal space; keep filename + last-run only.
+       TODO(ux): add role='tablist' / role='tab' / aria-selected to the
+       sidebar tab buttons. Same applies to SaveDialog. -->
   <el-dialog
     v-model="isVisible"
     title="Open Flow"

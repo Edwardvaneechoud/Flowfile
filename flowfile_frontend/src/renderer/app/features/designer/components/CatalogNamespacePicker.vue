@@ -1,4 +1,10 @@
 <template>
+  <!-- TODO(ux): collapse branches by default; only auto-expand the branch
+       containing the selected default namespace. Currently every branch is
+       expanded, which becomes unwieldy for non-trivial catalogs.
+       TODO(ux): replace string-based default lookup ('General'/'Local
+       Flows') with a backend is_default boolean flag on CatalogNamespace —
+       the current approach silently breaks if namespaces are renamed. -->
   <div class="namespace-picker">
     <div v-if="loading" class="ns-loading">Loading namespaces...</div>
     <div v-else-if="error" class="ns-error">{{ error }}</div>

@@ -1172,6 +1172,9 @@ def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettings:
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
+    # TODO: narrow this except and log at warning so real failures aren't
+    # hidden. Currently swallowing Exception keeps the tab bar responsive
+    # when hash computation fails, at the cost of masking real bugs.
     try:
         flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
     except Exception:

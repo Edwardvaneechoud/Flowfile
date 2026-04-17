@@ -1,51 +1,43 @@
 <template>
-  <!-- TODO(ux): move the file-browser Save trigger into the dialog footer
-       too, so both tabs share a single primary-action location. Requires
-       changing the file-browser to a pure-selection mode.
-       TODO(ux): surface the catalog-registration namespace more prominently
-       on re-save — keep the default-on behavior (users get free run history
-       that way), but make the target namespace visible at a glance so users
-       understand where their flow is being tracked. -->
+  <!-- TODO(ux): add role='tablist' / role='tab' / aria-selected to the
+       sidebar tab buttons. Same applies to SaveDialog/OpenDialog. -->
   <el-dialog
     v-model="isVisible"
-    title="Save Flow"
+    title="Create Flow"
     width="70%"
     :close-on-click-modal="false"
     custom-class="high-z-index-dialog"
-    @closed="handleDialogClosed"
   >
-    <div class="save-dialog-body">
-      <aside class="save-dialog-sidebar">
+    <div class="create-dialog-body">
+      <aside class="create-dialog-sidebar">
         <button
           class="sidebar-btn"
-          :class="{ active: saveMode === 'file' }"
-          @click="saveMode = 'file'"
+          :class="{ active: createMode === 'file' }"
+          @click="createMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
           <span>File System</span>
         </button>
         <button
           class="sidebar-btn"
-          :class="{ active: saveMode === 'catalog' }"
-          @click="saveMode = 'catalog'"
+          :class="{ active: createMode === 'catalog' }"
+          @click="createMode = 'catalog'"
         >
           <i class="fa-solid fa-book"></i>
           <span>Catalog</span>
         </button>
       </aside>
 
-      <section class="save-dialog-main">
+      <section class="create-dialog-main">
         <!-- File System tab -->
-        <div v-show="saveMode === 'file'" class="save-panel">
+        <div v-show="createMode === 'file'" class="create-panel">
           <file-browser
-            ref="fileBrowserRef"
             :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
             mode="create"
             context="flows"
-            :initial-file-path="initialPath"
-            :is-visible="isVisible && saveMode === 'file'"
-            @create-file="handleSaveFlow"
-            @overwrite-file="handleSaveFlow"
+            :is-visible="isVisible && createMode === 'file'"
+            @create-file="handleCreateAtPath"
+            @overwrite-file="handleCreateAtPath"
           />
           <div class="catalog-options">
             <el-checkbox v-model="registerInCatalog"> Also register in catalog </el-checkbox>
@@ -57,13 +49,17 @@
         </div>
 
         <!-- Catalog tab -->
-        <div v-show="saveMode === 'catalog'" class="save-panel">
-          <div class="catalog-save-form">
+        <div v-show="createMode === 'catalog'" class="create-panel">
+          <div class="catalog-create-form">
             <div class="form-group">
               <label>Flow name</label>
-              <el-input v-model="catalogFlowName" placeholder="my_flow" />
+              <el-input
+                v-model="catalogFlowName"
+                placeholder="my_flow"
+                data-tutorial="create-catalog-name"
+              />
               <span class="form-hint"
-                >File will be saved as <code>{{ catalogFilePath }}</code></span
+                >File will be created as <code>{{ catalogFilePath }}</code></span
               >
             </div>
             <div class="form-group">
@@ -78,12 +74,12 @@
       <div class="dialog-footer">
         <el-button @click="isVisible = false">Cancel</el-button>
         <el-button
-          v-if="saveMode === 'catalog'"
+          v-if="createMode === 'catalog'"
           type="primary"
-          :disabled="!canSaveToCatalog"
-          @click="handleCatalogSave"
+          :disabled="!canCreateInCatalog"
+          @click="handleCreateInCatalog"
         >
-          Save to Catalog
+          Create in Catalog
         </el-button>
       </div>
     </template>
@@ -94,10 +90,9 @@
 import { ref, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
-import { FileInfo } from "../../../components/common/FileBrowser/types";
-import { saveFlow, isInternalFlowfilePath } from "../../../components/layout/Header/utils";
+import { saveFlow } from "../../../components/layout/Header/utils";
+import { createFlow } from "../../../components/nodes/nodeLogic";
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
-import { getFlowSettings } from "../../../components/nodes/nodeLogic";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 
@@ -106,37 +101,20 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  flowId: {
-    type: Number,
-    required: true,
-  },
 });
 
-const emit = defineEmits(["save-complete", "save-cancelled", "update:visible"]);
+const emit = defineEmits(["create-complete", "create-cancelled", "update:visible"]);
 
 const isVisible = ref(props.visible);
-const initialPath = ref("");
 
 // Sidebar tab selection
-const saveMode = ref<"file" | "catalog">("file");
+const createMode = ref<"file" | "catalog">("file");
 
 // Catalog options
 const registerInCatalog = ref(true);
 const selectedNamespaceId = ref<number | null>(null);
 const catalogFlowName = ref("");
-// Always points at the backend-managed flows dir (``~/.flowfile/flows`` on
-// local, ``/data/user/flows`` in Docker).  Used as the target for Catalog-tab
-// saves so they land in the managed location regardless of where the file
-// browser was last navigated.
 const catalogFlowsDir = ref("");
-
-const fileBrowserRef = ref<{
-  refresh: () => Promise<void>;
-  handleInitialFileSelection: (filePath?: string) => Promise<void>;
-  loadCurrentDirectory: () => Promise<void>;
-  navigateUpDirectory: () => Promise<void>;
-  selectedFile: FileInfo | null;
-} | null>(null);
 
 watch(
   () => props.visible,
@@ -145,69 +123,28 @@ watch(
   },
 );
 
-// When visibility changes, update the initialPath and file selection
+// Emit visibility + refresh catalog dir when opening
 watch(isVisible, async (newValue) => {
   if (newValue !== props.visible) {
     emit("update:visible", newValue);
   }
-
-  if (newValue && props.flowId) {
-    await updateInitialPath();
-  }
-});
-
-// Emit cancelled when closed without saving
-watch(isVisible, (newValue) => {
   if (!newValue) {
-    emit("save-cancelled", props.flowId);
+    emit("create-cancelled");
+    return;
   }
-});
-
-const handleDialogClosed = () => {
-  // No extra cleanup needed
-};
-
-const updateInitialPath = async () => {
-  // Always refresh the managed catalog flows directory — this is the target
-  // for the Catalog tab and must never be influenced by the user's last
-  // browsed directory.
   try {
     catalogFlowsDir.value = await getCatalogFlowsDirectory();
   } catch (error) {
     console.error("Error fetching catalog flows directory:", error);
   }
-
-  try {
-    const settings = await getFlowSettings(props.flowId);
-    if (settings?.path) {
-      // Pre-fill catalog flow name from current file name (strip extension)
-      const fileName = settings.path.split(/[/\\]/).pop() ?? "";
-      catalogFlowName.value = fileName.replace(/\.(yaml|yml|json)$/i, "");
-
-      // Only seed the file-browser initial path from the current flow path
-      // when that path lives in a real user directory.  Quick-created flows
-      // live under ``~/.flowfile/flows/unnamed_flows`` and we don't want the
-      // Save dialog to open inside Flowfile's internal storage.
-      if (!isInternalFlowfilePath(settings.path)) {
-        initialPath.value = settings.path;
-        if (fileBrowserRef.value) {
-          await fileBrowserRef.value.handleInitialFileSelection(settings.path);
-        }
-      } else {
-        initialPath.value = "";
-      }
-    }
-  } catch (error) {
-    console.error("Error getting flow settings:", error);
-  }
-};
+});
 
 const isValidSaveExtension = (filePath: string): boolean => {
   const name = filePath.toLowerCase();
   return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
 };
 
-const handleSaveFlow = async (flowPath: string) => {
+const handleCreateAtPath = async (flowPath: string) => {
   if (flowPath.toLowerCase().endsWith(".flowfile")) {
     ElMessage.error({
       message: "The .flowfile format is deprecated. Please use .yaml or .yml instead.",
@@ -224,23 +161,30 @@ const handleSaveFlow = async (flowPath: string) => {
   }
 
   try {
-    const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : undefined;
-    const newFlowId = await saveFlow(props.flowId, flowPath, namespaceId ?? undefined);
-    ElMessage.success("Flow saved successfully");
+    const newFlowId = await createFlow(flowPath);
+    // The create endpoint auto-registers in the default namespace. If the user
+    // picked a different namespace, re-register by calling save_flow with
+    // namespace_id (same path → backend updates the existing registration).
+    if (registerInCatalog.value && selectedNamespaceId.value !== null) {
+      try {
+        await saveFlow(newFlowId, flowPath, selectedNamespaceId.value);
+      } catch (regErr) {
+        console.warn("Created flow but failed to set catalog namespace:", regErr);
+      }
+    }
+    ElMessage.success("Flow created successfully");
     isVisible.value = false;
-    emit("save-complete", newFlowId || props.flowId);
+    emit("create-complete", newFlowId);
   } catch (error: any) {
-    console.error("Error saving flow:", error);
+    console.error("Error creating flow:", error);
     ElMessage.error({
-      message: error?.message || "Failed to save flow",
+      message: error?.message || "Failed to create flow",
       duration: 5000,
     });
   }
 };
 
 const catalogFilePath = computed(() => {
-  // Catalog saves always target the backend-managed flows directory, never
-  // wherever the file browser happens to be.
   const dir = catalogFlowsDir.value || "~/.flowfile/flows";
   const name = catalogFlowName.value.trim() || "flow";
   const sep = dir.includes("\\") ? "\\" : "/";
@@ -248,37 +192,39 @@ const catalogFilePath = computed(() => {
   return `${dir}${sep}${name}${hasExt ? "" : ".yaml"}`;
 });
 
-const canSaveToCatalog = computed(() => {
+const canCreateInCatalog = computed(() => {
   return catalogFlowName.value.trim().length > 0 && selectedNamespaceId.value !== null;
 });
 
-const handleCatalogSave = async () => {
-  if (!canSaveToCatalog.value) return;
+const handleCreateInCatalog = async () => {
+  if (!canCreateInCatalog.value) return;
   try {
-    const newFlowId = await saveFlow(
-      props.flowId,
-      catalogFilePath.value,
-      selectedNamespaceId.value ?? undefined,
-    );
-    ElMessage.success("Flow saved and registered in catalog");
+    const newFlowId = await createFlow(catalogFilePath.value);
+    if (selectedNamespaceId.value !== null) {
+      try {
+        await saveFlow(newFlowId, catalogFilePath.value, selectedNamespaceId.value);
+      } catch (regErr) {
+        console.warn("Created flow but failed to set catalog namespace:", regErr);
+      }
+    }
+    ElMessage.success("Flow created and registered in catalog");
     isVisible.value = false;
-    emit("save-complete", newFlowId || props.flowId);
+    // Reset catalog name so the next invocation starts clean
+    catalogFlowName.value = "";
+    emit("create-complete", newFlowId);
   } catch (error: any) {
-    console.error("Error saving flow to catalog:", error);
+    console.error("Error creating flow in catalog:", error);
     ElMessage.error({
-      message: error?.message || "Failed to save flow",
+      message: error?.message || "Failed to create flow",
       duration: 5000,
     });
   }
 };
 
-const open = async () => {
-  await updateInitialPath();
-  isVisible.value = true;
-};
-
 defineExpose({
-  open,
+  open: () => {
+    isVisible.value = true;
+  },
   close: () => {
     isVisible.value = false;
   },
@@ -286,13 +232,13 @@ defineExpose({
 </script>
 
 <style scoped>
-.save-dialog-body {
+.create-dialog-body {
   display: flex;
   min-height: 420px;
   gap: var(--spacing-4);
 }
 
-.save-dialog-sidebar {
+.create-dialog-sidebar {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);
@@ -333,14 +279,14 @@ defineExpose({
   text-align: center;
 }
 
-.save-dialog-main {
+.create-dialog-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-.save-panel {
+.create-panel {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-4);
@@ -368,7 +314,7 @@ defineExpose({
   color: var(--color-text-primary);
 }
 
-.catalog-save-form {
+.catalog-create-form {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-4);

@@ -209,6 +209,9 @@ class FlowfileHandler:
         flow_exists = os.path.exists(flow.flow_settings.path)
         last_modified_ts = os.path.getmtime(flow.flow_settings.path) if flow_exists else -1
         flow.flow_settings.modified_on = last_modified_ts
+        # TODO: narrow this except and log at warning so real failures aren't
+        # hidden. Currently swallowing Exception keeps the tab bar responsive
+        # when hash computation fails, at the cost of masking real bugs.
         try:
             flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
         except Exception:
