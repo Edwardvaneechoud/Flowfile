@@ -1127,17 +1127,11 @@ def save_flow(
     if not flow_path:
         raise HTTPException(422, "No save path specified and flow has no existing path")
 
-    # Re-validate the final path. current_path comes from flow settings which
-    # can be set via POST /flow_settings without validation, so any path used
-    # for file I/O (or compared against via resolve()) must be sanitized here.
+    # Re-validate: current_path can be set via POST /flow_settings without validation.
     flow_path = validate_path_under_cwd(flow_path)
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
 
-    # Normalize using resolve() so symlinks/trailing slashes/./.. don't trigger "Save As"
-    is_new_path = (
-        bool(normalized_current)
-        and str(Path(flow_path).resolve()) != str(Path(normalized_current).resolve())
-    )
+    is_new_path = bool(normalized_current) and flow_path != normalized_current
 
     if is_new_path:
         user_id = current_user.id if current_user else None

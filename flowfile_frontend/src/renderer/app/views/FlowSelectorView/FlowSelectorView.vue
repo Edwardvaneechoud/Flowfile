@@ -11,12 +11,18 @@
       >
         <div
           class="flow-tab"
-          :class="{ active: selectedFlowId === flow.flow_id }"
+          :class="{ active: selectedFlowId === flow.flow_id, dirty: isDirty(flow.flow_id) }"
           @click="selectFlow(flow.flow_id)"
         >
           <div class="tab-content">
             <span class="material-icons tab-icon">account_tree</span>
             <span class="tab-name">{{ flow.name }}</span>
+            <span
+              v-if="isDirty(flow.flow_id)"
+              class="dirty-dot"
+              aria-label="Unsaved changes"
+              title="Unsaved changes"
+            ></span>
           </div>
           <span class="material-icons close-icon" @click.stop="confirmCloseTab(flow.flow_id)">
             close
@@ -46,6 +52,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from "vue";
 import { useNodeStore } from "../../stores/column-store";
+import { useEditorStore } from "../../stores/editor-store";
 import { FlowApi } from "../../api";
 import type { FlowSettings } from "../../types";
 import SaveDialog from "../../features/designer/components/SaveDialog.vue";
@@ -67,9 +74,41 @@ const emit = defineEmits(["flow-changed", "close-tab", "create-flow"]);
 const flows = ref<FlowSettings[]>([]);
 const selectedFlowId = ref<number | null>(null);
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const saveDialogVisible = ref(false);
 const pendingCloseFlowId = ref<number | null>(null);
 const isLoading = ref(false);
+
+const isDirty = (flowId: number): boolean => {
+  const flow = flows.value.find((f) => f.flow_id === flowId);
+  return flow?.has_unsaved_changes === true;
+};
+
+// Refresh dirty state for a single flow from the backend, mutating the local
+// flows[] entry in place so the tab bar re-renders.
+const refreshDirtyState = async (flowId: number | null) => {
+  if (flowId === null || flowId < 0) return;
+  try {
+    const settings = await FlowApi.getFlowSettings(flowId);
+    if (!settings) return;
+    const idx = flows.value.findIndex((f) => f.flow_id === flowId);
+    if (idx !== -1) {
+      flows.value[idx] = { ...flows.value[idx], has_unsaved_changes: settings.has_unsaved_changes };
+    }
+  } catch (err) {
+    // Non-critical: tab dot may be stale until the next refresh
+    console.debug("refreshDirtyState failed for flow", flowId, err);
+  }
+};
+
+// Debounce helper — coalesces rapid mutation events into a single refresh.
+let dirtyRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const scheduleDirtyRefresh = () => {
+  if (dirtyRefreshTimer) clearTimeout(dirtyRefreshTimer);
+  dirtyRefreshTimer = setTimeout(() => {
+    refreshDirtyState(selectedFlowId.value);
+  }, 400);
+};
 
 // Component references
 const saveConfirmationModal = ref<InstanceType<typeof SaveConfirmationModal> | null>(null);
@@ -123,6 +162,9 @@ const selectFlow = (flowId: number) => {
   if (props.onFlowChange) {
     props.onFlowChange(flowId);
   }
+  // Refresh the newly-selected tab's dirty state immediately so the dot
+  // reflects reality as soon as the user switches.
+  refreshDirtyState(flowId);
 };
 
 // Show confirmation dialog before closing tab — only if the flow has unsaved changes
@@ -162,6 +204,8 @@ const handleSaveComplete = (flowId: number) => {
   saveDialogVisible.value = false;
   emit("close-tab", flowId);
   pendingCloseFlowId.value = null;
+  // The saved flow is now clean; refresh its dirty state so the dot clears.
+  refreshDirtyState(flowId);
 };
 
 // If save is cancelled, keep the tab open
@@ -186,6 +230,15 @@ watch(
         selectedFlowId.value = newFlowId;
       }
     }
+  },
+);
+
+// Any graph mutation bumps editorStore.graphVersion; refresh the active tab's
+// dirty state (debounced) so the dot lights up live as the user edits.
+watch(
+  () => editorStore.graphVersion,
+  () => {
+    scheduleDirtyRefresh();
   },
 );
 
@@ -302,6 +355,22 @@ defineExpose({
   font-weight: var(--font-weight-medium);
   letter-spacing: 0.01em;
   color: var(--color-text-secondary);
+}
+
+/* TODO(ux): announce dirty-state changes via aria-live so screen readers
+   are notified when a flow becomes dirty, instead of relying on the static
+   aria-label alone. */
+.dirty-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-accent, #1976d2);
+  margin-left: var(--spacing-1, 4px);
+}
+
+.flow-tab.dirty .tab-name {
+  color: var(--color-text-primary);
 }
 
 .active .tab-name {

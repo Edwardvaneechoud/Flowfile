@@ -350,6 +350,7 @@ const pushFlowSettings = async () => {
     await updateFlowSettings(flowSettings.value);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
+    editorStore.bumpGraphVersion();
   }
 };
 
@@ -459,18 +460,15 @@ const handleCreateAction = async (flowPath: string) => {
 
 const handleQuickCreateAction = async () => {
   const fileName = getPreviewFileName();
-  // Use temp storage path - you'll need to replace 'temp://' with your actual temp storage path
-  console.log("Creating flow with name:", fileName);
   try {
     const createdFlowId = await createFlow(null, fileName);
     modalVisibleForQuickCreate.value = false;
-    quickCreateName.value = ""; // Reset the input
+    quickCreateName.value = "";
     nodeStore.setFlowId(createdFlowId);
 
     emit("refreshFlow");
   } catch (error) {
     console.error("Failed to create quick flow:", error);
-    // You might want to show an error message to the user here
   }
 };
 

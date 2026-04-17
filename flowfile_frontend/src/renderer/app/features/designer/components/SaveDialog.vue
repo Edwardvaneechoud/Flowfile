@@ -4,6 +4,7 @@
     title="Save Flow"
     width="70%"
     :close-on-click-modal="false"
+    custom-class="high-z-index-dialog"
     @closed="handleDialogClosed"
   >
     <div class="save-dialog-body">

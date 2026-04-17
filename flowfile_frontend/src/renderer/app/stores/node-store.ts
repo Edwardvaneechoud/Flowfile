@@ -256,7 +256,7 @@ export const useNodeStore = defineStore("node", {
         const result = await NodeApi.setNodeDescription(flowStore.flowId, nodeId, description);
 
         if (result === true) {
-          console.log("Description updated successfully");
+          useEditorStore().bumpGraphVersion();
         } else {
           console.warn("Unexpected response:", result);
         }
@@ -339,6 +339,7 @@ export const useNodeStore = defineStore("node", {
         const result = await NodeApi.setNodeReference(flowStore.flowId, nodeId, reference);
 
         if (result === true) {
+          editorStore.bumpGraphVersion();
           // Update nodeReference on the VueFlow node data
           const vf = flowStore.vueFlowInstance;
           if (vf) {
@@ -421,6 +422,7 @@ export const useNodeStore = defineStore("node", {
           node.data.nodeTemplate.item,
           inputData,
         );
+        useEditorStore().bumpGraphVersion();
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
@@ -449,6 +451,7 @@ export const useNodeStore = defineStore("node", {
         inputData.value.pos_y = node.position.y;
 
         const response = await NodeApi.updateUserDefinedSettings(nodeType, inputData.value);
+        useEditorStore().bumpGraphVersion();
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
@@ -478,6 +481,7 @@ export const useNodeStore = defineStore("node", {
         inputData.value.pos_y = node.position.y;
 
         const response = await NodeApi.updateSettingsDirectly(nodeType, inputData.value);
+        useEditorStore().bumpGraphVersion();
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
