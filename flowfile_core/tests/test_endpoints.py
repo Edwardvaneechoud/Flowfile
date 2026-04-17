@@ -621,6 +621,60 @@ def test_save_flow_to_catalog_unlinks_old_file_on_rename():
             db.commit()
 
 
+def test_save_flow_to_catalog_rejects_duplicate_name_in_namespace():
+    """A new registration may not share its display name with an existing,
+    distinct flow in the same namespace — users should overwrite instead."""
+    from flowfile_core.database.models import FlowRegistration
+
+    shared_name = "dup_name_collision"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    path_a = str(base_dir / "dup_name_source_a.yaml")
+    path_b = str(base_dir / "dup_name_source_b.yaml")
+    remove_flow(path_a)
+    remove_flow(path_b)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsDupNameCollision"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id_a = client.post("editor/create_flow", params={"flow_path": path_a}).json()
+    flow_id_b = client.post("editor/create_flow", params={"flow_path": path_b}).json()
+
+    expected_a = storage.flows_directory / f"{flow_id_a}_{shared_name}.yaml"
+    expected_b = storage.flows_directory / f"{flow_id_b}_{shared_name}.yaml"
+    for p in (expected_a, expected_b):
+        if p.exists():
+            p.unlink()
+
+    try:
+        resp_a = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_a, "flow_name": shared_name, "namespace_id": ns["id"]},
+        )
+        assert resp_a.status_code == 200, f"First save failed: {resp_a.text}"
+
+        resp_b = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id_b, "flow_name": shared_name, "namespace_id": ns["id"]},
+        )
+        assert resp_b.status_code == 409, (
+            f"Expected 409 for duplicate name, got {resp_b.status_code}: {resp_b.text}"
+        )
+        assert "already exists" in resp_b.text.lower()
+        # The second flow's file should NOT have been written.
+        assert not expected_b.exists(), (
+            "Rejected save should not have written a file"
+        )
+    finally:
+        for p in (expected_a, expected_b):
+            if p.exists():
+                p.unlink()
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path.in_([str(expected_a), str(expected_b)])
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_save_flow_to_catalog_rejects_filename_with_separators():
     """A flow_name containing path separators must be rejected with 403."""
     base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
@@ -639,6 +693,210 @@ def test_save_flow_to_catalog_rejects_filename_with_separators():
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
     finally:
         remove_flow(source_path)
+
+
+def test_overwrite_flow_in_catalog_preserves_metadata():
+    """Overwriting writes the source flow's YAML into the target's path while
+    keeping the target's name + namespace, and stamps the preserved
+    registration id onto the resulting in-memory flow."""
+    from flowfile_core.database.models import FlowRegistration
+
+    target_name = "alpha_overwrite_target"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path_a = str(base_dir / "overwrite_target_source.yaml")
+    source_path_b = str(base_dir / "overwrite_replacement_source.yaml")
+    remove_flow(source_path_a)
+    remove_flow(source_path_b)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsOverwriteMetadata"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    # Flow A: create directly at its catalog-managed path and register.
+    flow_id_a = client.post("editor/create_flow", params={"flow_path": source_path_a}).json()
+    target_path = storage.flows_directory / f"{flow_id_a}_{target_name}.yaml"
+    if target_path.exists():
+        target_path.unlink()
+    resp_a = client.post(
+        "/save_flow_to_catalog",
+        params={"flow_id": flow_id_a, "flow_name": target_name, "namespace_id": ns["id"]},
+    )
+    assert resp_a.status_code == 200, f"Initial catalog save failed: {resp_a.text}"
+    assert target_path.exists(), "Target catalog file should exist after initial save"
+
+    with get_db_context() as db:
+        reg = (
+            db.query(FlowRegistration)
+            .filter(FlowRegistration.flow_path == str(target_path))
+            .one()
+        )
+        target_registration_id = reg.id
+        original_namespace_id = reg.namespace_id
+        original_name = reg.name
+
+    # Flow B: separate flow we will push onto A's registration.
+    flow_id_b = client.post("editor/create_flow", params={"flow_path": source_path_b}).json()
+    add_node_placeholder("manual_input", node_id=1, flow_id=flow_id_b)
+    client.post("/save_flow", params={"flow_id": flow_id_b, "flow_path": source_path_b})
+
+    second_expected = None
+    try:
+        resp = client.post(
+            "/overwrite_flow_in_catalog",
+            params={"flow_id": flow_id_b, "target_registration_id": target_registration_id},
+        )
+        assert resp.status_code == 200, f"Overwrite failed: {resp.text}"
+        new_flow_id = resp.json()
+        assert new_flow_id != flow_id_b, "Overwrite should produce a new in-memory flow id"
+
+        # File on disk now belongs to the target path.
+        assert target_path.exists(), "Target file must still exist after overwrite"
+
+        # Catalog row preserved.
+        with get_db_context() as db:
+            reg = db.get(FlowRegistration, target_registration_id)
+            assert reg is not None, "Target registration must still exist"
+            assert reg.name == original_name, "Overwrite must not rename the catalog entry"
+            assert reg.namespace_id == original_namespace_id, (
+                "Overwrite must not move the catalog entry"
+            )
+
+        # The new in-memory flow links back to the preserved registration.
+        new_flow = flow_file_handler.get_flow(new_flow_id)
+        assert new_flow is not None, "New flow should be registered in the handler"
+        assert new_flow.flow_settings.source_registration_id == target_registration_id, (
+            "Overwritten flow must carry the preserved source_registration_id"
+        )
+    finally:
+        second_expected = target_path
+        if second_expected and second_expected.exists():
+            second_expected.unlink()
+        remove_flow(source_path_a)
+        remove_flow(source_path_b)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path == str(target_path)
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_overwrite_flow_in_catalog_404_on_unknown_registration():
+    """Unknown target_registration_id must produce a 404."""
+    flow_id = create_flow_with_manual_input_and_select()
+    resp = client.post(
+        "/overwrite_flow_in_catalog",
+        params={"flow_id": flow_id, "target_registration_id": 99999999},
+    )
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+
+def test_overwrite_flow_in_catalog_allows_path_outside_managed_dir():
+    """Catalog flows may be registered at arbitrary user-chosen paths (e.g. the
+    File System tab with 'Also register in catalog' enabled). Overwrite must
+    work for those too — we only rely on ``validate_path_under_cwd`` for
+    safety, not on managed-dir membership."""
+    from flowfile_core.database.models import FlowRegistration, User
+
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    target_path = str(base_dir / "outside_managed_target.yaml")
+    source_path = str(base_dir / "outside_managed_source.yaml")
+    remove_flow(target_path)
+    remove_flow(source_path)
+
+    # Seed the catalog-registered target file with a sentinel so we can prove
+    # the overwrite actually replaced the contents.
+    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(target_path).write_text("# sentinel pre-overwrite\n")
+
+    with get_db_context() as db:
+        local_user = db.query(User).filter_by(username="local_user").one()
+        reg = FlowRegistration(
+            name="outside_target",
+            flow_path=target_path,
+            owner_id=local_user.id,
+        )
+        db.add(reg)
+        db.commit()
+        db.refresh(reg)
+        reg_id = reg.id
+
+    # Source flow lives at a different user-chosen path.
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+    add_node_placeholder("manual_input", node_id=1, flow_id=flow_id)
+    client.post("/save_flow", params={"flow_id": flow_id, "flow_path": source_path})
+
+    try:
+        resp = client.post(
+            "/overwrite_flow_in_catalog",
+            params={"flow_id": flow_id, "target_registration_id": reg_id},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert Path(target_path).exists(), "Target file must exist after overwrite"
+        assert Path(target_path).read_text() != "# sentinel pre-overwrite\n", (
+            "Overwrite must replace the sentinel contents"
+        )
+    finally:
+        Path(target_path).unlink(missing_ok=True)
+        remove_flow(source_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(FlowRegistration.id == reg_id).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_overwrite_flow_in_catalog_403_on_foreign_owner():
+    """A user must not be able to overwrite a catalog flow they do not own."""
+    from flowfile_core.database.models import FlowRegistration
+
+    target_name = "foreign_owner_overwrite"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path = str(base_dir / "foreign_owner_source.yaml")
+    remove_flow(source_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsForeignOwnerOverwrite"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+    target_path = storage.flows_directory / f"{flow_id}_{target_name}.yaml"
+    if target_path.exists():
+        target_path.unlink()
+    resp = client.post(
+        "/save_flow_to_catalog",
+        params={"flow_id": flow_id, "flow_name": target_name, "namespace_id": ns["id"]},
+    )
+    assert resp.status_code == 200, f"Initial save failed: {resp.text}"
+    registered_flow_id = resp.json()
+
+    with get_db_context() as db:
+        reg = (
+            db.query(FlowRegistration)
+            .filter(FlowRegistration.flow_path == str(target_path))
+            .one()
+        )
+        target_registration_id = reg.id
+        original_owner_id = reg.owner_id
+        # Flip ownership to a non-existent user so the route rejects us.
+        reg.owner_id = original_owner_id + 99999
+        db.commit()
+
+    try:
+        resp = client.post(
+            "/overwrite_flow_in_catalog",
+            params={
+                "flow_id": registered_flow_id,
+                "target_registration_id": target_registration_id,
+            },
+        )
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+    finally:
+        if target_path.exists():
+            target_path.unlink()
+        remove_flow(source_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.id == target_registration_id
+            ).delete(synchronize_session=False)
+            db.commit()
 
 
 def test_save_flow_get_deprecation_header():

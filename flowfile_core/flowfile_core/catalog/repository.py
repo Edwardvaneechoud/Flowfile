@@ -161,6 +161,8 @@ class CatalogRepository(Protocol):
 
     def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None: ...
 
+    def list_tables_by_name(self, name: str) -> list[CatalogTable]: ...
+
     def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
 
     def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]: ...
@@ -562,6 +564,14 @@ class SQLAlchemyCatalogRepository:
 
     def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None:
         return self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).first()
+
+    def list_tables_by_name(self, name: str) -> list[CatalogTable]:
+        return (
+            self._db.query(CatalogTable)
+            .filter_by(name=name)
+            .order_by(CatalogTable.namespace_id.asc(), CatalogTable.id.asc())
+            .all()
+        )
 
     def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
         q = self._db.query(CatalogTable)

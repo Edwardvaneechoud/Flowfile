@@ -60,15 +60,45 @@
         <div v-show="saveMode === 'catalog'" class="save-panel">
           <div class="catalog-save-form">
             <div class="form-group">
-              <label>Flow name</label>
-              <el-input v-model="catalogFlowName" placeholder="my_flow" />
-              <span class="form-hint"
-                >File will be saved as <code>{{ catalogFilePath }}</code></span
-              >
+              <label>Browse the catalog</label>
+              <catalog-flow-picker
+                v-model="selectedRegistrationId"
+                @select-flow="handleOverwriteTargetSelected"
+                @select-namespace="handleNamespaceSelected"
+                @flows-loaded="handleFlowsLoaded"
+              />
+              <span v-if="overwriteTargetHint" class="form-hint overwrite-hint">
+                Will overwrite <code>{{ overwriteTargetHint }}</code>
+                <el-button text type="primary" size="small" @click="clearOverwriteSelection">
+                  Clear
+                </el-button>
+              </span>
+              <span v-else class="form-hint">
+                Pick an existing flow to overwrite, or save as new below.
+              </span>
             </div>
-            <div class="form-group">
-              <label>Namespace</label>
-              <catalog-namespace-picker v-model="selectedNamespaceId" />
+            <div v-if="!selectedRegistrationId" class="catalog-new-section">
+              <div class="section-divider">
+                <span class="divider-label">Or save as new</span>
+              </div>
+              <div class="form-group">
+                <label>Flow name</label>
+                <el-input
+                  v-model="catalogFlowName"
+                  placeholder="my_flow"
+                  @input="clearOverwriteSelection"
+                />
+                <span v-if="nameCollisionFlow" class="form-hint collision-hint">
+                  A flow named <code>{{ nameCollisionFlow.name }}</code> already exists here.
+                  <el-button text type="primary" size="small" @click="selectCollisionForOverwrite">
+                    Overwrite it instead
+                  </el-button>
+                </span>
+                <span v-else class="form-hint"
+                  >File will be saved as <code>{{ catalogFilePath }}</code> in
+                  <strong>{{ selectedNamespaceName || "the selected namespace" }}</strong></span
+                >
+              </div>
             </div>
           </div>
         </div>
@@ -83,7 +113,7 @@
           :disabled="!canSaveToCatalog"
           @click="handleCatalogSave"
         >
-          Save to Catalog
+          {{ catalogPrimaryLabel }}
         </el-button>
       </div>
     </template>
@@ -98,12 +128,15 @@ import { FileInfo } from "../../../components/common/FileBrowser/types";
 import {
   saveFlow,
   saveFlowToCatalog,
+  overwriteFlowInCatalog,
   isInternalFlowfilePath,
 } from "../../../components/layout/Header/utils";
 import { getCatalogFlowsDirectory } from "../../../api/file.api";
 import { getFlowSettings } from "../../../components/nodes/nodeLogic";
 import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
+import CatalogFlowPicker from "./CatalogFlowPicker.vue";
+import type { FlowRegistration } from "../../../types";
 
 const props = defineProps({
   visible: {
@@ -127,7 +160,16 @@ const saveMode = ref<"file" | "catalog">("file");
 // Catalog options
 const registerInCatalog = ref(true);
 const selectedNamespaceId = ref<number | null>(null);
+const selectedNamespaceName = ref<string | null>(null);
 const catalogFlowName = ref("");
+// Picker-driven catalog state: if ``selectedRegistrationId`` is set, saving
+// overwrites that existing flow; otherwise we create a new registration in
+// ``selectedNamespaceId`` using ``catalogFlowName``.
+const selectedRegistrationId = ref<number | null>(null);
+const overwriteTargetHint = ref<string>("");
+// Flows in the currently-selected namespace — used to detect name collisions
+// before the user hits save so we can offer the overwrite shortcut.
+const namespaceFlows = ref<FlowRegistration[]>([]);
 // Always points at the backend-managed flows dir (``~/.flowfile/flows`` on
 // local, ``/data/user/flows`` in Docker).  Used as the target for Catalog-tab
 // saves so they land in the managed location regardless of where the file
@@ -172,6 +214,10 @@ const handleDialogClosed = () => {
 };
 
 const updateInitialPath = async () => {
+  // Reset picker state each open so nothing leaks between sessions.
+  selectedRegistrationId.value = null;
+  overwriteTargetHint.value = "";
+
   // Always refresh the managed catalog flows directory — this is the target
   // for the Catalog tab and must never be influenced by the user's last
   // browsed directory.
@@ -253,25 +299,92 @@ const catalogFilePath = computed(() => {
   return `${dir}${sep}${props.flowId}_${stem}.yaml`;
 });
 
+const normalizedCatalogName = computed(() =>
+  catalogFlowName.value.trim().replace(/\.(yaml|yml|json)$/i, ""),
+);
+
+const nameCollisionFlow = computed<FlowRegistration | null>(() => {
+  if (selectedRegistrationId.value !== null) return null;
+  const candidate = normalizedCatalogName.value;
+  if (!candidate) return null;
+  return namespaceFlows.value.find((f) => f.name === candidate) ?? null;
+});
+
 const canSaveToCatalog = computed(() => {
+  if (selectedRegistrationId.value !== null) {
+    return true;
+  }
+  if (nameCollisionFlow.value) return false;
   return catalogFlowName.value.trim().length > 0 && selectedNamespaceId.value !== null;
 });
+
+const catalogPrimaryLabel = computed(() => {
+  if (selectedRegistrationId.value !== null && overwriteTargetHint.value) {
+    return `Overwrite "${overwriteTargetHint.value}"`;
+  }
+  if (selectedRegistrationId.value !== null) {
+    return "Overwrite flow";
+  }
+  return "Save to Catalog";
+});
+
+const handleOverwriteTargetSelected = (payload: {
+  flow: FlowRegistration;
+  namespaceName: string | null;
+}) => {
+  const prefix = payload.namespaceName ? `${payload.namespaceName}/` : "";
+  overwriteTargetHint.value = `${prefix}${payload.flow.name}`;
+};
+
+const handleNamespaceSelected = (payload: {
+  namespaceId: number;
+  namespaceName: string | null;
+}) => {
+  selectedNamespaceId.value = payload.namespaceId;
+  selectedNamespaceName.value = payload.namespaceName;
+};
+
+const clearOverwriteSelection = () => {
+  if (selectedRegistrationId.value !== null) {
+    selectedRegistrationId.value = null;
+    overwriteTargetHint.value = "";
+  }
+};
+
+const handleFlowsLoaded = (flows: FlowRegistration[]) => {
+  namespaceFlows.value = flows;
+};
+
+const selectCollisionForOverwrite = () => {
+  const target = nameCollisionFlow.value;
+  if (!target) return;
+  selectedRegistrationId.value = target.id;
+  const prefix = selectedNamespaceName.value ? `${selectedNamespaceName.value}/` : "";
+  overwriteTargetHint.value = `${prefix}${target.name}`;
+};
 
 const handleCatalogSave = async () => {
   if (!canSaveToCatalog.value) return;
   try {
-    const newFlowId = await saveFlowToCatalog(
-      props.flowId,
-      catalogFlowName.value.trim(),
-      selectedNamespaceId.value as number,
-    );
-    ElMessage.success("Flow saved and registered in catalog");
+    let newFlowId: number;
+    if (selectedRegistrationId.value !== null) {
+      newFlowId = await overwriteFlowInCatalog(props.flowId, selectedRegistrationId.value);
+      ElMessage.success("Existing catalog flow overwritten");
+    } else {
+      newFlowId = await saveFlowToCatalog(
+        props.flowId,
+        catalogFlowName.value.trim(),
+        selectedNamespaceId.value as number,
+      );
+      ElMessage.success("Flow saved and registered in catalog");
+    }
     isVisible.value = false;
     emit("save-complete", newFlowId || props.flowId);
   } catch (error: any) {
     console.error("Error saving flow to catalog:", error);
+    const detail = error?.response?.data?.detail;
     ElMessage.error({
-      message: error?.message || "Failed to save flow",
+      message: detail || error?.message || "Failed to save flow",
       duration: 5000,
     });
   }
@@ -378,6 +491,53 @@ defineExpose({
   flex-direction: column;
   gap: var(--spacing-4);
   padding: var(--spacing-2);
+}
+
+.overwrite-hint {
+  color: var(--color-accent, #1976d2);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.collision-hint {
+  color: var(--color-warning, #c77700);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.catalog-new-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.section-divider {
+  position: relative;
+  text-align: center;
+  margin: var(--spacing-2) 0;
+}
+
+.section-divider::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-color: var(--color-border-light);
+}
+
+.divider-label {
+  position: relative;
+  display: inline-block;
+  padding: 0 var(--spacing-3);
+  background-color: var(--color-background-primary);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .dialog-footer {

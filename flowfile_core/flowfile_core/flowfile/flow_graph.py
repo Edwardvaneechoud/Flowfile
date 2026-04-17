@@ -414,11 +414,25 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             table_record = None
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
-            elif node_catalog_reader.catalog_table_name:
-                table_record = repo.get_table_by_name(
-                    node_catalog_reader.catalog_table_name,
-                    node_catalog_reader.catalog_namespace_id,
+            else:
+                reference = (
+                    node_catalog_reader.catalog_full_table_name
+                    or node_catalog_reader.catalog_table_name
                 )
+                if reference:
+                    try:
+                        table_record = svc.resolve_table(
+                            reference,
+                            default_namespace_id=node_catalog_reader.catalog_namespace_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Could not resolve catalog table reference %r (ns=%s) for node %s",
+                            reference,
+                            node_catalog_reader.catalog_namespace_id,
+                            node_catalog_reader.node_id,
+                            exc_info=True,
+                        )
             if table_record is not None:
                 table_type = table_record.table_type
                 if table_type == "virtual":

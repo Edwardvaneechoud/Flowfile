@@ -66,3 +66,22 @@ export const saveFlowToCatalog = async (
   });
   return response.data as number;
 };
+
+/**
+ * Overwrite an existing catalog flow's YAML with the contents of ``flowId``.
+ * The target registration's name and namespace are preserved; only the file
+ * on disk changes. Returns the new in-memory flow id (Save-As semantics).
+ */
+export const overwriteFlowInCatalog = async (
+  flowId: number,
+  targetRegistrationId: number,
+): Promise<number> => {
+  const response = await axios.post("/overwrite_flow_in_catalog", null, {
+    params: {
+      flow_id: flowId,
+      target_registration_id: targetRegistrationId,
+    },
+    headers: { accept: "application/json" },
+  });
+  return response.data as number;
+};

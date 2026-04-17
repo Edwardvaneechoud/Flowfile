@@ -32,6 +32,7 @@ from flowfile_core.catalog.delta_utils import (
     table_exists,
 )
 from flowfile_core.catalog.exceptions import (
+    AmbiguousTableError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -150,11 +151,32 @@ class CatalogService:
     # Private helpers
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _reject_dot_in_name(name: str, kind: str) -> None:
+        if "." in name:
+            raise ValueError(
+                f"{kind} name '{name}' must not contain '.' — the dot is reserved for qualified "
+                f"table references (e.g. 'schema.table_name')."
+            )
+
+    @staticmethod
+    def _format_full_name(namespace_name: str | None, table_name: str) -> str:
+        if namespace_name:
+            return f"{namespace_name}.{table_name}"
+        return table_name
+
+    def _resolve_namespace_name(self, namespace_id: int | None) -> str | None:
+        if namespace_id is None:
+            return None
+        ns = self.repo.get_namespace(namespace_id)
+        return ns.name if ns is not None else None
+
     def _validate_table_registration(self, name: str, namespace_id: int | None) -> None:
         """Check that the namespace exists and the table name is unique.
 
         Raises NamespaceNotFoundError or TableExistsError on validation failure.
         """
+        self._reject_dot_in_name(name, "Table")
         if namespace_id is not None:
             ns = self.repo.get_namespace(namespace_id)
             if ns is None:
@@ -162,6 +184,90 @@ class CatalogService:
         existing = self.repo.get_table_by_name(name, namespace_id)
         if existing is not None:
             raise TableExistsError(name=name, namespace_id=namespace_id)
+
+    def resolve_table(
+        self,
+        reference: str,
+        default_namespace_id: int | None = None,
+        strict: bool = False,
+    ) -> CatalogTable:
+        """Resolve a ``"ns.table"`` or bare ``"table"`` reference to a single CatalogTable."""
+        if not reference:
+            raise TableNotFoundError(name=reference)
+
+        if "." in reference:
+            ns_name, _, table_name = reference.partition(".")
+            if not ns_name or not table_name:
+                raise TableNotFoundError(name=reference)
+            return self._resolve_qualified(ns_name, table_name, strict=strict)
+
+        return self._resolve_bare(reference, default_namespace_id, strict=strict)
+
+    def _all_namespaces_named(self, ns_name: str) -> list[CatalogNamespace]:
+        roots = self.repo.list_root_namespaces()
+        out: list[CatalogNamespace] = list(roots)
+        for root in roots:
+            out.extend(self.repo.list_child_namespaces(root.id))
+        return [ns for ns in out if ns.name == ns_name]
+
+    def _resolve_qualified(self, ns_name: str, table_name: str, *, strict: bool) -> CatalogTable:
+        candidates_ns = self._all_namespaces_named(ns_name)
+        if not candidates_ns:
+            raise NamespaceNotFoundError(name=ns_name)
+
+        tables: list[CatalogTable] = []
+        for ns in candidates_ns:
+            t = self.repo.get_table_by_name(table_name, ns.id)
+            if t is not None:
+                tables.append(t)
+        if not tables:
+            raise TableNotFoundError(name=f"{ns_name}.{table_name}")
+        if len(tables) == 1:
+            return tables[0]
+        return self._disambiguate(f"{ns_name}.{table_name}", tables, strict=strict)
+
+    def _resolve_bare(
+        self, name: str, default_namespace_id: int | None, *, strict: bool
+    ) -> CatalogTable:
+        if default_namespace_id is not None:
+            t = self.repo.get_table_by_name(name, default_namespace_id)
+            if t is None:
+                raise TableNotFoundError(name=name)
+            return t
+        matches = self.repo.list_tables_by_name(name)
+        if not matches:
+            raise TableNotFoundError(name=name)
+        if len(matches) == 1:
+            return matches[0]
+        return self._disambiguate(name, matches, strict=strict)
+
+    def _disambiguate(
+        self, reference: str, matches: list[CatalogTable], *, strict: bool
+    ) -> CatalogTable:
+        candidates = [
+            {
+                "id": t.id,
+                "name": t.name,
+                "namespace_id": t.namespace_id,
+                "namespace_name": self._resolve_namespace_name(t.namespace_id),
+            }
+            for t in matches
+        ]
+        if strict:
+            raise AmbiguousTableError(name=reference, candidates=candidates)
+        picked_candidate, *other_candidates = candidates
+        alternatives = ", ".join(
+            f"{self._format_full_name(c['namespace_name'], c['name'])} (id={c['id']})"
+            for c in other_candidates
+        )
+        logger.warning(
+            "Ambiguous table reference '%s' resolved to id=%s (%s). Other candidates: %s",
+            reference,
+            picked_candidate["id"],
+            self._format_full_name(picked_candidate["namespace_name"], picked_candidate["name"]),
+            alternatives,
+        )
+        return matches[0]
 
     @dataclass(frozen=True)
     class CatalogMaterializationResult:
@@ -394,6 +500,7 @@ class CatalogService:
         NamespaceExistsError
             If a namespace with the same name already exists under the parent.
         """
+        self._reject_dot_in_name(name, "Namespace")
         level = 0
         if parent_id is not None:
             parent = self.repo.get_namespace(parent_id)
@@ -1098,12 +1205,6 @@ class CatalogService:
         user_id: int | None = None,
         compute_laziness: bool = False,
     ) -> CatalogTableOut:
-        """Convert a CatalogTable ORM instance to its Pydantic output schema.
-
-        Laziness blockers require re-parsing the producer flow from disk, so by default
-        this skips that work. Callers that need blockers should pass compute_laziness=True
-        or recompute on demand via _compute_laziness_blockers.
-        """
         columns = self._parse_schema_columns(table)
         source_registration_name = self._resolve_flow_name(table.source_registration_id)
         producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
@@ -1123,10 +1224,15 @@ class CatalogService:
             producer = self.repo.get_flow(table.producer_registration_id)
             laziness_blockers = self._compute_laziness_blockers(producer.flow_path if producer else None)
 
+        namespace_name = self._resolve_namespace_name(table.namespace_id)
+        full_table_name = self._format_full_name(namespace_name, table.name)
+
         return CatalogTableOut(
             id=table.id,
             name=table.name,
             namespace_id=table.namespace_id,
+            namespace_name=namespace_name,
+            full_table_name=full_table_name,
             description=table.description,
             owner_id=table.owner_id,
             file_exists=fe,
@@ -1159,6 +1265,11 @@ class CatalogService:
         table_ids = [t.id for t in tables]
         fav_ids = self.repo.bulk_get_favorite_table_ids(user_id, table_ids)
 
+        ns_name_cache: dict[int, str | None] = {}
+        for t in tables:
+            if t.namespace_id is not None and t.namespace_id not in ns_name_cache:
+                ns_name_cache[t.namespace_id] = self._resolve_namespace_name(t.namespace_id)
+
         result: list[CatalogTableOut] = []
         for table in tables:
             columns = self._parse_schema_columns(table)
@@ -1170,11 +1281,16 @@ class CatalogService:
 
             fe = self._check_file_exists(table)
 
+            namespace_name = ns_name_cache.get(table.namespace_id) if table.namespace_id is not None else None
+            full_table_name = self._format_full_name(namespace_name, table.name)
+
             result.append(
                 CatalogTableOut(
                     id=table.id,
                     name=table.name,
                     namespace_id=table.namespace_id,
+                    namespace_name=namespace_name,
+                    full_table_name=full_table_name,
                     description=table.description,
                     owner_id=table.owner_id,
                     file_exists=fe,
@@ -1608,6 +1724,35 @@ class CatalogService:
         if table is None:
             raise TableNotFoundError(table_id=table_id)
         return self._table_to_out(table, user_id=user_id)
+
+    def resolve_table_out(
+        self,
+        reference: str,
+        default_namespace_id: int | None = None,
+        strict: bool = False,
+        user_id: int | None = None,
+    ) -> tuple[CatalogTableOut, list[dict]]:
+        """Resolve a reference and return its DTO plus ambiguity warnings (empty when unambiguous).
+
+        Warnings are populated only when the reference is a bare name matching multiple
+        rows; qualified references (``"ns.name"``) and filtered bare references
+        (``default_namespace_id`` set) never produce warnings.
+        """
+        warnings: list[dict] = []
+        if not strict and "." not in reference and default_namespace_id is None:
+            matches = self.repo.list_tables_by_name(reference)
+            if len(matches) > 1:
+                warnings = [
+                    {
+                        "id": t.id,
+                        "name": t.name,
+                        "namespace_id": t.namespace_id,
+                        "namespace_name": self._resolve_namespace_name(t.namespace_id),
+                    }
+                    for t in matches
+                ]
+        table = self.resolve_table(reference, default_namespace_id=default_namespace_id, strict=strict)
+        return self._table_to_out(table, user_id=user_id), warnings
 
     def list_tables(self, namespace_id: int | None = None, user_id: int | None = None) -> list[CatalogTableOut]:
         """List tables, optionally filtered by namespace."""
@@ -2203,21 +2348,34 @@ class CatalogService:
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
         """Convert a FlowSchedule ORM instance to its Pydantic output schema, populating trigger table info."""
-        # Resolve single table trigger name
+        # Resolve single table trigger
         trigger_table_name: str | None = None
+        trigger_namespace_id: int | None = None
+        trigger_namespace_name: str | None = None
+        trigger_full_table_name: str | None = None
         if schedule.trigger_table_id is not None:
             table = self.repo.get_table(schedule.trigger_table_id)
             if table is not None:
                 trigger_table_name = table.name
+                trigger_namespace_id = table.namespace_id
+                trigger_namespace_name = self._resolve_namespace_name(table.namespace_id)
+                trigger_full_table_name = self._format_full_name(trigger_namespace_name, table.name)
 
         # Resolve table set trigger IDs and names
         trigger_table_ids: list[int] = []
         trigger_table_names: list[str] = []
+        trigger_full_table_names: list[str] = []
         if schedule.schedule_type == "table_set_trigger":
             trigger_table_ids = self.repo.get_trigger_table_ids(schedule.id)
             for tid in trigger_table_ids:
                 table = self.repo.get_table(tid)
-                trigger_table_names.append(table.name if table else f"#{tid}")
+                if table is None:
+                    trigger_table_names.append(f"#{tid}")
+                    trigger_full_table_names.append(f"#{tid}")
+                    continue
+                trigger_table_names.append(table.name)
+                ns_name = self._resolve_namespace_name(table.namespace_id)
+                trigger_full_table_names.append(self._format_full_name(ns_name, table.name))
 
         return FlowScheduleOut(
             id=schedule.id,
@@ -2230,8 +2388,12 @@ class CatalogService:
             interval_seconds=schedule.interval_seconds,
             trigger_table_id=schedule.trigger_table_id,
             trigger_table_name=trigger_table_name,
+            trigger_namespace_id=trigger_namespace_id,
+            trigger_namespace_name=trigger_namespace_name,
+            trigger_full_table_name=trigger_full_table_name,
             trigger_table_ids=trigger_table_ids,
             trigger_table_names=trigger_table_names,
+            trigger_full_table_names=trigger_full_table_names,
             last_triggered_at=schedule.last_triggered_at,
             last_trigger_table_updated_at=schedule.last_trigger_table_updated_at,
             created_at=schedule.created_at,
@@ -2586,19 +2748,34 @@ class CatalogService:
         }
 
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
-        """Return Delta table name->dir mapping + virtual table name->id mapping."""
+        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
         tables = self.repo.list_tables()
+        bare_counts: dict[str, int] = {}
+        for t in tables:
+            if t.table_type == "virtual" or (t.file_path and is_delta_table(Path(t.file_path))):
+                bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
+
         delta_map: dict[str, str] = {}
         virtual_map: dict[str, int] = {}
         for table in tables:
+            ns_name = self._resolve_namespace_name(table.namespace_id)
+            qualified = self._format_full_name(ns_name, table.name)
+            include_bare = bare_counts.get(table.name, 0) == 1
             if table.table_type == "virtual":
-                virtual_map[table.name] = table.id
+                virtual_map[qualified] = table.id
+                if include_bare and qualified != table.name:
+                    virtual_map[table.name] = table.id
             elif table.file_path and is_delta_table(Path(table.file_path)):
-                delta_map[table.name] = Path(table.file_path).name
+                dir_name = Path(table.file_path).name
+                delta_map[qualified] = dir_name
+                if include_bare and qualified != table.name:
+                    delta_map[table.name] = dir_name
         return delta_map, virtual_map
 
     def execute_sql_query(self, query: str, max_rows: int = 10_000, user_id: int | None = None) -> SqlQueryResult:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
+        import re as _re
+
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -2613,18 +2790,33 @@ class CatalogService:
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
 
-        # Resolve virtual tables to IPC bytes so the worker can register them
+        qualified_names = [n for n in {*delta_map, *virtual_map} if "." in n]
+        for qname in sorted(qualified_names, key=len, reverse=True):
+            ns, _, table = qname.partition(".")
+            ns_esc, table_esc = _re.escape(ns), _re.escape(table)
+            ns_part = rf'(?:(?<![\w"]){ns_esc}|"{ns_esc}")'
+            table_part = rf'(?:{table_esc}(?![\w"])|"{table_esc}")'
+            pattern = _re.compile(rf"{ns_part}\s*\.\s*{table_part}")
+            query = pattern.sub(f'"{qname}"', query)
+
+        referenced_virtuals = {vname for vname in virtual_map if _re.search(_re.escape(vname), query)}
+
         virtual_ipc: dict[str, str] = {}
-        for vname, vid in virtual_map.items():
-            try:
-                lf = self.resolve_virtual_flow_table(
-                    vid, user_id=user_id, run_location="remote" if _should_offload() else "local"
-                )
-                buf = io.BytesIO()
-                lf.collect().write_ipc(buf)
-                virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
-            except Exception:
-                logger.warning("Could not resolve virtual table %r for SQL", vname)
+        ipc_by_id: dict[int, str] = {}
+        for vname in referenced_virtuals:
+            vid = virtual_map[vname]
+            if vid not in ipc_by_id:
+                try:
+                    lf = self.resolve_virtual_flow_table(
+                        vid, user_id=user_id, run_location="remote" if _should_offload() else "local"
+                    )
+                    buf = io.BytesIO()
+                    lf.collect().write_ipc(buf)
+                    ipc_by_id[vid] = base64.b64encode(buf.getvalue()).decode()
+                except Exception:
+                    logger.warning("Could not resolve virtual table %r for SQL", vname)
+                    continue
+            virtual_ipc[vname] = ipc_by_id[vid]
 
         try:
             result = trigger_sql_query(query, delta_map, max_rows, virtual_ipc=virtual_ipc or None)

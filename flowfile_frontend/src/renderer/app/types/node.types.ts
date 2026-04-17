@@ -760,6 +760,7 @@ export interface NodeCatalogWriter extends NodeBase {
 
 export interface NodeCatalogReader extends NodeBase {
   catalog_table_id: number | null;
+  catalog_full_table_name: string | null;
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;

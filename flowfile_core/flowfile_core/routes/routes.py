@@ -41,9 +41,12 @@ from flowfile_core.fileExplorer.funcs import (
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.catalog_helpers import (
+    FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
     auto_register_flow,
+    find_registration_by_name,
     find_registration_by_path,
+    find_registration_by_registration_id,
     register_flow_in_namespace,
     resolve_source_registration_id,
 )
@@ -1238,6 +1241,21 @@ def save_flow_to_catalog(
     # Overwrite guard: if the resolved target file is already registered to a
     # different flow, or exists on disk without any registration, refuse.
     source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
+
+    # Pre-save name-collision check — reject BEFORE writing any YAML so a
+    # failed save doesn't leave orphaned files on disk.  Two flows with the
+    # same display name in one namespace is confusing in the catalog picker;
+    # the correct path is to overwrite the existing entry instead.
+    existing_by_name = find_registration_by_name(stem, namespace_id)
+    if existing_by_name is not None and existing_by_name.id != source_registration_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A flow named '{stem}' already exists in this namespace. "
+                "Select it in the catalog picker to overwrite, or choose a different name."
+            ),
+        )
+
     existing_reg = find_registration_by_path(flow_path)
     if existing_reg is not None and existing_reg.id != source_registration_id:
         raise HTTPException(
@@ -1255,8 +1273,11 @@ def save_flow_to_catalog(
 
     user_id = current_user.id if current_user else None
 
-    def _register(fp: str, n: str, uid: int | None) -> None:
-        register_flow_in_namespace(fp, n, uid, namespace_id)
+    # Always register under the user-typed ``stem`` rather than the filename
+    # (``{flow_id}_{stem}``) so the catalog picker shows exactly what the user
+    # typed — and so the name-collision check below compares apples to apples.
+    def _register(fp: str, _n: str, uid: int | None) -> None:
+        register_flow_in_namespace(fp, stem, uid, namespace_id)
 
     if is_new_path:
         try:
@@ -1268,6 +1289,8 @@ def save_flow_to_catalog(
                 on_resolve_registration=resolve_source_registration_id,
             )
         except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        except FlowNameNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
 
         # If we renamed within the managed flows directory, unlink the old file.
@@ -1286,10 +1309,102 @@ def save_flow_to_catalog(
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
     try:
-        register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+        register_flow_in_namespace(flow_path, stem, user_id, namespace_id)
     except FlowPathNamespaceCollision as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+    except FlowNameNamespaceCollision as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
     return flow_id
+
+
+@router.post("/overwrite_flow_in_catalog", tags=["editor"])
+def overwrite_flow_in_catalog(
+    flow_id: int,
+    target_registration_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Overwrite an existing catalog flow's YAML with the contents of another flow.
+
+    Unlike ``/save_flow_to_catalog``, this intentionally writes over an existing
+    registration.  The target registration's name and namespace are preserved;
+    only the file contents on disk change.  Primary use case: reverting a flow
+    to an older version by loading that version and overwriting the canonical
+    catalog entry.
+
+    Returns the (possibly new) flow id so the frontend can switch to the target.
+    """
+    user_id = current_user.id if current_user else None
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+
+    target = find_registration_by_registration_id(target_registration_id)
+    if target is None:
+        raise HTTPException(404, "Target catalog registration not found")
+
+    # Overwrite is destructive — gate strictly on ownership even though
+    # ``update_flow`` itself does not.
+    if user_id is None or user_id != target.owner_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to overwrite this catalog flow",
+        )
+
+    target_path = validate_path_under_cwd(target.flow_path)
+    managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
+
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+
+    # Same-path case: current flow already lives at the target path, so just
+    # re-save in place and keep the registration pointer fresh.
+    if normalized_current == target_path:
+        resolve_source_registration_id(flow)
+        flow.save_flow(flow_path=target_path)
+        _touch_flow_registration(target_registration_id)
+        return flow_id
+
+    new_flow_id = flow_file_handler.save_as_flow(
+        flow_id=flow_id,
+        new_path=target_path,
+        user_id=user_id,
+        on_catalog_register=None,  # registration already exists; preserve it
+        on_resolve_registration=resolve_source_registration_id,
+    )
+
+    # If the source flow lived inside the managed dir on a different file,
+    # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
+    # up files under the managed root; user-owned paths elsewhere are left
+    # alone since we don't want to silently delete files the user manages.
+    if (
+        normalized_current
+        and normalized_current != target_path
+        and normalized_current.startswith(managed_root)
+    ):
+        try:
+            os.unlink(normalized_current)
+        except OSError:
+            logger.info(
+                f"Could not unlink old managed flow file {normalized_current}",
+                exc_info=True,
+            )
+
+    _touch_flow_registration(target_registration_id)
+    return new_flow_id
+
+
+def _touch_flow_registration(registration_id: int) -> None:
+    """Bump ``updated_at`` on a FlowRegistration row after overwrite."""
+    from datetime import datetime
+
+    from flowfile_core.database.models import FlowRegistration
+
+    with get_db_context() as db:
+        reg = db.get(FlowRegistration, registration_id)
+        if reg is None:
+            return
+        reg.updated_at = datetime.utcnow()
+        db.commit()
 
 
 @router.get("/flow_data", tags=["manager"])

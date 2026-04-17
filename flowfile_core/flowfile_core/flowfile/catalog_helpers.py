@@ -21,6 +21,16 @@ class FlowPathNamespaceCollision(Exception):
     """Raised when a flow_path already exists under a different namespace."""
 
 
+class FlowNameNamespaceCollision(Exception):
+    """Raised when a new registration would share its display name with an
+    existing, distinct flow in the same namespace.
+
+    The catalog picker lists flows by ``name``; allowing two entries with the
+    same name in one namespace forces users to guess which one they picked.
+    The overwrite flow is the correct path for reusing an existing name.
+    """
+
+
 @dataclass(frozen=True)
 class FlowRegistrationSnapshot:
     """Detached snapshot of a ``FlowRegistration`` row.
@@ -92,8 +102,18 @@ def register_flow_in_namespace(
                 namespace_id=namespace_id,
             )
             return
+        reg_name = name or Path(flow_path).stem
+        name_clash = service.repo.get_flow_by_name(reg_name, namespace_id)
+        if name_clash is not None:
+            # New registration would share its display name with an existing,
+            # distinct flow in the same namespace.  The caller should overwrite
+            # instead — raise so the route can translate to 409 with guidance.
+            raise FlowNameNamespaceCollision(
+                f"A flow named '{reg_name}' already exists in this namespace. "
+                "Select it in the catalog picker to overwrite, or choose a different name."
+            )
         reg = FlowRegistration(
-            name=name or Path(flow_path).stem,
+            name=reg_name,
             flow_path=flow_path,
             namespace_id=namespace_id,
             owner_id=user_id,
@@ -120,6 +140,20 @@ def find_registration_by_path(flow_path: str) -> FlowRegistrationSnapshot | None
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         return _snapshot(service.repo.get_flow_by_path(flow_path))
+
+
+def find_registration_by_name(name: str, namespace_id: int) -> FlowRegistrationSnapshot | None:
+    """Return the FlowRegistrationSnapshot for ``(name, namespace_id)``, or None.
+
+    Used by the route layer to detect display-name collisions before writing
+    any YAML — two registrations with the same name in one namespace would
+    render ambiguously in the catalog picker.
+    """
+    if not name:
+        return None
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        return _snapshot(service.repo.get_flow_by_name(name, namespace_id))
 
 
 def find_registration_by_registration_id(rid: int | None) -> FlowRegistrationSnapshot | None:

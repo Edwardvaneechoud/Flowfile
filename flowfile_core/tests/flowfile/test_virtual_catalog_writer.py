@@ -462,6 +462,46 @@ class TestReadVirtualFlowTables:
         """SQL query against a virtual table should work."""
         catalog_service.execute_sql_query("select * from lazy_virtual")
 
+    def test_sql_query_does_not_materialize_unreferenced_virtuals(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """A SQL query that doesn't mention a virtual table must not run its flow.
+
+        Regression: execute_sql_query previously materialized every virtual table
+        in the catalog to generate IPC bytes, activating all their producer flows
+        even when the query only touched one physical/physical+named table."""
+        # Seed a physical table the query actually targets, in the same namespace.
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                producer_path = f.name
+            reg_id = _create_flow_registration(ns_id, name="other_producer", path=producer_path)
+            # Create an additional unrelated virtual table whose producer flow would
+            # throw if materialized — simulating the worst-case observed symptom.
+            svc.create_virtual_flow_table(
+                name="untouched_virtual",
+                owner_id=1,
+                producer_registration_id=reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",  # invalid bytes on purpose
+                is_optimized=True,
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        # Query references only "lazy_virtual" — untouched_virtual must not be resolved.
+        catalog_service.execute_sql_query("select * from lazy_virtual")
+        assert calls == [lazy_virtual_table_id]
+
 
 class TestCheckUpstreamLaziness:
     """Test that laziness checking correctly scopes to upstream catalog writer deps."""
