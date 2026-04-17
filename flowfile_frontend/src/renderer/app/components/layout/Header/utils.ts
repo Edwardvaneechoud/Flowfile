@@ -29,7 +29,7 @@ export const saveFlow = async (
   if (namespaceId !== undefined && namespaceId !== null) {
     params.namespace_id = namespaceId;
   }
-  const response = await axios.get("/save_flow", {
+  const response = await axios.post("/save_flow", null, {
     params,
     headers: {
       accept: "application/json",
@@ -39,7 +39,7 @@ export const saveFlow = async (
 };
 
 export const saveFlowSilent = async (flowId: number): Promise<number> => {
-  const response = await axios.get("/save_flow", {
+  const response = await axios.post("/save_flow", null, {
     params: { flow_id: flowId },
     headers: { accept: "application/json" },
   });
@@ -56,7 +56,7 @@ export const saveFlowToCatalog = async (
   flowName: string,
   namespaceId: number,
 ): Promise<number> => {
-  const response = await axios.get("/save_flow_to_catalog", {
+  const response = await axios.post("/save_flow_to_catalog", null, {
     params: {
       flow_id: flowId,
       flow_name: flowName,

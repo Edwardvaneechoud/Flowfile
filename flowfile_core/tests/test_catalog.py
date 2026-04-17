@@ -593,7 +593,7 @@ class TestAutoRegisterFlow:
             assert ns is not None
             assert ns.name == "Unnamed Flows"
 
-    def test_falls_back_to_default_when_local_flows_missing(self):
+    def test_falls_back_to_default_when_local_flows_missing(self, monkeypatch):
         """If the Local Flows namespace is missing (older DBs), fall back to default."""
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
@@ -613,12 +613,8 @@ class TestAutoRegisterFlow:
 
         # Patch ensure_local_flows_namespace to return None to simulate the
         # older "default-only" catalog state.
-        original_ensure = CatalogService.ensure_local_flows_namespace
-        CatalogService.ensure_local_flows_namespace = lambda self: None
-        try:
-            auto_register_flow("/tmp/fallback_flow.yaml", "fallback_flow", user_id)
-        finally:
-            CatalogService.ensure_local_flows_namespace = original_ensure
+        monkeypatch.setattr(CatalogService, "ensure_local_flows_namespace", lambda self: None)
+        auto_register_flow("/tmp/fallback_flow.yaml", "fallback_flow", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/fallback_flow.yaml").first()

@@ -36,11 +36,14 @@ from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     SecureFileExplorer,
     get_files_from_directory,
+    resolve_managed_flow_path,
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.catalog_helpers import (
+    FlowPathNamespaceCollision,
     auto_register_flow,
+    find_registration_by_path,
     register_flow_in_namespace,
     resolve_source_registration_id,
 )
@@ -1099,14 +1102,13 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     return flow_id
 
 
-@router.get("/save_flow", tags=["editor"])
-def save_flow(
+def _save_flow_impl(
     flow_id: int,
-    flow_path: str = None,
-    namespace_id: int = None,
-    current_user=Depends(get_current_active_user),
+    flow_path: str | None,
+    namespace_id: int | None,
+    current_user,
 ):
-    """Saves the current state of a flow to a `.yaml`.
+    """Shared implementation for GET and POST ``/save_flow``.
 
     If ``flow_path`` is omitted, the flow is saved silently to its existing path.
 
@@ -1141,13 +1143,16 @@ def save_flow(
         def _register(fp: str, n: str, uid: int | None) -> None:
             register_flow_in_namespace(fp, n, uid, namespace_id)
 
-        return flow_file_handler.save_as_flow(
-            flow_id=flow_id,
-            new_path=flow_path,
-            user_id=user_id,
-            on_catalog_register=_register,
-            on_resolve_registration=resolve_source_registration_id,
-        )
+        try:
+            return flow_file_handler.save_as_flow(
+                flow_id=flow_id,
+                new_path=flow_path,
+                user_id=user_id,
+                on_catalog_register=_register,
+                on_resolve_registration=resolve_source_registration_id,
+            )
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
 
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)  # save_flow itself calls mark_as_saved()
@@ -1155,11 +1160,46 @@ def save_flow(
     # If namespace_id provided, ensure the flow is registered in that namespace
     if namespace_id is not None:
         user_id = current_user.id if current_user else None
-        register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+        try:
+            register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
     return flow_id
 
 
-@router.get("/save_flow_to_catalog", tags=["editor"])
+@router.get("/save_flow", tags=["editor"])
+def save_flow(
+    response: Response,
+    flow_id: int,
+    flow_path: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Deprecated GET variant of ``/save_flow``.  Prefer POST.
+
+    Kept for backward compatibility with older frontends/clients. Emits a
+    ``Deprecation: true`` response header.
+    """
+    logger.warning("GET /save_flow is deprecated; use POST /save_flow instead")
+    response.headers["Deprecation"] = "true"
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+
+
+@router.post("/save_flow", tags=["editor"])
+def save_flow_post(
+    flow_id: int,
+    flow_path: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Saves the current state of a flow to a ``.yaml``.
+
+    See :func:`_save_flow_impl` for semantics.
+    """
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+
+
+@router.post("/save_flow_to_catalog", tags=["editor"])
 def save_flow_to_catalog(
     flow_id: int,
     flow_name: str,
@@ -1175,7 +1215,11 @@ def save_flow_to_catalog(
     stem = flow_name.strip()
     if not stem:
         raise HTTPException(422, "flow_name must not be empty")
-    stem = Path(stem).name  # strip any path components the client might have sent
+    # Reject path separators and parent-traversal before any sanitization so
+    # callers can't launder ``../evil`` through ``Path(...).name``.
+    if "/" in stem or "\\" in stem or ".." in stem:
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    stem = Path(stem).name  # defense in depth in case future chars are added
     stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
     if not stem:
         raise HTTPException(422, "flow_name must contain more than just an extension")
@@ -1185,11 +1229,29 @@ def save_flow_to_catalog(
         raise HTTPException(404, "Flow not found")
 
     filename = f"{flow_id}_{stem}.yaml"
-    flow_path = validate_path_under_cwd(str(storage.flows_directory / filename))
+    flow_path = resolve_managed_flow_path(filename)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
     is_new_path = bool(normalized_current) and flow_path != normalized_current
+
+    # Overwrite guard: if the resolved target file is already registered to a
+    # different flow, or exists on disk without any registration, refuse.
+    source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
+    existing_reg = find_registration_by_path(flow_path)
+    if existing_reg is not None and existing_reg.id != source_registration_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Target file {flow_path} is already registered to another flow",
+        )
+    if existing_reg is None and os.path.exists(flow_path):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Target file {flow_path} exists but is not catalog-registered; "
+                "refusing to overwrite"
+            ),
+        )
 
     user_id = current_user.id if current_user else None
 
@@ -1197,17 +1259,36 @@ def save_flow_to_catalog(
         register_flow_in_namespace(fp, n, uid, namespace_id)
 
     if is_new_path:
-        return flow_file_handler.save_as_flow(
-            flow_id=flow_id,
-            new_path=flow_path,
-            user_id=user_id,
-            on_catalog_register=_register,
-            on_resolve_registration=resolve_source_registration_id,
-        )
+        try:
+            new_flow_id = flow_file_handler.save_as_flow(
+                flow_id=flow_id,
+                new_path=flow_path,
+                user_id=user_id,
+                on_catalog_register=_register,
+                on_resolve_registration=resolve_source_registration_id,
+            )
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+
+        # If we renamed within the managed flows directory, unlink the old file.
+        if normalized_current and normalized_current != flow_path:
+            managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
+            if normalized_current.startswith(managed_root):
+                try:
+                    os.unlink(normalized_current)
+                except OSError:
+                    logger.info(
+                        f"Could not unlink old managed flow file {normalized_current}",
+                        exc_info=True,
+                    )
+        return new_flow_id
 
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
-    register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+    try:
+        register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+    except FlowPathNamespaceCollision as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
     return flow_id
 
 

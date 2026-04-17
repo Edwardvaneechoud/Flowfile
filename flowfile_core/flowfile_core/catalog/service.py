@@ -862,7 +862,7 @@ class CatalogService:
             logger.info("Auto-registration skipped: 'General' catalog namespace not found")
             return None
 
-        is_unnamed = "/unnamed_flows/" in flow_path or "\\unnamed_flows\\" in flow_path
+        is_unnamed = Path(flow_path).parent.name == "unnamed_flows"
         if is_unnamed:
             target_ns = self.repo.get_namespace_by_name("Unnamed Flows", parent_id=general.id)
             if target_ns is None:
@@ -888,50 +888,37 @@ class CatalogService:
         )
         return self.repo.create_flow(reg)
 
-    def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
-        """Ensure 'General > Unnamed Flows' namespace exists, creating it if needed.
+    def _ensure_general_child(self, name: str, description: str) -> CatalogNamespace | None:
+        """Ensure 'General > {name}' namespace exists, creating it if needed.
 
-        Inherits ``owner_id`` from the parent 'General' namespace.  Returns the
-        namespace, or None if the parent 'General' namespace does not exist
-        (e.g. during very early startup before the catalog is seeded).
-        """
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
-        if general is None:
-            logger.info("Cannot ensure 'Unnamed Flows' namespace: parent 'General' not found")
-            return None
-        existing = self.repo.get_namespace_by_name("Unnamed Flows", parent_id=general.id)
-        if existing is not None:
-            return existing
-        ns = CatalogNamespace(
-            name="Unnamed Flows",
-            parent_id=general.id,
-            level=1,
-            description="Quick-created flows that have not yet been named",
-            owner_id=general.owner_id,
-        )
-        return self.repo.create_namespace(ns)
-
-    def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
-        """Ensure 'General > Local Flows' namespace exists, creating it if needed.
-
-        Inherits ``owner_id`` from the parent 'General' namespace.  Returns the
+        Inherits owner_id from the parent 'General' namespace.  Returns the
         namespace, or None if the parent 'General' namespace does not exist.
         """
         general = self.repo.get_namespace_by_name("General", parent_id=None)
         if general is None:
-            logger.info("Cannot ensure 'Local Flows' namespace: parent 'General' not found")
+            logger.info(f"Cannot ensure '{name}' namespace: parent 'General' not found")
             return None
-        existing = self.repo.get_namespace_by_name("Local Flows", parent_id=general.id)
+        existing = self.repo.get_namespace_by_name(name, parent_id=general.id)
         if existing is not None:
             return existing
         ns = CatalogNamespace(
-            name="Local Flows",
+            name=name,
             parent_id=general.id,
             level=1,
-            description="Flows saved to disk at user-chosen paths",
+            description=description,
             owner_id=general.owner_id,
         )
         return self.repo.create_namespace(ns)
+
+    def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
+        return self._ensure_general_child(
+            "Unnamed Flows", "Quick-created flows that have not yet been named"
+        )
+
+    def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
+        return self._ensure_general_child(
+            "Local Flows", "Flows saved to disk at user-chosen paths"
+        )
 
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""
@@ -1105,8 +1092,18 @@ class CatalogService:
             logger.warning(f"Could not open the flow or calculate the reasons:\n{e}")
             return None
 
-    def _table_to_out(self, table: CatalogTable, user_id: int | None = None) -> CatalogTableOut:
-        """Convert a CatalogTable ORM instance to its Pydantic output schema."""
+    def _table_to_out(
+        self,
+        table: CatalogTable,
+        user_id: int | None = None,
+        compute_laziness: bool = False,
+    ) -> CatalogTableOut:
+        """Convert a CatalogTable ORM instance to its Pydantic output schema.
+
+        Laziness blockers require re-parsing the producer flow from disk, so by default
+        this skips that work. Callers that need blockers should pass compute_laziness=True
+        or recompute on demand via _compute_laziness_blockers.
+        """
         columns = self._parse_schema_columns(table)
         source_registration_name = self._resolve_flow_name(table.source_registration_id)
         producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
@@ -1122,7 +1119,7 @@ class CatalogService:
 
         is_virtual = getattr(table, "table_type", "physical") == "virtual"
         laziness_blockers: list[str] | None = None
-        if is_virtual and table.producer_registration_id:
+        if compute_laziness and is_virtual and table.producer_registration_id:
             producer = self.repo.get_flow(table.producer_registration_id)
             laziness_blockers = self._compute_laziness_blockers(producer.flow_path if producer else None)
 

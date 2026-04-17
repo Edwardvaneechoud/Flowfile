@@ -218,7 +218,9 @@ class FlowfileHandler:
         try:
             dirty = flow.has_unsaved_changes()
         except Exception:
-            dirty = False
+            # Match HistoryManager.has_unsaved_changes: on error, assume dirty so
+            # unsaved-changes prompts err on the safe side.
+            dirty = True
         return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 
     def get_node(self, flow_id: int, node_id: int):

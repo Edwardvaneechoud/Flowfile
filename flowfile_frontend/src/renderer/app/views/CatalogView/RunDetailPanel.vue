@@ -86,7 +86,7 @@
                   {{ nr.success ? "OK" : nr.success === false ? "Failed" : "Running" }}
                 </span>
               </td>
-              <td class="mono">{{ nr.run_time >= 0 ? `${nr.run_time}ms` : "--" }}</td>
+              <td class="mono">{{ nr.run_time_ms >= 0 ? `${nr.run_time_ms}ms` : "--" }}</td>
               <td class="error-text">
                 <el-popover
                   v-if="nr.error"
@@ -226,7 +226,7 @@ interface NodeResultData {
   description?: string;
   success: boolean | null;
   error: string;
-  run_time: number;
+  run_time_ms: number;
   is_running: boolean;
 }
 

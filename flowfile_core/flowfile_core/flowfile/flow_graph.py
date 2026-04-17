@@ -642,11 +642,17 @@ def _handle_virtual_table_write(
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
-        existing_vt = repo.get_virtual_table_by_producer(reg_id)
-        if existing_vt:
+        existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+        if existing is not None and getattr(existing, "table_type", "physical") != "virtual":
+            raise ValueError(
+                f"Cannot write virtual table '{settings.table_name}': a non-virtual "
+                f"catalog table with that name already exists in this namespace."
+            )
+        if existing is not None:
             svc.update_virtual_flow_table(
-                table_id=existing_vt.id,
+                table_id=existing.id,
                 name=settings.table_name or None,
+                producer_registration_id=reg_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
                 is_optimized=is_lazy,
@@ -3313,7 +3319,7 @@ class FlowGraph:
                 node_result.is_running = False
             node_result.success = flow_node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
@@ -3323,7 +3329,7 @@ class FlowGraph:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
         finally:
@@ -3483,7 +3489,7 @@ class FlowGraph:
                 node_result.error = str(e)
                 node_result.success = False
                 node_result.end_timestamp = time()
-                node_result.run_time = 0
+                node_result.run_time_ms = 0
                 node_result.is_running = False
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
                 return node_result, node
@@ -3511,13 +3517,13 @@ class FlowGraph:
                 return node_result, node
             node_result.success = node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
         except Exception as e:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {node.node_id}: {e}")
 

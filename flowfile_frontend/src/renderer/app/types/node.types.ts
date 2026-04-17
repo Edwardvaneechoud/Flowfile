@@ -74,7 +74,7 @@ export interface NodeResult {
   end_timestamp: number;
   success?: boolean;
   error: string;
-  run_time: number;
+  run_time_ms: number;
   is_running: boolean;
 }
 

@@ -257,7 +257,7 @@ class NodeResults:
     example_data: FlowDataEngine | None = None
     example_data_path: str | None = None
     example_data_generator: Callable[[], pa.Table] | None = None
-    run_time: int = -1
+    run_time_ms: int = -1
     errors: str | None = None
     warnings: str | None = None
     analysis_data_generator: Callable[[], pa.Table] | None = None
@@ -265,7 +265,7 @@ class NodeResults:
     def __init__(self):
         self._resulting_data = None
         self.example_data = None
-        self.run_time = -1
+        self.run_time_ms = -1
         self.errors = None
         self.warnings = None
         self.example_data_generator = None
@@ -298,4 +298,4 @@ class NodeResults:
     def reset(self):
         """Resets all result attributes to their default, empty state."""
         self._resulting_data = None
-        self.run_time = -1
+        self.run_time_ms = -1

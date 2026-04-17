@@ -440,7 +440,7 @@ def test_save_flow():
     remove_flow(file_path)
     start_time = datetime.datetime.now().timestamp()
     # def save_flow(flow_id: int, flow_path: str = None)
-    response = client.get("/save_flow", params={"flow_id": flow_id, "flow_path": file_path})
+    response = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": file_path})
     assert response.status_code == 200, "Flow not saved"
     assert os.path.exists(file_path), "Flow not saved, file not found"
     assert imported_flow.__name__ == "sample_save"
@@ -457,7 +457,7 @@ def test_save_imported_flow():
     assert created_flow.__name__ == "random_value"
     new_path = str(storage.flows_directory / "readable_flow.yaml")
 
-    response = client.get("/save_flow", params={"flow_id": created_flow.flow_id, "flow_path": new_path})
+    response = client.post("/save_flow", params={"flow_id": created_flow.flow_id, "flow_path": new_path})
     assert response.status_code == 200, "Flow not saved"
     assert created_flow.__name__ == "readable_flow"
 
@@ -489,13 +489,13 @@ def test_save_flow_to_catalog_prefixes_filename():
             p.unlink()
 
     try:
-        resp_a = client.get(
+        resp_a = client.post(
             "/save_flow_to_catalog",
             params={"flow_id": flow_id_a, "flow_name": shared_name, "namespace_id": ns_a["id"]},
         )
         assert resp_a.status_code == 200, f"First catalog save failed: {resp_a.text}"
 
-        resp_b = client.get(
+        resp_b = client.post(
             "/save_flow_to_catalog",
             params={"flow_id": flow_id_b, "flow_name": shared_name, "namespace_id": ns_b["id"]},
         )
@@ -524,6 +524,138 @@ def test_save_flow_to_catalog_prefixes_filename():
                 FlowRegistration.flow_path.in_([str(expected_a), str(expected_b)])
             ).delete(synchronize_session=False)
             db.commit()
+
+
+def test_save_flow_to_catalog_refuses_overwrite_of_foreign_file():
+    """A pre-existing file with no catalog registration must not be overwritten."""
+    from flowfile_core.database.models import FlowRegistration
+
+    shared_name = "foreign_overwrite_test"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path = str(base_dir / "foreign_overwrite_source.yaml")
+    remove_flow(source_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsForeign_overwrite"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+
+    # Pre-create the managed target with no DB registration.
+    expected_target = storage.flows_directory / f"{flow_id}_{shared_name}.yaml"
+    if expected_target.exists():
+        expected_target.unlink()
+    expected_target.parent.mkdir(parents=True, exist_ok=True)
+    expected_target.write_text("# preexisting unrelated file\n")
+
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": shared_name, "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+        # Confirm the pre-existing content was left untouched
+        assert expected_target.read_text() == "# preexisting unrelated file\n"
+    finally:
+        if expected_target.exists():
+            expected_target.unlink()
+        remove_flow(source_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path == str(expected_target)
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_save_flow_to_catalog_unlinks_old_file_on_rename():
+    """Renaming a catalog-saved flow removes the previous managed yaml."""
+    from flowfile_core.database.models import FlowRegistration
+
+    first_name = "rename_before"
+    second_name = "rename_after"
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path = str(base_dir / "rename_source.yaml")
+    remove_flow(source_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsRename_endpoint"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+
+    first_expected = storage.flows_directory / f"{flow_id}_{first_name}.yaml"
+    if first_expected.exists():
+        first_expected.unlink()
+
+    try:
+        resp_first = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": first_name, "namespace_id": ns["id"]},
+        )
+        assert resp_first.status_code == 200, f"First save failed: {resp_first.text}"
+        new_flow_id = resp_first.json()
+        assert first_expected.exists(), "First-name file should exist after initial save"
+
+        second_expected = storage.flows_directory / f"{new_flow_id}_{second_name}.yaml"
+        if second_expected.exists():
+            second_expected.unlink()
+
+        resp_second = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": new_flow_id, "flow_name": second_name, "namespace_id": ns["id"]},
+        )
+        assert resp_second.status_code == 200, f"Second save failed: {resp_second.text}"
+        assert second_expected.exists(), "Second-name file should exist after rename save"
+        assert not first_expected.exists(), (
+            f"Old managed file {first_expected} should have been unlinked on rename"
+        )
+    finally:
+        for p in (first_expected, locals().get("second_expected")):
+            if p is not None and Path(p).exists():
+                Path(p).unlink()
+        remove_flow(source_path)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter(
+                FlowRegistration.flow_path.in_(
+                    [str(first_expected), str(locals().get("second_expected") or "")]
+                )
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_save_flow_to_catalog_rejects_filename_with_separators():
+    """A flow_name containing path separators must be rejected with 403."""
+    base_dir = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/tmp"
+    source_path = str(base_dir / "separator_rejection_source.yaml")
+    remove_flow(source_path)
+
+    ns = client.post("/catalog/namespaces", json={"name": "NsSeparatorReject_endpoint"}).json()
+    assert "id" in ns, "Namespace not created"
+
+    flow_id = client.post("editor/create_flow", params={"flow_path": source_path}).json()
+    try:
+        resp = client.post(
+            "/save_flow_to_catalog",
+            params={"flow_id": flow_id, "flow_name": "../evil", "namespace_id": ns["id"]},
+        )
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+    finally:
+        remove_flow(source_path)
+
+
+def test_save_flow_get_deprecation_header():
+    """GET /save_flow still succeeds but emits a Deprecation header."""
+    flow_id = create_flow_with_manual_input_and_select()
+    file_path = str(
+        find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/sample_deprecation_save.yaml"
+    )
+    remove_flow(file_path)
+    try:
+        response = client.get("/save_flow", params={"flow_id": flow_id, "flow_path": file_path})
+        assert response.status_code == 200, f"Flow not saved via deprecated GET: {response.text}"
+        assert response.headers.get("Deprecation") == "true", (
+            "GET /save_flow should return Deprecation: true header"
+        )
+    finally:
+        remove_flow(file_path)
 
 
 def test_delete_node():
@@ -1551,7 +1683,7 @@ def test_save_flow_path_traversal_blocked(monkeypatch):
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
     flow_id = create_flow_with_manual_input()
-    response = client.get("/save_flow", params={"flow_id": flow_id, "flow_path": "/etc/malicious.yaml"})
+    response = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": "/etc/malicious.yaml"})
     assert response.status_code == 403, "Path traversal to /etc should be blocked in Docker mode"
     assert "Access denied" in response.json()["detail"], "Should return access denied message"
 
@@ -1561,7 +1693,7 @@ def test_save_flow_path_traversal_with_dots():
     # .. patterns are blocked in all modes
     flow_id = create_flow_with_manual_input()
 
-    response = client.get("/save_flow", params={"flow_id": flow_id, "flow_path": "../../../etc/malicious.yaml"})
+    response = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": "../../../etc/malicious.yaml"})
     assert response.status_code == 403, "Path traversal with .. should be blocked"
 
 

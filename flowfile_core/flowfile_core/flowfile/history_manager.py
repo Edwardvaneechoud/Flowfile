@@ -48,6 +48,7 @@ class HistoryManager:
         "_is_restoring",
         "_last_snapshot_hash",
         "_saved_snapshot_hash",
+        "_dirty",
     )
 
     def __init__(self, config: HistoryConfig | None = None):
@@ -63,6 +64,8 @@ class HistoryManager:
         self._last_snapshot_hash: int | None = None
         # Hash of the flow state at the last save point; used for dirty tracking
         self._saved_snapshot_hash: int | None = None
+        # Fast dirty flag flipped on any recorded change; avoids re-hashing on hot path
+        self._dirty: bool = False
 
     @property
     def config(self) -> HistoryConfig:
@@ -162,6 +165,9 @@ class HistoryManager:
             # Add to undo stack
             self._undo_stack.append(entry)
 
+            # Real change recorded on a non-restoring path — flip the fast dirty flag.
+            self._dirty = True
+
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
 
@@ -226,6 +232,8 @@ class HistoryManager:
             # Add to undo stack
             self._undo_stack.append(entry)
             self._last_snapshot_hash = current_hash
+            # Real change confirmed on a non-restoring path — flip the fast dirty flag.
+            self._dirty = True
 
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
@@ -400,24 +408,32 @@ class HistoryManager:
         try:
             snapshot = flow_graph.get_flowfile_data()
             snapshot_dict = snapshot.model_dump()
-            self._saved_snapshot_hash = CompressedSnapshot._compute_hash(snapshot_dict)
+            self._saved_snapshot_hash = CompressedSnapshot.compute_hash(snapshot_dict)
+            # Successful save establishes a clean baseline — clear the fast dirty flag.
+            self._dirty = False
             logger.debug("History: marked current state as saved")
         except Exception as e:
+            # On failure, leave _dirty alone — we didn't actually establish a clean save.
             logger.warning(f"History: failed to mark saved state: {e}")
 
     def has_unsaved_changes(self, flow_graph: "FlowGraph") -> bool:
-        """Check whether the current flow state differs from the last save point."""
+        """Check whether the current flow state differs from the last save point.
+
+        Hot path: when a save baseline exists, return the cheap ``_dirty`` flag
+        without serializing or hashing the graph. The snapshot+hash path only
+        runs as a startup fallback, before the first ``mark_saved`` establishes
+        a baseline.
+        """
         try:
+            if self._saved_snapshot_hash is not None:
+                return self._dirty
+            # Never saved: fall back to the "non-empty content means dirty" rule
             snapshot = flow_graph.get_flowfile_data()
             snapshot_dict = snapshot.model_dump()
-            if self._saved_snapshot_hash is None:
-                # Never saved — treat as dirty only if the flow has content
-                return len(snapshot_dict.get("nodes", []) or []) > 0
-            current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
-            return current_hash != self._saved_snapshot_hash
+            return len(snapshot_dict.get("nodes", []) or []) > 0
         except Exception as e:
             logger.warning(f"History: failed to compute dirty state: {e}")
-            return True
+            return True  # conservative — keep the "unsaved changes" prompt
 
     def is_restoring(self) -> bool:
         """Check if a restore operation is currently in progress.

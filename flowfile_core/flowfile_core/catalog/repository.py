@@ -181,6 +181,10 @@ class CatalogRepository(Protocol):
 
     def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None: ...
 
+    def get_virtual_table_by_producer_and_name(
+        self, registration_id: int, name: str, namespace_id: int | None
+    ) -> CatalogTable | None: ...
+
     def count_virtual_tables(self) -> int: ...
 
     # -- Table Favorites -----------------------------------------------------
