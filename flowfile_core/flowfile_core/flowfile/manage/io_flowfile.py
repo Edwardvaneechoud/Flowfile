@@ -264,7 +264,8 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     """
     flow_path = _validate_flow_path(flow_path)
     suffix = flow_path.suffix.lower()
-    if suffix == ".flowfile":
+    if suffix == ".flowfile":  # legacy method
+
         try:
             flow_storage_obj = load_flowfile_pickle(str(flow_path))
             ensure_compatibility(flow_storage_obj, str(flow_path))

@@ -90,12 +90,20 @@
           </span>
         </div>
         <div class="col-flow">
-          <span
-            class="flow-name flow-link"
-            @click.stop="run.registration_id && $emit('viewFlow', run.registration_id)"
+          <el-tooltip
+            :content="run.flow_name"
+            placement="top"
+            :disabled="!truncatedIds.has(run.id)"
+            :show-after="300"
           >
-            {{ run.flow_name }}
-          </span>
+            <span
+              class="flow-name flow-link"
+              @mouseenter="checkTruncation($event, run.id)"
+              @click.stop="run.registration_id && $emit('viewFlow', run.registration_id)"
+            >
+              {{ run.flow_name }}
+            </span>
+          </el-tooltip>
         </div>
         <div class="col-trigger">
           <i :class="runTypeIcon(run.run_type)" class="trigger-icon" />
@@ -133,13 +141,11 @@
           <span v-else class="no-snapshot">--</span>
         </div>
         <div class="col-actions">
-          <button
-            class="btn-icon-inline"
-            title="View run details"
-            @click.stop="$emit('viewRun', run.id)"
-          >
-            <i class="fa-solid fa-arrow-right"></i>
-          </button>
+          <el-tooltip content="View run details" placement="top" :show-after="300">
+            <button class="btn-icon-inline" @click.stop="$emit('viewRun', run.id)">
+              <i class="fa-solid fa-arrow-right"></i>
+            </button>
+          </el-tooltip>
         </div>
       </div>
     </div>
@@ -192,6 +198,18 @@ const props = defineProps<{
 }>();
 
 const expanded = ref(false);
+const truncatedIds = ref(new Set<number>());
+
+function checkTruncation(event: MouseEvent, id: number) {
+  const el = event.currentTarget as HTMLElement;
+  const next = new Set(truncatedIds.value);
+  if (el.scrollWidth > el.clientWidth) {
+    next.add(id);
+  } else {
+    next.delete(id);
+  }
+  truncatedIds.value = next;
+}
 
 defineEmits(["viewRun", "viewFlow", "viewScheduleRuns", "openSnapshot"]);
 
@@ -300,6 +318,19 @@ function runStatusText(run: FlowRun): string {
   align-items: center;
   gap: var(--spacing-2);
   margin-bottom: var(--spacing-4);
+}
+
+/* Flow column */
+.col-flow {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.flow-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Schedule column */
