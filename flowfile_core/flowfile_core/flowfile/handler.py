@@ -7,7 +7,7 @@ from pathlib import Path
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.schemas.schemas import FlowSettings
+from flowfile_core.schemas.schemas import FlowSettings, FlowSettingsResponse
 from shared.storage_config import storage
 
 
@@ -209,14 +209,17 @@ class FlowfileHandler:
         flow_exists = os.path.exists(flow.flow_settings.path)
         last_modified_ts = os.path.getmtime(flow.flow_settings.path) if flow_exists else -1
         flow.flow_settings.modified_on = last_modified_ts
-        # TODO: narrow this except and log at warning so real failures aren't
-        # hidden. Currently swallowing Exception keeps the tab bar responsive
-        # when hash computation fails, at the cost of masking real bugs.
-        try:
-            flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
-        except Exception:
-            flow.flow_settings.has_unsaved_changes = False
         return flow.flow_settings
+
+    def get_flow_info_with_runtime(self, flow_id: int) -> FlowSettingsResponse:
+        """Like ``get_flow_info`` but includes runtime-only state (``has_unsaved_changes``)."""
+        flow_settings = self.get_flow_info(flow_id)
+        flow = self.get_flow(flow_id)
+        try:
+            dirty = flow.has_unsaved_changes()
+        except Exception:
+            dirty = False
+        return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 
     def get_node(self, flow_id: int, node_id: int):
         flow = self.get_flow(flow_id)

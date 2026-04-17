@@ -208,11 +208,13 @@ def register_flow(flow_data: schemas.FlowSettings, current_user=Depends(get_curr
     return flow_file_handler.register_flow(flow_data, user_id=user_id)
 
 
-@router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettings])
-async def get_active_flow_file_sessions(current_user=Depends(get_current_active_user)) -> list[schemas.FlowSettings]:
+@router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettingsResponse])
+async def get_active_flow_file_sessions(
+    current_user=Depends(get_current_active_user),
+) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [flf.flow_settings for flf in flow_file_handler.get_user_flows(user_id)]
+    return [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -685,9 +687,9 @@ def get_expressions() -> list[str]:
     return get_all_expressions()
 
 
-@router.get("/editor/flow", tags=["editor"], response_model=schemas.FlowSettings)
+@router.get("/editor/flow", tags=["editor"], response_model=schemas.FlowSettingsResponse)
 def get_flow(flow_id: int):
-    """Retrieves the settings for a specific flow."""
+    """Retrieves the settings for a specific flow (including runtime dirty state)."""
     flow_id = int(flow_id)
     result = get_flow_settings(flow_id)
     return result
@@ -1218,20 +1220,13 @@ def get_flow_frontend_data(flow_id: int | None = 1):
     return flow.get_frontend_data()
 
 
-@router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettings)
-def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettings:
+@router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettingsResponse)
+def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettingsResponse:
     """Retrieves the main settings for a flow (including dirty-state info)."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
-    # TODO: narrow this except and log at warning so real failures aren't
-    # hidden. Currently swallowing Exception keeps the tab bar responsive
-    # when hash computation fails, at the cost of masking real bugs.
-    try:
-        flow.flow_settings.has_unsaved_changes = flow.has_unsaved_changes()
-    except Exception:
-        flow.flow_settings.has_unsaved_changes = False
-    return flow.flow_settings
+    return flow_file_handler.get_flow_info_with_runtime(flow_id)
 
 
 @router.post("/flow_settings", tags=["manager"])

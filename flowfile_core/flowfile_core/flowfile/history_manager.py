@@ -417,7 +417,6 @@ class HistoryManager:
             return current_hash != self._saved_snapshot_hash
         except Exception as e:
             logger.warning(f"History: failed to compute dirty state: {e}")
-            # Fall back to treating flow as dirty so user isn't silently losing work
             return True
 
     def is_restoring(self) -> bool:

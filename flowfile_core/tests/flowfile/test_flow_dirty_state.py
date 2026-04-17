@@ -99,7 +99,7 @@ def test_open_modify_save_clears_dirty(handler, tmp_path):
 
 def test_handler_import_flow_reports_clean(handler, tmp_path):
     """Going through FlowfileHandler.import_flow (the route's call path) should
-    surface a clean flow_settings.has_unsaved_changes for an unmodified file."""
+    surface a clean has_unsaved_changes for an unmodified file."""
     path = tmp_path / "f.yaml"
     flow = _register(handler, path)
     add_test_manual_input(flow, SAMPLE)
@@ -109,4 +109,4 @@ def test_handler_import_flow_reports_clean(handler, tmp_path):
     imported_id = fresh_handler.import_flow(path)
     imported = fresh_handler.get_flow(imported_id)
     assert imported.has_unsaved_changes() is False
-    assert imported.flow_settings.has_unsaved_changes is False
+    assert fresh_handler.get_flow_info_with_runtime(imported_id).has_unsaved_changes is False
