@@ -462,6 +462,103 @@ class TestReadVirtualFlowTables:
         """SQL query against a virtual table should work."""
         catalog_service.execute_sql_query("select * from lazy_virtual")
 
+    def test_resolve_query_virtual_only_materializes_referenced_tables(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """When a query-based virtual table is resolved, it must only materialize
+        the tables its stored SQL actually references — not every other virtual in
+        the catalog. Regression: previously, resolve_query_virtual_table registered
+        every catalog table in its SQLContext, which triggered flow execution for
+        each unrelated flow-based virtual."""
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                path = f.name
+            other_reg_id = _create_flow_registration(ns_id, name="unrelated_producer", path=path)
+            svc.create_virtual_flow_table(
+                name="unrelated_flow_virtual",
+                owner_id=1,
+                producer_registration_id=other_reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",
+                is_optimized=True,
+            )
+            svc.create_query_virtual_table(
+                name="q_select_lazy",
+                owner_id=1,
+                namespace_id=ns_id,
+                sql_query="SELECT * FROM lazy_virtual",
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            q_row = repo.get_table_by_name("q_select_lazy", ns_id)
+            assert q_row is not None
+            q_id = q_row.id
+
+        catalog_service.resolve_query_virtual_table(q_id)
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            unrelated = repo.get_table_by_name("unrelated_flow_virtual", ns_id)
+            assert unrelated is not None
+            assert unrelated.id not in calls
+
+    def test_sql_query_filter_ignores_alias_lookalike(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """A short bare-named virtual (e.g. ``t``) must not be materialized when the
+        query uses it as a column alias or only as a substring of another identifier.
+        Regression: previous substring-matching filter false-positively materialized
+        every virtual whose name appeared anywhere in the query, including inside
+        ``"test-table"`` or ``SELECT ... AS t``."""
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                path = f.name
+            reg_id = _create_flow_registration(ns_id, name="t_producer", path=path)
+            svc.create_virtual_flow_table(
+                name="t",
+                owner_id=1,
+                producer_registration_id=reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",
+                is_optimized=True,
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        catalog_service.execute_sql_query('SELECT count(*) as t FROM "test-table"')
+        # Only lazy_virtual (if referenced) or nothing — the short ``t`` virtual must
+        # NOT be materialized just because ``t`` appears as an alias or inside another
+        # identifier.
+        assert lazy_virtual_table_id not in calls  # sanity: not referenced here
+        # The bare ``t`` virtual also must not be materialized.
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            t_row = repo.get_table_by_name("t", ns_id)
+            assert t_row is not None
+            assert t_row.id not in calls
+
     def test_sql_query_does_not_materialize_unreferenced_virtuals(
         self, lazy_virtual_table_id, catalog_service, monkeypatch
     ):

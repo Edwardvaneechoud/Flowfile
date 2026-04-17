@@ -7,12 +7,14 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
+from collections.abc import Iterable
 from typing import Literal
 import base64
 import io
 import json
 import logging
 import os
+import re
 import signal
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -99,6 +101,44 @@ def _should_offload() -> bool:
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
     return OFFLOAD_TO_WORKER.value
+
+
+_TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
+
+
+def _rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> str:
+    """Rewrite ``ns.table`` / ``"ns"."table"`` / mixed variants to ``"ns.table"``.
+
+    Only rewrites occurrences matching a known registered qualified name, so column
+    qualifiers like ``t.col`` on unrelated aliases are untouched.
+    """
+    for qname in sorted(qualified_names, key=len, reverse=True):
+        if "." not in qname:
+            continue
+        ns, _, table = qname.partition(".")
+        ns_esc, table_esc = re.escape(ns), re.escape(table)
+        ns_part = rf'(?:(?<![\w"]){ns_esc}|"{ns_esc}")'
+        table_part = rf'(?:{table_esc}(?![\w"])|"{table_esc}")'
+        pattern = re.compile(rf"{ns_part}\s*\.\s*{table_part}")
+        query = pattern.sub(f'"{qname}"', query)
+    return query
+
+
+def _is_table_reference(name: str, query: str) -> bool:
+    """Return True iff ``name`` appears as an actual table reference in ``query``.
+
+    Matches after a table-introducing keyword (``FROM``/``JOIN``/``INTO``/``UPDATE``)
+    or a comma (continuation of a ``FROM`` list). Accepts both the bare identifier
+    and its double-quoted form; rejects lookalikes that continue into a longer
+    identifier (e.g. ``t`` should not match inside ``test-table``). This avoids
+    false positives from column aliases (``SELECT x AS t``) and substrings.
+    """
+    escaped = re.escape(name)
+    pattern = re.compile(
+        rf'(?:{_TABLE_INTRODUCERS})\s+(?:"{escaped}"|{escaped}(?![\w"-]))',
+        re.IGNORECASE,
+    )
+    return bool(pattern.search(query))
 
 
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
@@ -2079,40 +2119,73 @@ class CatalogService:
         if table is None or not getattr(table, "sql_query", None):
             raise TableNotFoundError(table_id=table_id)
 
-        # Build SQL context with all other catalog tables
-        ctx = pl.SQLContext()
-        for t in self.repo.list_tables():
-            if t.id == table_id:
-                continue  # skip self
-            if t.table_type == "virtual":
-                if getattr(t, "sql_query", None):
-                    # Nested query virtual table
-                    try:
-                        nested_lf = self.resolve_query_virtual_table(
-                            t.id,
-                            user_id=user_id,
-                            _visited=_visited,
-                            _depth=_depth + 1,
-                        )
-                        ctx.register(t.name, nested_lf)
-                    except Exception:
-                        logger.warning("Could not resolve nested query virtual table %r", t.name)
-                elif (
-                    t.is_optimized
-                    and t.serialized_lazy_frame
-                    and check_source_versions_current(t.source_table_versions)
-                ):
-                    ctx.register(t.name, pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame)))
-                elif t.producer_registration_id:
-                    try:
-                        lf = self.resolve_virtual_flow_table(t.id, user_id=user_id)
-                        ctx.register(t.name, lf)
-                    except Exception:
-                        logger.warning("Could not resolve flow virtual table %r", t.name)
-            elif t.file_path and is_delta_table(Path(t.file_path)):
-                ctx.register(t.name, pl.scan_delta(t.file_path))
+        all_tables = [t for t in self.repo.list_tables() if t.id != table_id]
+        bare_counts: dict[str, int] = {}
+        for t in all_tables:
+            bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
 
-        return ctx.execute(table.sql_query)
+        aliases_by_table: dict[int, list[str]] = {}
+        alias_to_table: dict[str, CatalogTable] = {}
+        for t in all_tables:
+            ns_name = self._resolve_namespace_name(t.namespace_id)
+            qualified = self._format_full_name(ns_name, t.name)
+            aliases = [qualified]
+            if bare_counts.get(t.name, 0) == 1 and qualified != t.name:
+                aliases.append(t.name)
+            aliases_by_table[t.id] = aliases
+            for alias in aliases:
+                alias_to_table[alias] = t
+
+        rewritten_query = _rewrite_qualified_references(table.sql_query, alias_to_table.keys())
+        referenced_ids = {
+            tbl.id
+            for alias, tbl in alias_to_table.items()
+            if _is_table_reference(alias, rewritten_query)
+        }
+
+        ctx = pl.SQLContext()
+        for tbl_id in referenced_ids:
+            t = next(tbl for tbl in all_tables if tbl.id == tbl_id)
+            lf = self._resolve_table_for_sql_context(t, user_id=user_id, visited=_visited, depth=_depth + 1)
+            if lf is None:
+                continue
+            for alias in aliases_by_table[tbl_id]:
+                ctx.register(alias, lf)
+
+        return ctx.execute(rewritten_query)
+
+    def _resolve_table_for_sql_context(
+        self,
+        t: CatalogTable,
+        user_id: int | None,
+        visited: set[int] | None,
+        depth: int,
+    ) -> pl.LazyFrame | None:
+        if t.table_type == "virtual":
+            if getattr(t, "sql_query", None):
+                try:
+                    return self.resolve_query_virtual_table(
+                        t.id, user_id=user_id, _visited=visited, _depth=depth
+                    )
+                except Exception:
+                    logger.warning("Could not resolve nested query virtual table %r", t.name)
+                    return None
+            if (
+                t.is_optimized
+                and t.serialized_lazy_frame
+                and check_source_versions_current(t.source_table_versions)
+            ):
+                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
+            if t.producer_registration_id:
+                try:
+                    return self.resolve_virtual_flow_table(t.id, user_id=user_id)
+                except Exception:
+                    logger.warning("Could not resolve flow virtual table %r", t.name)
+                    return None
+            return None
+        if t.file_path and is_delta_table(Path(t.file_path)):
+            return pl.scan_delta(t.file_path)
+        return None
 
     def resolve_virtual_flow_table(
         self,
@@ -2774,8 +2847,6 @@ class CatalogService:
 
     def execute_sql_query(self, query: str, max_rows: int = 10_000, user_id: int | None = None) -> SqlQueryResult:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
-        import re as _re
-
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -2790,16 +2861,8 @@ class CatalogService:
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
 
-        qualified_names = [n for n in {*delta_map, *virtual_map} if "." in n]
-        for qname in sorted(qualified_names, key=len, reverse=True):
-            ns, _, table = qname.partition(".")
-            ns_esc, table_esc = _re.escape(ns), _re.escape(table)
-            ns_part = rf'(?:(?<![\w"]){ns_esc}|"{ns_esc}")'
-            table_part = rf'(?:{table_esc}(?![\w"])|"{table_esc}")'
-            pattern = _re.compile(rf"{ns_part}\s*\.\s*{table_part}")
-            query = pattern.sub(f'"{qname}"', query)
-
-        referenced_virtuals = {vname for vname in virtual_map if _re.search(_re.escape(vname), query)}
+        query = _rewrite_qualified_references(query, {*delta_map, *virtual_map})
+        referenced_virtuals = {vname for vname in virtual_map if _is_table_reference(vname, query)}
 
         virtual_ipc: dict[str, str] = {}
         ipc_by_id: dict[int, str] = {}
