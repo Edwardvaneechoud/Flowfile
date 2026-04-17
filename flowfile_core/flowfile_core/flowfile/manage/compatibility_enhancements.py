@@ -438,7 +438,6 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
         flow_storage_obj.flow_settings = flow_settings
         flow_storage_obj = schemas.FlowInformation.model_validate(flow_storage_obj)
         return flow_storage_obj
-    breakpoint()
     fs = flow_storage_obj.flow_settings
     if not hasattr(fs, "execution_location"):
         fs.execution_location = "remote"
