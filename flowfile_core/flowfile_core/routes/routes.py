@@ -1233,6 +1233,9 @@ def save_flow_to_catalog(
 
     filename = f"{int(flow_id)}_{stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
+    flows_root = str(Path(storage.flows_directory).resolve())
+    if os.path.commonpath([flows_root, os.path.realpath(flow_path)]) != flows_root:
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
