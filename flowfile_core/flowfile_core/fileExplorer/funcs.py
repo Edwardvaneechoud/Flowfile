@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -462,29 +463,22 @@ def validate_path_under_cwd(user_path: str) -> str:
     raise HTTPException(403, "Access denied")
 
 
+_MANAGED_FLOW_FILENAME_RE = re.compile(r"^[A-Za-z0-9_\-]+\.(yaml|yml|json)$")
+
+
 def resolve_managed_flow_path(filename: str) -> str:
     """Resolve a filename to an absolute path under storage.flows_directory.
 
-    Rejects any filename containing path separators or '..'.  Returns an absolute
-    path strictly under the resolved flows_directory root.  Raises HTTPException(403)
-    on violation.  The route layer uses this for server-constructed catalog paths,
-    so we don't have to lean on validate_path_under_cwd (which is for user input).
+    Accepts only filenames matching ``[A-Za-z0-9_-]+\\.(yaml|yml|json)``. Returns
+    an absolute path strictly under the resolved flows_directory root. Raises
+    HTTPException(403) on violation.
     """
-    if not filename:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    # Reject any separators or parent-traversal components
-    if filename != os.path.basename(filename):
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    if ".." in filename:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    if "/" in filename or "\\" in filename:
+    if not filename or not _MANAGED_FLOW_FILENAME_RE.fullmatch(filename):
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     root = Path(storage.flows_directory).resolve()
     candidate = (root / filename).resolve()
-    # Ensure candidate is exactly root/filename (no symlink escape) AND lives
-    # strictly under root.
-    if candidate != root / filename or not str(candidate).startswith(str(root) + os.sep):
+    if candidate.parent != root:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
     return str(candidate)
 
