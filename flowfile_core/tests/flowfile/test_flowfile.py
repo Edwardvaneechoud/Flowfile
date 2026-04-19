@@ -318,7 +318,9 @@ def test_running_performance_mode():
     graph.flow_settings.execution_mode = 'Development'
     slow = graph.run_graph()
 
-    assert slow.node_step_result[1].run_time > fast.node_step_result[1].run_time, 'Performance mode should be faster'
+    assert slow.node_step_result[1].run_time_ms > fast.node_step_result[1].run_time_ms, 'Performance mode should be faster'
+    # Sanity check that values are in milliseconds (would fail if accidentally stored as seconds).
+    assert slow.node_step_result[1].run_time_ms > 10, 'Run time should be at least 10 ms, confirming ms units'
 
 
 def test_adding_graph_solver(execution_location):

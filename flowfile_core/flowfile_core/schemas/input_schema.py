@@ -1118,13 +1118,21 @@ class NodeCatalogWriter(NodeSingleInput):
 
 
 class NodeCatalogReader(NodeBase):
-    """Settings for a node that reads a table from the catalog."""
+    """Settings for a node that reads a table from the catalog.
+
+    Resolution priority at runtime: ``catalog_table_id`` > ``catalog_full_table_name`` >
+    ``(catalog_table_name, catalog_namespace_id)``. The qualified form
+    (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
+    identifier when an id isn't available.
+    """
 
     catalog_table_id: int | None = None
+    catalog_full_table_name: str | None = None
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
     sql_query: str | None = None
+    is_virtual_optimized: bool | None = None
 
     def get_default_description(self) -> str:
         if self.sql_query:
@@ -1132,9 +1140,10 @@ class NodeCatalogReader(NodeBase):
             if len(first_line) > 80:
                 first_line = first_line[:77] + "..."
             return f"SQL: {first_line}"
-        if self.catalog_table_name:
+        display = self.catalog_full_table_name or self.catalog_table_name
+        if display:
             suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
-            return f"Catalog: {self.catalog_table_name}{suffix}"
+            return f"Catalog: {display}{suffix}"
         return "Read from Catalog"
 
 

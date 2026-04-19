@@ -723,7 +723,7 @@ defineExpose({
         :node-types="nodeTypes"
         class="custom-node-flow"
         :connection-mode="ConnectionMode.Strict"
-        :connection-radius="30"
+        :connection-radius="60"
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
         @edge-update="onEdgeUpdate"

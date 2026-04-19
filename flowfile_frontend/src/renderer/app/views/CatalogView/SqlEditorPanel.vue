@@ -239,7 +239,7 @@ const runKeymap = keymap.of([
 const tableSchema = computed(() => {
   const schema: Record<string, string[]> = {};
   for (const t of catalogStore.allTables) {
-    schema[t.name] = [];
+    schema[t.full_table_name ?? t.name] = (t.schema_columns ?? []).map((c) => c.name);
   }
   return schema;
 });

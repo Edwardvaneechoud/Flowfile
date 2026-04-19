@@ -23,24 +23,10 @@ export default {
       },
     },
     {
-      name: "templates",
-      displayName: "menu.templates",
-      meta: {
-        icon: "fa-solid fa-layer-group",
-      },
-    },
-    {
       name: "catalog",
       displayName: "menu.catalog",
       meta: {
         icon: "fa-solid fa-folder-tree",
-      },
-    },
-    {
-      name: "documentation",
-      displayName: "menu.documentation",
-      meta: {
-        icon: "fa-solid fa-book",
       },
     },
     {

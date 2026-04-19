@@ -107,7 +107,7 @@ The **Database Reader** node loads data from database tables or custom SQL queri
 
 | Mode | Description |
 |------|-------------|
-| **Reference** | Use a saved connection from the [Connection Manager](../catalog/connections.md) (recommended) |
+| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
 | **Inline** | Enter connection credentials directly in the node settings |
 
 #### **Query Settings:**

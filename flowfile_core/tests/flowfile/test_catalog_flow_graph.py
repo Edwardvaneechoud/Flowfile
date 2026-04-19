@@ -747,11 +747,6 @@ class TestCatalogSqlReader:
             _run_graph(graph)
 
 
-# ---------------------------------------------------------------------------
-# Unit tests for extracted catalog helper functions
-# ---------------------------------------------------------------------------
-
-
 class TestResolveVirtualTable:
     """Test _resolve_virtual_table helper."""
 
@@ -761,8 +756,9 @@ class TestResolveVirtualTable:
         buf = _io.BytesIO()
         lf.serialize(buf)
         serialized = buf.getvalue()
-
-        result = _resolve_virtual_table(is_optimized=True, serialized_lf=serialized, catalog_table_id=-1)
+        result = _resolve_virtual_table(
+            is_optimized=True, serialized_lf=serialized, catalog_table_id=-1, run_location="local"
+        )
 
         assert isinstance(result, pl.LazyFrame)
         df = result.collect()
@@ -785,7 +781,7 @@ class TestResolveVirtualTable:
                 result = _resolve_virtual_table(is_optimized=False, serialized_lf=None, catalog_table_id=42)
 
         assert isinstance(result, pl.LazyFrame)
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(42)
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(42, run_location=None, node_logger=None)
 
     def test_resolve_optimized_without_serialized_lf_falls_back(self):
         """When is_optimized=True but serialized_lf is None, should fall back to service resolution."""
@@ -803,7 +799,7 @@ class TestResolveVirtualTable:
 
                 _resolve_virtual_table(is_optimized=True, serialized_lf=None, catalog_table_id=99)
 
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(99)
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(99, run_location=None, node_logger=None)
 
 
 class TestWriteCatalogDeltaLocal:
@@ -988,7 +984,6 @@ class TestHandleVirtualTableWrite:
         """Running virtual write twice should update the existing virtual table."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="vw_update_producer")
-
         # First write
         graph1 = _create_graph(flow_id=1, source_registration_id=reg_id)
         _add_manual_input(graph1, SAMPLE_DATA, node_id=1)

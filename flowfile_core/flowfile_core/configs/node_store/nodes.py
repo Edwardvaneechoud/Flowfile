@@ -44,6 +44,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Read Data",
             drawer_intro="Load data from CSV, Excel, or Parquet files",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(
@@ -307,6 +309,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             can_be_start=True,
             drawer_title="Polars Code",
             drawer_intro="Write custom Polars DataFrame transformations",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(
@@ -376,6 +380,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Cloud Storage Reader",
             drawer_intro="Read data from AWS S3 and other cloud storage",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(
