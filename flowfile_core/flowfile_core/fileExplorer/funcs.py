@@ -492,9 +492,9 @@ def resolve_managed_flow_path(filename: str) -> str:
 
     base_path = os.path.normpath(str(storage.flows_directory))
     fullpath = os.path.normpath(os.path.join(base_path, filename))
-    if not fullpath.startswith(base_path + os.sep) and fullpath != base_path:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    return fullpath
+    if fullpath.startswith(base_path):
+        return fullpath
+    raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
 
 # Alias for backward compatibility

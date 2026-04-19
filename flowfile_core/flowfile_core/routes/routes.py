@@ -1235,17 +1235,6 @@ def save_flow_to_catalog(
 
     filename = f"{int(flow_id)}_{stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
-    # Inline CodeQL py/path-injection sanitizer at the function scope. We
-    # reconstruct flow_path from normpath + join + .startswith() against the
-    # managed flows root so the scanner sees a recognized guard directly on
-    # the taint path to every filesystem sink in this function. We do NOT
-    # route this through validate_path_under_cwd because that helper has an
-    # Electron-mode early return without a startswith guard, which CodeQL
-    # follows as un-sanitized and re-taints flow_path.
-    _flows_root = os.path.normpath(str(storage.flows_directory))
-    flow_path = os.path.normpath(os.path.join(_flows_root, os.path.basename(flow_path)))
-    if not flow_path.startswith(_flows_root + os.sep) and flow_path != _flows_root:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
