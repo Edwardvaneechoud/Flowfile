@@ -1215,6 +1215,10 @@ def save_flow_to_catalog(
     two flows with the same user-chosen name in different namespaces cannot overwrite
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
+    safe_flow_id = int(flow_id)
+    if safe_flow_id <= 0:
+        raise HTTPException(status_code=422, detail="flow_id must be a positive integer")
+
     stem = flow_name.strip()
     if not stem:
         raise HTTPException(422, "flow_name must not be empty")
@@ -1227,11 +1231,11 @@ def save_flow_to_catalog(
     if not stem:
         raise HTTPException(422, "flow_name must contain more than just an extension")
 
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = flow_file_handler.get_flow(safe_flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
 
-    filename = f"{flow_id}_{stem}.yaml"
+    filename = f"{safe_flow_id}_{stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
