@@ -2143,6 +2143,31 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_random_split(self, settings: input_schema.NodeRandomSplit) -> "FlowGraph":
+        """Adds a node that randomly partitions rows into N labeled outputs.
+
+        Returns a dict[str, FlowDataEngine]; the framework unpacks it into
+        ``_named_outputs`` so each split is reachable via its own output handle.
+
+        Args:
+            settings: The settings object specifying the splits and optional seed.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+        def _func(table: FlowDataEngine) -> dict[str, FlowDataEngine]:
+            return table.random_split(settings.splits, settings.seed)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="random_split",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
         """Adds a node to create a new column with a unique ID for each record.
 
@@ -3774,6 +3799,7 @@ class FlowGraph:
                 right_input_id=node_info.right_input_id,
                 input_ids=node_info.input_ids,
                 outputs=node_info.outputs,
+                output_handles=node_info.output_handles,
                 setting_input=node_info.setting_input,
             )
             nodes.append(flowfile_node)

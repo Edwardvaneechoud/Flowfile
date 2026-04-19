@@ -2113,3 +2113,197 @@ class TestLocalWriteOutputUnit:
             )
             assert os.path.exists(path), f"excel not written for shape={shape}"
 
+
+# ============================================================================
+# Multi-output framework + random_split node
+# ============================================================================
+
+
+def _add_random_split_to_graph(
+    graph: FlowGraph,
+    splits: list[input_schema.RandomSplitGroup],
+    seed: int | None = 42,
+    node_id: int = 2,
+) -> None:
+    """Helper: attach a random_split node to node 1 with the given splits."""
+    add_node_promise_on_type(graph, "random_split", node_id)
+    add_connection(
+        graph,
+        input_schema.NodeConnection.create_from_simple_input(1, node_id),
+    )
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=1,
+            splits=splits,
+            seed=seed,
+        )
+    )
+
+
+def test_random_split_two_groups_exact_counts():
+    """80/20 split on a 1000-row input yields 800/200 outputs, accessible by handle."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(1000)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="train", percentage=80.0),
+            input_schema.RandomSplitGroup(name="test", percentage=20.0),
+        ],
+    )
+    graph.run_graph()
+    node = graph.get_node(2)
+    train = node.get_output("output-0").collect()
+    test = node.get_output("output-1").collect()
+    assert len(train) == 800
+    assert len(test) == 200
+    # Default (handle-less) consumers see the first output.
+    assert len(node.get_resulting_data().collect()) == 800
+
+
+def test_random_split_three_groups():
+    """70/15/15 with `validate` partitions cover the full input without overlap."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(100)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="train", percentage=70.0),
+            input_schema.RandomSplitGroup(name="test", percentage=15.0),
+            input_schema.RandomSplitGroup(name="validate", percentage=15.0),
+        ],
+    )
+    graph.run_graph()
+    node = graph.get_node(2)
+    train = node.get_output("output-0").collect()
+    test = node.get_output("output-1").collect()
+    validate = node.get_output("output-2").collect()
+    assert len(train) + len(test) + len(validate) == 100
+    assert len(train) == 70
+    # Combined ids cover the input exactly once.
+    seen = set(train["id"].to_list()) | set(test["id"].to_list()) | set(validate["id"].to_list())
+    assert seen == set(range(100))
+
+
+def test_random_split_seed_reproducible():
+    """Same seed → identical partitions across runs."""
+    rows = [{"id": i} for i in range(200)]
+    seed = 12345
+
+    def _run() -> list[list[int]]:
+        graph = create_graph(execution_location="local")
+        add_manual_input(graph, rows, node_id=1)
+        _add_random_split_to_graph(
+            graph,
+            [
+                input_schema.RandomSplitGroup(name="a", percentage=50.0),
+                input_schema.RandomSplitGroup(name="b", percentage=50.0),
+            ],
+            seed=seed,
+        )
+        graph.run_graph()
+        node = graph.get_node(2)
+        return [
+            sorted(node.get_output("output-0").collect()["id"].to_list()),
+            sorted(node.get_output("output-1").collect()["id"].to_list()),
+        ]
+
+    first = _run()
+    second = _run()
+    assert first == second
+
+
+def test_random_split_validation_rejects_bad_percentages():
+    """Percentages summing to 99 should fail Pydantic validation."""
+    with pytest.raises(Exception):
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=80.0),
+                input_schema.RandomSplitGroup(name="test", percentage=19.0),
+            ],
+        )
+
+
+def test_random_split_validation_rejects_duplicate_names():
+    with pytest.raises(Exception):
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            splits=[
+                input_schema.RandomSplitGroup(name="x", percentage=50.0),
+                input_schema.RandomSplitGroup(name="x", percentage=50.0),
+            ],
+        )
+
+
+def test_random_split_downstream_routing():
+    """A downstream node connected to output-1 sees only the second partition."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(100)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="big", percentage=80.0),
+            input_schema.RandomSplitGroup(name="small", percentage=20.0),
+        ],
+        node_id=2,
+    )
+    add_node_promise_on_type(graph, "sample", 3)
+    # Connect the downstream sample node to output-1 (the "small" partition) of the split node.
+    explicit_conn = input_schema.NodeConnection(
+        input_connection=input_schema.NodeInputConnection(node_id=3, connection_class="input-0"),
+        output_connection=input_schema.NodeOutputConnection(node_id=2, connection_class="output-1"),
+    )
+    add_connection(graph, explicit_conn)
+    graph.add_sample(input_schema.NodeSample(flow_id=1, node_id=3, depending_on_id=2, sample_size=1000))
+    graph.run_graph()
+    sample_node = graph.get_node(3)
+    assert sample_node._input_output_handles[2] == "output-1"
+    sampled = sample_node.get_resulting_data().collect()
+    # The sample node sees only the small partition (20 rows), not the full input.
+    assert len(sampled) == 20
+
+
+def test_random_split_table_example_per_handle():
+    """get_table_example(output_handle=...) returns the sample for that named output."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(40)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="big", percentage=75.0),
+            input_schema.RandomSplitGroup(name="small", percentage=25.0),
+        ],
+    )
+    graph.run_graph()
+    node = graph.get_node(2)
+    big_preview = node.get_table_example(True, output_handle="output-0")
+    small_preview = node.get_table_example(True, output_handle="output-1")
+    big_ids = {row["id"] for row in big_preview.data}
+    small_ids = {row["id"] for row in small_preview.data}
+    assert len(big_ids) == 30
+    assert len(small_ids) == 10
+    assert big_ids.isdisjoint(small_ids)
+
+
+def test_multi_output_streamable_propagation():
+    """All dict-returned outputs should inherit the node's streamable flag."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(50)], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="a", percentage=60.0),
+            input_schema.RandomSplitGroup(name="b", percentage=40.0),
+        ],
+    )
+    graph.run_graph()
+    node = graph.get_node(2)
+    expected = node.node_settings.streamable
+    for handle in ("output-0", "output-1"):
+        assert node.get_output(handle)._streamable == expected
+

@@ -29,6 +29,22 @@
 
     <!-- Data Tab Content -->
     <div v-show="activeTab === 'data'" class="dp-tab-content">
+      <!-- Output selector for multi-output nodes -->
+      <div v-if="hasMultipleOutputs" class="output-selector">
+        <span class="output-selector__label">Output:</span>
+        <button
+          v-for="output in nodeOutputs"
+          :key="output.id"
+          class="output-selector__button"
+          :class="{ active: output.id === selectedOutputHandle }"
+          :title="output.title"
+          @click="selectOutput(output.id)"
+        >
+          <span class="output-selector__letter">{{ output.label || output.id }}</span>
+          <span v-if="output.title" class="output-selector__name">{{ output.title }}</span>
+        </button>
+      </div>
+
       <!-- Button for when there is sample data, but the sample data is outdated -->
       <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
         <p>
@@ -171,6 +187,27 @@ const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
 const showOutdatedDataBanner = ref(false);
+const selectedOutputHandle = ref<string>("output-0");
+
+// Available output handles for the currently previewed node, read from the
+// VueFlow node's data.outputs (populated by useDragAndDrop's buildOutputHandles).
+const nodeOutputs = computed(() => {
+  if (currentNodeId.value == null) return [];
+  const vfInstance = flowStore.vueFlowInstance;
+  if (!vfInstance) return [];
+  const vfNode = vfInstance.findNode(String(currentNodeId.value));
+  return (vfNode?.data?.outputs as Array<{ id: string; label?: string; title?: string }>) ?? [];
+});
+
+const hasMultipleOutputs = computed(() => nodeOutputs.value.length > 1);
+
+async function selectOutput(handle: string) {
+  if (handle === selectedOutputHandle.value) return;
+  selectedOutputHandle.value = handle;
+  if (currentNodeId.value != null) {
+    await downloadData(currentNodeId.value);
+  }
+}
 
 interface Props {
   showFileStats?: boolean;
@@ -217,11 +254,12 @@ const nodeArtifacts = computed(() => {
   return flowStore.getNodeArtifactSummary(currentNodeId.value);
 });
 
-// Reset to data tab when the selected node changes
+// Reset to data tab and default output when the selected node changes
 watch(
   () => currentNodeId.value,
   () => {
     activeTab.value = "data";
+    selectedOutputHandle.value = "output-0";
   },
 );
 
@@ -266,7 +304,11 @@ async function downloadData(nodeId: number) {
     showOutdatedDataBanner.value = false;
     currentNodeId.value = nodeId;
 
-    let resp = await nodeStore.getTableExample(nodeStore.flow_id, nodeId);
+    let resp = await nodeStore.getTableExample(
+      nodeStore.flow_id,
+      nodeId,
+      selectedOutputHandle.value,
+    );
 
     if (resp) {
       dataPreview.value = resp;
@@ -775,5 +817,74 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   font-size: 13px;
   text-align: center;
   padding: 24px;
+}
+
+/* ============================================================
+   Output Selector (multi-output nodes)
+   ============================================================ */
+
+.output-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.output-selector__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.output-selector__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.output-selector__button:hover {
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.output-selector__button.active {
+  background: var(--color-accent, #6366f1);
+  border-color: var(--color-accent, #6366f1);
+  color: var(--color-text-inverse, #fff);
+}
+
+.output-selector__letter {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 18px;
+  height: 18px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.output-selector__button.active .output-selector__letter {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.output-selector__name {
+  font-weight: 500;
 }
 </style>

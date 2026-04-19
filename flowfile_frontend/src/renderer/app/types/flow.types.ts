@@ -132,6 +132,7 @@ export interface NodeHandle {
   id: string;
   position: Position;
   label?: string;
+  title?: string;
 }
 
 // ============================================================================

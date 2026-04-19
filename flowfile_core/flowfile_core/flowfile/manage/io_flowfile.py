@@ -216,6 +216,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             right_input_id=node.right_input_id,
             input_ids=node.input_ids,
             outputs=node.outputs,
+            output_handles=node.output_handles,
             setting_input=setting_input,
         )
         nodes_dict[node.id] = node_info
@@ -341,7 +342,9 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
 
         # Setup connections
         from_node = new_flow.get_node(node_id)
-        for output_node_id in node_info.outputs or []:
+        # Legacy pickled NodeInformation may lack the field entirely.
+        output_handles = getattr(node_info, "output_handles", None) or []
+        for idx, output_node_id in enumerate(node_info.outputs or []):
             to_node = new_flow.get_node(output_node_id)
             if to_node is not None:
                 output_node_obj = flow_storage_obj.data[output_node_id]
@@ -361,7 +364,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                     insert_type = "main"
                 else:
                     continue
-                to_node.add_node_connection(from_node, insert_type)
+                output_handle = output_handles[idx] if idx < len(output_handles) else "output-0"
+                to_node.add_node_connection(from_node, insert_type, output_handle=output_handle)
             else:
                 from_node.delete_lead_to_node(output_node_id)
                 if (from_node.node_id, output_node_id) not in flow_storage_obj.node_connections:

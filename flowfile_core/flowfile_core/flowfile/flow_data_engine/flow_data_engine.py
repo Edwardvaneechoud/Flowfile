@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -1605,6 +1606,46 @@ class FlowDataEngine:
             sample_df = self.data_frame.head(n_rows)
 
         return FlowDataEngine(sample_df, schema=self.schema)
+
+    def random_split(
+        self,
+        splits: list[input_schema.RandomSplitGroup],
+        seed: int | None = None,
+    ) -> dict[str, FlowDataEngine]:
+        """Randomly partition rows into N labeled groups.
+
+        Adds a seeded shuffle key, sorts on it, then takes successive lazy
+        slices for each split. Lazy: each output's slice carries the same
+        sort+shuffle through to its own collect, so partition boundaries stay
+        consistent as long as ``seed`` is fixed.
+
+        Args:
+            splits: Ordered list of (name, percentage) groups; percentages must
+                sum to 100 (validated upstream by ``NodeRandomSplit``).
+            seed: Random seed; if None, a fresh one is generated per call.
+
+        Returns:
+            A dict mapping each split name to a new ``FlowDataEngine``.
+        """
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+        total = self.get_number_of_records()
+        shuffled = (
+            self.data_frame
+            .with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_idx__"))
+            .sort("__split_idx__")
+            .drop("__split_idx__")
+        )
+        out: dict[str, FlowDataEngine] = {}
+        offset = 0
+        for i, sp in enumerate(splits):
+            if i == len(splits) - 1:
+                length = max(0, total - offset)
+            else:
+                length = int(round(total * sp.percentage / 100.0))
+            out[sp.name] = FlowDataEngine(shuffled.slice(offset, length))
+            offset += length
+        return out
 
     def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
         """Gets the first `n_rows` from the DataFrame.

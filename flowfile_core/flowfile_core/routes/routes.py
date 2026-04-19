@@ -1051,11 +1051,15 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
 
 
 @router.get("/node/data", response_model=output_model.TableExample, tags=["editor"])
-def get_table_example(flow_id: int, node_id: int):
-    """Retrieves a data preview (schema and sample rows) for a node's output."""
+def get_table_example(flow_id: int, node_id: int, output_handle: str = "output-0"):
+    """Retrieves a data preview (schema and sample rows) for a node's output.
+
+    For multi-output nodes, ``output_handle`` selects which named output to
+    preview (e.g. ``"output-0"``, ``"output-1"``); the default is the first.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
-    return node.get_table_example(True)
+    return node.get_table_example(True, output_handle=output_handle)
 
 
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])
