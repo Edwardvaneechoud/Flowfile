@@ -473,19 +473,23 @@ def resolve_managed_flow_path(filename: str) -> str:
     """
     if not filename:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
+
+    # Canonicalize to basename first so path construction never uses raw input.
+    safe_filename = Path(filename).name
+    if safe_filename != filename:
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+
     # Reject any separators or parent-traversal components
-    if filename != os.path.basename(filename):
+    if ".." in safe_filename:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    if ".." in filename:
-        raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    if "/" in filename or "\\" in filename:
+    if "/" in safe_filename or "\\" in safe_filename:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
     # Allow only safe filename characters to prevent ambiguous/path-like inputs.
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", safe_filename):
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     root = Path(storage.flows_directory).resolve()
-    candidate = (root / filename).resolve()
+    candidate = (root / safe_filename).resolve()
     # Ensure the resolved target is a direct child of root (no traversal/symlink escape).
     if candidate.parent != root:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
