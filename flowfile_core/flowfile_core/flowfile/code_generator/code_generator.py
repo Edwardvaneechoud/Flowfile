@@ -867,6 +867,81 @@ class FlowGraphCodeConverter:
         self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
         self._add_code("")
 
+    def _build_window_expr_code(
+        self,
+        w: "transform_schema.WindowFunctionInput",
+        partition_by: list[str],
+        order_by: list["transform_schema.SortByInput"] | None = None,
+    ) -> str:
+        """Builds a Polars expression string for a single window-function op."""
+        fw = self.framework
+        partition_repr = repr(partition_by) if partition_by else None
+
+        def over(expr: str) -> str:
+            return f"{expr}.over({partition_repr})" if partition_by else expr
+
+        func = w.function
+        if func.startswith("rolling_"):
+            kwargs = f"window_size={w.window_size}"
+            if w.min_periods is not None:
+                kwargs += f", min_samples={w.min_periods}"
+            base = f'{fw}.col("{w.column}").{func}({kwargs})'
+            return f'{over(base)}.alias("{w.new_column_name}")'
+        if func.startswith("cum_"):
+            base = f'{fw}.col("{w.column}").{func}()'
+            return f'{over(base)}.alias("{w.new_column_name}")'
+        if func == "rank":
+            method = w.rank_method or "ordinal"
+            base = f'{fw}.col("{w.column}").rank(method="{method}")'
+            return f'{over(base)}.alias("{w.new_column_name}")'
+        if func == "tile":
+            # Tile uses only Expr methods (cum_count, when/then/otherwise) and the
+            # framework-level ``len()`` so it works in both pl and ff codegen.
+            if not order_by:
+                raise ValueError("tile requires at least one order_by column")
+            order_col = order_by[0].column
+            n = int(w.number_of_groups)
+            pos = over(f'{fw}.col("{order_col}").cum_count()') + " - 1"  # 0..N-1 per group
+            group_len = over(f"{fw}.len()")
+            big = f"(({group_len}) + {n} - 1) // {n}"
+            threshold = f"(({group_len}) % {n}) * ({big})"
+            small = (
+                f"{fw}.when((({group_len}) // {n}) < 1).then(1)"
+                f".otherwise(({group_len}) // {n})"
+            )
+            expr = (
+                f"{fw}.when(({pos}) < ({threshold}))"
+                f".then(({pos}) // ({big}) + 1)"
+                f".otherwise((({pos}) - ({threshold})) // ({small}) + (({group_len}) % {n}) + 1)"
+                f".cast({fw}.Int64)"
+            )
+            return f'{expr}.alias("{w.new_column_name}")'
+        raise ValueError(f"Unsupported window function: {func!r}")
+
+    def _handle_window_functions(
+        self, settings: input_schema.NodeWindowFunctions, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle window function nodes (rolling, cumulative, rank, tile)."""
+        input_df = input_vars.get("main", "df")
+        window_input = settings.window_input
+
+        sorted_df = input_df
+        if window_input.order_by:
+            sort_cols = [f'"{s.column}"' for s in window_input.order_by]
+            descending = [s.how == "desc" for s in window_input.order_by]
+            self._add_code(f"{var_name} = {input_df}.sort([{', '.join(sort_cols)}], descending={descending})")
+            sorted_df = var_name
+
+        exprs = [
+            self._build_window_expr_code(w, window_input.partition_by, window_input.order_by)
+            for w in window_input.window_functions
+        ]
+        self._add_code(f"{var_name} = {sorted_df}.with_columns([")
+        for expr in exprs:
+            self._add_code(f"    {expr},")
+        self._add_code("])")
+        self._add_code("")
+
     @staticmethod
     def _transform_fuzzy_mappings_to_string(fuzzy_mappings: list[FuzzyMapping], prefix: str = "") -> str:
         # TODO(FlowFrame): FuzzyMapping fields containing Polars Expr objects

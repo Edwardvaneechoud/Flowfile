@@ -44,6 +44,7 @@ const BUILTIN_ICONS = new Set([
   "unpivot.png",
   "user-defined-icon.png",
   "view.png",
+  "window_functions.svg",
 ]);
 
 // Default fallback icon

@@ -155,6 +155,58 @@ def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -
     return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
 
 
+def _build_window_expr(
+    w: transform_schemas.WindowFunctionInput, partition_by: list[str]
+) -> pl.Expr:
+    """Builds a Polars expression for a single window-function operation.
+
+    Expected to be applied after any ``order_by`` sort has been performed on
+    the frame; tile and cumulative operations rely on row position rather
+    than on ``order_by`` inside ``over()``.
+    """
+
+    def over(expr: pl.Expr) -> pl.Expr:
+        return expr.over(partition_by) if partition_by else expr
+
+    func = w.function
+
+    if func.startswith("rolling_"):
+        kwargs: dict[str, Any] = {"window_size": w.window_size}
+        if w.min_periods is not None:
+            kwargs["min_samples"] = w.min_periods
+        expr = getattr(pl.col(w.column), func)(**kwargs)
+        return over(expr).alias(w.new_column_name)
+
+    if func.startswith("cum_"):
+        expr = getattr(pl.col(w.column), func)()
+        return over(expr).alias(w.new_column_name)
+
+    if func == "rank":
+        expr = pl.col(w.column).rank(method=w.rank_method or "ordinal")
+        return over(expr).alias(w.new_column_name)
+
+    if func == "tile":
+        n = int(w.number_of_groups)
+        if partition_by:
+            group_len = pl.len().over(partition_by)
+            pos = pl.int_range(pl.len()).over(partition_by)
+        else:
+            group_len = pl.len()
+            pos = pl.int_range(pl.len())
+        big_size = (group_len + n - 1) // n  # ceil(N/n)
+        threshold = (group_len % n) * big_size
+        small_size = pl.max_horizontal(group_len // n, pl.lit(1))
+        tile = (
+            pl.when(pos < threshold)
+            .then(pos // big_size + 1)
+            .otherwise((pos - threshold) // small_size + (group_len % n) + 1)
+            .cast(pl.Int64)
+        )
+        return tile.alias(w.new_column_name)
+
+    raise ValueError(f"Unsupported window function: {func!r}")
+
+
 @dataclass
 class FlowDataEngine:
     """The core data handling engine for Flowfile.
@@ -987,6 +1039,30 @@ class FlowDataEngine:
             result_df,
             calculate_schema_stats=calculate_schema_stats,
         )
+
+    def do_window_functions(
+        self, settings: transform_schemas.WindowFunctionsInput, calculate_schema_stats: bool = False
+    ) -> FlowDataEngine:
+        """Applies window functions (rolling, cumulative, rank, tile) to the data.
+
+        When ``settings.order_by`` is provided, rows are sorted first so that
+        rolling and tile operations have a deterministic order; the sort is
+        preserved in the output. Partitioning (``partition_by``) is applied via
+        ``.over(...)`` so operations reset for each group.
+        """
+        if not settings.window_functions:
+            return self
+
+        df = self.data_frame
+        if settings.order_by:
+            descending = [s.how == "desc" or (s.how or "").lower() == "descending" for s in settings.order_by]
+            df = df.sort([s.column for s in settings.order_by], descending=descending)
+
+        exprs = [
+            _build_window_expr(w, settings.partition_by) for w in settings.window_functions
+        ]
+        df = df.with_columns(exprs)
+        return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
 
     def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.

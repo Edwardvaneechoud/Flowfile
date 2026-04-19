@@ -426,6 +426,42 @@ export interface GroupByInput {
   agg_cols: AggColl[];
 }
 
+// ============================================================================
+// Window Function Types
+// ============================================================================
+
+export type WindowFunctionName =
+  | "rolling_sum"
+  | "rolling_mean"
+  | "rolling_min"
+  | "rolling_max"
+  | "rolling_std"
+  | "cum_sum"
+  | "cum_count"
+  | "cum_min"
+  | "cum_max"
+  | "rank"
+  | "tile";
+
+export type RankMethod = "ordinal" | "dense" | "min" | "max" | "average";
+
+export interface WindowFunctionInput {
+  column?: string | null;
+  function: WindowFunctionName;
+  new_column_name: string;
+  window_size?: number | null;
+  min_periods?: number | null;
+  number_of_groups?: number | null;
+  rank_method?: RankMethod | null;
+  output_type?: string | null;
+}
+
+export interface WindowFunctionsInput {
+  partition_by: string[];
+  order_by: SortByInput[];
+  window_functions: WindowFunctionInput[];
+}
+
 export type AggOption =
   | "sum"
   | "max"
@@ -787,6 +823,10 @@ export interface NodeFilter extends NodeSingleInput {
 
 export interface NodeGroupBy extends NodeSingleInput {
   groupby_input: GroupByInput;
+}
+
+export interface NodeWindowFunctions extends NodeSingleInput {
+  window_input: WindowFunctionsInput;
 }
 
 export interface NodePivot extends NodeSingleInput {

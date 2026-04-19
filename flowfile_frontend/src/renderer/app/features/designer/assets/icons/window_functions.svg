@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <style>
+    svg {
+      --ff-icon-bg: #ECFEFF;
+      --ff-icon-primary: #0E7490;
+      --ff-icon-secondary: #22D3EE;
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --ff-icon-bg: #083344;
+        --ff-icon-primary: #A5F3FC;
+        --ff-icon-secondary: #67E8F9;
+      }
+    }
+  </style>
+  <circle cx="50" cy="50" r="46" fill="var(--ff-icon-bg)"/>
+  <rect x="22" y="44" width="18" height="18" fill="none" stroke="var(--ff-icon-primary)" stroke-width="3" rx="2"/>
+  <path d="M18 74 L28 58 L38 66 L50 42 L62 56 L74 32 L84 48" stroke="var(--ff-icon-primary)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="28" cy="58" r="3.5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="38" cy="66" r="3.5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="50" cy="42" r="3.5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="62" cy="56" r="3.5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="74" cy="32" r="3.5" fill="var(--ff-icon-secondary)"/>
+</svg>
