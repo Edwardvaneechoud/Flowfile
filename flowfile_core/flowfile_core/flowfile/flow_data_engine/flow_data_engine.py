@@ -1609,43 +1609,43 @@ class FlowDataEngine:
 
     def random_split(
         self,
-        splits: list[input_schema.RandomSplitGroup],
+        splits: list[tuple[str, float]],
         seed: int | None = None,
-    ) -> dict[str, FlowDataEngine]:
+    ) -> "NamedOutputs":
         """Randomly partition rows into N labeled groups.
 
-        Adds a seeded shuffle key, sorts on it, then takes successive lazy
-        slices for each split. Lazy: each output's slice carries the same
-        sort+shuffle through to its own collect, so partition boundaries stay
-        consistent as long as ``seed`` is fixed.
+        The shuffled frame is materialized once so that each output shares the
+        same shuffle — otherwise every handle's ``.collect()`` would re-run the
+        full shuffle+sort independently (O(N·n log n) instead of O(n log n)).
 
         Args:
-            splits: Ordered list of (name, percentage) groups; percentages must
-                sum to 100 (validated upstream by ``NodeRandomSplit``).
-            seed: Random seed; if None, a fresh one is generated per call.
+            splits: Ordered (name, percentage) pairs; percentages must sum to
+                100 (validated upstream in ``NodeRandomSplit``).
+            seed: Random seed; if None, one is generated per call.
 
         Returns:
-            A dict mapping each split name to a new ``FlowDataEngine``.
+            ``NamedOutputs`` mapping each split name to a fresh ``FlowDataEngine``.
         """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
         if seed is None:
             seed = random.randint(0, 2**31 - 1)
-        total = self.get_number_of_records()
         shuffled = (
-            self.data_frame
-            .with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_idx__"))
-            .sort("__split_idx__")
-            .drop("__split_idx__")
+            self.data_frame.with_columns(
+                pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__")
+            )
+            .sort("__split_rank__")
+            .drop("__split_rank__")
+            .collect()
         )
+        total = shuffled.height
         out: dict[str, FlowDataEngine] = {}
         offset = 0
-        for i, sp in enumerate(splits):
-            if i == len(splits) - 1:
-                length = max(0, total - offset)
-            else:
-                length = int(round(total * sp.percentage / 100.0))
-            out[sp.name] = FlowDataEngine(shuffled.slice(offset, length))
+        for i, (name, percentage) in enumerate(splits):
+            length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
+            out[name] = FlowDataEngine(shuffled.slice(offset, max(0, length)).lazy())
             offset += length
-        return out
+        return NamedOutputs(out)
 
     def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
         """Gets the first `n_rows` from the DataFrame.

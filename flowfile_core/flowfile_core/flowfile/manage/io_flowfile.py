@@ -4,6 +4,7 @@ from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
@@ -365,7 +366,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                     insert_type = "main"
                 else:
                     continue
-                output_handle = output_handles[idx] if idx < len(output_handles) else "output-0"
+                output_handle = output_handles[idx] if idx < len(output_handles) else DEFAULT_OUTPUT_HANDLE
                 to_node.add_node_connection(from_node, insert_type, output_handle=output_handle)
             else:
                 from_node.delete_lead_to_node(output_node_id)

@@ -72,6 +72,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, nextTick } from "vue";
 import { Position } from "@vue-flow/core";
+import { outputHandle } from "../../../../../utils/outputHandle";
 import { NodeRandomSplit, RandomSplitGroup } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -114,7 +115,7 @@ const updateNodeOutputHandles = () => {
   if (!vfNode) return;
   const multi = splits.value.length > 1;
   vfNode.data.outputs = splits.value.map((s, i) => ({
-    id: `output-${i}`,
+    id: outputHandle(i),
     position: Position.Right,
     label: multi ? letterFor(i) : undefined,
     title: multi ? s.name : undefined,

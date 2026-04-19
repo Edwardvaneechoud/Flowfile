@@ -41,6 +41,7 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
@@ -1078,7 +1079,7 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
 
 
 @router.get("/node/data", response_model=output_model.TableExample, tags=["editor"])
-def get_table_example(flow_id: int, node_id: int, output_handle: str = "output-0"):
+def get_table_example(flow_id: int, node_id: int, output_handle: str = DEFAULT_OUTPUT_HANDLE):
     """Retrieves a data preview (schema and sample rows) for a node's output.
 
     For multi-output nodes, ``output_handle`` selects which named output to

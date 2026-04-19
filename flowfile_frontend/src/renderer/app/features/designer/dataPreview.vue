@@ -166,6 +166,7 @@ import { AgGridVue } from "@ag-grid-community/vue3";
 import { GridApi } from "@ag-grid-community/core";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
+import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
 import "@ag-grid-community/styles/ag-grid.css";
 import "@ag-grid-community/styles/ag-theme-balham.css";
 
@@ -187,7 +188,7 @@ const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
 const showOutdatedDataBanner = ref(false);
-const selectedOutputHandle = ref<string>("output-0");
+const selectedOutputHandle = ref<string>(DEFAULT_OUTPUT_HANDLE);
 
 // Available output handles for the currently previewed node, read from the
 // VueFlow node's data.outputs (populated by useDragAndDrop's buildOutputHandles).
@@ -259,7 +260,7 @@ watch(
   () => currentNodeId.value,
   () => {
     activeTab.value = "data";
-    selectedOutputHandle.value = "output-0";
+    selectedOutputHandle.value = DEFAULT_OUTPUT_HANDLE;
   },
 );
 

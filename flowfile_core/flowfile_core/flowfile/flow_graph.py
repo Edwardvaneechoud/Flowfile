@@ -2178,7 +2178,7 @@ class FlowGraph:
     def add_random_split(self, settings: input_schema.NodeRandomSplit) -> "FlowGraph":
         """Adds a node that randomly partitions rows into N labeled outputs.
 
-        Returns a dict[str, FlowDataEngine]; the framework unpacks it into
+        Returns a ``NamedOutputs``; the framework unpacks it into
         ``_named_outputs`` so each split is reachable via its own output handle.
 
         Args:
@@ -2187,8 +2187,13 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-        def _func(table: FlowDataEngine) -> dict[str, FlowDataEngine]:
-            return table.random_split(settings.splits, settings.seed)
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        def _func(table: FlowDataEngine) -> NamedOutputs:
+            return table.random_split(
+                [(s.name, s.percentage) for s in settings.splits],
+                settings.seed,
+            )
 
         self.add_node_step(
             node_id=settings.node_id,

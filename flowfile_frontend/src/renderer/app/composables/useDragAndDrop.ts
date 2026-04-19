@@ -16,6 +16,7 @@ import type {
 import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
+import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -51,7 +52,7 @@ export function buildOutputHandles(outputCount: number, names?: string[]): NodeH
   const count = Math.max(outputCount, names?.length ?? 0);
   const multi = count > 1;
   return Array.from({ length: count }, (_, i) => ({
-    id: `output-${i}`,
+    id: outputHandle(i),
     position: Position.Right,
     label: multi ? String.fromCharCode(65 + i) : undefined,
     title: multi ? names?.[i] : undefined,
@@ -661,7 +662,7 @@ export default function useDragAndDrop() {
           label: "Manual Input",
           component: markRaw(component),
           inputs: [],
-          outputs: [{ id: "output-0", position: Position.Right }],
+          outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
           nodeTemplate,
         },
       };

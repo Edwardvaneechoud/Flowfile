@@ -2309,3 +2309,144 @@ def test_multi_output_streamable_propagation():
     for handle in ("output-0", "output-1"):
         assert node.get_output(handle)._streamable == expected
 
+
+def test_random_split_returns_named_outputs():
+    """FlowDataEngine.random_split must return a NamedOutputs, not a dict."""
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+    engine = FlowDataEngine([{"id": i} for i in range(20)])
+    result = engine.random_split([("train", 50.0), ("test", 50.0)], seed=1)
+    assert isinstance(result, NamedOutputs)
+    assert result.labels == ["train", "test"]
+
+
+def _install_heterogeneous_multi_output(node):
+    """Replace a node's function with one that returns two different schemas per handle.
+
+    Returns the reusable zero-arg callable for schema-callback wiring.
+    """
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+    def _multi_fn(_table):
+        return NamedOutputs(
+            {
+                "nums": FlowDataEngine([{"num_col": 1}]),
+                "names": FlowDataEngine([{"name_col": "a"}]),
+            }
+        )
+
+    node._function = _multi_fn
+    # reset the cached schema callback so the test reinstalls a fresh one
+    node._schema_callback = None
+    return lambda: _multi_fn(None)
+
+
+def test_schema_callback_caches_per_handle_schemas():
+    """For a multi-output node function, one schema_callback invocation
+    captures every handle's schema on the node."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": 1}], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="a", percentage=50.0),
+            input_schema.RandomSplitGroup(name="b", percentage=50.0),
+        ],
+    )
+    node = graph.get_node(2)
+    zero_arg = _install_heterogeneous_multi_output(node)
+
+    callback = node.create_schema_callback_from_function(zero_arg)
+    default_schema = callback()
+
+    assert set(node._named_schemas.keys()) == {"output-0", "output-1"}
+    assert [c.name for c in node._named_schemas["output-0"]] == ["num_col"]
+    assert [c.name for c in node._named_schemas["output-1"]] == ["name_col"]
+    # The callback's own return still honors the old contract: default handle schema.
+    assert [c.name for c in default_schema] == ["num_col"]
+
+
+def test_schema_for_handle_falls_back_to_default_schema():
+    """Single-output nodes have no _named_schemas; schema_for_handle still works."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": 1, "val": "a"}], node_id=1)
+    graph.run_graph()
+    node = graph.get_node(1)
+    # Unknown handle → default schema (the one and only output).
+    assert node.schema_for_handle("output-0") == node.schema
+    assert node.schema_for_handle("output-42") == node.schema
+
+
+def test_get_predicted_resulting_data_routes_by_handle():
+    """Without full execution, the predicted FlowDataEngine for a handle
+    must reflect that handle's schema, not the default one."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": 1}], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="a", percentage=50.0),
+            input_schema.RandomSplitGroup(name="b", percentage=50.0),
+        ],
+    )
+    node = graph.get_node(2)
+    zero_arg = _install_heterogeneous_multi_output(node)
+    node.schema_callback = node.create_schema_callback_from_function(zero_arg)
+
+    default = node.get_predicted_resulting_data("output-0")
+    alt = node.get_predicted_resulting_data("output-1")
+
+    assert [c.name for c in default.schema] == ["num_col"]
+    assert [c.name for c in alt.schema] == ["name_col"]
+
+
+def test_downstream_predicted_data_uses_correct_upstream_handle():
+    """A downstream node wired to output-1 must predict *its own* resulting
+    data from output-1's schema, not output-0's."""
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": 1}], node_id=1)
+    _add_random_split_to_graph(
+        graph,
+        [
+            input_schema.RandomSplitGroup(name="a", percentage=50.0),
+            input_schema.RandomSplitGroup(name="b", percentage=50.0),
+        ],
+    )
+
+    # Wire a sample downstream specifically to output-1 (handle routing).
+    add_node_promise_on_type(graph, "sample", 3)
+    explicit_conn = input_schema.NodeConnection(
+        input_connection=input_schema.NodeInputConnection(node_id=3, connection_class="input-0"),
+        output_connection=input_schema.NodeOutputConnection(node_id=2, connection_class="output-1"),
+    )
+    add_connection(graph, explicit_conn)
+    graph.add_sample(
+        input_schema.NodeSample(flow_id=graph.flow_id, node_id=3, depending_on_id=2, sample_size=10)
+    )
+
+    # Swap the random_split node's function for one with heterogeneous output schemas,
+    # so output-0 and output-1 have distinguishable schemas.
+    upstream = graph.get_node(2)
+
+    def _multi_fn(_table):
+        return NamedOutputs(
+            {
+                "nums": FlowDataEngine([{"num_col": 1}]),
+                "names": FlowDataEngine([{"name_col": "a"}]),
+            }
+        )
+
+    upstream._function = _multi_fn
+    upstream._schema_callback = None
+    upstream.schema_callback = upstream.create_schema_callback_from_function(lambda: _multi_fn(None))
+
+    downstream = graph.get_node(3)
+    predicted = downstream._predicted_data_getter()
+    assert predicted is not None
+    # Sample is a passthrough on schema — the downstream sees output-1's columns.
+    assert [c.name for c in predicted.schema] == ["name_col"]
+
