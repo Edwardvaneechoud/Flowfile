@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -479,12 +480,14 @@ def resolve_managed_flow_path(filename: str) -> str:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    # Allow only safe filename characters to prevent ambiguous/path-like inputs.
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     root = Path(storage.flows_directory).resolve()
     candidate = (root / filename).resolve()
-    # Ensure candidate is exactly root/filename (no symlink escape) AND lives
-    # strictly under root.
-    if candidate != root / filename or not str(candidate).startswith(str(root) + os.sep):
+    # Ensure the resolved target is a direct child of root (no traversal/symlink escape).
+    if candidate.parent != root:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
     return str(candidate)
 
