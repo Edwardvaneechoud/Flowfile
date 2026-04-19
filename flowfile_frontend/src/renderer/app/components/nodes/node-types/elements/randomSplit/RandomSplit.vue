@@ -9,7 +9,7 @@
         <div class="listbox-subtitle">Splits</div>
         <div class="splits-editor">
           <div v-for="(split, index) in splits" :key="index" class="split-row">
-            <span class="split-letter">{{ letterFor(index) }}</span>
+            <span class="split-letter">{{ outputLabel(index) }}</span>
             <el-input
               v-model="split.name"
               size="small"
@@ -70,15 +70,16 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, nextTick } from "vue";
+import { ref, computed, nextTick } from "vue";
 import { Position } from "@vue-flow/core";
-import { outputHandle } from "../../../../../utils/outputHandle";
-import { NodeRandomSplit, RandomSplitGroup } from "../../../baseNode/nodeInput";
-import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { useNodeStore } from "../../../../../stores/node-store";
-import { useFlowStore } from "../../../../../stores/flow-store";
-import { useNodeSettings } from "../../../../../composables/useNodeSettings";
-import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { ElMessage } from "element-plus";
+import { outputHandle, outputLabel } from "@/utils/outputHandle";
+import type { NodeRandomSplit, RandomSplitGroup } from "@/types/node.types";
+import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
+import { useNodeStore } from "@/stores/node-store";
+import { useFlowStore } from "@/stores/flow-store";
+import { useNodeSettings } from "@/composables/useNodeSettings";
+import GenericNodeSettings from "@/components/nodes/baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -92,8 +93,6 @@ const splits = ref<RandomSplitGroup[]>([
 ]);
 const seedInput = ref<number | null>(null);
 
-const letterFor = (i: number) => String.fromCharCode(65 + i);
-
 const totalPercentage = computed(() =>
   splits.value.reduce((acc, s) => acc + (Number(s.percentage) || 0), 0),
 );
@@ -103,9 +102,7 @@ const namesAreValid = computed(() => {
   const names = splits.value.map((s) => s.name);
   if (names.some((n) => !n)) return false;
   if (new Set(names).size !== names.length) return false;
-  return names.every(
-    (n) => /^[A-Za-z][A-Za-z0-9_]*$/.test(n),
-  );
+  return names.every((n) => /^[A-Za-z][A-Za-z0-9_]*$/.test(n));
 });
 
 const updateNodeOutputHandles = () => {
@@ -117,7 +114,7 @@ const updateNodeOutputHandles = () => {
   vfNode.data.outputs = splits.value.map((s, i) => ({
     id: outputHandle(i),
     position: Position.Right,
-    label: multi ? letterFor(i) : undefined,
+    label: multi ? outputLabel(i) : undefined,
     title: multi ? s.name : undefined,
   }));
 };
@@ -142,7 +139,18 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodeRandomSplit,
   onBeforeSave: () => {
     if (!nodeRandomSplit.value) return false;
-    if (!totalIsValid.value || !namesAreValid.value || splits.value.length === 0) {
+    if (splits.value.length === 0) {
+      ElMessage.error("At least one split is required");
+      return false;
+    }
+    if (!totalIsValid.value) {
+      ElMessage.error("Split percentages must sum to 100");
+      return false;
+    }
+    if (!namesAreValid.value) {
+      ElMessage.error(
+        "Split names must be unique and start with a letter (alphanumeric / underscore only)",
+      );
       return false;
     }
     nodeRandomSplit.value.splits = splits.value.map((s) => ({
@@ -178,10 +186,6 @@ defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
-});
-
-onMounted(async () => {
-  await nextTick();
 });
 </script>
 

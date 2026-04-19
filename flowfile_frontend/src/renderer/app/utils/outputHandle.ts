@@ -7,10 +7,8 @@ export function outputHandle(index: number): string {
   return `output-${index}`;
 }
 
-export function outputHandleIndex(handle: string): number {
-  const prefix = "output-";
-  if (!handle.startsWith(prefix)) {
-    throw new Error(`Invalid output handle: ${handle}`);
-  }
-  return Number(handle.slice(prefix.length));
+// Compact per-handle label shown on the node body (A, B, C, …) when a node
+// has more than one output.
+export function outputLabel(index: number): string {
+  return String.fromCharCode(65 + index);
 }

@@ -16,7 +16,7 @@ import type {
 import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
-import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
+import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -54,7 +54,7 @@ export function buildOutputHandles(outputCount: number, names?: string[]): NodeH
   return Array.from({ length: count }, (_, i) => ({
     id: outputHandle(i),
     position: Position.Right,
-    label: multi ? String.fromCharCode(65 + i) : undefined,
+    label: multi ? outputLabel(i) : undefined,
     title: multi ? names?.[i] : undefined,
   }));
 }

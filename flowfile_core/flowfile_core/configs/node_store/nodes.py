@@ -186,7 +186,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             output_names=["train", "test"],
             transform_type="narrow",
             node_type="process",
-            image="sample.png",
+            image="random_split.svg",
             node_group="transform",
             drawer_title="Random Split",
             drawer_intro="Randomly partition rows into named groups (e.g. train/test)",

@@ -264,6 +264,21 @@ watch(
   },
 );
 
+// If the current node's output set shrinks (e.g. user removed a split) and the
+// previously selected handle no longer exists, fall back to the default so the
+// next preview fetch isn't sent with a stale handle.
+watch(
+  () => nodeOutputs.value.map((o) => o.id).join(","),
+  () => {
+    if (
+      selectedOutputHandle.value !== DEFAULT_OUTPUT_HANDLE &&
+      !nodeOutputs.value.some((o) => o.id === selectedOutputHandle.value)
+    ) {
+      selectedOutputHandle.value = DEFAULT_OUTPUT_HANDLE;
+    }
+  },
+);
+
 const defaultColDef = {
   editable: true,
   filter: true,

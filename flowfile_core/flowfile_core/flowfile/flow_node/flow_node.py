@@ -167,8 +167,6 @@ class FlowNode:
         # schema callback). Consulted by downstream nodes needing the schema
         # of a specific handle rather than the default.
         self._named_schemas: dict[str, list[FlowfileColumn]] = {}
-        # User-facing labels for the named outputs, in handle order
-        self._output_labels: list[str] = []
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
         self._on_flow_complete = None
@@ -235,7 +233,6 @@ class FlowNode:
                 with self._execution_lock:
                     result = f()
                     if isinstance(result, NamedOutputs):
-                        self._output_labels = result.labels
                         self._named_schemas = {
                             output_handle(i): engine.schema for i, engine in enumerate(result.engines)
                         }
@@ -859,7 +856,6 @@ class FlowNode:
                             except Exception as e:
                                 raise e
                         if isinstance(fl, NamedOutputs):
-                            self._output_labels = fl.labels
                             self._named_outputs = fl.by_handle()
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
                             for v in self._named_outputs.values():
@@ -1259,7 +1255,6 @@ class FlowNode:
         self.results.example_data = None
         self._named_outputs = {}
         self._named_schemas = {}
-        self._output_labels = []
 
     def cancel(self):
         """Cancels an ongoing external process if one is running."""
