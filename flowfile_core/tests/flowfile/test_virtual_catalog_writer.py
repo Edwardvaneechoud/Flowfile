@@ -193,6 +193,92 @@ class TestVirtualCatalogWriter:
             assert table.table_type == "virtual"
             assert table.producer_registration_id == reg_id
 
+    def test_virtual_writer_multiple_writers_same_registration(self):
+        """A flow with two virtual catalog_writers (same source_registration_id) should
+        produce two distinct virtual rows, not collide on the name+namespace UNIQUE
+        constraint. Regression for get_virtual_table_by_producer returning an ambiguous
+        first match when multiple virtual tables share a producer_registration_id."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="multi_writer_flow")
+        graph = _create_graph(source_registration_id=reg_id)
+
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        _add_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="writer_a",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+        _add_manual_input(graph, SAMPLE_DATA, node_id=3)
+        _add_catalog_writer(
+            graph,
+            node_id=4,
+            depending_on_id=3,
+            table_name="writer_b",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # First run creates both virtual tables
+        _run_graph(graph)
+        # Second run must update in place (no UNIQUE violation) and keep two rows
+        _run_graph(graph)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            names = sorted(t.name for t in tables)
+            assert names == ["writer_a", "writer_b"]
+            for table in tables:
+                assert table.table_type == "virtual"
+                assert table.producer_registration_id == reg_id
+
+    def test_virtual_writer_rehomes_across_flow_registrations(self):
+        """When a virtual table already exists in a namespace (e.g. created by a prior
+        flow registration), a new flow writing to the same name+namespace must update
+        the existing row in place — not raise TableExistsError. The producer is rehomed
+        to the new registration. Regression for 'Catalog table X already exists in
+        namespace' when re-registering a flow."""
+        ns_id = _create_namespace()
+        reg_a = _create_flow_registration(ns_id, name="flow_a")
+        graph_a = _create_graph(flow_id=1, source_registration_id=reg_a)
+        _add_manual_input(graph_a, SAMPLE_DATA, node_id=1)
+        _add_catalog_writer(
+            graph_a,
+            node_id=2,
+            depending_on_id=1,
+            table_name="shared_name",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+        _run_graph(graph_a)
+
+        # A different registration writes to the same (name, namespace). This simulates
+        # the user's case: the flow was re-registered and now has a new registration_id.
+        reg_b = _create_flow_registration(ns_id, name="flow_b")
+        graph_b = _create_graph(flow_id=2, source_registration_id=reg_b)
+        _add_manual_input(graph_b, SAMPLE_DATA, node_id=1)
+        _add_catalog_writer(
+            graph_b,
+            node_id=2,
+            depending_on_id=1,
+            table_name="shared_name",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+        _run_graph(graph_b)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            assert tables[0].name == "shared_name"
+            assert tables[0].table_type == "virtual"
+            # Producer was rehomed to the most recent writer
+            assert tables[0].producer_registration_id == reg_b
+
     def test_virtual_writer_requires_source_registration(self):
         """When source_registration_id is not set, virtual write should fail
         with a clear error about missing registration."""
@@ -376,6 +462,143 @@ class TestReadVirtualFlowTables:
         """SQL query against a virtual table should work."""
         catalog_service.execute_sql_query("select * from lazy_virtual")
 
+    def test_resolve_query_virtual_only_materializes_referenced_tables(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """When a query-based virtual table is resolved, it must only materialize
+        the tables its stored SQL actually references — not every other virtual in
+        the catalog. Regression: previously, resolve_query_virtual_table registered
+        every catalog table in its SQLContext, which triggered flow execution for
+        each unrelated flow-based virtual."""
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                path = f.name
+            other_reg_id = _create_flow_registration(ns_id, name="unrelated_producer", path=path)
+            svc.create_virtual_flow_table(
+                name="unrelated_flow_virtual",
+                owner_id=1,
+                producer_registration_id=other_reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",
+                is_optimized=True,
+            )
+            svc.create_query_virtual_table(
+                name="q_select_lazy",
+                owner_id=1,
+                namespace_id=ns_id,
+                sql_query="SELECT * FROM lazy_virtual",
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            q_row = repo.get_table_by_name("q_select_lazy", ns_id)
+            assert q_row is not None
+            q_id = q_row.id
+
+        catalog_service.resolve_query_virtual_table(q_id)
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            unrelated = repo.get_table_by_name("unrelated_flow_virtual", ns_id)
+            assert unrelated is not None
+            assert unrelated.id not in calls
+
+    def test_sql_query_filter_ignores_alias_lookalike(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """A short bare-named virtual (e.g. ``t``) must not be materialized when the
+        query uses it as a column alias or only as a substring of another identifier.
+        Regression: previous substring-matching filter false-positively materialized
+        every virtual whose name appeared anywhere in the query, including inside
+        ``"test-table"`` or ``SELECT ... AS t``."""
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                path = f.name
+            reg_id = _create_flow_registration(ns_id, name="t_producer", path=path)
+            svc.create_virtual_flow_table(
+                name="t",
+                owner_id=1,
+                producer_registration_id=reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",
+                is_optimized=True,
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        catalog_service.execute_sql_query('SELECT count(*) as t FROM "test-table"')
+        # Only lazy_virtual (if referenced) or nothing — the short ``t`` virtual must
+        # NOT be materialized just because ``t`` appears as an alias or inside another
+        # identifier.
+        assert lazy_virtual_table_id not in calls  # sanity: not referenced here
+        # The bare ``t`` virtual also must not be materialized.
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            t_row = repo.get_table_by_name("t", ns_id)
+            assert t_row is not None
+            assert t_row.id not in calls
+
+    def test_sql_query_does_not_materialize_unreferenced_virtuals(
+        self, lazy_virtual_table_id, catalog_service, monkeypatch
+    ):
+        """A SQL query that doesn't mention a virtual table must not run its flow.
+
+        Regression: execute_sql_query previously materialized every virtual table
+        in the catalog to generate IPC bytes, activating all their producer flows
+        even when the query only touched one physical/physical+named table."""
+        # Seed a physical table the query actually targets, in the same namespace.
+        ns_id = _create_namespace()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+                producer_path = f.name
+            reg_id = _create_flow_registration(ns_id, name="other_producer", path=producer_path)
+            # Create an additional unrelated virtual table whose producer flow would
+            # throw if materialized — simulating the worst-case observed symptom.
+            svc.create_virtual_flow_table(
+                name="untouched_virtual",
+                owner_id=1,
+                producer_registration_id=reg_id,
+                namespace_id=ns_id,
+                serialized_lazy_frame=b"\x00",  # invalid bytes on purpose
+                is_optimized=True,
+            )
+
+        calls: list[int] = []
+        original = catalog_service.resolve_virtual_flow_table
+
+        def spy(table_id, *args, **kwargs):
+            calls.append(table_id)
+            return original(table_id, *args, **kwargs)
+
+        monkeypatch.setattr(catalog_service, "resolve_virtual_flow_table", spy)
+
+        # Query references only "lazy_virtual" — untouched_virtual must not be resolved.
+        catalog_service.execute_sql_query("select * from lazy_virtual")
+        assert calls == [lazy_virtual_table_id]
+
 
 class TestCheckUpstreamLaziness:
     """Test that laziness checking correctly scopes to upstream catalog writer deps."""
@@ -531,8 +754,9 @@ class TestFlowRegistrationAttributes:
             assert isinstance(blockers, list)
 
     def test_table_to_out_with_virtual_table(self):
-        """_table_to_out should populate laziness_blockers for a virtual table
-        with a producer_registration_id without raising AttributeError."""
+        """_table_to_out should handle a virtual table with a producer_registration_id
+        without raising AttributeError. Laziness is now opt-in (compute_laziness=True)
+        to avoid re-parsing the producer flow on every serialization."""
         ns_id = _create_namespace()
         # Save a flow to disk so _compute_laziness_blockers can load it
         graph = _create_graph(flow_id=99)
@@ -552,7 +776,6 @@ class TestFlowRegistrationAttributes:
 
         reg_id = _create_flow_registration(ns_id, name="to_out_flow", path=save_path)
 
-        # Create a virtual CatalogTable with producer_registration_id
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
@@ -562,11 +785,14 @@ class TestFlowRegistrationAttributes:
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
             )
+            assert table_out.table_type == "virtual"
+            assert table_out.laziness_blockers is None  # opt-in default
 
-        # The returned CatalogTableOut should have laziness_blockers without error
-        assert table_out.table_type == "virtual"
-        assert table_out.laziness_blockers is not None
-        assert isinstance(table_out.laziness_blockers, list)
+            # Explicit opt-in still works and does not raise AttributeError
+            table = repo.get_table(table_out.id)
+            with_blockers = svc._table_to_out(table, compute_laziness=True)
+            assert with_blockers.laziness_blockers is not None
+            assert isinstance(with_blockers.laziness_blockers, list)
 
 
 class TestVirtualTableTriggerFiring:

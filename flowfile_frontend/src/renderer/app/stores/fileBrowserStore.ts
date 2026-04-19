@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { isInternalFlowfilePath } from "../components/layout/Header/utils";
 
 export type SortByType = "name" | "size" | "last_modified" | "created_date";
 export type SortDirectionType = "asc" | "desc";
@@ -26,23 +27,27 @@ function getDefaultPath(): string {
 }
 
 /**
- * Load context state from localStorage
+ * Load context state from localStorage.
+ * Paths inside Flowfile's internal storage (``~/.flowfile/``) are discarded
+ * so the file browser never reopens at an internal location the user didn't
+ * choose — e.g. after quick-creating a flow.
  */
 function loadContextState(context: FileBrowserContext): ContextState {
   const storedPath = localStorage.getItem(`fileBrowser_${context}_lastPath`);
+  const safePath = storedPath && !isInternalFlowfilePath(storedPath) ? storedPath : "";
   return {
-    currentPath: storedPath || getDefaultPath(),
-    lastUsedPath: storedPath || getDefaultPath(),
+    currentPath: safePath || getDefaultPath(),
+    lastUsedPath: safePath || getDefaultPath(),
   };
 }
 
 /**
- * Save context state to localStorage
+ * Save context state to localStorage.  Internal Flowfile paths are not
+ * persisted so they don't become the starting point next session.
  */
 function saveContextPath(context: FileBrowserContext, path: string): void {
-  if (path) {
-    localStorage.setItem(`fileBrowser_${context}_lastPath`, path);
-  }
+  if (!path || isInternalFlowfilePath(path)) return;
+  localStorage.setItem(`fileBrowser_${context}_lastPath`, path);
 }
 
 export const useFileBrowserStore = defineStore("fileBrowser", {

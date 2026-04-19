@@ -33,6 +33,19 @@ export class FileApi {
     }
   }
 
+  /**
+   * Returns the managed flows directory used for catalog-tab saves.
+   * Resolves to ``~/.flowfile/flows`` on local or ``/data/user/flows`` in Docker.
+   */
+  static async getCatalogFlowsDirectory(): Promise<string> {
+    try {
+      const response = await axios.get<string>("files/catalog_flows_directory/");
+      return response.data;
+    } catch (error) {
+      return handleApiError(error);
+    }
+  }
+
   static async createDirectory(directoryName: string): Promise<boolean> {
     try {
       const response = await axios.post<boolean>("files/create_directory", {
@@ -79,6 +92,7 @@ export class FileApi {
 
 export const getDirectoryContents = FileApi.getDirectoryContents;
 export const getDefaultPath = FileApi.getDefaultPath;
+export const getCatalogFlowsDirectory = FileApi.getCatalogFlowsDirectory;
 export const createDirectory = FileApi.createDirectory;
 export const getLocalFiles = FileApi.getLocalFiles;
 export const getParentPath = FileApi.getParentPath;

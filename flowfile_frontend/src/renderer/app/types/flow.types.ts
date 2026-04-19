@@ -40,6 +40,7 @@ export interface FlowSettings {
   is_running: boolean;
   max_parallel_workers: number;
   parameters?: FlowParameter[];
+  has_unsaved_changes?: boolean;
 }
 
 // ============================================================================
