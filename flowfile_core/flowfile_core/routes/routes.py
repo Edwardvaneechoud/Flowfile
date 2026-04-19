@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,8 @@ from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+_MANAGED_FLOW_STEM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 def get_node_model(setting_name_ref: str):
@@ -1222,17 +1225,20 @@ def save_flow_to_catalog(
     # callers can't launder ``../evil`` through ``Path(...).name``.
     if "/" in stem or "\\" in stem or ".." in stem:
         raise HTTPException(status_code=403, detail="invalid managed flow filename")
-    stem = Path(stem).name  # defense in depth in case future chars are added
     stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
-    if not stem:
-        raise HTTPException(422, "flow_name must contain more than just an extension")
+    if not _MANAGED_FLOW_STEM_RE.fullmatch(stem):
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
 
-    filename = f"{flow_id}_{stem}.yaml"
+    filename = f"{int(flow_id)}_{stem}.yaml"
     flow_path = resolve_managed_flow_path(filename)
+    # Re-pass through the CodeQL-trusted sanitizer so the taint path from
+    # flow_name -> filename -> flow_path hits a recognized py/path-injection
+    # sanitizer immediately before any filesystem sink in this function.
+    flow_path = validate_path_under_cwd(flow_path)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
