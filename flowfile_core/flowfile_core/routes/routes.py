@@ -1244,10 +1244,8 @@ def save_flow_to_catalog(
     # different flow, or exists on disk without any registration, refuse.
     source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
 
-    # Pre-save name-collision check — reject BEFORE writing any YAML so a
-    # failed save doesn't leave orphaned files on disk.  Two flows with the
-    # same display name in one namespace is confusing in the catalog picker;
-    # the correct path is to overwrite the existing entry instead.
+    # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
+    # on disk.
     existing_by_name = find_registration_by_name(stem, namespace_id)
     if existing_by_name is not None and existing_by_name.id != source_registration_id:
         raise HTTPException(
