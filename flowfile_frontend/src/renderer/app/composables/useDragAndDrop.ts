@@ -16,6 +16,7 @@ import type {
 import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
+import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -39,6 +40,23 @@ let id = 0;
 
 function getId(): number {
   return ++id;
+}
+
+// Build the outputs array for a custom-node. When a node declares more than one
+// output, each handle gets a compact letter id (A, B, …) for the canvas and the
+// user-defined name (when available) as a hover tooltip via the `title` attr.
+// For nodes whose output count is user-configurable (e.g. random_split), the
+// effective count is whichever is larger: the template's static count or the
+// number of saved output names.
+export function buildOutputHandles(outputCount: number, names?: string[]): NodeHandle[] {
+  const count = Math.max(outputCount, names?.length ?? 0);
+  const multi = count > 1;
+  return Array.from({ length: count }, (_, i) => ({
+    id: outputHandle(i),
+    position: Position.Right,
+    label: multi ? outputLabel(i) : undefined,
+    title: multi ? names?.[i] : undefined,
+  }));
 }
 
 const state = {
@@ -271,10 +289,10 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(
+            node.numberOfOutputs,
+            node.nodeTemplate?.output_names ?? undefined,
+          ),
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -328,11 +346,7 @@ export default function useDragAndDrop() {
           id: `input-${i}`,
           position: Position.Left,
         })),
-        outputs: Array.from({ length: node.output }, (_, i) => ({
-          id: `output-${i}`,
-          position: Position.Right,
-          label: node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
-        })),
+        outputs: buildOutputHandles(node.output, node.output_names ?? undefined),
         nodeTemplate: nodeTemplate,
       },
     };
@@ -423,10 +437,7 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: nodeData.output }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(nodeData.output, nodeData.output_names ?? undefined),
           nodeTemplate: nodeData,
         },
       };
@@ -508,10 +519,10 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(
+            node.numberOfOutputs,
+            node.nodeTemplate?.output_names ?? undefined,
+          ),
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -651,7 +662,7 @@ export default function useDragAndDrop() {
           label: "Manual Input",
           component: markRaw(component),
           inputs: [],
-          outputs: [{ id: "output-0", position: Position.Right }],
+          outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
           nodeTemplate,
         },
       };

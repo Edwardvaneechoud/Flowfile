@@ -1034,5 +1034,58 @@ class TestNodeReferenceYaml:
             "None node_reference should be handled correctly"
 
 
+class TestMultiOutputRoundtrip:
+    """Multi-output node connections must preserve their source output handle on round-trip."""
+
+    def test_random_split_preserves_output_handle_routing(self, tmp_path: Path):
+        graph = create_graph(flow_id=600)
+        add_manual_input(graph, [{"id": i} for i in range(50)], node_id=1)
+
+        add_node_promise(graph, "random_split", node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_random_split(
+            input_schema.NodeRandomSplit(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                splits=[
+                    input_schema.RandomSplitGroup(name="train", percentage=70.0),
+                    input_schema.RandomSplitGroup(name="test", percentage=20.0),
+                    input_schema.RandomSplitGroup(name="validate", percentage=10.0),
+                ],
+                seed=42,
+            )
+        )
+
+        # Three downstream record_count nodes, one wired to each output handle.
+        for downstream_id, handle in [(3, "output-0"), (4, "output-1"), (5, "output-2")]:
+            add_node_promise(graph, "record_count", node_id=downstream_id)
+            add_connection(
+                graph,
+                input_schema.NodeConnection(
+                    input_connection=input_schema.NodeInputConnection(
+                        node_id=downstream_id, connection_class="input-0"
+                    ),
+                    output_connection=input_schema.NodeOutputConnection(
+                        node_id=2, connection_class=handle,
+                    ),
+                ),
+            )
+            graph.add_record_count(
+                input_schema.NodeRecordCount(
+                    flow_id=graph.flow_id, node_id=downstream_id, depending_on_id=2
+                )
+            )
+
+        yaml_path = tmp_path / "random_split.yaml"
+        graph.save_flow(str(yaml_path))
+        loaded = open_flow(yaml_path)
+
+        for downstream_id, expected_handle in [(3, "output-0"), (4, "output-1"), (5, "output-2")]:
+            assert loaded.get_node(downstream_id)._input_output_handles[2] == expected_handle, (
+                f"Node {downstream_id} should be wired to {expected_handle} after reload"
+            )
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

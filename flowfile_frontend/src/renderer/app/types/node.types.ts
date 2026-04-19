@@ -824,6 +824,16 @@ export interface NodeSample extends NodeBase {
   sample_size: number;
 }
 
+export interface RandomSplitGroup {
+  name: string;
+  percentage: number;
+}
+
+export interface NodeRandomSplit extends NodeBase {
+  splits: RandomSplitGroup[];
+  seed: number | null;
+}
+
 export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
 }

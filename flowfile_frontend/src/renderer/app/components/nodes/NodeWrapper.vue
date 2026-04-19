@@ -82,6 +82,7 @@
         <span
           v-if="output.label && data.outputs.length > 1"
           class="handle-label handle-label--output"
+          :title="output.title"
         >
           {{ output.label }}
         </span>

@@ -3,6 +3,8 @@ from collections.abc import Callable, Generator
 from time import sleep
 from typing import Any, Literal, Optional
 
+import polars as pl
+
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -24,6 +26,11 @@ from flowfile_core.flowfile.flow_node.models import (
     NodeStepInputs,
     NodeStepSettings,
     NodeStepStats,
+)
+from flowfile_core.flowfile.flow_node.multi_output import (
+    DEFAULT_OUTPUT_HANDLE,
+    NamedOutputs,
+    output_handle,
 )
 from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
@@ -153,8 +160,13 @@ class FlowNode:
         # Initialize execution state
         self._execution_state = NodeExecutionState()
         self._executor = None  # Will be lazily created
-        # Multi-output support: maps output handle (e.g. "output-0") to FlowDataEngine
+        # Multi-output: output handle (e.g. "output-0") → FlowDataEngine
         self._named_outputs: dict[str, FlowDataEngine] = {}
+        # Parallel cache: output handle → schema, populated whenever the node
+        # function runs and produces a NamedOutputs (either full execution or
+        # schema callback). Consulted by downstream nodes needing the schema
+        # of a specific handle rather than the default.
+        self._named_schemas: dict[str, list[FlowfileColumn]] = {}
         # Maps source node id -> output handle used in the connection
         self._input_output_handles: dict[int, str] = {}
         self._on_flow_complete = None
@@ -177,23 +189,55 @@ class FlowNode:
         """
         self._state_needs_reset = v
 
+    @staticmethod
+    def _as_default_output(fl: "FlowDataEngine | NamedOutputs") -> "FlowDataEngine":
+        """Return the default (first) output for a node-function result.
+
+        Downstream consumers that don't request a specific handle see this one.
+        """
+        if isinstance(fl, NamedOutputs):
+            return fl.default()
+        return fl
+
+    def schema_for_handle(self, handle: str) -> list[FlowfileColumn]:
+        """Return the cached schema for a specific output handle.
+
+        Falls back to the default ``schema`` property when the handle is unknown
+        or the node is single-output, so callers can always rely on this.
+        """
+        if handle in self._named_schemas:
+            return self._named_schemas[handle]
+        if handle in self._named_outputs:
+            return self._named_outputs[handle].schema
+        return self.schema
+
     def create_schema_callback_from_function(self, f: Callable) -> Callable[[], list[FlowfileColumn]]:
         """Wraps a node's function to create a schema callback that extracts the schema.
+
+        For multi-output functions, every handle's schema is captured in
+        ``_named_schemas`` on the single call; the callback itself still
+        returns the default handle's schema so the existing contract holds.
 
         Thread-safe: uses _execution_lock to prevent concurrent execution with get_resulting_data.
 
         Args:
-            f: The node's core function that returns a FlowDataEngine instance.
+            f: The node's core function that returns a FlowDataEngine or NamedOutputs.
 
         Returns:
-            A callable that, when executed, returns the output schema.
+            A callable that, when executed, returns the default output's schema.
         """
 
         def schema_callback() -> list[FlowfileColumn]:
             try:
                 logger.info("Executing the schema callback function based on the node function")
                 with self._execution_lock:
-                    return f().schema
+                    result = f()
+                    if isinstance(result, NamedOutputs):
+                        self._named_schemas = {
+                            output_handle(i): engine.schema for i, engine in enumerate(result.engines)
+                        }
+                        return self._named_schemas.get(DEFAULT_OUTPUT_HANDLE, [])
+                    return result.schema
             except Exception as e:
                 logger.warning(f"Error with the schema callback: {e}")
                 return []
@@ -451,6 +495,11 @@ class FlowNode:
         )
         node_information.setting_input = self.setting_input
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
+        # Source-side handle for each downstream connection — the downstream
+        # node tracks this in ``_input_output_handles[from_node_id]``.
+        node_information.output_handles = [
+            n._input_output_handles.get(self.node_id, DEFAULT_OUTPUT_HANDLE) for n in self.leads_to_nodes
+        ]
         user_description = self.setting_input.description if hasattr(self.setting_input, "description") else ""
         if user_description:
             node_information.description = user_description
@@ -572,7 +621,7 @@ class FlowNode:
         self,
         from_node: "FlowNode",
         insert_type: Literal["main", "left", "right"] = "main",
-        output_handle: str = "output-0",
+        output_handle: str = DEFAULT_OUTPUT_HANDLE,
     ) -> None:
         """Adds a connection from a source node to this node.
 
@@ -723,7 +772,7 @@ class FlowNode:
         """
         logger.info(f"{self.node_type}, node_id: {self.node_id}: {v}")
 
-    def get_output(self, handle: str = "output-0") -> FlowDataEngine | None:
+    def get_output(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> FlowDataEngine | None:
         """Get the result for a specific output handle.
 
         For nodes with multiple outputs (e.g. kernel-based custom nodes),
@@ -752,8 +801,8 @@ class FlowNode:
         Returns:
             The FlowDataEngine from the appropriate output handle.
         """
-        handle = self._input_output_handles.get(input_node.node_id, "output-0")
-        if handle != "output-0" and input_node._named_outputs:
+        handle = self._input_output_handles.get(input_node.node_id, DEFAULT_OUTPUT_HANDLE)
+        if handle != DEFAULT_OUTPUT_HANDLE and input_node._named_outputs:
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
@@ -806,7 +855,17 @@ class FlowNode:
                                         lock.release()
                             except Exception as e:
                                 raise e
-                        fl.set_streamable(self.node_settings.streamable)
+                        if isinstance(fl, NamedOutputs):
+                            self._named_outputs = fl.by_handle()
+                            self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
+                            for v in self._named_outputs.values():
+                                v.set_streamable(self.node_settings.streamable)
+                            # Default downstream-without-handle consumers to the first output.
+                            # output_field_config (below) only applies to this default; future
+                            # multi-output nodes that need per-output config must extend the loop.
+                            fl = self._named_outputs[DEFAULT_OUTPUT_HANDLE]
+                        else:
+                            fl.set_streamable(self.node_settings.streamable)
 
                         # Apply output field configuration if enabled
                         if (
@@ -848,7 +907,15 @@ class FlowNode:
                 # Unresolved parameters during lazy eval are non-fatal; just run without substitution
                 restorations = []
         try:
-            fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
+            fl = self._function(
+                *[
+                    v.get_predicted_resulting_data(
+                        self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE)
+                    )
+                    for v in self.all_inputs
+                ]
+            )
+            fl = self._as_default_output(fl)
 
             # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
             # This ensures schema prediction accounts for output_field_config validation
@@ -872,18 +939,35 @@ class FlowNode:
             if restorations:
                 restore_parameters(restorations)
 
-    def get_predicted_resulting_data(self) -> FlowDataEngine:
+    def get_predicted_resulting_data(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> FlowDataEngine:
         """Creates a `FlowDataEngine` instance based on the predicted schema.
 
-        This avoids executing the node's full logic.
+        This avoids executing the node's full logic. For multi-output nodes the
+        ``handle`` argument selects which output's schema to reflect so that a
+        downstream node wired to e.g. ``output-1`` sees that partition's schema.
+
+        Args:
+            handle: The output handle to reflect. Ignored for single-output nodes.
 
         Returns:
             A FlowDataEngine instance with a schema but no data.
         """
+        # Multi-output: prefer the handle-specific cached schema if we have it.
+        if handle != DEFAULT_OUTPUT_HANDLE and (self._named_schemas or self._named_outputs):
+            schema = self.schema_for_handle(handle)
+            if schema:
+                return FlowDataEngine.create_from_schema(schema)
+
         if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print("Getting data based on the schema")
-
-            _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
+            # Running the schema callback populates _named_schemas for multi-output
+            # nodes; re-check the handle cache afterward before falling back.
+            if self.node_schema.result_schema is None:
+                _s = self.schema_callback()
+                if handle != DEFAULT_OUTPUT_HANDLE and handle in self._named_schemas:
+                    _s = self._named_schemas[handle]
+            else:
+                _s = self.node_schema.result_schema
             return FlowDataEngine.create_from_schema(_s)
         else:
             if isinstance(self.function, FlowDataEngine):
@@ -1169,6 +1253,8 @@ class FlowNode:
         self.results.errors = None
         self.results.resulting_data = None
         self.results.example_data = None
+        self._named_outputs = {}
+        self._named_schemas = {}
 
     def cancel(self):
         """Cancels an ongoing external process if one is running."""
@@ -1445,13 +1531,18 @@ class FlowNode:
         self.results.example_data_generator = None
         self.results.example_data_path = None
 
-    def get_table_example(self, include_data: bool = False) -> TableExample | None:
+    def get_table_example(
+        self, include_data: bool = False, output_handle: str = DEFAULT_OUTPUT_HANDLE
+    ) -> TableExample | None:
         """Generates a `TableExample` model summarizing the node's output.
 
-        This can optionally include a sample of the data.
+        This can optionally include a sample of the data. For multi-output
+        nodes, ``output_handle`` selects which named output to preview.
 
         Args:
             include_data: If True, includes a data sample in the result.
+            output_handle: The output handle to preview (e.g. ``"output-0"``).
+                For single-output nodes the default is the only choice.
 
         Returns:
             A `TableExample` object, or None if the node is not set up.
@@ -1463,6 +1554,27 @@ class FlowNode:
                 return self.main_input[0].get_table_example(include_data)
 
             logger.info("getting the table example since the node has run")
+            # For multi-output nodes, pull the sample from the requested named
+            # output instead of the default cached example_data_generator.
+            if self._named_outputs and output_handle in self._named_outputs:
+                engine = self._named_outputs[output_handle]
+                preview_df = engine.data_frame.head(100)
+                if isinstance(preview_df, pl.LazyFrame):
+                    preview_df = preview_df.collect()
+                data = preview_df.to_dicts() if preview_df is not None else []
+                schema = [FileColumn.model_validate(c.get_column_repr()) for c in engine.schema]
+                return TableExample(
+                    node_id=self.node_id,
+                    name=str(self.node_id),
+                    number_of_records=999,
+                    number_of_columns=len(schema),
+                    table_schema=schema,
+                    columns=[c.name for c in schema],
+                    data=data,
+                    has_example_data=True,
+                    has_run_with_current_setup=self.node_stats.has_run_with_current_setup,
+                )
+
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:
                 data = example_data_getter().to_pylist()
@@ -1549,16 +1661,18 @@ class FlowNode:
         Returns:
             A `NodeInput` object.
         """
-        # Pass output_names to the frontend when the node has them configured
         output_names = getattr(self.setting_input, "output_names", None)
         node_reference = getattr(self.setting_input, "node_reference", None)
+        template_fields = {**self.node_template.__dict__}
+        template_fields["output_names"] = (
+            output_names if output_names and len(output_names) > 1 else None
+        )
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,
             id=self.node_id,
-            output_names=output_names if output_names and len(output_names) > 1 else None,
             node_reference=node_reference,
-            **self.node_template.__dict__,
+            **template_fields,
         )
 
     def get_edge_input(self) -> list[schemas.NodeEdge]:
@@ -1570,7 +1684,7 @@ class FlowNode:
         edges = []
         if self.node_inputs.main_inputs is not None:
             for i, main_input in enumerate(self.node_inputs.main_inputs):
-                source_handle = self._input_output_handles.get(main_input.node_id, "output-0")
+                source_handle = self._input_output_handles.get(main_input.node_id, DEFAULT_OUTPUT_HANDLE)
                 edges.append(
                     schemas.NodeEdge(
                         id=f"{main_input.node_id}-{self.node_id}-{i}",
@@ -1581,7 +1695,7 @@ class FlowNode:
                     )
                 )
         if self.node_inputs.left_input is not None:
-            left_handle = self._input_output_handles.get(self.node_inputs.left_input.node_id, "output-0")
+            left_handle = self._input_output_handles.get(self.node_inputs.left_input.node_id, DEFAULT_OUTPUT_HANDLE)
             edges.append(
                 schemas.NodeEdge(
                     id=f"{self.node_inputs.left_input.node_id}-{self.node_id}-right",
@@ -1592,7 +1706,7 @@ class FlowNode:
                 )
             )
         if self.node_inputs.right_input is not None:
-            right_handle = self._input_output_handles.get(self.node_inputs.right_input.node_id, "output-0")
+            right_handle = self._input_output_handles.get(self.node_inputs.right_input.node_id, DEFAULT_OUTPUT_HANDLE)
             edges.append(
                 schemas.NodeEdge(
                     id=f"{self.node_inputs.right_input.node_id}-{self.node_id}-left",

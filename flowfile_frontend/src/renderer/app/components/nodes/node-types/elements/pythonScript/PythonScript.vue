@@ -249,6 +249,7 @@ import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { KernelInfo, KernelMemoryInfo } from "../../../../../types/kernel.types";
 import { KernelApi } from "../../../../../api/kernel.api";
 import { FlowApi } from "../../../../../api/flow.api";
+import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
@@ -488,7 +489,7 @@ const updateNodeOutputHandles = () => {
   const vfNode = vfInstance.findNode(nodeId);
   if (vfNode) {
     vfNode.data.outputs = outputNames.value.map((name: string, i: number) => ({
-      id: `output-${i}`,
+      id: outputHandle(i),
       position: Position.Right,
       label: outputNames.value.length > 1 ? name : undefined,
     }));
