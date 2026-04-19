@@ -11,6 +11,7 @@ export { TemplatesApi } from "./templates.api";
 export {
   getDirectoryContents,
   getDefaultPath,
+  getCatalogFlowsDirectory,
   createDirectory,
   getLocalFiles,
   getParentPath,

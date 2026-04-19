@@ -93,6 +93,11 @@ class FlowfileStorage:
             return self.base_directory / "flows"
 
     @property
+    def unnamed_flows_directory(self) -> Path:
+        """Directory for quick-created unnamed flows (persistent, user-accessible)."""
+        return self.flows_directory / "unnamed_flows"
+
+    @property
     def uploads_directory(self) -> Path:
         """Directory for user uploads (user-accessible)."""
         if _is_docker_mode():
@@ -215,6 +220,7 @@ class FlowfileStorage:
         # User-accessible directories (location depends on environment)
         user_directories = [
             self.flows_directory,
+            self.unnamed_flows_directory,
             self.uploads_directory,
             self.outputs_directory,
             self.user_defined_nodes_directory,

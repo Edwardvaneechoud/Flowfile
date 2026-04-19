@@ -38,13 +38,13 @@ export const designerHelp: PageHelpContent = {
       tips: [
         {
           type: "success",
-          title: "Double-click a node to configure it",
+          title: "Click a node to configure it",
           description:
             "Each node has settings you can customize — column selections, filters, join keys, and more.",
         },
         {
           type: "success",
-          title: "Use Ctrl+S to save and Ctrl+R to run",
+          title: "Use Ctrl+S to save and Ctrl+E to run",
           description: "Keyboard shortcuts help you work faster without reaching for buttons.",
         },
         {

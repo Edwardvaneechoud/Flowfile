@@ -30,7 +30,12 @@
 
         <div class="controls-row">
           <div class="search-container">
-            <el-input v-model="searchTerm" placeholder="Search files..." class="search-input">
+            <el-input
+              v-model="searchTerm"
+              placeholder="Search files..."
+              size="small"
+              class="search-input"
+            >
               <template #prefix>
                 <span class="material-icons">search</span>
               </template>
@@ -645,11 +650,15 @@ onMounted(async () => {
 .browser-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  font-size: 18px;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+.browser-title .material-icons {
+  font-size: 16px;
 }
 
 .mode-selector {
@@ -660,12 +669,12 @@ onMounted(async () => {
 .browser-content {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 116px); /* Adjust based on header height */
+  height: calc(100% - 72px); /* Header is now ~72px tall (title + compact toolbar) */
   overflow: hidden;
 }
 
 .browser-toolbar {
-  padding: 16px;
+  padding: 8px 12px;
   background-color: var(--color-background-primary);
   border-bottom: 1px solid var(--color-border-primary);
 }
@@ -678,22 +687,26 @@ onMounted(async () => {
 .path-navigation {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .nav-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 16px;
+  padding: 4px 8px;
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   background-color: var(--color-background-primary);
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.nav-button .material-icons {
+  font-size: 14px;
 }
 
 .nav-button:hover:not(:disabled) {
@@ -703,23 +716,35 @@ onMounted(async () => {
 
 .current-path {
   flex: 1;
-  padding: 8px 12px;
+  padding: 4px 10px;
   background-color: var(--color-background-secondary);
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-family: var(--font-family-mono);
+  font-size: 12px;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-container {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex: 1;
 }
 
 .search-input {
   flex: 1;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  border-radius: 4px;
+}
+
+.search-input :deep(.el-input__inner) {
+  font-size: 12px;
 }
 
 .browser-main {
@@ -933,24 +958,37 @@ onMounted(async () => {
 .sort-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 180px; /* Prevent select from being too narrow */
+  gap: 6px;
+  min-width: 150px;
+}
+
+.sort-select :deep(.el-input__inner) {
+  height: 26px;
+  font-size: 12px;
 }
 
 .sort-direction-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 32px;
+  width: 28px;
+  height: 26px;
   padding: 0;
+}
+
+.sort-direction-button .material-icons {
+  font-size: 14px;
 }
 
 .controls-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.show-hidden-toggle :deep(.el-checkbox__label) {
+  font-size: 12px;
 }
 
 .form-hint {

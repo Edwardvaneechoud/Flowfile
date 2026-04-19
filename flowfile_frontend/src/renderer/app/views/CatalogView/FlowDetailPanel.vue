@@ -125,6 +125,7 @@
         @view-run="$emit('viewRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
         @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+        @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
 
@@ -411,6 +412,7 @@ const emit = defineEmits([
   "cancelFlowRun",
   "selectSchedule",
   "recoverFromSnapshot",
+  "openSnapshot",
 ]);
 
 const latestSnapshotRunId = computed((): number | null => {

@@ -63,7 +63,13 @@
               :value="table.id"
             >
               <span>{{ table.name }}</span>
-              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+              <el-tag
+                v-if="table.table_type === 'virtual'"
+                size="small"
+                type="info"
+                style="margin-left: 8px"
+                >virtual</el-tag
+              >
             </el-option>
           </el-option-group>
           <el-option-group
@@ -77,7 +83,13 @@
               :value="table.id"
             >
               <span>{{ table.name }}</span>
-              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+              <el-tag
+                v-if="table.table_type === 'virtual'"
+                size="small"
+                type="info"
+                style="margin-left: 8px"
+                >virtual</el-tag
+              >
             </el-option>
           </el-option-group>
         </el-select>
@@ -104,7 +116,13 @@
               :value="table.id"
             >
               <span>{{ table.name }}</span>
-              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+              <el-tag
+                v-if="table.table_type === 'virtual'"
+                size="small"
+                type="info"
+                style="margin-left: 8px"
+                >virtual</el-tag
+              >
             </el-option>
           </el-option-group>
           <el-option-group
@@ -118,7 +136,13 @@
               :value="table.id"
             >
               <span>{{ table.name }}</span>
-              <el-tag v-if="table.table_type === 'virtual'" size="small" type="info" style="margin-left: 8px">virtual</el-tag>
+              <el-tag
+                v-if="table.table_type === 'virtual'"
+                size="small"
+                type="info"
+                style="margin-left: 8px"
+                >virtual</el-tag
+              >
             </el-option>
           </el-option-group>
         </el-select>

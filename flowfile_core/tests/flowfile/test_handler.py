@@ -72,7 +72,6 @@ def test_register_second_flow():
 
 def test_import_flow():
     handler = create_flowfile_handler()
-
     flow_path = find_parent_directory("Flowfile")/"flowfile_core/tests/support_files/flows/read_csv.flowfile"
     flow_id = handler.import_flow(Path(flow_path))
 

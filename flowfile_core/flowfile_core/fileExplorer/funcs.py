@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -460,6 +461,40 @@ def validate_path_under_cwd(user_path: str) -> str:
         return fullpath
 
     raise HTTPException(403, "Access denied")
+
+
+_MANAGED_FLOW_FILENAME_RE = re.compile(r"^[A-Za-z0-9_\-]+\.(yaml|yml|json)$")
+
+
+def resolve_managed_flow_path(filename: str) -> str:
+    """Resolve a filename to an absolute path under storage.flows_directory.
+
+    Accepts ONLY filenames matching ``[A-Za-z0-9_-]+\\.(yaml|yml|json)`` — no
+    directory components, no dots other than the extension separator. Returns
+    an absolute path strictly under storage.flows_directory. Raises
+    HTTPException(403) on violation.
+
+    Sanitization is layered so CodeQL's ``py/path-injection`` query sees a
+    recognized sanitizer on every taint path:
+      1. Regex allowlist rejects anything but pure basename + known extension.
+      2. String-level rejects on separators / parent-traversal (redundant with
+         the regex; kept as defense in depth).
+      3. os.path.normpath + os.path.join + .startswith() — CodeQL's documented
+         safe pattern for py/path-injection (same construct as
+         validate_path_under_cwd above).
+    """
+    if not filename or not _MANAGED_FLOW_FILENAME_RE.fullmatch(filename):
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    if filename != os.path.basename(filename):
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+
+    base_path = os.path.normpath(str(storage.flows_directory))
+    fullpath = os.path.normpath(os.path.join(base_path, filename))
+    if fullpath.startswith(base_path):
+        return fullpath
+    raise HTTPException(status_code=403, detail="invalid managed flow filename")
 
 
 # Alias for backward compatibility

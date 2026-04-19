@@ -47,7 +47,8 @@ const emitRemove = (item: string) => {
   display: flex;
   align-items: center;
   padding: 5px 10px;
-  background-color: #f0f0f0;
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
   border-radius: 4px;
   font-size: 12px; /* Font size set to 12px */
   position: relative;
