@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
+    AmbiguousTableError,
     CatalogService,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -71,6 +72,7 @@ from flowfile_core.schemas.catalog_schema import (
     PaginatedFlowRuns,
     QueryVirtualTableCreate,
     QueryVirtualTableUpdate,
+    ResolveTableResult,
     SaveQueryAsFlowRequest,
     SchedulerStatusOut,
     SqlQueryRequest,
@@ -109,6 +111,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     FlowAlreadyRunningError: (409, "Flow already has an active run"),
     TableNotFoundError: (404, "Catalog table not found"),
     TableExistsError: (409, "A table with this name already exists in this namespace"),
+    AmbiguousTableError: (409, None),
     RunNotFoundError: (404, "Run not found"),
     ScheduleNotFoundError: (404, "Schedule not found"),
     FavoriteNotFoundError: (404, "Favorite not found"),
@@ -149,6 +152,11 @@ def handle_catalog_exceptions(**overrides: str):
                         msg = override_map.get(exc_type, default_msg)
                         if msg is None:
                             msg = str(exc)
+                        if isinstance(exc, AmbiguousTableError):
+                            raise HTTPException(
+                                status_code,
+                                detail={"message": msg, "name": exc.name, "candidates": exc.candidates},
+                            ) from None
                         raise HTTPException(status_code, msg) from None
                 raise  # unreachable but keeps linters happy
 
@@ -491,6 +499,29 @@ def register_table(
         namespace_id=body.namespace_id,
         description=body.description,
     )
+
+
+@router.get("/tables/resolve", response_model=ResolveTableResult)
+@handle_catalog_exceptions()
+def resolve_table(
+    q: str,
+    namespace_id: int | None = None,
+    strict: bool = False,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Resolve a catalog table by ``"namespace.table"`` or bare ``"table"`` reference.
+
+    Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
+    Default mode soft-picks deterministically and reports alternatives in ``warnings``.
+    """
+    table_out, warnings = service.resolve_table_out(
+        q,
+        default_namespace_id=namespace_id,
+        strict=strict,
+        user_id=current_user.id,
+    )
+    return ResolveTableResult(table=table_out, warnings=warnings)
 
 
 @router.get("/tables/{table_id}", response_model=CatalogTableOut)

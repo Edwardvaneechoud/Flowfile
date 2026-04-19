@@ -43,7 +43,7 @@
             <el-option
               v-for="table in filteredTables"
               :key="table.id"
-              :label="table.name"
+              :label="tableOptionLabel(table)"
               :value="table.id"
             >
               <i
@@ -53,7 +53,7 @@
                     : 'fa-solid fa-table catalog-option-icon'
                 "
               ></i>
-              {{ table.name }}
+              {{ tableOptionLabel(table) }}
             </el-option>
           </el-select>
         </div>
@@ -123,9 +123,10 @@
               v-for="t in allTables"
               :key="t.id"
               class="table-chip"
-              @click="insertTableName(t.name)"
+              :title="t.full_table_name ?? t.name"
+              @click="insertTableName(t.full_table_name ?? t.name)"
             >
-              {{ t.name }}
+              {{ t.full_table_name ?? t.name }}
             </span>
           </div>
         </div>
@@ -155,6 +156,7 @@ const sqlCode = ref("");
 const cachedTableState = ref<{
   catalog_table_id: number | null;
   catalog_table_name: string | null;
+  catalog_full_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
   selectedTableMeta: CatalogTable | null;
@@ -174,7 +176,7 @@ const deltaVersions = ref<DeltaVersionCommit[]>([]);
 const tableSchema = computed(() => {
   const schema: Record<string, string[]> = {};
   for (const t of allTables.value) {
-    schema[t.name] = (t.schema_columns ?? []).map((c) => c.name);
+    schema[t.full_table_name ?? t.name] = (t.schema_columns ?? []).map((c) => c.name);
   }
   return schema;
 });
@@ -188,6 +190,24 @@ const filteredTables = computed(() => {
   if (nodeData.value?.catalog_namespace_id == null) return allTables.value;
   return allTables.value.filter((t) => t.namespace_id === nodeData.value?.catalog_namespace_id);
 });
+
+// Whether the candidate list has any name collisions — used to force qualified
+// labels even when the user is browsing within a single namespace.
+const hasNameCollisions = computed(() => {
+  const counts = new Map<string, number>();
+  for (const t of filteredTables.value) {
+    counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
+  }
+  for (const n of counts.values()) if (n > 1) return true;
+  return false;
+});
+
+function tableOptionLabel(table: CatalogTable): string {
+  if (nodeData.value?.catalog_namespace_id == null || hasNameCollisions.value) {
+    return table.full_table_name ?? table.name;
+  }
+  return table.name;
+}
 
 const versionOptions = computed(() => {
   return deltaVersions.value.map((v) => ({
@@ -212,6 +232,7 @@ function switchMode(newMode: "table" | "sql") {
     cachedTableState.value = {
       catalog_table_id: nodeData.value.catalog_table_id,
       catalog_table_name: nodeData.value.catalog_table_name,
+      catalog_full_table_name: nodeData.value.catalog_full_table_name,
       catalog_namespace_id: nodeData.value.catalog_namespace_id,
       delta_version: nodeData.value.delta_version,
       selectedTableMeta: selectedTableMeta.value,
@@ -219,6 +240,7 @@ function switchMode(newMode: "table" | "sql") {
     };
     nodeData.value.catalog_table_id = null;
     nodeData.value.catalog_table_name = null;
+    nodeData.value.catalog_full_table_name = null;
     nodeData.value.delta_version = null;
     selectedTableMeta.value = null;
     deltaVersions.value = [];
@@ -238,6 +260,7 @@ function switchMode(newMode: "table" | "sql") {
     if (cachedTableState.value) {
       nodeData.value.catalog_table_id = cachedTableState.value.catalog_table_id;
       nodeData.value.catalog_table_name = cachedTableState.value.catalog_table_name;
+      nodeData.value.catalog_full_table_name = cachedTableState.value.catalog_full_table_name;
       nodeData.value.catalog_namespace_id = cachedTableState.value.catalog_namespace_id;
       nodeData.value.delta_version = cachedTableState.value.delta_version;
       selectedTableMeta.value = cachedTableState.value.selectedTableMeta;
@@ -263,6 +286,7 @@ function handleNamespaceChange() {
   if (nodeData.value) {
     nodeData.value.catalog_table_id = null;
     nodeData.value.catalog_table_name = null;
+    nodeData.value.catalog_full_table_name = null;
     nodeData.value.delta_version = null;
   }
   selectedTableMeta.value = null;
@@ -278,10 +302,12 @@ async function handleTableChange(tableId: number | null) {
   if (table) {
     nodeData.value.catalog_table_name = table.name;
     nodeData.value.catalog_namespace_id = table.namespace_id;
+    nodeData.value.catalog_full_table_name = table.full_table_name ?? null;
     selectedTableMeta.value = table;
     await loadTableHistory(table.id);
   } else {
     nodeData.value.catalog_table_name = null;
+    nodeData.value.catalog_full_table_name = null;
     selectedTableMeta.value = null;
   }
 }
@@ -342,9 +368,13 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.sql_query === undefined) {
       nodeData.value!.sql_query = null;
     }
+    if (nodeData.value!.catalog_full_table_name === undefined) {
+      nodeData.value!.catalog_full_table_name = null;
+    }
   } else {
     nodeData.value = {
       catalog_table_id: null,
+      catalog_full_table_name: null,
       catalog_table_name: null,
       catalog_namespace_id: null,
       delta_version: null,

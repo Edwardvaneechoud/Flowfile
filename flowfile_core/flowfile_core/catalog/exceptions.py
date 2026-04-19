@@ -164,6 +164,22 @@ class TableExistsError(CatalogError):
         super().__init__(f"Catalog table '{name}' already exists in namespace_id={namespace_id}")
 
 
+class AmbiguousTableError(CatalogError):
+    """Raised (in strict mode) when a bare table name matches multiple catalog rows
+    across namespaces and the caller has not supplied a disambiguating namespace.
+
+    Carries the list of candidate ``(table_id, namespace_id, namespace_name, table_name)``
+    tuples so callers can render them in an error response."""
+
+    def __init__(self, name: str, candidates: list[dict]):
+        self.name = name
+        self.candidates = candidates
+        rendered = ", ".join(
+            f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates
+        )
+        super().__init__(f"Table name '{name}' is ambiguous; candidates: {rendered}")
+
+
 class TableFavoriteNotFoundError(CatalogError):
     """Raised when a table favorite record is not found."""
 

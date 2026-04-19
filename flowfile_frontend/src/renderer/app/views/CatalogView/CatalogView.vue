@@ -134,6 +134,7 @@
           @delete-schedule="handleDeleteScheduleFromDetail"
           @run-now="handleRunNowFromDetail"
           @cancel-schedule-run="handleCancelScheduleRun"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Artifact detail view -->
         <ArtifactDetailPanel
@@ -179,6 +180,7 @@
           @cancel-flow-run="handleCancelFlowRun"
           @select-schedule="selectSchedule"
           @recover-from-snapshot="openRunSnapshot($event)"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Run history overview -->
         <RunOverviewPanel
@@ -186,6 +188,7 @@
           @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
           @view-schedule-runs="navigateToScheduleRuns"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Schedule overview -->
         <ScheduleOverviewPanel

@@ -516,19 +516,31 @@ class FlowNode:
         visited: set[FlowNode] = set()
         stack = list(self.all_inputs)
         reasons: list[str] = []
+
         while stack:
             current = stack.pop()
             if current in visited:
                 continue
             visited.add(current)
-            laziness = current.node_template.laziness
-            if laziness == "eager":
-                reasons.append(f"Node '{current.node_template.name}' (id={current.node_id}) is eager")
-            elif laziness == "conditional":
-                reasons.append(
-                    f"Node '{current.node_template.name}' (id={current.node_id}) is conditional"
-                    " — defaulting to non-optimized"
-                )
+
+            if isinstance(current.setting_input, input_schema.NodeCatalogReader):
+                if current.setting_input.is_virtual_optimized is False:
+                    reasons.append(
+                        f"Node '{current.node_template.name}' (id={current.node_id}) reads a "
+                        "non-optimized virtual table"
+                    )
+            else:
+                laziness: schemas.LazinessLiteral = current.node_template.laziness
+                if laziness == "eager":
+                    reasons.append(f"Node '{current.node_template.name}' (id={current.node_id}) is eager")
+                elif laziness == "conditional":
+                    # TODO: resolve conditional nodes (read_data, polars_code, cloud_storage_reader)
+                    # via isinstance checks like catalog_reader, then raise ValueError here instead
+                    reasons.append(
+                        f"Node '{current.node_template.name}' (id={current.node_id}) is conditional"
+                        " — defaulting to non-optimized"
+                    )
+
             stack.extend(current.all_inputs)
         return len(reasons) == 0, reasons
 
@@ -1184,7 +1196,7 @@ class FlowNode:
         reset_cache: bool = False,
         performance_mode: bool = False,
         retry: bool = True,
-        node_logger: NodeLogger = None,
+        node_logger: NodeLogger | None = None,
         optimize_for_downstream: bool = True,
     ) -> None:
         """Execute the node based on its current state and settings.

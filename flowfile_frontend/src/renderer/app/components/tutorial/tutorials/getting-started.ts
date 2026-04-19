@@ -30,13 +30,14 @@ export const gettingStartedTutorial: Tutorial = {
       showPrevButton: false,
     },
 
-    // Step 2: Click Quick Create button
+    // Step 2: Click Create button (instantly creates a flow)
     {
       id: "click-quick-create",
       title: "Create a New Flow",
       content: `
         <p>First, let's create a new flow.</p>
-        <p>Click the <strong>Quick Create</strong> button to open the flow creation dialog.</p>
+        <p>Click the <strong>Create</strong> button — it will instantly make a new flow you can start editing.</p>
+        <p>Tip: the small chevron next to it opens a dialog if you want to pick a specific location or catalog namespace.</p>
       `,
       target: "[data-tutorial='quick-create-btn']",
       position: "bottom",
@@ -45,20 +46,7 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 3: Click Create Flow in modal (no highlight - tooltip stays in corner)
-    {
-      id: "confirm-create-flow",
-      title: "Confirm Flow Creation",
-      content: `
-        <p>A dialog appeared where you can optionally name your flow.</p>
-        <p>Click <strong>Create Flow</strong> in the dialog to continue.</p>
-      `,
-      position: "center",
-      action: "observe",
-      showNextButton: false,
-    },
-
-    // Step 4: Explore the canvas
+    // Step 3: Explore the canvas
     {
       id: "explore-canvas",
       title: "Your Flow Canvas",

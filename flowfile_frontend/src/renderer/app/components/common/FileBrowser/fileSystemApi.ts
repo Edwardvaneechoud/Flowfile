@@ -2,6 +2,7 @@ export {
   FileApi,
   getDirectoryContents,
   getDefaultPath,
+  getCatalogFlowsDirectory,
   createDirectory,
   getLocalFiles,
   getParentPath,

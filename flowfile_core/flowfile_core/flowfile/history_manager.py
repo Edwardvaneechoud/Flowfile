@@ -41,7 +41,15 @@ class HistoryManager:
     - HistoryEntry uses __slots__ for reduced memory overhead
     """
 
-    __slots__ = ("_config", "_undo_stack", "_redo_stack", "_is_restoring", "_last_snapshot_hash")
+    __slots__ = (
+        "_config",
+        "_undo_stack",
+        "_redo_stack",
+        "_is_restoring",
+        "_last_snapshot_hash",
+        "_saved_snapshot_hash",
+        "_dirty",
+    )
 
     def __init__(self, config: HistoryConfig | None = None):
         """Initialize the HistoryManager.
@@ -54,6 +62,10 @@ class HistoryManager:
         self._redo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._is_restoring: bool = False
         self._last_snapshot_hash: int | None = None
+        # Hash of the flow state at the last save point; used for dirty tracking
+        self._saved_snapshot_hash: int | None = None
+        # Fast dirty flag flipped on any recorded change; avoids re-hashing on hot path
+        self._dirty: bool = False
 
     @property
     def config(self) -> HistoryConfig:
@@ -153,6 +165,9 @@ class HistoryManager:
             # Add to undo stack
             self._undo_stack.append(entry)
 
+            # Real change recorded on a non-restoring path — flip the fast dirty flag.
+            self._dirty = True
+
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
 
@@ -217,6 +232,8 @@ class HistoryManager:
             # Add to undo stack
             self._undo_stack.append(entry)
             self._last_snapshot_hash = current_hash
+            # Real change confirmed on a non-restoring path — flip the fast dirty flag.
+            self._dirty = True
 
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
@@ -372,11 +389,51 @@ class HistoryManager:
         )
 
     def clear(self) -> None:
-        """Clear all history entries."""
+        """Clear all history entries.
+
+        Note: ``_saved_snapshot_hash`` is intentionally preserved here — the
+        save point persists across history clears.
+        """
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._last_snapshot_hash = None
         logger.debug("History cleared")
+
+    def mark_saved(self, flow_graph: "FlowGraph") -> None:
+        """Record the current flow state as the saved baseline.
+
+        Called after a successful save to establish the clean reference point
+        for dirty tracking.
+        """
+        try:
+            snapshot = flow_graph.get_flowfile_data()
+            snapshot_dict = snapshot.model_dump()
+            self._saved_snapshot_hash = CompressedSnapshot.compute_hash(snapshot_dict)
+            # Successful save establishes a clean baseline — clear the fast dirty flag.
+            self._dirty = False
+            logger.debug("History: marked current state as saved")
+        except Exception as e:
+            # On failure, leave _dirty alone — we didn't actually establish a clean save.
+            logger.warning(f"History: failed to mark saved state: {e}")
+
+    def has_unsaved_changes(self, flow_graph: "FlowGraph") -> bool:
+        """Check whether the current flow state differs from the last save point.
+
+        Hot path: when a save baseline exists, return the cheap ``_dirty`` flag
+        without serializing or hashing the graph. The snapshot+hash path only
+        runs as a startup fallback, before the first ``mark_saved`` establishes
+        a baseline.
+        """
+        try:
+            if self._saved_snapshot_hash is not None:
+                return self._dirty
+            # Never saved: fall back to the "non-empty content means dirty" rule
+            snapshot = flow_graph.get_flowfile_data()
+            snapshot_dict = snapshot.model_dump()
+            return len(snapshot_dict.get("nodes", []) or []) > 0
+        except Exception as e:
+            logger.warning(f"History: failed to compute dirty state: {e}")
+            return True  # conservative — keep the "unsaved changes" prompt
 
     def is_restoring(self) -> bool:
         """Check if a restore operation is currently in progress.

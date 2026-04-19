@@ -7,7 +7,7 @@ Query your catalog tables directly using SQL — no need to build a flow for qui
 ## Opening the SQL Editor
 
 Click the **SQL** button in the catalog toolbar to open the SQL editor panel.
-
+![SQL editor](../../../assets/images/guides/catalog/sql-editor.png)
 ---
 
 ## Writing Queries

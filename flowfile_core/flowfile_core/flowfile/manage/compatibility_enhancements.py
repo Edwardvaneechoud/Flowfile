@@ -429,11 +429,6 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
             node_polars.polars_code_input = new_polars_code_input
 
 
-# =============================================================================
-# FLOW-LEVEL COMPATIBILITY
-# =============================================================================
-
-
 def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     """Ensure flow_settings exists and has all required fields."""
     if not hasattr(flow_storage_obj, "flow_settings") or flow_storage_obj.flow_settings is None:
@@ -443,7 +438,6 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
         flow_storage_obj.flow_settings = flow_settings
         flow_storage_obj = schemas.FlowInformation.model_validate(flow_storage_obj)
         return flow_storage_obj
-
     fs = flow_storage_obj.flow_settings
     if not hasattr(fs, "execution_location"):
         fs.execution_location = "remote"
@@ -458,9 +452,6 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if not hasattr(fs, "show_detailed_progress"):
         fs.show_detailed_progress = True
 
-    # For track_history, we need to handle legacy pickled objects that were
-    # serialized before this field existed. Use object.__setattr__ to bypass
-    # Pydantic validation which would reject adding a new field.
     if "track_history" not in fs.__dict__:
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "track_history": True})
 
@@ -474,11 +465,6 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "parameters": []})
 
     return flow_storage_obj
-
-
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
 
 
 def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: str):

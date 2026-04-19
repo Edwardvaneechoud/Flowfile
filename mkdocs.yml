@@ -96,11 +96,11 @@ nav:
         - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
         - Schedules: users/visual-editor/catalog/schedules.md
         - SQL Editor: users/visual-editor/catalog/sql-editor.md
-        - Connections: users/visual-editor/catalog/connections.md
         - Secrets & Encryption: users/visual-editor/catalog/secrets.md
       - Features:
         - Kernel Execution: users/visual-editor/kernels.md
         - Node Designer: users/visual-editor/node-designer.md
+        - Connections: users/visual-editor/catalog/connections.md
       - Tutorials:
         - Overview: users/visual-editor/tutorials/index.md
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md

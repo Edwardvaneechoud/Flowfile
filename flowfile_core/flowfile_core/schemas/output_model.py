@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class NodeResult(BaseModel):
@@ -10,11 +10,16 @@ class NodeResult(BaseModel):
 
     node_id: int
     node_name: str | None = None
+    description: str = ""
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None
     error: str = ""
-    run_time: int = -1
+    run_time_ms: int = Field(
+        default=-1,
+        description="Run time in milliseconds",
+        validation_alias=AliasChoices("run_time_ms", "run_time"),
+    )
     is_running: bool = True
 
 
