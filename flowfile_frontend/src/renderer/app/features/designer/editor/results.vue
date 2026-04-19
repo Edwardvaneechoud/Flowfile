@@ -31,7 +31,7 @@
             <div class="node-details">
               <p>
                 Duration:
-                {{ formatRunTime(node.run_time, node.start_timestamp, node.is_running) }}
+                {{ formatRunTime(node.run_time_ms, node.start_timestamp, node.is_running) }}
               </p>
               <p>
                 Status:
@@ -83,28 +83,18 @@ const calculateColor = (success: boolean | undefined) => {
   if (success === null) return "var(--color-info)";
   return success ? "var(--color-success)" : "var(--color-danger)";
 };
-const formatRunTime = (runTime: number, startTimestamp: number, isRunning: boolean) => {
+const formatRunTime = (runTimeMs: number, startTimestamp: number, isRunning: boolean) => {
+  let ms = runTimeMs;
   if (isRunning && startTimestamp > 0) {
-    const currentTime = Date.now() / 1000; // Convert to seconds
-    runTime = currentTime - startTimestamp;
+    ms = Date.now() - startTimestamp * 1000;
   }
-
-  const ms = runTime * 1000;
-
-  // Handle invalid runtime
-  if (runTime < 0) {
-    return "Not started";
-  }
-
-  if (ms < 1000) {
-    return `${Math.round(ms)} ms`;
-  } else if (ms >= 1000 && runTime < 60) {
-    return `${Math.round(runTime)} seconds`;
-  } else {
-    const minutes = Math.floor(runTime / 60);
-    const seconds = Math.round(runTime % 60);
-    return seconds > 0 ? `${minutes} minutes, ${seconds} seconds` : `${minutes} minutes`;
-  }
+  if (ms < 0) return "Not started";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)} seconds`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return seconds > 0 ? `${minutes} minutes, ${seconds} seconds` : `${minutes} minutes`;
 };
 
 const navigateToNode = (nodeId: string) => {

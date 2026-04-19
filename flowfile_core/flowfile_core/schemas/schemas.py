@@ -197,6 +197,12 @@ class FlowSettings(FlowGraphConfig):
         return cls.model_validate(flow_graph_config.model_dump())
 
 
+class FlowSettingsResponse(FlowSettings):
+    """FlowSettings plus runtime-only fields for API responses. Not persisted."""
+
+    has_unsaved_changes: bool = False
+
+
 class RawLogInput(BaseModel):
     """
     Schema for a raw log message.

@@ -125,6 +125,37 @@ def create_default_catalog_namespace(db: Session):
         db.add(default_schema)
         db.commit()
 
+    # Dedicated schema for quick-created / unnamed flows so they don't clutter 'default'
+    unnamed_schema = (
+        db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
+    )
+    if not unnamed_schema:
+        unnamed_schema = db_models.CatalogNamespace(
+            name="Unnamed Flows",
+            parent_id=general.id,
+            level=1,
+            description="Quick-created flows that have not yet been named",
+            owner_id=local_user.id,
+        )
+        db.add(unnamed_schema)
+        db.commit()
+
+    # Dedicated schema for flows saved to arbitrary disk locations, distinct from
+    # catalog-managed flows so users can tell disk-backed and catalog flows apart.
+    local_schema = (
+        db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+    )
+    if not local_schema:
+        local_schema = db_models.CatalogNamespace(
+            name="Local Flows",
+            parent_id=general.id,
+            level=1,
+            description="Flows saved to disk at user-chosen paths",
+            owner_id=local_user.id,
+        )
+        db.add(local_schema)
+        db.commit()
+
 
 def update_db_info(db: Session):
     """Upsert the application version into the db_info table."""

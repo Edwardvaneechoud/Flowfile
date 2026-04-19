@@ -7,10 +7,34 @@
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
     <div class="sidebar-footer">
-      <div class="footer-btn-wrapper" data-tooltip="Interactive tutorial">
-        <button class="tutorial-button" @click="handleStartTutorial">
-          <span class="material-icons">school</span>
-        </button>
+      <div class="footer-btn-wrapper" data-tooltip="More & help">
+        <el-popover
+          placement="right-end"
+          :width="200"
+          trigger="click"
+          popper-class="sidebar-more-popover"
+          :show-arrow="true"
+        >
+          <template #reference>
+            <button class="tutorial-button">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </template>
+          <div class="sidebar-more-menu">
+            <button class="sidebar-more-item" @click="handleOpenTemplates">
+              <i class="fa-solid fa-layer-group"></i>
+              <span>Templates</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleOpenDocumentation">
+              <i class="fa-solid fa-book"></i>
+              <span>Documentation</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleStartTutorial">
+              <span class="material-icons">school</span>
+              <span>Interactive tutorial</span>
+            </button>
+          </div>
+        </el-popover>
       </div>
       <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
         <ThemeToggle />
@@ -116,6 +140,14 @@ const handleStartTutorial = async () => {
     await router.push({ name: "designer" });
   }
   tutorialStore.startTutorial(gettingStartedTutorial);
+};
+
+const handleOpenTemplates = () => {
+  router.push({ name: "templates" });
+};
+
+const handleOpenDocumentation = () => {
+  router.push({ name: "documentation" });
 };
 
 const handleLogout = () => {
@@ -252,5 +284,44 @@ const handleLogout = () => {
 
 .info-button i {
   font-size: var(--font-size-lg);
+}
+
+.sidebar-more-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.sidebar-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: none;
+  border-radius: var(--border-radius-md);
+  background-color: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.sidebar-more-item:hover {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+}
+
+.sidebar-more-item i,
+.sidebar-more-item .material-icons {
+  width: 18px;
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+}
+
+.sidebar-more-item:hover i,
+.sidebar-more-item:hover .material-icons {
+  color: var(--color-accent);
 }
 </style>

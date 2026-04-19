@@ -97,14 +97,18 @@
       <div v-if="schedule.schedule_type === 'table_trigger'" class="meta-card">
         <span class="meta-label">Trigger Table</span>
         <span class="meta-value">{{
-          schedule.trigger_table_name ?? `Table #${schedule.trigger_table_id}`
+          schedule.trigger_full_table_name ??
+          schedule.trigger_table_name ??
+          `Table #${schedule.trigger_table_id}`
         }}</span>
       </div>
       <div v-if="schedule.schedule_type === 'table_set_trigger'" class="meta-card">
         <span class="meta-label">Trigger Tables</span>
         <span class="meta-value">{{
-          schedule.trigger_table_names?.join(", ") ||
-          `${schedule.trigger_table_ids?.length ?? 0} tables`
+          (schedule.trigger_full_table_names?.length
+            ? schedule.trigger_full_table_names
+            : schedule.trigger_table_names
+          )?.join(", ") || `${schedule.trigger_table_ids?.length ?? 0} tables`
         }}</span>
       </div>
     </div>
@@ -149,6 +153,7 @@
         @view-run="$emit('viewRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
         @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+        @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
   </div>
@@ -183,6 +188,7 @@ defineEmits([
   "deleteSchedule",
   "runNow",
   "cancelScheduleRun",
+  "openSnapshot",
 ]);
 
 const isEditingName = ref(false);

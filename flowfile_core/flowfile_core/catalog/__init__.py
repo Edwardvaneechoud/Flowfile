@@ -9,6 +9,7 @@ Public interface:
 """
 
 from .exceptions import (
+    AmbiguousTableError,
     CatalogError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -55,4 +56,5 @@ __all__ = [
     "TableNotFoundError",
     "TableExistsError",
     "TableFavoriteNotFoundError",
+    "AmbiguousTableError",
 ]

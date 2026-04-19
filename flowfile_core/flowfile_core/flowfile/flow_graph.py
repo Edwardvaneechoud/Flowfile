@@ -414,11 +414,25 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             table_record = None
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
-            elif node_catalog_reader.catalog_table_name:
-                table_record = repo.get_table_by_name(
-                    node_catalog_reader.catalog_table_name,
-                    node_catalog_reader.catalog_namespace_id,
+            else:
+                reference = (
+                    node_catalog_reader.catalog_full_table_name
+                    or node_catalog_reader.catalog_table_name
                 )
+                if reference:
+                    try:
+                        table_record = svc.resolve_table(
+                            reference,
+                            default_namespace_id=node_catalog_reader.catalog_namespace_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Could not resolve catalog table reference %r (ns=%s) for node %s",
+                            reference,
+                            node_catalog_reader.catalog_namespace_id,
+                            node_catalog_reader.node_id,
+                            exc_info=True,
+                        )
             if table_record is not None:
                 table_type = table_record.table_type
                 if table_type == "virtual":
@@ -642,11 +656,17 @@ def _handle_virtual_table_write(
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = CatalogService(repo)
-        existing_vt = repo.get_virtual_table_by_producer(reg_id)
-        if existing_vt:
+        existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+        if existing is not None and getattr(existing, "table_type", "physical") != "virtual":
+            raise ValueError(
+                f"Cannot write virtual table '{settings.table_name}': a non-virtual "
+                f"catalog table with that name already exists in this namespace."
+            )
+        if existing is not None:
             svc.update_virtual_flow_table(
-                table_id=existing_vt.id,
+                table_id=existing.id,
                 name=settings.table_name or None,
+                producer_registration_id=reg_id,
                 description=settings.description,
                 serialized_lazy_frame=serialized_lf,
                 is_optimized=is_lazy,
@@ -849,6 +869,10 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
+        # Mark the empty initial state as the saved baseline so an unmodified
+        # flow is not considered dirty.
+        self._history_manager.mark_saved(self)
+
     @property
     def flow_settings(self) -> schemas.FlowSettings:
         return self._flow_settings
@@ -934,6 +958,14 @@ class FlowGraph:
             HistoryState with information about available undo/redo operations.
         """
         return self._history_manager.get_state()
+
+    def mark_as_saved(self) -> None:
+        """Mark the current flow state as the saved baseline (for dirty tracking)."""
+        self._history_manager.mark_saved(self)
+
+    def has_unsaved_changes(self) -> bool:
+        """Return True if the flow has changed since the last save point."""
+        return self._history_manager.has_unsaved_changes(self)
 
     def _execute_with_history(
         self,
@@ -3304,7 +3336,11 @@ class FlowGraph:
         self.flow_logger.clear_log_file()
         self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
         node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
-        node_result = NodeResult(node_id=flow_node.node_id, node_name=flow_node.name)
+        node_result = NodeResult(
+            node_id=flow_node.node_id,
+            node_name=flow_node.name,
+            description=flow_node.get_node_information().description,
+        )
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         try:
             self.latest_run_info.node_step_result.append(node_result)
@@ -3322,7 +3358,7 @@ class FlowGraph:
                 node_result.is_running = False
             node_result.success = flow_node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
@@ -3332,7 +3368,7 @@ class FlowGraph:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
         finally:
@@ -3466,7 +3502,11 @@ class FlowGraph:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
         """
         node_logger = self.flow_logger.get_node_logger(node.node_id)
-        node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+        node_result = NodeResult(
+            node_id=node.node_id,
+            node_name=node.name,
+            description=node.get_node_information().description,
+        )
 
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
@@ -3488,7 +3528,7 @@ class FlowGraph:
                 node_result.error = str(e)
                 node_result.success = False
                 node_result.end_timestamp = time()
-                node_result.run_time = 0
+                node_result.run_time_ms = 0
                 node_result.is_running = False
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
                 return node_result, node
@@ -3516,13 +3556,13 @@ class FlowGraph:
                 return node_result, node
             node_result.success = node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
         except Exception as e:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {node.node_id}: {e}")
 
@@ -3920,6 +3960,8 @@ class FlowGraph:
 
         self.flow_settings.path = flow_path
         self._sync_catalog_read_links()
+        # Record the current state as the clean baseline for dirty tracking
+        self.mark_as_saved()
 
     def _sync_catalog_read_links(self):
         """Record which catalog tables this flow reads from.

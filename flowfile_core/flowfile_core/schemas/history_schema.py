@@ -63,6 +63,15 @@ class CompressedSnapshot:
         # Pre-compute hash for fast comparison
         self._hash = self._compute_hash(snapshot_dict)
 
+    @classmethod
+    def compute_hash(cls, snapshot_dict: dict) -> int:
+        """Public wrapper around :meth:`_compute_hash`.
+
+        Allows callers outside this class to compute a snapshot hash without
+        reaching into a private method.
+        """
+        return cls._compute_hash(snapshot_dict)
+
     @staticmethod
     def _compute_hash(snapshot_dict: dict) -> int:
         """Compute a fast structural hash of the snapshot."""
