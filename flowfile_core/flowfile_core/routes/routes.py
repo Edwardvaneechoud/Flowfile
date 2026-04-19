@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,16 +31,26 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration, FlowRun
 
 # File handling
 from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     SecureFileExplorer,
     get_files_from_directory,
+    resolve_managed_flow_path,
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.catalog_helpers import (
+    FlowNameNamespaceCollision,
+    FlowPathNamespaceCollision,
+    auto_register_flow,
+    find_registration_by_name,
+    find_registration_by_path,
+    find_registration_by_registration_id,
+    register_flow_in_namespace,
+    resolve_source_registration_id,
+)
 from flowfile_core.flowfile.code_generator.code_generator import (
     UnsupportedNodeError,
     export_flow_to_flowframe,
@@ -58,7 +69,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
-from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
@@ -69,6 +79,8 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
+_MANAGED_FLOW_STEM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
 
 def get_node_model(setting_name_ref: str):
     """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
@@ -78,64 +90,6 @@ def get_node_model(setting_name_ref: str):
             return ref
     logger.error(f"Could not find node model for: {setting_name_ref}")
     return None
-
-
-def _auto_register_flow(flow_path: str, name: str, user_id: int | None) -> None:
-    """Register a flow in the default catalog namespace (General > default) if it exists.
-
-    Failures are logged at info level since users may wonder why some flows
-    don't appear in the catalog.
-    """
-    if user_id is None or flow_path is None:
-        return
-    try:
-        with get_db_context() as db:
-            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
-            if general is None:
-                logger.info("Auto-registration skipped: 'General' catalog namespace not found")
-                return
-            default_schema = db.query(CatalogNamespace).filter_by(name="default", parent_id=general.id).first()
-            if default_schema is None:
-                logger.info("Auto-registration skipped: 'default' schema not found under 'General'")
-                return
-            existing = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            if existing:
-                return  # Already registered, silent success
-            reg = FlowRegistration(
-                name=name or Path(flow_path).stem,
-                flow_path=flow_path,
-                namespace_id=default_schema.id,
-                owner_id=user_id,
-            )
-            db.add(reg)
-            db.commit()
-            logger.info(f"Auto-registered flow '{reg.name}' in default namespace")
-    except Exception:
-        logger.info(f"Auto-registration failed for '{flow_path}' (non-critical)", exc_info=True)
-
-
-def _resolve_source_registration_id(flow) -> None:
-    """Resolve and set source_registration_id on a flow from the catalog registration.
-
-    Looks up the flow_registrations table by flow_path and stamps the
-    registration ID onto the in-memory flow settings so it is available
-    for run tracking and kernel nodes without needing to re-resolve later.
-    """
-    if getattr(flow.flow_settings, "source_registration_id", None) is not None:
-        return
-    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-    if not flow_path:
-        return
-    try:
-        with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            if reg:
-                try:
-                    flow.flow_settings.source_registration_id = reg.id
-                except (AttributeError, ValueError):
-                    object.__setattr__(flow.flow_settings, "source_registration_id", reg.id)
-    except Exception:
-        logger.info(f"Could not resolve source_registration_id for '{flow_path}' (non-critical)", exc_info=True)
 
 
 @router.post("/upload/")
@@ -190,6 +144,18 @@ async def get_local_files(directory: str) -> list[FileInfo]:
 async def get_default_path() -> str:
     """Returns the default starting path for the file browser (user data directory)."""
     return str(storage.user_data_directory)
+
+
+@router.get("/files/catalog_flows_directory/", response_model=str, tags=["file manager"])
+async def get_catalog_flows_directory() -> str:
+    """Returns the managed flows directory used for catalog-tab saves.
+
+    On local this resolves to ``~/.flowfile/flows``; in Docker mode to
+    ``/data/user/flows``.  The frontend uses this to build the target path
+    for flows saved via the Catalog tab, so they always land in the managed
+    location regardless of where the file browser was last navigated.
+    """
+    return str(storage.flows_directory)
 
 
 @router.get("/files/directory_contents/", response_model=list[FileInfo], tags=["file manager"])
@@ -251,11 +217,13 @@ def register_flow(flow_data: schemas.FlowSettings, current_user=Depends(get_curr
     return flow_file_handler.register_flow(flow_data, user_id=user_id)
 
 
-@router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettings])
-async def get_active_flow_file_sessions(current_user=Depends(get_current_active_user)) -> list[schemas.FlowSettings]:
+@router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettingsResponse])
+async def get_active_flow_file_sessions(
+    current_user=Depends(get_current_active_user),
+) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [flf.flow_settings for flf in flow_file_handler.get_user_flows(user_id)]
+    return [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -291,7 +259,7 @@ def _run_and_track(flow, user_id: int | None):
 
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
-    _resolve_source_registration_id(flow)
+    resolve_source_registration_id(flow)
     logger.debug(
         f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
     )
@@ -358,14 +326,11 @@ def _run_and_track(flow, user_id: int | None):
             )
         else:
             # Fallback: create the full record if phase 1 failed
-            duration = None
-            if run_info.start_time and run_info.end_time:
-                duration = (run_info.end_time - run_info.start_time).total_seconds()
-
             with get_db_context() as db:
                 reg_id = getattr(flow.flow_settings, "source_registration_id", None)
                 flow_path = flow.flow_settings.path or flow.flow_settings.save_location
-                db_run = FlowRun(
+                service = CatalogService(SQLAlchemyCatalogRepository(db))
+                service.create_completed_run(
                     registration_id=reg_id,
                     flow_name=flow_name,
                     flow_path=flow_path,
@@ -375,13 +340,10 @@ def _run_and_track(flow, user_id: int | None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     number_of_nodes=run_info.number_of_nodes,
-                    duration_seconds=duration,
                     run_type=run_info.run_type,
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )
-                db.add(db_run)
-                db.commit()
     except Exception as exc:
         logger.error(
             f"Failed to update run record for flow '{flow_name}'. "
@@ -734,12 +696,22 @@ def get_expressions() -> list[str]:
     return get_all_expressions()
 
 
-@router.get("/editor/flow", tags=["editor"], response_model=schemas.FlowSettings)
+@router.get("/editor/flow", tags=["editor"], response_model=schemas.FlowSettingsResponse)
 def get_flow(flow_id: int):
-    """Retrieves the settings for a specific flow."""
+    """Retrieves the settings for a specific flow (including runtime dirty state)."""
     flow_id = int(flow_id)
     result = get_flow_settings(flow_id)
     return result
+
+
+@router.get("/editor/laziness_check", tags=["editor"])
+def check_flow_laziness(flow_id: int):
+    """Check whether a flow supports fully lazy execution for virtual tables."""
+    flow = flow_file_handler.get_flow(int(flow_id))
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    is_lazy, reasons = flow.check_flow_laziness()
+    return {"is_optimizable": is_lazy, "blockers": reasons}
 
 
 @router.get("/editor/code_to_polars", tags=[], response_model=str)
@@ -752,7 +724,7 @@ def get_generated_code(flow_id: int) -> str:
     try:
         return export_flow_to_polars(flow)
     except UnsupportedNodeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/editor/code_to_flowframe", tags=[], response_model=str)
@@ -765,7 +737,7 @@ def get_generated_flowframe_code(flow_id: int) -> str:
     try:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/editor/create_flow/", tags=["editor"])
@@ -792,8 +764,8 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
     flow_id = flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
+        auto_register_flow(flow.flow_settings.path, name or flow.flow_settings.name, user_id)
+        resolve_source_registration_id(flow)
     return flow_id
 
 
@@ -1131,55 +1103,308 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     flow_id = flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(validated_path, flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
+        auto_register_flow(validated_path, flow.flow_settings.name, user_id)
+        resolve_source_registration_id(flow)
     return flow_id
 
 
-@router.get("/save_flow", tags=["editor"])
-def save_flow(flow_id: int, flow_path: str = None, current_user=Depends(get_current_active_user)):
-    """Saves the current state of a flow to a `.yaml`.
+def _save_flow_impl(
+    flow_id: int,
+    flow_path: str | None,
+    namespace_id: int | None,
+    current_user,
+):
+    """Shared implementation for GET and POST ``/save_flow``.
+
+    If ``flow_path`` is omitted, the flow is saved silently to its existing path.
 
     When saving to a new path ("Save As"), the flow is treated as a new flow:
     a new flowfile_id is generated, the old handler entry is replaced, and a
     fresh catalog registration is created.  The new flow_id is returned so the
     frontend can switch to it.
+
+    When ``namespace_id`` is provided, the flow is registered in that catalog
+    namespace (instead of the default namespace).
     """
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
-    is_new_path = (
-        flow_path is not None and current_path and str(Path(flow_path).absolute()) != str(Path(current_path).absolute())
-    )
+
+    # If no explicit path provided, use the current path (silent save)
+    if flow_path is None:
+        flow_path = current_path
+    if not flow_path:
+        raise HTTPException(422, "No save path specified and flow has no existing path")
+
+    # Re-validate: current_path can be set via POST /flow_settings without validation.
+    flow_path = validate_path_under_cwd(flow_path)
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+
+    is_new_path = bool(normalized_current) and flow_path != normalized_current
 
     if is_new_path:
         user_id = current_user.id if current_user else None
-        old_flow_id = flow.flow_id
-        new_flow_id = create_unique_id()
 
-        # 1. Clear old catalog link and assign new flow identity
-        flow.flow_settings.source_registration_id = None
-        flow.flow_id = new_flow_id  # updates flow + child nodes + settings
+        def _register(fp: str, n: str, uid: int | None) -> None:
+            register_flow_in_namespace(fp, n, uid, namespace_id)
 
-        # 2. Save to the new path (updates flow.flow_settings.path)
-        flow.save_flow(flow_path=flow_path)
+        try:
+            return flow_file_handler.save_as_flow(
+                flow_id=flow_id,
+                new_path=flow_path,
+                user_id=user_id,
+                on_catalog_register=_register,
+                on_resolve_registration=resolve_source_registration_id,
+            )
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
 
-        # 3. Re-key in handler: remove old entry, register under new id
-        flow_file_handler.rekey_flow(old_flow_id, new_flow_id, user_id)
+    resolve_source_registration_id(flow)
+    flow.save_flow(flow_path=flow_path)  # save_flow itself calls mark_as_saved()
 
-        # 4. Create catalog registration for the new path and resolve
-        _auto_register_flow(flow_path, flow.flow_settings.name, user_id)
-        _resolve_source_registration_id(flow)
+    # If namespace_id provided, ensure the flow is registered in that namespace
+    if namespace_id is not None:
+        user_id = current_user.id if current_user else None
+        try:
+            register_flow_in_namespace(flow_path, flow.flow_settings.name, user_id, namespace_id)
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+    return flow_id
 
-        # 5. Re-save to persist the correct source_registration_id in YAML
-        flow.save_flow(flow_path=flow_path)
 
+@router.get("/save_flow", tags=["editor"])
+def save_flow(
+    response: Response,
+    flow_id: int,
+    flow_path: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Deprecated GET variant of ``/save_flow``.  Prefer POST.
+
+    Kept for backward compatibility with older frontends/clients. Emits a
+    ``Deprecation: true`` response header.
+    """
+    logger.warning("GET /save_flow is deprecated; use POST /save_flow instead")
+    response.headers["Deprecation"] = "true"
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+
+
+@router.post("/save_flow", tags=["editor"])
+def save_flow_post(
+    flow_id: int,
+    flow_path: str = None,
+    namespace_id: int = None,
+    current_user=Depends(get_current_active_user),
+):
+    """Saves the current state of a flow to a ``.yaml``.
+
+    See :func:`_save_flow_impl` for semantics.
+    """
+    return _save_flow_impl(flow_id, flow_path, namespace_id, current_user)
+
+
+@router.post("/save_flow_to_catalog", tags=["editor"])
+def save_flow_to_catalog(
+    flow_id: int,
+    flow_name: str,
+    namespace_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Save a flow into the managed catalog flows directory with a collision-free filename.
+
+    The file is always written to ``{flows_dir}/{flow_id}_{sanitized_name}.yaml`` so
+    two flows with the same user-chosen name in different namespaces cannot overwrite
+    each other. Returns the (possibly new) flow id so the frontend can switch to it.
+    """
+    stem = flow_name.strip()
+    if not stem:
+        raise HTTPException(422, "flow_name must not be empty")
+    # Reject path separators and parent-traversal before any sanitization so
+    # callers can't launder ``../evil`` through ``Path(...).name``.
+    if "/" in stem or "\\" in stem or ".." in stem:
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+    stem = stem.rsplit(".yaml", 1)[0].rsplit(".yml", 1)[0].rsplit(".json", 1)[0]
+    if not _MANAGED_FLOW_STEM_RE.fullmatch(stem):
+        raise HTTPException(status_code=403, detail="invalid managed flow filename")
+
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+
+    filename = f"{int(flow_id)}_{stem}.yaml"
+    flow_path = resolve_managed_flow_path(filename)
+
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+    is_new_path = bool(normalized_current) and flow_path != normalized_current
+
+    # Overwrite guard: if the resolved target file is already registered to a
+    # different flow, or exists on disk without any registration, refuse.
+    source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
+
+    # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
+    # on disk.
+    existing_by_name = find_registration_by_name(stem, namespace_id)
+    if existing_by_name is not None and existing_by_name.id != source_registration_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A flow named '{stem}' already exists in this namespace. "
+                "Select it in the catalog picker to overwrite, or choose a different name."
+            ),
+        )
+
+    existing_reg = find_registration_by_path(flow_path)
+    if existing_reg is not None and existing_reg.id != source_registration_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Target file {flow_path} is already registered to another flow",
+        )
+    if existing_reg is None and os.path.exists(flow_path):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Target file {flow_path} exists but is not catalog-registered; "
+                "refusing to overwrite"
+            ),
+        )
+
+    user_id = current_user.id if current_user else None
+
+    # Always register under the user-typed ``stem`` rather than the filename
+    # (``{flow_id}_{stem}``) so the catalog picker shows exactly what the user
+    # typed — and so the name-collision check below compares apples to apples.
+    def _register(fp: str, _n: str, uid: int | None) -> None:
+        register_flow_in_namespace(fp, stem, uid, namespace_id)
+
+    if is_new_path:
+        try:
+            new_flow_id = flow_file_handler.save_as_flow(
+                flow_id=flow_id,
+                new_path=flow_path,
+                user_id=user_id,
+                on_catalog_register=_register,
+                on_resolve_registration=resolve_source_registration_id,
+            )
+        except FlowPathNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+        except FlowNameNamespaceCollision as err:
+            raise HTTPException(status_code=409, detail=str(err)) from err
+
+        # If we renamed within the managed flows directory, unlink the old file.
+        if normalized_current and normalized_current != flow_path:
+            managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
+            if normalized_current.startswith(managed_root):
+                try:
+                    os.unlink(normalized_current)
+                except OSError:
+                    logger.info(
+                        f"Could not unlink old managed flow file {normalized_current}",
+                        exc_info=True,
+                    )
         return new_flow_id
 
-    _resolve_source_registration_id(flow)
+    resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
+    try:
+        register_flow_in_namespace(flow_path, stem, user_id, namespace_id)
+    except FlowPathNamespaceCollision as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except FlowNameNamespaceCollision as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
     return flow_id
+
+
+@router.post("/overwrite_flow_in_catalog", tags=["editor"])
+def overwrite_flow_in_catalog(
+    flow_id: int,
+    target_registration_id: int,
+    current_user=Depends(get_current_active_user),
+):
+    """Overwrite an existing catalog flow's YAML with the contents of another flow.
+
+    Unlike ``/save_flow_to_catalog``, this intentionally writes over an existing
+    registration.  The target registration's name and namespace are preserved;
+    only the file contents on disk change.  Primary use case: reverting a flow
+    to an older version by loading that version and overwriting the canonical
+    catalog entry.
+
+    Returns the (possibly new) flow id so the frontend can switch to the target.
+    """
+    user_id = current_user.id if current_user else None
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+
+    target = find_registration_by_registration_id(target_registration_id)
+    if target is None:
+        raise HTTPException(404, "Target catalog registration not found")
+
+    # Overwrite is destructive — gate strictly on ownership even though
+    # ``update_flow`` itself does not.
+    if user_id is None or user_id != target.owner_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to overwrite this catalog flow",
+        )
+
+    target_path = validate_path_under_cwd(target.flow_path)
+    managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
+
+    current_path = flow.flow_settings.path or flow.flow_settings.save_location
+    normalized_current = validate_path_under_cwd(current_path) if current_path else None
+
+    # Same-path case: current flow already lives at the target path, so just
+    # re-save in place and keep the registration pointer fresh.
+    if normalized_current == target_path:
+        resolve_source_registration_id(flow)
+        flow.save_flow(flow_path=target_path)
+        _touch_flow_registration(target_registration_id)
+        return flow_id
+
+    new_flow_id = flow_file_handler.save_as_flow(
+        flow_id=flow_id,
+        new_path=target_path,
+        user_id=user_id,
+        on_catalog_register=None,  # registration already exists; preserve it
+        on_resolve_registration=resolve_source_registration_id,
+    )
+
+    # If the source flow lived inside the managed dir on a different file,
+    # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
+    # up files under the managed root; user-owned paths elsewhere are left
+    # alone since we don't want to silently delete files the user manages.
+    if (
+        normalized_current
+        and normalized_current != target_path
+        and normalized_current.startswith(managed_root)
+    ):
+        try:
+            os.unlink(normalized_current)
+        except OSError:
+            logger.info(
+                f"Could not unlink old managed flow file {normalized_current}",
+                exc_info=True,
+            )
+
+    _touch_flow_registration(target_registration_id)
+    return new_flow_id
+
+
+def _touch_flow_registration(registration_id: int) -> None:
+    """Bump ``updated_at`` on a FlowRegistration row after overwrite."""
+    from datetime import datetime
+
+    from flowfile_core.database.models import FlowRegistration
+
+    with get_db_context() as db:
+        reg = db.get(FlowRegistration, registration_id)
+        if reg is None:
+            return
+        reg.updated_at = datetime.utcnow()
+        db.commit()
 
 
 @router.get("/flow_data", tags=["manager"])
@@ -1191,13 +1416,13 @@ def get_flow_frontend_data(flow_id: int | None = 1):
     return flow.get_frontend_data()
 
 
-@router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettings)
-def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettings:
-    """Retrieves the main settings for a flow."""
+@router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettingsResponse)
+def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettingsResponse:
+    """Retrieves the main settings for a flow (including dirty-state info)."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "could not find the flow")
-    return flow.flow_settings
+    return flow_file_handler.get_flow_info_with_runtime(flow_id)
 
 
 @router.post("/flow_settings", tags=["manager"])
@@ -1452,5 +1677,5 @@ def create_from_template(template_id: str, current_user=Depends(get_current_acti
 
     flow = flow_file_handler.get_flow(flow_id)
     if flow and flow.flow_settings:
-        _auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
+        auto_register_flow(str(flows_dir / f"{flow_stem}.yaml"), flow.flow_settings.name, user_id)
     return flow_id

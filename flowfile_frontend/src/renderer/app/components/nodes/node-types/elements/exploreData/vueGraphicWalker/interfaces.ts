@@ -1,4 +1,4 @@
-export { IMutField, IRow, VizSpecStore, IChart } from "@kanaries/graphic-walker";
+export { IMutField, IRow, ISemanticType, VizSpecStore, IChart } from "@kanaries/graphic-walker";
 import { IMutField, IRow, VizSpecStore, IChart } from "@kanaries/graphic-walker";
 import { NodeBase } from "../../../../baseNode/nodeInput";
 

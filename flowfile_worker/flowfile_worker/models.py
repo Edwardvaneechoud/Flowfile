@@ -2,7 +2,7 @@ from base64 import b64decode, b64encode
 from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match import FuzzyMapping
-from pydantic import BaseModel, BeforeValidator, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
@@ -203,3 +203,21 @@ class DeltaVersionPreviewResponse(BaseModel):
     dtypes: list[str]
     rows: list[list]
     total_rows: int
+
+
+class SqlQueryRequest(BaseModel):
+    query: str
+    tables: dict[str, str]  # mapping of logical table name -> directory name
+    max_rows: int = 10_000
+    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64-encoded IPC bytes
+
+
+class SqlQueryResponse(BaseModel):
+    columns: list[str] = Field(default_factory=list)
+    dtypes: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    execution_time_ms: float = 0.0
+    used_tables: list[str] = Field(default_factory=list)
+    error: str | None = None

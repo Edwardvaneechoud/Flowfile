@@ -156,6 +156,8 @@ export interface CatalogTable {
   id: number;
   name: string;
   namespace_id: number | null;
+  namespace_name: string | null;
+  full_table_name: string | null;
   description: string | null;
   owner_id: number;
   file_exists: boolean;
@@ -168,6 +170,14 @@ export interface CatalogTable {
   source_registration_name: string | null;
   source_run_id: number | null;
   read_by_flows: FlowSummary[];
+  table_type: "physical" | "virtual";
+  producer_registration_id: number | null;
+  producer_registration_name: string | null;
+  is_optimized: boolean | null;
+  laziness_blockers: string[] | null;
+  sql_query: string | null;
+  polars_plan: string | null;
+  source_table_versions: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,6 +193,27 @@ export interface CatalogTableUpdate {
   name?: string;
   description?: string;
   namespace_id?: number | null;
+}
+
+export interface VirtualFlowTableCreate {
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+  producer_registration_id: number;
+}
+
+export interface VirtualFlowTableUpdate {
+  name?: string;
+  description?: string;
+  namespace_id?: number | null;
+  producer_registration_id?: number | null;
+}
+
+export interface QueryVirtualTableCreate {
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+  sql_query: string;
 }
 
 export interface CatalogTablePreview {
@@ -223,8 +254,12 @@ export interface FlowSchedule {
   interval_seconds: number | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
+  trigger_namespace_id: number | null;
+  trigger_namespace_name: string | null;
+  trigger_full_table_name: string | null;
   trigger_table_ids: number[];
   trigger_table_names: string[];
+  trigger_full_table_names: string[];
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;
@@ -277,6 +312,7 @@ export interface CatalogStats {
   total_table_favorites: number;
   total_artifacts: number;
   total_tables: number;
+  total_virtual_tables: number;
   total_schedules: number;
   recent_runs: FlowRun[];
   favorite_flows: FlowRegistration[];
@@ -300,4 +336,19 @@ export interface SchedulerStatus {
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules";
+export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules" | "sql";
+
+// ============================================================================
+// SQL Query types
+// ============================================================================
+
+export interface SqlQueryResult {
+  columns: string[];
+  dtypes: string[];
+  rows: any[][];
+  total_rows: number;
+  truncated: boolean;
+  execution_time_ms: number;
+  used_tables: string[];
+  error: string | null;
+}

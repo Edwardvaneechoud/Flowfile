@@ -79,6 +79,14 @@
           The file <code>{{ flow.flow_path }}</code> no longer exists on disk. The flow cannot be
           opened or executed, but its run history is still available below.
         </p>
+        <button
+          v-if="latestSnapshotRunId !== null"
+          class="btn btn-sm btn-primary recovery-btn"
+          @click="emit('recoverFromSnapshot', latestSnapshotRunId!)"
+        >
+          <i class="fa-solid fa-arrow-rotate-left"></i>
+          Recover from latest snapshot
+        </button>
       </div>
     </div>
 
@@ -117,6 +125,7 @@
         @view-run="$emit('viewRun', $event)"
         @view-flow="$emit('viewFlow', $event)"
         @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+        @open-snapshot="$emit('openSnapshot', $event)"
       />
     </div>
 
@@ -402,7 +411,17 @@ const emit = defineEmits([
   "runFlow",
   "cancelFlowRun",
   "selectSchedule",
+  "recoverFromSnapshot",
+  "openSnapshot",
 ]);
+
+const latestSnapshotRunId = computed((): number | null => {
+  const runs = catalogStore.runs.filter(
+    (r) => r.registration_id === props.flow.id && r.has_snapshot,
+  );
+  if (runs.length === 0) return null;
+  return runs[0].id;
+});
 
 const isEditing = ref(false);
 const editName = ref("");
@@ -823,5 +842,12 @@ async function handleDeleteSchedule(id: number) {
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
   border-radius: var(--border-radius-sm);
+}
+
+.recovery-btn {
+  margin-top: var(--spacing-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
 }
 </style>

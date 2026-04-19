@@ -3,7 +3,12 @@
     <div v-if="!isLoading" class="header">
       <div class="header-top">
         <div class="left-section">
-          <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+          <header-buttons
+            ref="headerButtons"
+            @open-flow="openFlow"
+            @refresh-flow="refreshFlow"
+            @flow-saved="handleFlowSaved"
+          />
         </div>
       </div>
       <div class="header-bottom">
@@ -55,7 +60,7 @@
       class="canvas"
       @save="headerButtons?.openSaveModal()"
       @run="headerButtons?.runFlow()"
-      @new="headerButtons?.handleQuickCreateAction()"
+      @new="headerButtons?.handleQuickCreate()"
     />
   </div>
 </template>
@@ -188,6 +193,10 @@ const handleFlowChange = async (flowId: number) => {
   }
 };
 
+const handleFlowSaved = (flowId: number) => {
+  flowSelector.value?.refreshDirtyState(flowId);
+};
+
 const refreshFlow = async () => {
   isLoading.value = true;
   try {
@@ -219,8 +228,7 @@ const openFlowDialog = () => {
 
 const openQuickCreateDialog = () => {
   if (headerButtons.value) {
-    console.log("Opening quick create dialog");
-    headerButtons.value.handleQuickCreateAction();
+    headerButtons.value.handleQuickCreate();
   }
 };
 

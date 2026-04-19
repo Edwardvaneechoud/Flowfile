@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
 import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
 import { FlowApi } from "../api";
+import { useEditorStore } from "./editor-store";
 
 const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
@@ -65,9 +66,13 @@ export const useFlowStore = defineStore("flow", {
       return this.vueFlowInstance;
     },
 
-    // Update history state from API response
+    // Update history state from API response.
+    // Every canvas-level mutation (add/delete/connect/disconnect/undo/redo)
+    // routes through here, so this is also the hook point for bumping the
+    // dirty-state counter.
     updateHistoryState(historyState: HistoryState) {
       this.historyState = historyState;
+      useEditorStore().bumpGraphVersion();
     },
 
     // Reset history state

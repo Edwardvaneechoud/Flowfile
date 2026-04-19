@@ -1,5 +1,6 @@
 import datetime
 import functools
+import io as _io
 import json
 import os
 import threading
@@ -10,7 +11,7 @@ from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import time
-from typing import Any, Literal, Union
+from typing import Any, Literal, NamedTuple, Union
 from uuid import uuid1
 
 import fastexcel
@@ -20,10 +21,10 @@ from fastapi.exceptions import HTTPException
 from pyarrow.parquet import ParquetFile
 
 from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.delta_utils import delete_table_storage, is_delta_table
+from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
-from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
@@ -33,7 +34,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_database_connection,
 )
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
+    FlowDataEngine,
+    execute_polars_code,
+    execute_sql_query,
+)
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
@@ -71,7 +76,11 @@ from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+    BaseSqlSource,
+    SqlSource,
+    validate_sql_query,
+)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
@@ -310,6 +319,467 @@ def get_cloud_connection_settings(
     return cloud_connection_settings
 
 
+# ---------------------------------------------------------------------------
+# Catalog writer/reader helpers (extracted for testability)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_virtual_table(
+    is_optimized: bool,
+    serialized_lf: bytes | None,
+    catalog_table_id: int,
+    run_location: Literal["remote", "local"] | None = None,
+    node_logger: NodeLogger = None,
+    source_table_versions: str | None = None,
+) -> pl.LazyFrame:
+    """Resolve a virtual table to a LazyFrame.
+
+    Optimized tables deserialize a stored execution plan if source table
+    versions are still current; otherwise falls back to re-executing
+    the producer flow via CatalogService.
+    """
+    if is_optimized and serialized_lf and check_source_versions_current(source_table_versions):
+        return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        return svc.resolve_virtual_flow_table(catalog_table_id, run_location=run_location, node_logger=node_logger)
+
+
+class CatalogSqlTables(NamedTuple):
+    """Resolved catalog tables for SQL execution."""
+
+    table_paths: dict[str, str]
+    virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
+
+
+def _resolve_catalog_sql_tables(node_id: int | str) -> CatalogSqlTables:
+    """Resolve all catalog tables (physical Delta + virtual) for a SQL query node."""
+    table_paths: dict[str, str] = {}
+    virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            seen_names: set[str] = set()
+            for t in repo.list_tables():
+                if t.name in seen_names:
+                    logger.warning(
+                        "Duplicate table name %r in catalog SQL context for node %s; "
+                        "later entry will overwrite the earlier one",
+                        t.name,
+                        node_id,
+                    )
+                seen_names.add(t.name)
+                if t.table_type == "virtual":
+                    virtual_tables[t.name] = (
+                        t.is_optimized,
+                        t.serialized_lazy_frame,
+                        t.id,
+                        t.source_table_versions,
+                    )
+                elif t.file_path and is_delta_table(Path(t.file_path)):
+                    table_paths[t.name] = t.file_path
+
+    except Exception:
+        logger.warning(
+            "Could not resolve catalog tables for SQL node %s",
+            node_id,
+            exc_info=True,
+        )
+    return CatalogSqlTables(table_paths=table_paths, virtual_tables=virtual_tables)
+
+
+class CatalogTableInfo(NamedTuple):
+    """Resolved catalog table info for a single-table reader."""
+
+    file_path: str | None
+    table_type: str
+    serialized_lf: bytes | None
+    is_optimized: bool
+    source_table_versions: str | None = None
+
+
+def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
+    """Resolve a single catalog table (physical or virtual) for a table reader node."""
+    file_path: str | None = None
+    table_type: str = "physical"
+    serialized_lf: bytes | None = None
+    is_optimized: bool = False
+    source_table_versions: str | None = None
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+
+            table_record = None
+            if node_catalog_reader.catalog_table_id:
+                table_record = repo.get_table(node_catalog_reader.catalog_table_id)
+            else:
+                reference = (
+                    node_catalog_reader.catalog_full_table_name
+                    or node_catalog_reader.catalog_table_name
+                )
+                if reference:
+                    try:
+                        table_record = svc.resolve_table(
+                            reference,
+                            default_namespace_id=node_catalog_reader.catalog_namespace_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Could not resolve catalog table reference %r (ns=%s) for node %s",
+                            reference,
+                            node_catalog_reader.catalog_namespace_id,
+                            node_catalog_reader.node_id,
+                            exc_info=True,
+                        )
+            if table_record is not None:
+                table_type = table_record.table_type
+                if table_type == "virtual":
+                    is_optimized = table_record.is_optimized
+                    serialized_lf = table_record.serialized_lazy_frame
+                    source_table_versions = table_record.source_table_versions
+                else:
+                    file_path = table_record.file_path
+            else:
+                file_path = svc.resolve_table_file_path(
+                    table_id=node_catalog_reader.catalog_table_id,
+                    table_name=node_catalog_reader.catalog_table_name,
+                    namespace_id=node_catalog_reader.catalog_namespace_id,
+                )
+    except Exception:
+        logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
+    return CatalogTableInfo(
+        file_path=file_path,
+        table_type=table_type,
+        serialized_lf=serialized_lf,
+        is_optimized=is_optimized,
+        source_table_versions=source_table_versions,
+    )
+
+
+def _write_catalog_delta_local(
+    df: FlowDataEngine,
+    dest_path: Path,
+    delta_mode: str,
+    merge_keys: list[str] | None,
+) -> TableWriteMetadata | None:
+    """Write a Delta table locally. Returns metadata dict, or ``None`` when the write was skipped."""
+    dest = str(dest_path)
+    if delta_mode in ("upsert", "update", "delete"):
+        wrote = merge_into_delta(df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=merge_keys)
+    else:
+        wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
+    if not wrote:
+        return None
+    return {
+        "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
+        "row_count": df.count(),
+        "column_count": df.number_of_fields,
+        "size_bytes": get_delta_size_bytes(dest_path),
+    }
+
+
+def _write_catalog_delta_remote(
+    flow_id: int,
+    node_id: int | str,
+    df: FlowDataEngine,
+    op_type: str,
+    op_kwargs: dict,
+    table_name: str,
+) -> TableWriteMetadata | None:
+    """Write a Delta table via the worker service. Returns metadata dict, or ``None`` when skipped."""
+    fetcher = ExternalDfFetcher(
+        flow_id=flow_id,
+        node_id=node_id,
+        lf=df.data_frame,
+        wait_on_completion=True,
+        operation_type=op_type,
+        kwargs=op_kwargs,
+    )
+    if fetcher.has_error:
+        raise RuntimeError(f"Worker failed to write delta table '{table_name}': {fetcher.error_description}")
+    if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
+        return None
+    meta: TableWriteMetadata = {}
+    if isinstance(fetcher.result, dict):
+        meta = {k: fetcher.result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
+    return meta
+
+
+def _register_catalog_table(
+    existing,
+    dest_path: Path,
+    settings: input_schema.CatalogWriteSettings,
+    source_registration_id: int | None,
+    user_id: int,
+    meta_kwargs: TableWriteMetadata,
+) -> None:
+    """Register or update the catalog table entry, cleaning up orphaned storage on failure for new tables."""
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            if existing is not None:
+                svc.overwrite_table_data(
+                    table_id=existing.id,
+                    table_path=str(dest_path),
+                    source_registration_id=source_registration_id,
+                    description=settings.description,
+                    storage_format="delta",
+                    **meta_kwargs,
+                )
+            else:
+                svc.register_table_from_data(
+                    name=settings.table_name,
+                    table_path=str(dest_path),
+                    owner_id=user_id,
+                    namespace_id=settings.namespace_id,
+                    description=settings.description,
+                    source_registration_id=source_registration_id,
+                    storage_format="delta",
+                    **meta_kwargs,
+                )
+    except Exception:
+        if existing is None and dest_path.exists():
+            try:
+                delete_table_storage(dest_path)
+            except OSError:
+                logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
+        raise
+
+
+def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
+    """Collect delta versions of upstream physical catalog tables used by this flow.
+
+    For each catalog_reader node that reads a physical delta table, records
+    the current delta version. For optimized virtual table sources, includes
+    their transitive source_table_versions.
+
+    Returns a JSON string of SourceTableVersion entries, or None if no sources found.
+    """
+    from deltalake import DeltaTable as _DeltaTable
+
+    from shared.delta_models import SourceTableVersion
+
+    versions: list[SourceTableVersion] = []
+    seen_table_ids: set[int] = set()
+
+    # Collect all catalog_reader table IDs first
+    table_ids: list[int] = []
+    for node in graph.nodes:
+        if node.node_type != "catalog_reader":
+            continue
+        setting = node.setting_input
+        table_id = getattr(setting, "catalog_table_id", None)
+        if not table_id or table_id in seen_table_ids:
+            continue
+        seen_table_ids.add(table_id)
+        table_ids.append(table_id)
+
+    # Single DB session for all lookups
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            for table_id in table_ids:
+                table_record = repo.get_table(table_id)
+                if table_record is None:
+                    continue
+                if table_record.table_type == "virtual":
+                    # Include transitive versions from optimized virtual sources
+                    if table_record.source_table_versions:
+                        existing = json.loads(table_record.source_table_versions)
+                        for entry in existing:
+                            sv = SourceTableVersion(**entry)
+                            if sv.table_id not in seen_table_ids:
+                                seen_table_ids.add(sv.table_id)
+                                versions.append(sv)
+                elif table_record.file_path and is_delta_table(table_record.file_path):
+                    try:
+                        current_version = _DeltaTable(table_record.file_path, without_files=True).version()
+                        versions.append(
+                            SourceTableVersion(
+                                table_id=table_id,
+                                file_path=table_record.file_path,
+                                version=current_version,
+                            )
+                        )
+                    except Exception:
+                        logger.warning("Could not read delta version for source table %d", table_id, exc_info=True)
+    except Exception:
+        logger.warning("Could not collect source table versions", exc_info=True)
+
+    if not versions:
+        return None
+    return json.dumps([v.model_dump() for v in versions])
+
+
+def _handle_virtual_table_write(
+    graph: "FlowGraph",
+    node_catalog_writer: input_schema.NodeCatalogWriter,
+    df: FlowDataEngine,
+) -> FlowDataEngine:
+    """Handle virtual-mode catalog write: register a virtual table without materializing data."""
+    settings = node_catalog_writer.catalog_write_settings
+    reg_id = graph._flow_settings.source_registration_id
+    if not reg_id:
+        raise ValueError(
+            "Cannot create a virtual table: this flow is not linked to a catalog registration. "
+            "Open the flow from the catalog, or register it first."
+        )
+
+    serialized_lf: bytes | None = None
+    polars_plan: str | None = None
+    source_table_versions: str | None = None
+    changed_execution_mode = False
+
+    writer_node = graph.get_node(node_catalog_writer.node_id)
+    is_lazy, _reasons = writer_node.check_upstream_laziness()
+    if is_lazy:
+        if graph.execution_mode != "performance":
+            graph.execution_mode = "performance"
+            graph.reset()
+            changed_execution_mode = True
+            incoming_node = graph.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
+            df = incoming_node.get_resulting_data()
+        polars_plan = df.data_frame.explain()
+        graph.flow_logger.info(f"creating a virtual table with: {polars_plan}")
+        buf = _io.BytesIO()
+        df.data_frame.serialize(buf)
+        serialized_lf = buf.getvalue()
+        source_table_versions = _collect_source_table_versions(graph)
+    else:
+        graph.flow_logger.info("creating a virtual table from workflow")
+
+    schema_json = json.dumps([{"name": c.column_name, "dtype": c.data_type} for c in df.schema])
+
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        existing = repo.get_table_by_name(settings.table_name, settings.namespace_id)
+        if existing is not None and getattr(existing, "table_type", "physical") != "virtual":
+            raise ValueError(
+                f"Cannot write virtual table '{settings.table_name}': a non-virtual "
+                f"catalog table with that name already exists in this namespace."
+            )
+        if existing is not None:
+            svc.update_virtual_flow_table(
+                table_id=existing.id,
+                name=settings.table_name or None,
+                producer_registration_id=reg_id,
+                description=settings.description,
+                serialized_lazy_frame=serialized_lf,
+                is_optimized=is_lazy,
+                schema_json=schema_json,
+                polars_plan=polars_plan,
+                source_table_versions=source_table_versions,
+            )
+        else:
+            svc.create_virtual_flow_table(
+                name=settings.table_name,
+                owner_id=node_catalog_writer.user_id or 1,
+                producer_registration_id=reg_id,
+                namespace_id=settings.namespace_id,
+                description=settings.description,
+                serialized_lazy_frame=serialized_lf,
+                is_optimized=is_lazy,
+                schema_json=schema_json,
+                polars_plan=polars_plan,
+                source_table_versions=source_table_versions,
+            )
+
+    if changed_execution_mode:
+        graph.execution_mode = "Development"
+    return df
+
+
+def _handle_physical_table_write(
+    graph: "FlowGraph",
+    node_catalog_writer: input_schema.NodeCatalogWriter,
+    df: FlowDataEngine,
+) -> FlowDataEngine:
+    """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
+    settings = node_catalog_writer.catalog_write_settings
+
+    catalog_dir = storage.catalog_tables_directory
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        svc = CatalogService(repo)
+        existing, dest_path, delta_mode = svc.resolve_write_destination(
+            table_name=settings.table_name,
+            namespace_id=settings.namespace_id,
+            write_mode=settings.write_mode,
+            catalog_dir=catalog_dir,
+        )
+
+    if delta_mode in ("upsert", "update", "delete"):
+        op_type = "merge_delta"
+        op_kwargs = {
+            "output_path": str(dest_path),
+            "merge_mode": delta_mode,
+            "merge_keys": settings.merge_keys,
+        }
+    else:
+        op_type = "write_delta"
+        op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
+
+    if graph.flow_settings.execution_location == "local":
+        meta_kwargs = _write_catalog_delta_local(df, dest_path, delta_mode, settings.merge_keys)
+    else:
+        meta_kwargs = _write_catalog_delta_remote(
+            flow_id=graph.flow_id,
+            node_id=node_catalog_writer.node_id,
+            df=df,
+            op_type=op_type,
+            op_kwargs=op_kwargs,
+            table_name=settings.table_name,
+        )
+
+    if meta_kwargs is None:
+        return df
+
+    _register_catalog_table(
+        existing=existing,
+        dest_path=dest_path,
+        settings=settings,
+        source_registration_id=graph._flow_settings.source_registration_id,
+        user_id=node_catalog_writer.user_id or 1,
+        meta_kwargs=meta_kwargs,
+    )
+    return df
+
+
+def _resolve_database_credentials(
+    database_settings,
+    user_id: int,
+) -> tuple:
+    """Resolve database connection and encrypted password from settings.
+
+    Returns:
+        (database_connection, encrypted_password, database_reference_settings)
+        where database_reference_settings is the stored connection (or None for inline).
+    """
+    is_sqlite = (
+        database_settings.connection_mode == "inline"
+        and database_settings.database_connection is not None
+        and database_settings.database_connection.database_type == "sqlite"
+    )
+    if database_settings.connection_mode == "inline" and not is_sqlite:
+        database_connection = database_settings.database_connection
+        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
+        if encrypted_password is None:
+            raise HTTPException(status_code=400, detail="Password not found")
+        return database_connection, encrypted_password, None
+    elif is_sqlite:
+        return database_settings.database_connection, None, None
+    else:
+        ref_settings = get_local_database_connection(database_settings.database_connection_name, user_id)
+        encrypted_password = ref_settings.password.get_secret_value()
+        return ref_settings, encrypted_password, ref_settings
+
+
 class FlowGraph:
     """A class representing a Directed Acyclic Graph (DAG) for data processing pipelines.
 
@@ -399,6 +869,10 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
+        # Mark the empty initial state as the saved baseline so an unmodified
+        # flow is not considered dirty.
+        self._history_manager.mark_saved(self)
+
     @property
     def flow_settings(self) -> schemas.FlowSettings:
         return self._flow_settings
@@ -484,6 +958,14 @@ class FlowGraph:
             HistoryState with information about available undo/redo operations.
         """
         return self._history_manager.get_state()
+
+    def mark_as_saved(self) -> None:
+        """Mark the current flow state as the saved baseline (for dirty tracking)."""
+        self._history_manager.mark_saved(self)
+
+    def has_unsaved_changes(self) -> bool:
+        """Return True if the flow has changed since the last save point."""
+        return self._history_manager.has_unsaved_changes(self)
 
     def _execute_with_history(
         self,
@@ -934,6 +1416,102 @@ class FlowGraph:
 
         return _func
 
+    def _execute_on_kernel(
+        self,
+        *,
+        node_id: int,
+        kernel_id: str,
+        code: str,
+        output_names: list[str],
+        flow_data_engine: tuple[FlowDataEngine, ...],
+    ) -> FlowDataEngine | None:
+        """Execute code on a kernel container and return the primary output.
+
+        Shared logic for both custom-node kernel execution and python_script nodes.
+        Handles artifact context, directory setup, input writing, kernel execution,
+        log forwarding, artifact recording, and output reading.
+        """
+        manager = get_kernel_manager()
+        flow_id = self.flow_id
+        node_logger = self.flow_logger.get_node_logger(node_id)
+
+        # Compute available artifacts
+        self.artifact_context.compute_available(
+            node_id=node_id,
+            kernel_id=kernel_id,
+            upstream_node_ids=self._get_upstream_node_ids(node_id),
+        )
+
+        # Prepare shared directories
+        shared_base = manager.shared_volume_path
+        input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
+        output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Resolve named input keys and write inputs to parquet
+        node = self.get_node(node_id)
+        input_names = self._resolve_input_names(node, len(flow_data_engine))
+        input_paths = write_inputs_to_parquet(
+            flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
+        )
+
+        # Build request and execute on the kernel
+        request = build_execute_request(
+            node_id=node_id,
+            code=code,
+            input_paths=input_paths,
+            output_dir=output_dir,
+            flow_id=flow_id,
+            manager=manager,
+            source_registration_id=self._flow_settings.source_registration_id,
+        )
+
+        cancel_event = threading.Event()
+        if node is not None:
+            node._kernel_cancel_context = (kernel_id, manager)
+            node._kernel_cancel_event = cancel_event
+        try:
+            result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
+        finally:
+            if node is not None:
+                node._kernel_cancel_context = None
+                node._kernel_cancel_event = None
+
+        forward_kernel_logs(result, node_logger)
+        if not result.success:
+            raise RuntimeError(f"Kernel execution failed: {result.error}")
+
+        # Record artifacts
+        if result.artifacts_published:
+            self.artifact_context.record_published(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                artifacts=[{"name": n} for n in result.artifacts_published],
+            )
+        if result.artifacts_deleted:
+            self.artifact_context.record_deleted(
+                node_id=node_id,
+                kernel_id=kernel_id,
+                artifact_names=result.artifacts_deleted,
+            )
+
+        # Read outputs and populate named outputs on the FlowNode
+        primary_result: FlowDataEngine | None = None
+        for i, name in enumerate(output_names):
+            output_path = os.path.join(output_dir, f"{name}.parquet")
+            if os.path.exists(output_path):
+                fde = FlowDataEngine(pl.scan_parquet(output_path))
+                handle = f"output-{i}"
+                if node is not None:
+                    node._named_outputs[handle] = fde
+                if i == 0:
+                    primary_result = fde
+
+        if primary_result is not None:
+            return primary_result
+        return flow_data_engine[0] if flow_data_engine else FlowDataEngine(pl.LazyFrame())
+
     def _make_kernel_user_defined_func(
         self,
         *,
@@ -942,105 +1520,16 @@ class FlowGraph:
         kernel_id: str,
         output_names: list[str],
     ) -> Callable:
-        """Create the execution function for a kernel-executed custom node.
-
-        Follows the same pattern as ``add_python_script``: writes inputs to
-        shared parquet files, generates the kernel code from the custom node's
-        process method, executes on the kernel, and reads back the outputs.
-        """
+        """Create the execution function for a kernel-executed custom node."""
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
-            manager = get_kernel_manager()
-            node_id = user_defined_node_settings.node_id
-            flow_id = self.flow_id
-            node_logger = self.flow_logger.get_node_logger(node_id)
-
-            # Compute available artifacts
-            upstream_ids = self._get_upstream_node_ids(node_id)
-            self.artifact_context.compute_available(
-                node_id=node_id,
+            return self._execute_on_kernel(
+                node_id=user_defined_node_settings.node_id,
                 kernel_id=kernel_id,
-                upstream_node_ids=upstream_ids,
+                code=custom_node.generate_kernel_code(),
+                output_names=output_names,
+                flow_data_engine=flow_data_engine,
             )
-
-            # Prepare shared directories
-            shared_base = manager.shared_volume_path
-            input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
-            output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
-            os.makedirs(input_dir, exist_ok=True)
-            os.makedirs(output_dir, exist_ok=True)
-
-            # Resolve named input keys from connected source nodes
-            node = self.get_node(node_id)
-            input_names = self._resolve_input_names(node, len(flow_data_engine))
-
-            # Write inputs to parquet
-            input_paths = write_inputs_to_parquet(
-                flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
-            )
-
-            # Generate the kernel code from the custom node's process method
-            code = custom_node.generate_kernel_code()
-
-            # Build request and execute on the kernel
-            request = build_execute_request(
-                node_id=node_id,
-                code=code,
-                input_paths=input_paths,
-                output_dir=output_dir,
-                flow_id=flow_id,
-                manager=manager,
-                source_registration_id=self._flow_settings.source_registration_id,
-            )
-
-            cancel_event = threading.Event()
-            if node is not None:
-                node._kernel_cancel_context = (kernel_id, manager)
-                node._kernel_cancel_event = cancel_event
-            try:
-                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
-            finally:
-                if node is not None:
-                    node._kernel_cancel_context = None
-                    node._kernel_cancel_event = None
-
-            # Forward stdout/stderr
-            forward_kernel_logs(result, node_logger)
-
-            if not result.success:
-                raise RuntimeError(f"Kernel execution failed: {result.error}")
-
-            # Record artifacts
-            if result.artifacts_published:
-                self.artifact_context.record_published(
-                    node_id=node_id,
-                    kernel_id=kernel_id,
-                    artifacts=[{"name": n} for n in result.artifacts_published],
-                )
-            if result.artifacts_deleted:
-                self.artifact_context.record_deleted(
-                    node_id=node_id,
-                    kernel_id=kernel_id,
-                    artifact_names=result.artifacts_deleted,
-                )
-
-            # Read outputs and populate named outputs on the FlowNode
-            primary_result: FlowDataEngine | None = None
-            for i, name in enumerate(output_names):
-                output_path = os.path.join(output_dir, f"{name}.parquet")
-                if os.path.exists(output_path):
-                    fde = FlowDataEngine(pl.scan_parquet(output_path))
-                    handle = f"output-{i}"
-                    if node is not None:
-                        node._named_outputs[handle] = fde
-                    if i == 0:
-                        primary_result = fde
-
-            if primary_result is not None:
-                return primary_result
-
-            # No output published — pass through first input
-            return flow_data_engine[0] if flow_data_engine else FlowDataEngine(pl.LazyFrame())
 
         return _func
 
@@ -1305,101 +1794,46 @@ class FlowGraph:
             node.results.errors = str(e)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_sql_query(self, node_sql_query: input_schema.NodeSqlQuery):
+        """Adds a node that executes a SQL query against connected data sources.
+
+        Args:
+            node_sql_query: The settings for the SQL query node.
+        """
+
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            return execute_sql_query(*flowfile_tables, sql_code=node_sql_query.sql_query_input.sql_code)
+
+        self.add_node_step(
+            node_id=node_sql_query.node_id,
+            function=_func,
+            node_type="sql_query",
+            setting_input=node_sql_query,
+            input_node_ids=node_sql_query.depending_on_ids,
+        )
+
+        try:
+            validate_sql_query(node_sql_query.sql_query_input.sql_code)
+        except Exception as e:
+            node = self.get_node(node_id=node_sql_query.node_id)
+            node.results.errors = str(e)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_python_script(self, node_python_script: input_schema.NodePythonScript):
         """Adds a node that executes Python code on a kernel container."""
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             kernel_id = node_python_script.python_script_input.kernel_id
-            code = node_python_script.python_script_input.code
-
             if not kernel_id:
                 raise ValueError("No kernel selected for python_script node")
-
-            manager = get_kernel_manager()
-            node_id = node_python_script.node_id
-            flow_id = self.flow_id
-            node_logger = self.flow_logger.get_node_logger(node_id)
-
-            # 1. Make upstream artifacts visible to the kernel
-            self.artifact_context.compute_available(
-                node_id=node_id,
+            result = self._execute_on_kernel(
+                node_id=node_python_script.node_id,
                 kernel_id=kernel_id,
-                upstream_node_ids=self._get_upstream_node_ids(node_id),
+                code=node_python_script.python_script_input.code,
+                output_names=node_python_script.output_names,
+                flow_data_engine=flowfile_tables,
             )
-
-            # 2. Write input tables to the shared volume
-            shared_base = manager.shared_volume_path
-            input_dir = os.path.join(shared_base, str(flow_id), str(node_id), "inputs")
-            output_dir = os.path.join(shared_base, str(flow_id), str(node_id), "outputs")
-            os.makedirs(input_dir, exist_ok=True)
-            os.makedirs(output_dir, exist_ok=True)
-            self.flow_logger.info(f"Prepared shared directories for kernel execution: {input_dir}, {output_dir}")
-
-            # Resolve named input keys from connected source nodes
-            node = self.get_node(node_id)
-            input_names = self._resolve_input_names(node, len(flowfile_tables))
-
-            input_paths = write_inputs_to_parquet(
-                flowfile_tables, manager, input_dir, flow_id, node_id, input_names=input_names
-            )
-
-            # 3. Build request and execute on the kernel
-            request = build_execute_request(
-                node_id=node_id,
-                code=code,
-                input_paths=input_paths,
-                output_dir=output_dir,
-                flow_id=flow_id,
-                manager=manager,
-                source_registration_id=self._flow_settings.source_registration_id,
-            )
-
-            cancel_event = threading.Event()
-            if node is not None:
-                node._kernel_cancel_context = (kernel_id, manager)
-                node._kernel_cancel_event = cancel_event
-            try:
-                result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
-            finally:
-                if node is not None:
-                    node._kernel_cancel_context = None
-                    node._kernel_cancel_event = None
-
-            # 4. Forward kernel stdout/stderr and check for errors
-            forward_kernel_logs(result, node_logger)
-            if not result.success:
-                raise RuntimeError(f"Kernel execution failed: {result.error}")
-
-            # 5. Record artifact changes
-            if result.artifacts_published:
-                self.artifact_context.record_published(
-                    node_id=node_id,
-                    kernel_id=kernel_id,
-                    artifacts=[{"name": n} for n in result.artifacts_published],
-                )
-            if result.artifacts_deleted:
-                self.artifact_context.record_deleted(
-                    node_id=node_id,
-                    kernel_id=kernel_id,
-                    artifact_names=result.artifacts_deleted,
-                )
-
-            # 6. Read named output parquets or pass through first input
-            output_names = node_python_script.output_names
-            primary_result: FlowDataEngine | None = None
-            for i, name in enumerate(output_names):
-                output_path = os.path.join(output_dir, f"{name}.parquet")
-                if os.path.exists(output_path):
-                    fde = FlowDataEngine(pl.scan_parquet(output_path))
-                    handle = f"output-{i}"
-                    if node is not None:
-                        node._named_outputs[handle] = fde
-                    if i == 0:
-                        primary_result = fde
-
-            if primary_result is not None:
-                return primary_result
-            return flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame())
+            return result or (flowfile_tables[0] if flowfile_tables else FlowDataEngine(pl.LazyFrame()))
 
         def schema_callback():
             """Best-effort schema prediction for python_script nodes.
@@ -2032,27 +2466,102 @@ class FlowGraph:
         """Adds a node that reads a table from the catalog.
 
         Resolves the catalog table by ID (or name + namespace) and reads
-        the materialized Parquet file.
+        the materialized Parquet file.  When ``sql_query`` is set, executes
+        the SQL against all catalog Delta tables instead.
         """
 
-        # Resolve catalog table metadata ahead of time so we can build a schema callback.
-        file_path: str | None = None
-        try:
-            with get_db_context() as db:
-                repo = SQLAlchemyCatalogRepository(db)
-                svc = CatalogService(repo)
-                file_path = svc.resolve_table_file_path(
-                    table_id=node_catalog_reader.catalog_table_id,
-                    table_name=node_catalog_reader.catalog_table_name,
-                    namespace_id=node_catalog_reader.catalog_namespace_id,
-                )
-        except Exception:
-            logger.warning("Could not resolve catalog table for node %s", node_catalog_reader.node_id, exc_info=True)
+        if node_catalog_reader.sql_query:
+            is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
+        else:
+            is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader)
+        node_catalog_reader.is_virtual_optimized = is_virtual_optimized
 
-        resolved_path = file_path
-        delta_version = node_catalog_reader.delta_version
+    def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
+        """Execute a SQL query against all catalog tables (physical + virtual).
+
+        Returns:
+            Whether all referenced virtual tables are optimized, or None if no virtual tables.
+        """
+
+        sql_code = node_catalog_reader.sql_query
+        resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id)
+        table_paths = resolved.table_paths
+        virtual_tables = resolved.virtual_tables
 
         def _func() -> FlowDataEngine:
+            if not table_paths and not virtual_tables:
+                raise ValueError("No catalog tables available to query")
+            ctx = pl.SQLContext()
+            for name, path in table_paths.items():
+                ctx.register(name, pl.scan_delta(path))
+            for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
+                ctx.register(
+                    name,
+                    _resolve_virtual_table(
+                        is_opt,
+                        ser_lf,
+                        tid,
+                        node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
+                        run_location=self.execution_location,
+                        source_table_versions=stv,
+                    ),
+                )
+            return FlowDataEngine(ctx.execute(sql_code))
+
+        # todo: There are quite some round-trips happening here because the Flowgraph tries to predict the schema.
+        is_virtual_optimized: bool | None = None
+        if virtual_tables:
+            is_virtual_optimized = all(is_opt for is_opt, _, _, _ in virtual_tables.values())
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+        )
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
+
+        try:
+            validate_sql_query(sql_code)
+        except Exception as e:
+            node.results.errors = str(e)
+
+        return is_virtual_optimized
+
+    def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
+        """Read a single table from the catalog (physical or virtual).
+
+        Returns:
+            Whether the virtual table is optimized, or None if not a virtual table.
+        """
+
+        info = _resolve_catalog_table_info(node_catalog_reader)
+
+        is_virtual_optimized: bool | None = info.is_optimized if info.table_type == "virtual" else None
+
+        resolved_path = info.file_path
+        delta_version = node_catalog_reader.delta_version
+        _table_type = info.table_type
+        _serialized_lf = info.serialized_lf
+        _is_optimized = info.is_optimized
+        _catalog_table_id = node_catalog_reader.catalog_table_id
+        _source_table_versions = info.source_table_versions
+
+        def _func() -> FlowDataEngine:
+            if _table_type == "virtual":
+                return FlowDataEngine(
+                    _resolve_virtual_table(
+                        _is_optimized,
+                        _serialized_lf,
+                        _catalog_table_id,
+                        node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
+                        run_location=self.execution_location,
+                        source_table_versions=_source_table_versions,
+                    )
+                )
+
             if not resolved_path:
                 raise ValueError("Catalog table could not be resolved — no file path found")
             if is_delta_table(resolved_path):
@@ -2071,116 +2580,19 @@ class FlowGraph:
         )
         node = self.get_node(node_catalog_reader.node_id)
         self.add_node_to_starting_list(node)
+        return is_virtual_optimized
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_catalog_writer(self, node_catalog_writer: input_schema.NodeCatalogWriter):
-        """Adds a node that writes its input to the catalog as a Delta table."""
+        """Adds a node that writes its input to the catalog as a Delta table or virtual table."""
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
-            catalog_dir = storage.catalog_tables_directory
-            catalog_dir.mkdir(parents=True, exist_ok=True)
-
-            # Resolve destination path and check for existing table
-            with get_db_context() as db:
-                repo = SQLAlchemyCatalogRepository(db)
-                svc = CatalogService(repo)
-                existing, dest_path, delta_mode = svc.resolve_write_destination(
-                    table_name=settings.table_name,
-                    namespace_id=settings.namespace_id,
-                    write_mode=settings.write_mode,
-                    catalog_dir=catalog_dir,
-                )
-
-            # Offload collect + write to the worker
-            if delta_mode in ("upsert", "update", "delete"):
-                op_type = "merge_delta"
-                op_kwargs = {
-                    "output_path": str(dest_path),
-                    "merge_mode": delta_mode,
-                    "merge_keys": settings.merge_keys,
-                }
-            else:
-                op_type = "write_delta"
-                op_kwargs = {"output_path": str(dest_path), "mode": delta_mode}
-
-            if self.flow_settings.execution_location == "local":
-                dest = str(dest_path)
-                if op_type == "merge_delta":
-                    wrote = merge_into_delta(
-                        df.data_frame.collect(), dest, merge_mode=delta_mode, merge_keys=settings.merge_keys
-                    )
-                else:
-                    wrote = _write_delta(df.data_frame, dest, mode=delta_mode)
-                if not wrote:
-                    return df
-
-                meta_kwargs: TableWriteMetadata = {
-                    "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
-                    "row_count": df.count(),
-                    "column_count": df.number_of_fields,
-                    "size_bytes": get_delta_size_bytes(dest_path),
-                }
-            else:
-                fetcher = ExternalDfFetcher(
-                    flow_id=self.flow_id,
-                    node_id=node_catalog_writer.node_id,
-                    lf=df.data_frame,
-                    wait_on_completion=True,
-                    operation_type=op_type,
-                    kwargs=op_kwargs,
-                )
-                if fetcher.has_error:
-                    raise RuntimeError(
-                        f"Worker failed to write delta table '{settings.table_name}': {fetcher.error_description}"
-                    )
-
-                # Extract metadata computed by the worker
-                if isinstance(fetcher.result, dict) and fetcher.result.get("skipped"):
-                    return df
-                meta_kwargs: TableWriteMetadata = {}
-                if isinstance(fetcher.result, dict):
-                    meta_kwargs = {
-                        k: fetcher.result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")
-                    }
-
-            # Register / update in catalog
-            try:
-                with get_db_context() as db:
-                    repo = SQLAlchemyCatalogRepository(db)
-                    svc = CatalogService(repo)
-                    if existing is not None:
-                        svc.overwrite_table_data(
-                            table_id=existing.id,
-                            table_path=str(dest_path),
-                            source_registration_id=self._flow_settings.source_registration_id,
-                            description=settings.description,
-                            storage_format="delta",
-                            **meta_kwargs,
-                        )
-                    else:
-                        svc.register_table_from_data(
-                            name=settings.table_name,
-                            table_path=str(dest_path),
-                            owner_id=node_catalog_writer.user_id or 1,
-                            namespace_id=settings.namespace_id,
-                            description=settings.description,
-                            source_registration_id=self._flow_settings.source_registration_id,
-                            storage_format="delta",
-                            **meta_kwargs,
-                        )
-            except Exception:
-                # Only clean up if this was a new table (not an overwrite of existing)
-                if existing is None and dest_path.exists():
-                    try:
-                        delete_table_storage(dest_path)
-                    except OSError:
-                        logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
-                raise
-
-            return df
+            if settings.write_mode == "virtual":
+                return _handle_virtual_table_write(self, node_catalog_writer, df)
+            return _handle_physical_table_write(self, node_catalog_writer, df)
 
         def schema_callback():
             input_node: FlowNode = self.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
@@ -2207,27 +2619,9 @@ class FlowGraph:
 
         node_type = "database_writer"
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
-        database_connection: input_schema.DatabaseConnection | input_schema.FullDatabaseConnection | None
-        is_sqlite = (
-            database_settings.connection_mode == "inline"
-            and database_settings.database_connection is not None
-            and database_settings.database_connection.database_type == "sqlite"
+        database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
+            database_settings, node_database_writer.user_id
         )
-        if database_settings.connection_mode == "inline" and not is_sqlite:
-            database_connection: input_schema.DatabaseConnection = database_settings.database_connection
-            encrypted_password = get_encrypted_secret(
-                current_user_id=node_database_writer.user_id, secret_name=database_connection.password_ref
-            )
-            if encrypted_password is None:
-                raise HTTPException(status_code=400, detail="Password not found")
-        elif is_sqlite:
-            database_connection = database_settings.database_connection
-            encrypted_password = None
-        else:
-            database_reference_settings = get_local_database_connection(
-                database_settings.database_connection_name, node_database_writer.user_id
-            )
-            encrypted_password = database_reference_settings.password.get_secret_value()
 
         def _func(df: FlowDataEngine):
             df.lazy = True
@@ -2278,28 +2672,9 @@ class FlowGraph:
         logger.info("Adding database reader")
         node_type = "database_reader"
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
-        database_connection: input_schema.DatabaseConnection | input_schema.FullDatabaseConnection | None
-        is_sqlite = (
-            database_settings.connection_mode == "inline"
-            and database_settings.database_connection is not None
-            and database_settings.database_connection.database_type == "sqlite"
+        database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
+            database_settings, node_database_reader.user_id
         )
-        if database_settings.connection_mode == "inline" and not is_sqlite:
-            database_connection: input_schema.DatabaseConnection = database_settings.database_connection
-            encrypted_password = get_encrypted_secret(
-                current_user_id=node_database_reader.user_id, secret_name=database_connection.password_ref
-            )
-            if encrypted_password is None:
-                raise HTTPException(status_code=400, detail="Password not found")
-        elif is_sqlite:
-            database_connection = database_settings.database_connection
-            encrypted_password = None
-        else:
-            database_reference_settings = get_local_database_connection(
-                database_settings.database_connection_name, node_database_reader.user_id
-            )
-            database_connection = database_reference_settings
-            encrypted_password = database_reference_settings.password.get_secret_value()
 
         def _func():
             sql_source = BaseSqlSource(
@@ -2426,8 +2801,11 @@ class FlowGraph:
                 # Store deferred commit info for post-stage commit
                 if kafka_result.messages_consumed > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, kafka_result.new_offsets, node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        kafka_result.new_offsets,
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             else:
                 # Remote execution — offload to worker (worker uses commit=False + sidecar)
@@ -2438,8 +2816,11 @@ class FlowGraph:
                 offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
                 if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
                     node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings, offsets_data["new_offsets"], node_kafka_source.node_id,
-                        self.flow_logger, _decrypt_fn,
+                        kafka_read_settings,
+                        offsets_data["new_offsets"],
+                        node_kafka_source.node_id,
+                        self.flow_logger,
+                        _decrypt_fn,
                     )
             # The worker DataFrame may have fewer columns than the inferred
             # schema (e.g. empty topic or starting at "latest").  Align to
@@ -2815,6 +3196,33 @@ class FlowGraph:
 
         return list(self._node_db.values())
 
+    def check_flow_laziness(self) -> tuple[bool, list[str]]:
+        """Check whether the flow supports lazy execution for virtual tables.
+
+        Finds all catalog-writer nodes in the graph and checks whether their
+        upstream dependencies are fully lazy.  Only the nodes that actually
+        feed into a catalog writer matter — unrelated branches (e.g. an
+        Explore Data node on a separate path) are ignored.
+
+        Returns a tuple of (is_optimizable, reasons_if_not).
+        """
+        catalog_writers = [n for n in self.nodes if n.node_type == "catalog_writer"]
+        if not catalog_writers:
+            # No catalog writer → nothing to optimise; treat as non-lazy
+            return False, ["No catalog writer node found in the flow"]
+        all_reasons: list[str] = []
+        for writer in catalog_writers:
+            _, reasons = writer.check_upstream_laziness()
+            all_reasons.extend(reasons)
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for r in all_reasons:
+            if r not in seen:
+                seen.add(r)
+                unique.append(r)
+        return len(unique) == 0, unique
+
     @property
     def execution_mode(self) -> schemas.ExecutionModeLiteral:
         """Gets the current execution mode ('Development' or 'Performance')."""
@@ -2903,7 +3311,11 @@ class FlowGraph:
         self.flow_logger.clear_log_file()
         self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
         node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
-        node_result = NodeResult(node_id=flow_node.node_id, node_name=flow_node.name)
+        node_result = NodeResult(
+            node_id=flow_node.node_id,
+            node_name=flow_node.name,
+            description=flow_node.get_node_information().description,
+        )
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         try:
             self.latest_run_info.node_step_result.append(node_result)
@@ -2921,7 +3333,7 @@ class FlowGraph:
                 node_result.is_running = False
             node_result.success = flow_node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
@@ -2931,7 +3343,7 @@ class FlowGraph:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
         finally:
@@ -3065,7 +3477,11 @@ class FlowGraph:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
         """
         node_logger = self.flow_logger.get_node_logger(node.node_id)
-        node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+        node_result = NodeResult(
+            node_id=node.node_id,
+            node_name=node.name,
+            description=node.get_node_information().description,
+        )
 
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
@@ -3087,7 +3503,7 @@ class FlowGraph:
                 node_result.error = str(e)
                 node_result.success = False
                 node_result.end_timestamp = time()
-                node_result.run_time = 0
+                node_result.run_time_ms = 0
                 node_result.is_running = False
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
                 return node_result, node
@@ -3115,13 +3531,13 @@ class FlowGraph:
                 return node_result, node
             node_result.success = node.results.errors is None
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
         except Exception as e:
             node_result.error = "Node did not run"
             node_result.success = False
             node_result.end_timestamp = time()
-            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
             node_result.is_running = False
             node_logger.error(f"Error in node {node.node_id}: {e}")
 
@@ -3276,9 +3692,7 @@ class FlowGraph:
             try:
                 callback(success)
             except Exception as e:
-                self.flow_logger.error(
-                    f"Post-execution callback failed for node {n.node_id}: {e}"
-                )
+                self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
     def run_graph(self) -> RunInformation | None:
@@ -3520,6 +3934,8 @@ class FlowGraph:
 
         self.flow_settings.path = flow_path
         self._sync_catalog_read_links()
+        # Record the current state as the clean baseline for dirty tracking
+        self.mark_as_saved()
 
     def _sync_catalog_read_links(self):
         """Record which catalog tables this flow reads from.

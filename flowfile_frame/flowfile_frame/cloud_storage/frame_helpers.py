@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-import polars as pl
 from polars._typing import CsvEncoding
 
 from flowfile_core.flowfile.flow_graph import FlowGraph

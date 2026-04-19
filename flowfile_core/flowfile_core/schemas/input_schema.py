@@ -1097,7 +1097,7 @@ class CatalogWriteSettings(BaseModel):
     table_name: str = ""
     namespace_id: int | None = None
     description: str | None = None
-    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite"
+    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite"
     merge_keys: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -1118,17 +1118,32 @@ class NodeCatalogWriter(NodeSingleInput):
 
 
 class NodeCatalogReader(NodeBase):
-    """Settings for a node that reads a table from the catalog."""
+    """Settings for a node that reads a table from the catalog.
+
+    Resolution priority at runtime: ``catalog_table_id`` > ``catalog_full_table_name`` >
+    ``(catalog_table_name, catalog_namespace_id)``. The qualified form
+    (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
+    identifier when an id isn't available.
+    """
 
     catalog_table_id: int | None = None
+    catalog_full_table_name: str | None = None
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
+    sql_query: str | None = None
+    is_virtual_optimized: bool | None = None
 
     def get_default_description(self) -> str:
-        if self.catalog_table_name:
+        if self.sql_query:
+            first_line = self.sql_query.strip().split("\n")[0]
+            if len(first_line) > 80:
+                first_line = first_line[:77] + "..."
+            return f"SQL: {first_line}"
+        display = self.catalog_full_table_name or self.catalog_table_name
+        if display:
             suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
-            return f"Catalog: {self.catalog_table_name}{suffix}"
+            return f"Catalog: {display}{suffix}"
         return "Read from Catalog"
 
 
@@ -1241,6 +1256,20 @@ class NodePolarsCode(NodeMultiInput):
     def get_default_description(self) -> str:
         """Describes the Polars code snippet."""
         code = self.polars_code_input.polars_code
+        first_line = code.strip().split("\n")[0] if code else ""
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return first_line
+
+
+class NodeSqlQuery(NodeMultiInput):
+    """Settings for a node that executes a SQL query against connected data sources."""
+
+    sql_query_input: transform_schema.SqlQueryInput
+
+    def get_default_description(self) -> str:
+        """Describes the SQL query snippet."""
+        code = self.sql_query_input.sql_code
         first_line = code.strip().split("\n")[0] if code else ""
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."

@@ -7,8 +7,11 @@ Covers:
 - Round-trip: write → read → verify data integrity
 """
 
+import io as _io
 import os
 import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
@@ -17,25 +20,39 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
-    CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
-    FlowRegistration,
     FlowSchedule,
 )
-from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas
-
-def _cleanup():
-    """Remove all catalog / flow-registration rows so tests start clean."""
-    with get_db_context() as db:
-        db.query(CatalogTableReadLink).delete()
-        db.query(FlowSchedule).delete()
-        db.query(CatalogTable).delete()
-        db.query(FlowRegistration).delete()
-        db.query(CatalogNamespace).delete()
-        db.commit()
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_graph import (
+    _register_catalog_table,
+    _resolve_virtual_table,
+    _write_catalog_delta_local,
+    add_connection,
+)
+from flowfile_core.schemas import input_schema
+from tests.flowfile.conftest import (
+    CATALOG_SAMPLE_DATA as SAMPLE_DATA,
+)
+from tests.flowfile.conftest import (
+    add_test_manual_input as _add_manual_input,
+)
+from tests.flowfile.conftest import (
+    catalog_cleanup as _cleanup,
+)
+from tests.flowfile.conftest import (
+    create_test_flow_registration as _create_flow_registration,
+)
+from tests.flowfile.conftest import (
+    create_test_graph as _create_graph,
+)
+from tests.flowfile.conftest import (
+    create_test_namespace as _create_namespace,
+)
+from tests.flowfile.conftest import (
+    run_test_graph as _run_graph,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -43,84 +60,6 @@ def clean_state():
     _cleanup()
     yield
     _cleanup()
-
-
-def _create_namespace():
-    """Create a two-level namespace hierarchy and return the schema-level id."""
-    with get_db_context() as db:
-        cat = CatalogNamespace(name="TestCat", level=0, owner_id=1)
-        db.add(cat)
-        db.commit()
-        db.refresh(cat)
-        schema = CatalogNamespace(name="TestSch", level=1, parent_id=cat.id, owner_id=1)
-        db.add(schema)
-        db.commit()
-        db.refresh(schema)
-        return schema.id
-
-
-def _create_flow_registration(namespace_id: int, name: str = "test_flow", path: str = "/tmp/test.yaml"):
-    """Insert a FlowRegistration row and return its id."""
-    with get_db_context() as db:
-        reg = FlowRegistration(
-            name=name,
-            flow_path=path,
-            namespace_id=namespace_id,
-            owner_id=1,
-        )
-        db.add(reg)
-        db.commit()
-        db.refresh(reg)
-        return reg.id
-
-
-def _create_graph(
-    flow_id: int = 1,
-    source_registration_id: int | None = None,
-    execution_location: str = "local",
-) -> FlowGraph:
-    """Create a FlowGraph with optional source_registration_id."""
-    handler = FlowfileHandler()
-    settings = schemas.FlowSettings(
-        flow_id=flow_id,
-        name="test_flow",
-        path=".",
-        execution_mode="Development",
-        execution_location=execution_location,
-        source_registration_id=source_registration_id,
-    )
-    handler.register_flow(settings)
-    return handler.get_flow(flow_id)
-
-
-def _add_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1):
-    """Add a manual input node with the given data."""
-    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
-    graph.add_node_promise(promise)
-    manual = input_schema.NodeManualInput(
-        flow_id=graph.flow_id,
-        node_id=node_id,
-        raw_data_format=input_schema.RawData.from_pylist(data),
-    )
-    graph.add_manual_input(manual)
-
-
-def _run_graph(graph: FlowGraph) -> RunInformation:
-    run_info = graph.run_graph()
-    if not run_info.success:
-        errors = []
-        for step in run_info.node_step_result:
-            if not step.success:
-                errors.append(f"node {step.node_id}: {step.error}")
-        raise AssertionError("Graph execution failed:\n" + "\n".join(errors))
-    return run_info
-
-
-SAMPLE_DATA = [
-    {"name": "Alice", "age": 30, "city": "Amsterdam"},
-    {"name": "Bob", "age": 25, "city": "Berlin"},
-    {"name": "Charlie", "age": 35, "city": "Copenhagen"},
-]
 
 
 # ---------------------------------------------------------------------------
@@ -397,9 +336,7 @@ class TestCatalogWriter:
 
         # Read link should still exist and point to the same table ID
         with get_db_context() as db:
-            link = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=reg_id
-            ).first()
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
             # Table should still be valid
             table = db.get(CatalogTable, table_id)
@@ -527,9 +464,7 @@ class TestSyncCatalogReadLinks:
 
         # Verify the read link was created
         with get_db_context() as db:
-            link = db.query(CatalogTableReadLink).filter_by(
-                table_id=table_id, registration_id=reg_id
-            ).first()
+            link = db.query(CatalogTableReadLink).filter_by(table_id=table_id, registration_id=reg_id).first()
             assert link is not None
 
         os.unlink(save_path)
@@ -637,3 +572,467 @@ class TestCatalogRoundTrip:
         # Verify actual values
         names = sorted(result_df["name"].to_list())
         assert names == ["Alice", "Bob", "Charlie"]
+
+
+# ---------------------------------------------------------------------------
+# Catalog SQL reader tests
+# ---------------------------------------------------------------------------
+
+
+class TestCatalogSqlReader:
+    """Test that catalog_reader nodes with sql_query execute SQL against catalog Delta tables."""
+
+    _tmp_dirs: list = []
+
+    @classmethod
+    def teardown_method(cls):
+        import shutil
+
+        for d in cls._tmp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+        cls._tmp_dirs.clear()
+
+    @classmethod
+    def _register_delta_table(cls, ns_id: int, table_name: str, data: list[dict]) -> int:
+        """Write a Delta table and register it in the catalog. Returns the table id."""
+        import tempfile
+
+        tmp_dir = tempfile.mkdtemp()
+        cls._tmp_dirs.append(tmp_dir)
+        delta_path = os.path.join(tmp_dir, table_name)
+        pl.DataFrame(data).write_delta(delta_path)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            table_out = svc.register_table_from_data(
+                name=table_name,
+                table_path=delta_path,
+                owner_id=1,
+                namespace_id=ns_id,
+                storage_format="delta",
+            )
+        return table_out.id
+
+    def test_sql_query_simple_select(self):
+        """A catalog_reader with sql_query should execute SQL against catalog Delta tables."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "people", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT * FROM people",
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 3
+        assert set(result_df.columns) == {"name", "age", "city"}
+
+    def test_sql_query_with_filter(self):
+        """SQL query with a WHERE clause should return filtered results."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "people_filter", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT name, age FROM people_filter WHERE age > 28",
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 2
+        assert set(result_df.columns) == {"name", "age"}
+        names = sorted(result_df["name"].to_list())
+        assert names == ["Alice", "Charlie"]
+
+    def test_sql_query_join_two_tables(self):
+        """SQL query that JOINs two catalog tables."""
+        ns_id = _create_namespace()
+        self._register_delta_table(
+            ns_id,
+            "customers_sql",
+            [
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"},
+            ],
+        )
+        self._register_delta_table(
+            ns_id,
+            "orders_sql",
+            [
+                {"customer_id": 1, "amount": 100},
+                {"customer_id": 2, "amount": 200},
+                {"customer_id": 1, "amount": 150},
+            ],
+        )
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query=(
+                "SELECT c.name, SUM(o.amount) AS total "
+                "FROM customers_sql c "
+                "JOIN orders_sql o ON c.id = o.customer_id "
+                "GROUP BY c.name"
+            ),
+        )
+        graph.add_catalog_reader(reader)
+
+        _run_graph(graph)
+
+        node = graph.get_node(1)
+        result_df = node.get_resulting_data().collect()
+        assert len(result_df) == 2
+        assert "name" in result_df.columns
+        assert "total" in result_df.columns
+
+    def test_sql_query_description(self):
+        """NodeCatalogReader with sql_query should return SQL-based description."""
+        reader = input_schema.NodeCatalogReader(
+            flow_id=1,
+            node_id=1,
+            sql_query="SELECT * FROM my_table WHERE id > 10",
+        )
+        assert reader.get_default_description().startswith("SQL: SELECT")
+
+    def test_sql_query_invalid_sql_sets_error(self):
+        """Invalid SQL should store a validation error on the node without crashing."""
+        ns_id = _create_namespace()
+        self._register_delta_table(ns_id, "dummy_table", SAMPLE_DATA)
+
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELEC * FORM people",  # intentionally broken SQL
+        )
+        graph.add_catalog_reader(reader)
+
+        node = graph.get_node(1)
+        assert node.results.errors is not None
+
+    def test_sql_query_no_tables_raises(self):
+        """When no Delta tables exist, executing the SQL node should raise ValueError."""
+        graph = _create_graph()
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            sql_query="SELECT 1",
+        )
+        graph.add_catalog_reader(reader)
+
+        with pytest.raises(AssertionError, match="No catalog tables available to query"):
+            _run_graph(graph)
+
+
+class TestResolveVirtualTable:
+    """Test _resolve_virtual_table helper."""
+
+    def test_resolve_optimized_virtual_table(self):
+        """An optimized virtual table should deserialize the stored LazyFrame."""
+        lf = pl.LazyFrame({"x": [1, 2, 3]})
+        buf = _io.BytesIO()
+        lf.serialize(buf)
+        serialized = buf.getvalue()
+        result = _resolve_virtual_table(
+            is_optimized=True, serialized_lf=serialized, catalog_table_id=-1, run_location="local"
+        )
+
+        assert isinstance(result, pl.LazyFrame)
+        df = result.collect()
+        assert df["x"].to_list() == [1, 2, 3]
+
+    def test_resolve_non_optimized_virtual_table(self):
+        """A non-optimized virtual table should call CatalogService.resolve_virtual_flow_table."""
+        expected_lf = pl.LazyFrame({"y": [10, 20]})
+
+        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
+            mock_db = MagicMock()
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
+                mock_svc_instance = MagicMock()
+                mock_svc_instance.resolve_virtual_flow_table.return_value = expected_lf
+                MockSvc.return_value = mock_svc_instance
+
+                result = _resolve_virtual_table(is_optimized=False, serialized_lf=None, catalog_table_id=42)
+
+        assert isinstance(result, pl.LazyFrame)
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(42, run_location=None, node_logger=None)
+
+    def test_resolve_optimized_without_serialized_lf_falls_back(self):
+        """When is_optimized=True but serialized_lf is None, should fall back to service resolution."""
+        expected_lf = pl.LazyFrame({"z": [5]})
+
+        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
+            mock_db = MagicMock()
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
+                mock_svc_instance = MagicMock()
+                mock_svc_instance.resolve_virtual_flow_table.return_value = expected_lf
+                MockSvc.return_value = mock_svc_instance
+
+                _resolve_virtual_table(is_optimized=True, serialized_lf=None, catalog_table_id=99)
+
+        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(99, run_location=None, node_logger=None)
+
+
+class TestWriteCatalogDeltaLocal:
+    """Test _write_catalog_delta_local helper."""
+
+    def test_write_delta_creates_table_and_returns_metadata(self, tmp_path):
+        """Writing a new Delta table should return metadata with schema, row_count, etc."""
+        df = FlowDataEngine(pl.LazyFrame({"name": ["Alice", "Bob"], "age": [30, 25]}))
+        dest_path = tmp_path / "test_table"
+
+        result = _write_catalog_delta_local(df, dest_path, delta_mode="overwrite", merge_keys=None)
+
+        assert result is not None
+        assert result["row_count"] == 2
+        assert result["column_count"] == 2
+        assert isinstance(result["schema"], list)
+        assert len(result["schema"]) == 2
+        assert result["size_bytes"] > 0
+
+    def test_write_delta_append_mode(self, tmp_path):
+        """Appending to an existing Delta table should return updated metadata."""
+        dest_path = tmp_path / "append_table"
+        df1 = FlowDataEngine(pl.LazyFrame({"x": [1, 2]}))
+        _write_catalog_delta_local(df1, dest_path, delta_mode="overwrite", merge_keys=None)
+
+        df2 = FlowDataEngine(pl.LazyFrame({"x": [3, 4]}))
+        result = _write_catalog_delta_local(df2, dest_path, delta_mode="append", merge_keys=None)
+
+        assert result is not None
+        assert result["row_count"] == 2  # metadata reflects the appended batch
+
+
+class TestRegisterCatalogTable:
+    """Test _register_catalog_table helper."""
+
+    def test_register_new_table(self):
+        """Registering a new table should call register_table_from_data."""
+        ns_id = _create_namespace()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest_path = Path(tmp_dir) / "new_table"
+            pl.DataFrame({"a": [1]}).write_delta(str(dest_path))
+
+            settings = input_schema.CatalogWriteSettings(
+                table_name="reg_test_table",
+                namespace_id=ns_id,
+            )
+            meta: dict = {
+                "schema": [{"name": "a", "dtype": "Int64"}],
+                "row_count": 1,
+                "column_count": 1,
+                "size_bytes": 100,
+            }
+
+            _register_catalog_table(
+                existing=None,
+                dest_path=dest_path,
+                settings=settings,
+                source_registration_id=None,
+                user_id=1,
+                meta_kwargs=meta,
+            )
+
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                tables = repo.list_tables(namespace_id=ns_id)
+                assert len(tables) == 1
+                assert tables[0].name == "reg_test_table"
+
+    def test_register_existing_table_overwrites(self):
+        """Overwriting an existing table should call overwrite_table_data."""
+        ns_id = _create_namespace()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest_path = Path(tmp_dir) / "overwrite_table"
+            pl.DataFrame({"a": [1]}).write_delta(str(dest_path))
+
+            # First, register the table
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                svc = CatalogService(repo)
+                table_out = svc.register_table_from_data(
+                    name="overwrite_test",
+                    table_path=str(dest_path),
+                    owner_id=1,
+                    namespace_id=ns_id,
+                    storage_format="delta",
+                )
+                existing = repo.get_table(table_out.id)
+
+            # Overwrite with new data
+            pl.DataFrame({"a": [2, 3]}).write_delta(str(dest_path), mode="overwrite")
+
+            meta: dict = {
+                "schema": [{"name": "a", "dtype": "Int64"}],
+                "row_count": 2,
+                "column_count": 1,
+                "size_bytes": 200,
+            }
+
+            _register_catalog_table(
+                existing=existing,
+                dest_path=dest_path,
+                settings=input_schema.CatalogWriteSettings(
+                    table_name="overwrite_test",
+                    namespace_id=ns_id,
+                ),
+                source_registration_id=None,
+                user_id=1,
+                meta_kwargs=meta,
+            )
+
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                tables = repo.list_tables(namespace_id=ns_id)
+                assert len(tables) == 1
+                assert tables[0].id == table_out.id
+                assert tables[0].row_count == 2
+
+
+class TestHandleVirtualTableWrite:
+    """Test _handle_virtual_table_write via full graph execution."""
+
+    def test_virtual_write_validates_registration(self):
+        """Virtual write without source_registration_id should raise ValueError."""
+        graph = _create_graph(source_registration_id=None)
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="should_fail",
+                namespace_id=1,
+                write_mode="virtual",
+            ),
+            user_id=1,
+        )
+        graph.add_catalog_writer(writer)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        with pytest.raises(AssertionError, match="not linked to a catalog registration"):
+            _run_graph(graph)
+
+    def test_virtual_write_creates_table(self):
+        """Virtual write with valid registration should create a virtual table."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="vw_producer")
+        graph = _create_graph(source_registration_id=reg_id)
+
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+
+        promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
+        graph.add_node_promise(promise)
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="vw_table",
+                namespace_id=ns_id,
+                write_mode="virtual",
+            ),
+            user_id=1,
+        )
+        graph.add_catalog_writer(writer)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        _run_graph(graph)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            assert tables[0].table_type == "virtual"
+            assert tables[0].name == "vw_table"
+
+    def test_virtual_write_updates_existing(self):
+        """Running virtual write twice should update the existing virtual table."""
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="vw_update_producer")
+        # First write
+        graph1 = _create_graph(flow_id=1, source_registration_id=reg_id)
+        _add_manual_input(graph1, SAMPLE_DATA, node_id=1)
+        promise1 = input_schema.NodePromise(flow_id=1, node_id=2, node_type="catalog_writer")
+        graph1.add_node_promise(promise1)
+        writer1 = input_schema.NodeCatalogWriter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="vw_update_table",
+                namespace_id=ns_id,
+                write_mode="virtual",
+            ),
+            user_id=1,
+        )
+        graph1.add_catalog_writer(writer1)
+        add_connection(graph1, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph1)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            assert len(tables) == 1
+            original_id = tables[0].id
+
+        # Second write (update)
+        graph2 = _create_graph(flow_id=2, source_registration_id=reg_id)
+        _add_manual_input(graph2, [{"name": "Diana", "age": 40, "city": "Dublin"}], node_id=1)
+        promise2 = input_schema.NodePromise(flow_id=2, node_id=2, node_type="catalog_writer")
+        graph2.add_node_promise(promise2)
+        writer2 = input_schema.NodeCatalogWriter(
+            flow_id=2,
+            node_id=2,
+            depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="vw_update_table",
+                namespace_id=ns_id,
+                write_mode="virtual",
+            ),
+            user_id=1,
+        )
+        graph2.add_catalog_writer(writer2)
+        add_connection(graph2, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+        _run_graph(graph2)
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            tables = repo.list_tables(namespace_id=ns_id)
+            # Should still be only one virtual table (updated, not duplicated)
+            assert len(tables) == 1
+            assert tables[0].id == original_id

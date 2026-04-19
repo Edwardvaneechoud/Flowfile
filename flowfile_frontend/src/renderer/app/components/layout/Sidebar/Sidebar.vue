@@ -7,13 +7,42 @@
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
     <div class="sidebar-footer">
-      <div class="footer-btn-wrapper" data-tooltip="Interactive tutorial">
-        <button class="tutorial-button" @click="handleStartTutorial">
-          <span class="material-icons">school</span>
-        </button>
+      <div class="footer-btn-wrapper" data-tooltip="More & help">
+        <el-popover
+          placement="right-end"
+          :width="200"
+          trigger="click"
+          popper-class="sidebar-more-popover"
+          :show-arrow="true"
+        >
+          <template #reference>
+            <button class="tutorial-button">
+              <i class="fa-solid fa-circle-question"></i>
+            </button>
+          </template>
+          <div class="sidebar-more-menu">
+            <button class="sidebar-more-item" @click="handleOpenTemplates">
+              <i class="fa-solid fa-layer-group"></i>
+              <span>Templates</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleOpenDocumentation">
+              <i class="fa-solid fa-book"></i>
+              <span>Documentation</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleStartTutorial">
+              <span class="material-icons">school</span>
+              <span>Interactive tutorial</span>
+            </button>
+          </div>
+        </el-popover>
       </div>
       <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
         <ThemeToggle />
+      </div>
+      <div v-if="currentPageHelp" class="footer-btn-wrapper" data-tooltip="Page info">
+        <button class="info-button" @click="showHelp = true">
+          <i class="fa-solid fa-circle-info"></i>
+        </button>
       </div>
       <div v-if="showLogout" class="footer-btn-wrapper" data-tooltip="Sign out">
         <button class="logout-button" @click="handleLogout">
@@ -21,20 +50,33 @@
         </button>
       </div>
     </div>
+    <PageHelpModal
+      v-if="currentPageHelp"
+      :show="showHelp"
+      v-bind="currentPageHelp"
+      @close="showHelp = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { useRouter } from "vue-router";
+import { computed, ref, watch } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import NavigationRoutes from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
 import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
+import { PageHelpModal } from "../../common";
+import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
+import { designerHelp } from "../../../views/DesignerView/designerHelp";
+import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
+import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
+import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
+import { kernelHelp } from "../../../views/KernelManagerView/kernelHelp";
 
 // Define the isCollapse prop
 defineProps({
@@ -48,8 +90,33 @@ defineProps({
 defineEmits(["toggle-collapse"]);
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const tutorialStore = useTutorialStore();
+
+// Page help
+const showHelp = ref(false);
+
+const helpByRoute: Record<string, PageHelpContent> = {
+  designer: designerHelp,
+  catalog: catalogHelp,
+  connections: connectionsHelp,
+  templates: templatesHelp,
+  kernelManager: kernelHelp,
+};
+
+const currentPageHelp = computed(() => {
+  const name = route.name as string;
+  return helpByRoute[name] ?? null;
+});
+
+// Close help modal on route change
+watch(
+  () => route.name,
+  () => {
+    showHelp.value = false;
+  },
+);
 
 // Filter routes based on admin status and Electron mode
 const items = computed(() => {
@@ -73,6 +140,14 @@ const handleStartTutorial = async () => {
     await router.push({ name: "designer" });
   }
   tutorialStore.startTutorial(gettingStartedTutorial);
+};
+
+const handleOpenTemplates = () => {
+  router.push({ name: "templates" });
+};
+
+const handleOpenDocumentation = () => {
+  router.push({ name: "documentation" });
 };
 
 const handleLogout = () => {
@@ -178,5 +253,75 @@ const handleLogout = () => {
 
 .logout-button i {
   font-size: var(--font-size-lg);
+}
+
+.info-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.info-button:hover {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.info-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--color-accent);
+}
+
+.info-button i {
+  font-size: var(--font-size-lg);
+}
+
+.sidebar-more-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.sidebar-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: none;
+  border-radius: var(--border-radius-md);
+  background-color: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-base) var(--transition-timing);
+}
+
+.sidebar-more-item:hover {
+  background-color: var(--color-accent-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-accent);
+}
+
+.sidebar-more-item i,
+.sidebar-more-item .material-icons {
+  width: 18px;
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+}
+
+.sidebar-more-item:hover i,
+.sidebar-more-item:hover .material-icons {
+  color: var(--color-accent);
 }
 </style>

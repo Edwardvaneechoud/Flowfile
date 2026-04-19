@@ -1,4 +1,5 @@
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -6,15 +7,19 @@ from pathlib import Path
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.schemas.schemas import FlowSettings
+from flowfile_core.schemas.schemas import FlowSettings, FlowSettingsResponse
 from shared.storage_config import storage
 
 
 def get_flow_save_location(flow_name: str) -> Path:
-    """Gets the initial save location for flow files"""
+    """Gets the initial save location for unnamed / quick-created flow files.
+
+    Persisted under ``~/.flowfile/flows/unnamed_flows`` (not a temp directory)
+    so quick-created flows survive auto-cleanup and remain user-accessible.
+    """
     if ".yaml" not in flow_name and ".yml" not in flow_name:
         flow_name += ".yaml"
-    return storage.temp_directory_for_flows / flow_name
+    return storage.unnamed_flows_directory / flow_name
 
 
 def create_flow_name() -> str:
@@ -130,6 +135,51 @@ class FlowfileHandler:
         else:
             raise Exception("Flow not found or not accessible by user")
 
+    def save_as_flow(
+        self,
+        flow_id: int,
+        new_path: str,
+        user_id: int | None = None,
+        on_catalog_register: Callable[[str, str, int | None], None] | None = None,
+        on_resolve_registration: Callable | None = None,
+    ) -> int:
+        """Save an existing flow to a new path ("Save As").
+
+        Creates a new flow identity (new flow_id), saves to the new path,
+        re-keys the handler registry, and optionally registers with the
+        catalog via the provided callbacks.
+
+        Returns:
+            The new flow ID.
+        """
+        flow = self.get_flow(flow_id, user_id)
+        if flow is None:
+            raise Exception(f"Flow {flow_id} not found or not accessible by user")
+
+        old_flow_id = flow.flow_id
+        new_flow_id = create_unique_id()
+
+        # 1. Clear old catalog link and assign new flow identity
+        flow.flow_settings.source_registration_id = None
+        flow.flow_id = new_flow_id  # propagates to child nodes + settings
+
+        # 2. Save to the new path (updates flow.flow_settings.path)
+        flow.save_flow(flow_path=new_path)
+
+        # 3. Re-key in handler: remove old entry, register under new id
+        self.rekey_flow(old_flow_id, new_flow_id, user_id)
+
+        # 4. Catalog registration (if callbacks provided)
+        if on_catalog_register is not None:
+            on_catalog_register(new_path, flow.flow_settings.name, user_id)
+        if on_resolve_registration is not None:
+            on_resolve_registration(flow)
+
+        # 5. Re-save to persist the resolved source_registration_id in YAML
+        flow.save_flow(flow_path=new_path)
+
+        return new_flow_id
+
     def add_flow(self, name: str = None, flow_path: str = None, user_id: int | None = None) -> int:
         """
         Creates a new flow with a reference to the flow path
@@ -160,6 +210,18 @@ class FlowfileHandler:
         last_modified_ts = os.path.getmtime(flow.flow_settings.path) if flow_exists else -1
         flow.flow_settings.modified_on = last_modified_ts
         return flow.flow_settings
+
+    def get_flow_info_with_runtime(self, flow_id: int) -> FlowSettingsResponse:
+        """Like ``get_flow_info`` but includes runtime-only state (``has_unsaved_changes``)."""
+        flow_settings = self.get_flow_info(flow_id)
+        flow = self.get_flow(flow_id)
+        try:
+            dirty = flow.has_unsaved_changes()
+        except Exception:
+            # Match HistoryManager.has_unsaved_changes: on error, assume dirty so
+            # unsaved-changes prompts err on the safe side.
+            dirty = True
+        return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 
     def get_node(self, flow_id: int, node_id: int):
         flow = self.get_flow(flow_id)

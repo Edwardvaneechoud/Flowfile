@@ -120,10 +120,10 @@ The **Database Writer** node saves processed data to a database table. It suppor
 
 #### **Connection Modes:**
 
-| Mode | Description |
-|------|-------------|
+| Mode | Description                                                                                   |
+|------|-----------------------------------------------------------------------------------------------|
 | **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
-| **Inline** | Enter connection credentials directly in the node settings |
+| **Inline** | Enter connection credentials directly in the node settings                                    |
 
 #### **Settings:**
 
@@ -151,29 +151,62 @@ For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-c
 
 ### Catalog Writer
 
-The **Catalog Writer** node saves data as a table in the [Catalog](../catalog.md). The data is materialized as a Parquet file and registered with schema metadata, row count, and lineage information.
+The **Catalog Writer** node saves data as a table in the [Catalog](../catalog/index.md). It supports two modes: **physical** (materialized as a Delta table on disk) and **virtual** (no data written — resolved on demand). The node uses a tabbed interface to switch between modes.
 
-#### **Settings:**
+#### **Shared Settings:**
 
 | Parameter | Description |
 |-----------|-------------|
 | **Table Name** | Name for the catalog table |
 | **Catalog / Schema** | Target namespace in the catalog hierarchy |
-| **Write Mode** | **Overwrite** (replace existing) or **Error if exists** |
 | **Description** | Optional description for the table |
+
+#### **Write to Catalog (Physical)**
+
+Materializes data as a Delta table with full schema metadata, row count, and lineage information.
+
+| Parameter | Description |
+|-----------|-------------|
+| **Write Mode** | How to handle existing data (see table below) |
+| **Key Columns** | Required for Upsert, Update, and Delete modes — columns used to match rows |
+
+**Write modes:**
+
+| Mode | Description |
+|------|-------------|
+| **Overwrite** | Replace all existing data in the table |
+| **Error if exists** | Fail if the table already exists |
+| **Append** | Add rows to the existing table |
+| **Upsert** | Insert new rows or update existing rows matching the key columns |
+| **Update** | Update only existing rows matching the key columns (no inserts) |
+| **Delete** | Remove rows from the target that match the key columns in the source |
 
 #### **Usage:**
 
 1. Add a **Catalog Writer** node to your flow
 2. Enter a table name
 3. Select the target catalog/schema namespace
-4. Choose a write mode
+4. Choose a write mode on the **Write to Catalog** tab
 5. Optionally add a description
 6. Run the flow to materialize and register the table
 
 ![Catalog Writer settings](../../../assets/images/guides/nodes/catalog-writer-settings.png)
 
 *Catalog Writer configured to write a table to the default schema*
+
+#### **Virtual Table Mode**
+
+Switch to the **Virtual Table** tab to create a [virtual flow table](../catalog/virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow.
+
+When you select the Virtual Table tab, Flowfile automatically checks whether your pipeline supports **optimized resolution**:
+
+- **Green checkmark** — all upstream nodes are lazy. The virtual table will store a serialized execution plan for instant resolution with predicate and projection pushdown.
+- **Yellow warning** — some upstream nodes are eager or conditional. The virtual table will use standard resolution (re-executes the full producer flow on each read). The specific blocker nodes are listed.
+
+!!! warning "Flow registration required"
+    Virtual tables require the flow to be registered in the catalog. If the flow isn't registered, the virtual write will fail with an error. Open the flow from the catalog, or register it first.
+
+For the full guide on virtual tables, optimization, and when to use them, see [Virtual Flow Tables](../catalog/virtual-tables.md).
 
 ---
 

@@ -22,7 +22,11 @@ import type {
   NamespaceTree,
   NamespaceUpdate,
   PaginatedFlowRuns,
+  QueryVirtualTableCreate,
   SchedulerStatus,
+  SqlQueryResult,
+  VirtualFlowTableCreate,
+  VirtualFlowTableUpdate,
 } from "../types";
 
 export class CatalogApi {
@@ -225,9 +229,41 @@ export class CatalogApi {
   }
 
   static async getTableHistory(tableId: number): Promise<DeltaTableHistory> {
-    const response = await axios.get<DeltaTableHistory>(
-      `/catalog/tables/${tableId}/history`,
+    const response = await axios.get<DeltaTableHistory>(`/catalog/tables/${tableId}/history`);
+    return response.data;
+  }
+
+  // ====== Virtual Flow Tables ======
+
+  static async createVirtualTable(body: VirtualFlowTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/virtual-tables", body);
+    return response.data;
+  }
+
+  static async updateVirtualTable(
+    id: number,
+    body: VirtualFlowTableUpdate,
+  ): Promise<CatalogTable> {
+    const response = await axios.put<CatalogTable>(`/catalog/virtual-tables/${id}`, body);
+    return response.data;
+  }
+
+  static async resolveVirtualTable(
+    tableId: number,
+    limit = 100,
+  ): Promise<CatalogTablePreview> {
+    const response = await axios.post<CatalogTablePreview>(
+      `/catalog/virtual-tables/${tableId}/resolve`,
+      null,
+      { params: { limit } },
     );
+    return response.data;
+  }
+
+  // ====== Query-based Virtual Tables ======
+
+  static async createQueryVirtualTable(body: QueryVirtualTableCreate): Promise<CatalogTable> {
+    const response = await axios.post<CatalogTable>("/catalog/query-virtual-tables", body);
     return response.data;
   }
 
@@ -295,6 +331,33 @@ export class CatalogApi {
 
   static async getStats(): Promise<CatalogStats> {
     const response = await axios.get<CatalogStats>("/catalog/stats");
+    return response.data;
+  }
+
+  // ====== SQL Query ======
+
+  static async executeSqlQuery(query: string, maxRows = 10_000): Promise<SqlQueryResult> {
+    const response = await axios.post<SqlQueryResult>("/catalog/sql/execute", {
+      query,
+      max_rows: maxRows,
+    });
+    return response.data;
+  }
+
+  static async saveQueryAsFlow(
+    query: string,
+    name: string,
+    namespaceId?: number,
+    description?: string,
+    usedTables?: string[],
+  ): Promise<{ flow_id: number }> {
+    const response = await axios.post<{ flow_id: number }>("/catalog/sql/save-as-flow", {
+      query,
+      name,
+      namespace_id: namespaceId,
+      description,
+      used_tables: usedTables ?? [],
+    });
     return response.data;
   }
 }

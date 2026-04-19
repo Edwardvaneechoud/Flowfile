@@ -38,6 +38,11 @@
                 <i class="fa-solid fa-table"></i>
               </button>
             </el-tooltip>
+            <el-tooltip content="Create virtual table" placement="bottom" :show-after="400">
+              <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateVirtualTable = true">
+                <i class="fa-solid fa-bolt"></i>
+              </button>
+            </el-tooltip>
             <el-tooltip content="Register flow" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="openRegisterFlowGlobal">
                 <i class="fa-solid fa-file-circle-plus"></i>
@@ -46,6 +51,15 @@
             <el-tooltip content="Create Kafka Sync" placement="bottom" :show-after="400">
               <button class="btn btn-ghost btn-icon btn-sm" @click="showCreateSync = true">
                 <i class="fa-solid fa-rotate"></i>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="SQL Editor" placement="bottom" :show-after="400">
+              <button
+                class="btn btn-ghost btn-icon btn-sm"
+                :class="{ 'btn-active': showSqlEditor }"
+                @click="showSqlEditor = !showSqlEditor"
+              >
+                <i class="fa-solid fa-code"></i>
               </button>
             </el-tooltip>
             <el-tooltip content="New catalog" placement="bottom" :show-after="400">
@@ -90,6 +104,8 @@
               @register-flow="openRegisterFlow($event)"
               @register-table="openRegisterTable($event)"
               @create-schema="openCreateSchema($event)"
+              @delete-table="handleDeleteTable($event)"
+              @delete-flow="handleDeleteFlow($event)"
             />
           </div>
         </div>
@@ -118,6 +134,7 @@
           @delete-schedule="handleDeleteScheduleFromDetail"
           @run-now="handleRunNowFromDetail"
           @cancel-schedule-run="handleCancelScheduleRun"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Artifact detail view -->
         <ArtifactDetailPanel
@@ -140,6 +157,8 @@
           @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
           @navigate-to-flow="navigateToFlow($event)"
           @select-version="catalogStore.selectVersion($event)"
+          @query-table="handleQueryTable($event)"
+          @recover-from-run="openRunSnapshot($event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -160,6 +179,8 @@
           @run-flow="handleRunFlow"
           @cancel-flow-run="handleCancelFlowRun"
           @select-schedule="selectSchedule"
+          @recover-from-snapshot="openRunSnapshot($event)"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Run history overview -->
         <RunOverviewPanel
@@ -167,6 +188,7 @@
           @view-run="handleViewRun"
           @view-flow="navigateToFlow($event)"
           @view-schedule-runs="navigateToScheduleRuns"
+          @open-snapshot="openRunSnapshot($event)"
         />
         <!-- Schedule overview -->
         <ScheduleOverviewPanel
@@ -198,6 +220,11 @@
             />
           </div>
         </div>
+        <!-- SQL Editor -->
+        <SqlEditorPanel
+          v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
+          :initial-query="sqlInitialQuery"
+        />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -240,6 +267,13 @@
       :namespace-id="registerTableNamespaceId"
       :default-namespace-id="defaultNamespaceId"
       @close="showRegisterTable = false"
+    />
+
+    <CreateVirtualTableModal
+      :visible="showCreateVirtualTable"
+      :namespace-id="registerTableNamespaceId"
+      :default-namespace-id="defaultNamespaceId"
+      @close="showCreateVirtualTable = false"
     />
 
     <CreateScheduleModal
@@ -301,6 +335,18 @@
         </div>
         <div class="info-card">
           <div class="info-card-header">
+            <i class="fa-solid fa-bolt"></i>
+            <h4>Virtual Flow Tables</h4>
+          </div>
+          <p>
+            Virtual flow tables do not store data on disk. When queried, they execute a registered
+            flow on-demand to produce results. They appear with a
+            <strong>bolt</strong> icon and a <strong>virtual</strong> badge in the catalog tree.
+            Optimized virtual tables can push query predicates into the flow for faster execution.
+          </p>
+        </div>
+        <div class="info-card">
+          <div class="info-card-header">
             <i class="fa-solid fa-calendar-days"></i>
             <h4>Schedules</h4>
           </div>
@@ -337,6 +383,8 @@ import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 import ScheduleDetailPanel from "./ScheduleDetailPanel.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
+import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
+import SqlEditorPanel from "./SqlEditorPanel.vue";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -376,6 +424,12 @@ const tabs = computed(() => [
     icon: "fa-solid fa-calendar-days",
     badge: catalogStore.stats?.total_schedules ?? null,
   },
+  {
+    key: "sql" as CatalogTab,
+    label: "SQL",
+    icon: "fa-solid fa-code",
+    badge: null,
+  },
 ]);
 
 // Search and filter state
@@ -393,6 +447,9 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+const showCreateVirtualTable = ref(false);
+const showSqlEditor = ref(false);
+const sqlInitialQuery = ref<string | undefined>(undefined);
 
 // Default namespace ID (loaded once on mount)
 const defaultNamespaceId = ref<number | null>(null);
@@ -534,6 +591,18 @@ function openRegisterTableGlobal() {
 function openRegisterFlowGlobal() {
   registerFlowNamespaceId.value = defaultNamespaceId.value ?? null;
   showRegisterFlow.value = true;
+}
+
+function quoteSqlName(name: string): string {
+  return /^[a-zA-Z_]\w*$/.test(name) ? name : `"${name}"`;
+}
+
+function handleQueryTable(tableName: string) {
+  sqlInitialQuery.value = `SELECT * FROM ${quoteSqlName(tableName)}`;
+  showSqlEditor.value = true;
+  // Clear selected table so the SQL editor panel shows
+  catalogStore.clearTableSelection();
+  router.push({ name: "catalog", query: { tab: "sql" } });
 }
 
 async function handleDeleteTable(tableId: number) {
@@ -1505,6 +1574,11 @@ onUnmounted(() => {
 .sidebar-header-actions {
   display: flex;
   gap: 4px;
+}
+
+.sidebar-header-actions .btn-active {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .catalog-detail {

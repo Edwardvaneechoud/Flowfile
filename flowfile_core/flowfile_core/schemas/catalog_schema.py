@@ -200,6 +200,34 @@ class CatalogTableUpdate(BaseModel):
     namespace_id: int | None = None
 
 
+class VirtualFlowTableCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    producer_registration_id: int
+
+
+class VirtualFlowTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    producer_registration_id: int | None = None
+
+
+class QueryVirtualTableCreate(BaseModel):
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    sql_query: str
+
+
+class QueryVirtualTableUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+
+
 class ColumnSchema(BaseModel):
     name: str
     dtype: str
@@ -216,6 +244,8 @@ class CatalogTableOut(BaseModel):
     id: int
     name: str
     namespace_id: int | None = None
+    namespace_name: str | None = None
+    full_table_name: str | None = None
     description: str | None = None
     owner_id: int
     file_exists: bool = True
@@ -228,6 +258,14 @@ class CatalogTableOut(BaseModel):
     source_registration_name: str | None = None
     source_run_id: int | None = None
     read_by_flows: list["FlowSummary"] = Field(default_factory=list)
+    table_type: str = "physical"
+    producer_registration_id: int | None = None
+    producer_registration_name: str | None = None
+    is_optimized: bool | None = None
+    laziness_blockers: list[str] | None = None
+    sql_query: str | None = None
+    polars_plan: str | None = None
+    source_table_versions: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -241,6 +279,23 @@ class FlowSummary(BaseModel):
     name: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ResolveTableCandidate(BaseModel):
+    id: int
+    name: str
+    namespace_id: int | None = None
+    namespace_name: str | None = None
+
+
+class ResolveTableResult(BaseModel):
+    """Response body for ``GET /catalog/tables/resolve``.
+
+    When a bare reference matches multiple rows the resolver soft-picks the
+    deterministic candidate and reports the full list under ``warnings``."""
+
+    table: CatalogTableOut
+    warnings: list[ResolveTableCandidate] = Field(default_factory=list)
 
 
 class CatalogTablePreview(BaseModel):
@@ -257,6 +312,39 @@ class DeltaTableHistory(BaseModel):
 
     current_version: int
     history: list[DeltaVersionCommit] = Field(default_factory=list)
+
+
+# ==================== SQL Query Schemas ====================
+
+
+class SqlQueryRequest(BaseModel):
+    """Request to execute a SQL query against catalog Delta tables."""
+
+    query: str
+    max_rows: int = 10_000
+
+
+class SqlQueryResult(BaseModel):
+    """Result of a SQL query execution."""
+
+    columns: list[str] = Field(default_factory=list)
+    dtypes: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    execution_time_ms: float = 0.0
+    used_tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class SaveQueryAsFlowRequest(BaseModel):
+    """Request to save a SQL query as a registered flow."""
+
+    query: str
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+    used_tables: list[str] = Field(default_factory=list)
 
 
 # ==================== Catalog Overview ====================
@@ -303,8 +391,12 @@ class FlowScheduleOut(BaseModel):
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
     trigger_table_name: str | None = None
+    trigger_namespace_id: int | None = None
+    trigger_namespace_name: str | None = None
+    trigger_full_table_name: str | None = None
     trigger_table_ids: list[int] = Field(default_factory=list)
     trigger_table_names: list[str] = Field(default_factory=list)
+    trigger_full_table_names: list[str] = Field(default_factory=list)
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime
@@ -341,6 +433,7 @@ class CatalogStats(BaseModel):
     total_table_favorites: int = 0
     total_artifacts: int = 0
     total_tables: int = 0
+    total_virtual_tables: int = 0
     total_schedules: int = 0
     recent_runs: list[FlowRunOut] = Field(default_factory=list)
     favorite_flows: list[FlowRegistrationOut] = Field(default_factory=list)

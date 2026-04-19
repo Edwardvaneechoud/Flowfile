@@ -356,8 +356,10 @@ export const useCatalogStore = defineStore("catalog", {
 
       if (tableId !== null) {
         this.selectedTable = this.findTableInTree(tableId) ?? null;
-        this.loadTablePreview(tableId);
-        this.loadTableHistory(tableId);
+        if (this.selectedTable?.table_type !== "virtual") {
+          this.loadTablePreview(tableId);
+          this.loadTableHistory(tableId);
+        }
       } else {
         this.selectedTable = null;
       }

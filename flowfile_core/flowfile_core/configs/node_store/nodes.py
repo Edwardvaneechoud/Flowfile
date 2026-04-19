@@ -18,6 +18,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             prod_ready=False,
             drawer_title="External Source",
             drawer_intro="Connect to external data sources and APIs",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Manual input",
@@ -30,6 +31,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Manual Input",
             drawer_intro="Create data directly",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Read data",
@@ -42,6 +44,9 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Read Data",
             drawer_intro="Load data from CSV, Excel, or Parquet files",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
+            laziness="conditional",
         ),
         NodeTemplate(
             name="Join",
@@ -54,6 +59,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Join Datasets",
             drawer_intro="Merge two datasets based on matching column values",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Formula",
@@ -66,6 +72,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Formula Editor",
             drawer_intro="Create or modify columns using custom expressions",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Write data",
@@ -78,6 +85,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Write Data",
             drawer_intro="Save your data as CSV, Excel, or Parquet files",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Select data",
@@ -90,6 +98,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Select Columns",
             drawer_intro="Choose, rename, and reorder columns to keep",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Filter data",
@@ -102,6 +111,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Filter Rows",
             drawer_intro="Keep only rows that match your conditions",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Group by",
@@ -114,6 +124,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Group By",
             drawer_intro="Aggregate data by grouping and calculating statistics",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Fuzzy match",
@@ -126,6 +137,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Fuzzy Match",
             drawer_intro="Join datasets based on similar values instead of exact matches",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Sort data",
@@ -138,6 +150,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Sort Data",
             drawer_intro="Order your data by one or more columns",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Add record Id",
@@ -150,6 +163,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Add Record ID",
             drawer_intro="Generate unique identifiers for each row",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Take Sample",
@@ -162,6 +176,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Take Sample",
             drawer_intro="Work with a subset of your data",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Explore data",
@@ -174,6 +189,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Explore Data",
             drawer_intro="Interactive data exploration and analysis",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Pivot data",
@@ -186,6 +202,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Pivot Data",
             drawer_intro="Convert data from long format to wide format",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Unpivot data",
@@ -198,6 +215,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Unpivot Data",
             drawer_intro="Transform data from wide format to long format",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Union data",
@@ -211,6 +229,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Union Data",
             drawer_intro="Stack multiple datasets by combining rows",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Drop duplicates",
@@ -223,6 +242,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Drop Duplicates",
             drawer_intro="Remove duplicate rows based on selected columns",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Graph solver",
@@ -235,6 +255,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Graph Solver",
             drawer_intro="Group related records in graph-structured data",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Count records",
@@ -247,6 +268,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="aggregate",
             drawer_title="Count Records",
             drawer_intro="Calculate the total number of rows",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Cross join",
@@ -259,6 +281,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="combine",
             drawer_title="Cross Join",
             drawer_intro="Create all possible combinations between two datasets",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Text to rows",
@@ -271,6 +294,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="transform",
             drawer_title="Text to Rows",
             drawer_intro="Split text into multiple rows based on a delimiter",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Polars code",
@@ -285,6 +309,24 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             can_be_start=True,
             drawer_title="Polars Code",
             drawer_intro="Write custom Polars DataFrame transformations",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
+            laziness="conditional",
+        ),
+        NodeTemplate(
+            name="SQL Query",
+            item="sql_query",
+            input=10,
+            output=1,
+            transform_type="narrow",
+            image="sql_query.svg",
+            node_group="transform",
+            node_type="process",
+            multi=True,
+            can_be_start=True,
+            drawer_title="SQL Query",
+            drawer_intro="Write SQL queries against connected data sources",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Python Script",
@@ -299,6 +341,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_type="process",
             drawer_title="Python Script",
             drawer_intro="Execute Python code on an isolated kernel container",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Read from Database",
@@ -311,6 +354,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Database Reader",
             drawer_intro="Load data from database tables or queries",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Write to Database",
@@ -323,6 +367,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Database Writer",
             drawer_intro="Save data to database tables",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Read from cloud provider",
@@ -335,6 +380,9 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Cloud Storage Reader",
             drawer_intro="Read data from AWS S3 and other cloud storage",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
+            laziness="conditional",
         ),
         NodeTemplate(
             name="Read from Catalog",
@@ -347,6 +395,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Catalog Reader",
             drawer_intro="Read a table from the data catalog",
+            laziness="lazy",
         ),
         NodeTemplate(
             name="Write to Catalog",
@@ -359,6 +408,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Catalog Writer",
             drawer_intro="Save data as a table in the data catalog",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Write to cloud provider",
@@ -371,6 +421,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="output",
             drawer_title="Cloud Storage Writer",
             drawer_intro="Save data to AWS S3 and other cloud storage",
+            laziness="eager",
         ),
         NodeTemplate(
             name="Kafka Source",
@@ -383,6 +434,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Kafka Source",
             drawer_intro="Read data from a Kafka or Redpanda topic",
+            laziness="eager",
         ),
     ]
     nodes_list.sort(key=lambda x: x.name)
@@ -411,6 +463,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
         image="",
         node_type="input",
         transform_type="other",
+        laziness="lazy",
     )
 
     return nodes_list, node_dict, node_defaults

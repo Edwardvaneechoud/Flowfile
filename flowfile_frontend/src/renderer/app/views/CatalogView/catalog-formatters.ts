@@ -54,11 +54,16 @@ export function formatScheduleType(schedule: FlowSchedule): string {
     return remMins > 0 ? `Every ${hrs}h ${remMins}m` : `Every ${hrs}h`;
   }
   if (schedule.schedule_type === "table_trigger") {
-    const name = schedule.trigger_table_name ?? `#${schedule.trigger_table_id}`;
+    const name =
+      schedule.trigger_full_table_name ??
+      schedule.trigger_table_name ??
+      `#${schedule.trigger_table_id}`;
     return `On refresh: ${name}`;
   }
   if (schedule.schedule_type === "table_set_trigger") {
-    const names = schedule.trigger_table_names ?? [];
+    const names = schedule.trigger_full_table_names?.length
+      ? schedule.trigger_full_table_names
+      : (schedule.trigger_table_names ?? []);
     if (names.length > 0) return `Listens to: ${names.join(", ")}`;
     return `Listens to ${schedule.trigger_table_ids?.length ?? 0} tables`;
   }

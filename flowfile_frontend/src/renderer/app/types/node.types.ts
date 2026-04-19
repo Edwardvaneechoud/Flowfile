@@ -74,7 +74,7 @@ export interface NodeResult {
   end_timestamp: number;
   success?: boolean;
   error: string;
-  run_time: number;
+  run_time_ms: number;
   is_running: boolean;
 }
 
@@ -702,7 +702,11 @@ export interface OutputFieldInfo {
 
 export interface OutputFieldConfig {
   enabled: boolean;
-  validation_mode_behavior: "add_missing" | "add_missing_keep_extra" | "raise_on_missing" | "select_only";
+  validation_mode_behavior:
+    | "add_missing"
+    | "add_missing_keep_extra"
+    | "raise_on_missing"
+    | "select_only";
   fields: OutputFieldInfo[];
   validate_data_types: boolean;
 }
@@ -740,7 +744,7 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
-export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete";
+export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete" | "virtual";
 
 export interface CatalogWriteSettings {
   table_name: string;
@@ -756,9 +760,11 @@ export interface NodeCatalogWriter extends NodeBase {
 
 export interface NodeCatalogReader extends NodeBase {
   catalog_table_id: number | null;
+  catalog_full_table_name: string | null;
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
+  sql_query: string | null;
 }
 
 export interface NodeInputData extends NodeBase {
@@ -820,6 +826,14 @@ export interface NodeSample extends NodeBase {
 
 export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
+}
+
+export interface SqlQueryInput {
+  sql_code: string;
+}
+
+export interface NodeSqlQuery extends NodeMultiInput {
+  sql_query_input: SqlQueryInput;
 }
 
 export interface NodePythonScript extends NodeMultiInput {

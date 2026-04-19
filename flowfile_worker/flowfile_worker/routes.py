@@ -392,6 +392,22 @@ def create_table(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/catalog/sql_query", response_model=models.SqlQueryResponse)
+def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryResponse:
+    """Execute a SQL query against catalog tables (physical + virtual)."""
+    try:
+        result = funcs.execute_sql_query(
+            payload.query, payload.tables, payload.max_rows,
+            virtual_tables_ipc=payload.virtual_tables_ipc,
+        )
+        return models.SqlQueryResponse(**result)
+    except ValueError as e:
+        return models.SqlQueryResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error executing SQL query: {str(e)}", exc_info=True)
+        return models.SqlQueryResponse(error=str(e))
+
+
 @router.post("/catalog/materialize", response_model=models.CatalogMaterializeResponse)
 def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> models.CatalogMaterializeResponse:
     source_path = os.path.abspath(payload.source_file_path)

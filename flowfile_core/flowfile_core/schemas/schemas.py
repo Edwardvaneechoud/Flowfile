@@ -12,6 +12,7 @@ ExecutionLocationsLiteral = Literal["local", "remote"]
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal["input", "output", "process"]
 TransformTypeLiteral = Literal["narrow", "wide", "other"]
+LazinessLiteral = Literal["lazy", "eager", "conditional"]
 _custom_node_store_cache = None
 
 NODE_TYPE_TO_SETTINGS_CLASS = {
@@ -30,6 +31,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "graph_solver": input_schema.NodeGraphSolver,
     "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
+    "sql_query": input_schema.NodeSqlQuery,
     "join": input_schema.NodeJoin,
     "cross_join": input_schema.NodeCrossJoin,
     "fuzzy_match": input_schema.NodeFuzzyMatch,
@@ -194,6 +196,12 @@ class FlowSettings(FlowGraphConfig):
         return cls.model_validate(flow_graph_config.model_dump())
 
 
+class FlowSettingsResponse(FlowSettings):
+    """FlowSettings plus runtime-only fields for API responses. Not persisted."""
+
+    has_unsaved_changes: bool = False
+
+
 class RawLogInput(BaseModel):
     """
     Schema for a raw log message.
@@ -320,6 +328,7 @@ class NodeTemplate(BaseModel):
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
+    laziness: LazinessLiteral = "eager"
 
 
 class NodeInformation(BaseModel):

@@ -161,6 +161,8 @@ class CatalogRepository(Protocol):
 
     def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None: ...
 
+    def list_tables_by_name(self, name: str) -> list[CatalogTable]: ...
+
     def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
 
     def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]: ...
@@ -174,6 +176,18 @@ class CatalogRepository(Protocol):
     def count_tables_in_namespace(self, namespace_id: int) -> int: ...
 
     def count_all_tables(self) -> int: ...
+
+    # -- Virtual table helpers -----------------------------------------------
+
+    def list_virtual_tables(self, namespace_id: int | None = None) -> list[CatalogTable]: ...
+
+    def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None: ...
+
+    def get_virtual_table_by_producer_and_name(
+        self, registration_id: int, name: str, namespace_id: int | None
+    ) -> CatalogTable | None: ...
+
+    def count_virtual_tables(self) -> int: ...
 
     # -- Table Favorites -----------------------------------------------------
 
@@ -551,6 +565,14 @@ class SQLAlchemyCatalogRepository:
     def get_table_by_name(self, name: str, namespace_id: int | None) -> CatalogTable | None:
         return self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).first()
 
+    def list_tables_by_name(self, name: str) -> list[CatalogTable]:
+        return (
+            self._db.query(CatalogTable)
+            .filter_by(name=name)
+            .order_by(CatalogTable.namespace_id.asc(), CatalogTable.id.asc())
+            .all()
+        )
+
     def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
         q = self._db.query(CatalogTable)
         if namespace_id is not None:
@@ -584,6 +606,24 @@ class SQLAlchemyCatalogRepository:
 
     def count_all_tables(self) -> int:
         return self._db.query(CatalogTable).count()
+
+    # -- Virtual table helpers -----------------------------------------------
+
+    def list_virtual_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
+        q = self._db.query(CatalogTable).filter(CatalogTable.table_type == "virtual")
+        if namespace_id is not None:
+            q = q.filter(CatalogTable.namespace_id == namespace_id)
+        return q.order_by(CatalogTable.name).all()
+
+    def get_virtual_table_by_producer(self, registration_id: int) -> CatalogTable | None:
+        return (
+            self._db.query(CatalogTable)
+            .filter_by(table_type="virtual", producer_registration_id=registration_id)
+            .first()
+        )
+
+    def count_virtual_tables(self) -> int:
+        return self._db.query(CatalogTable).filter(CatalogTable.table_type == "virtual").count()
 
     # -- Table Favorites -----------------------------------------------------
 

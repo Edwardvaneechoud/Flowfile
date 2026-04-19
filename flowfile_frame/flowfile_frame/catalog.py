@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-import polars as pl
-
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_frame.flow_frame import FlowFrame
@@ -113,6 +111,50 @@ def read_catalog_table(
         catalog_table_name=table_name,
         catalog_namespace_id=namespace_id,
         delta_version=delta_version,
+    )
+    flow_graph.add_catalog_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id,
+    )
+
+
+def read_catalog_sql(
+    sql_query: str,
+    *,
+    flow_graph=None,
+) -> FlowFrame:
+    """Execute a SQL query against all catalog Delta tables.
+
+    Registers every Delta table in the catalog into a Polars SQLContext
+    (by table name) and executes the given SQL query.
+
+    Args:
+        sql_query: SQL query string to execute.
+        flow_graph: Optional existing FlowGraph to add the node to.
+
+    Returns:
+        FlowFrame: A FlowFrame backed by a catalog SQL reader node.
+
+    Raises:
+        ValueError: If no Delta catalog tables are available.
+    """
+    from flowfile_core.schemas import input_schema
+    from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.utils import create_flow_graph, generate_node_id
+
+    node_id = generate_node_id()
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCatalogReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=get_current_user_id(),
+        sql_query=sql_query,
     )
     flow_graph.add_catalog_reader(settings)
     return FlowFrame(

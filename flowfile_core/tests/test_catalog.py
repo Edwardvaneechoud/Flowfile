@@ -24,7 +24,7 @@ from flowfile_core.database.models import (
     ScheduleTriggerTable,
     User,
 )
-from flowfile_core.routes.routes import _auto_register_flow
+from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -453,6 +453,7 @@ class TestStats:
         assert "total_flows" in data
         assert "total_runs" in data
         assert "total_favorites" in data
+        assert "total_virtual_tables" in data
         assert "recent_runs" in data
 
     def test_stats_counts_only_catalogs(self):
@@ -495,6 +496,49 @@ class TestDefaultNamespace:
             generals = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).all()
             assert len(generals) == 1
 
+    def test_local_flows_namespace_created_on_init(self):
+        """init_db should seed General > Local Flows for disk-backed flow registration."""
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            assert general is not None
+            local_flows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+            )
+            assert local_flows is not None
+            assert local_flows.level == 1
+
+    def test_local_flows_namespace_idempotent(self):
+        """Running init_db twice shouldn't duplicate the Local Flows namespace."""
+        init_db()
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            local_flows_rows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).all()
+            )
+            assert len(local_flows_rows) == 1
+
+    def test_ensure_local_flows_namespace_creates_when_missing(self):
+        """ensure_local_flows_namespace() self-heals a missing namespace."""
+        init_db()
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            # Delete the Local Flows namespace to simulate an older DB
+            local_flows = (
+                db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
+            )
+            if local_flows is not None:
+                db.delete(local_flows)
+                db.commit()
+
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            ns = service.ensure_local_flows_namespace()
+            assert ns is not None
+            assert ns.name == "Local Flows"
+            assert ns.parent_id == general.id
+            assert ns.owner_id == general.owner_id
+
 
 # ---------------------------------------------------------------------------
 # Auto-registration tests
@@ -502,7 +546,7 @@ class TestDefaultNamespace:
 
 
 class TestAutoRegisterFlow:
-    """Tests for _auto_register_flow which registers flows in the default namespace."""
+    """Tests for auto_register_flow which registers flows in the default namespace."""
 
     @staticmethod
     def _ensure_default_namespace():
@@ -515,18 +559,66 @@ class TestAutoRegisterFlow:
             assert user is not None
             return user.id
 
-    def test_registers_flow_in_default_namespace(self):
-        """A new flow path is registered under General > default."""
+    def test_registers_flow_in_local_flows_namespace(self):
+        """Disk-backed flows land under General > Local Flows by default."""
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
+        auto_register_flow("/tmp/auto_reg_test.yaml", "auto_flow", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/auto_reg_test.yaml").first()
             assert reg is not None
             assert reg.name == "auto_flow"
             assert reg.owner_id == user_id
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "Local Flows"
+
+    def test_registers_unnamed_flow_in_unnamed_namespace(self):
+        """Quick-created flows (under unnamed_flows/) land in General > Unnamed Flows."""
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        auto_register_flow("/tmp/unnamed_flows/quick_flow.yaml", "quick_flow", user_id)
+
+        with get_db_context() as db:
+            reg = (
+                db.query(FlowRegistration)
+                .filter_by(flow_path="/tmp/unnamed_flows/quick_flow.yaml")
+                .first()
+            )
+            assert reg is not None
+            ns = db.get(CatalogNamespace, reg.namespace_id)
+            assert ns is not None
+            assert ns.name == "Unnamed Flows"
+
+    def test_falls_back_to_default_when_local_flows_missing(self, monkeypatch):
+        """If the Local Flows namespace is missing (older DBs), fall back to default."""
+        self._ensure_default_namespace()
+        user_id = self._get_local_user_id()
+
+        # Remove the Local Flows namespace to simulate a pre-existing DB that
+        # predates this change (and prevent auto-create via ensure_*).
+        with get_db_context() as db:
+            general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
+            local_flows = (
+                db.query(CatalogNamespace)
+                .filter_by(name="Local Flows", parent_id=general.id)
+                .first()
+            )
+            if local_flows is not None:
+                db.delete(local_flows)
+                db.commit()
+
+        # Patch ensure_local_flows_namespace to return None to simulate the
+        # older "default-only" catalog state.
+        monkeypatch.setattr(CatalogService, "ensure_local_flows_namespace", lambda self: None)
+        auto_register_flow("/tmp/fallback_flow.yaml", "fallback_flow", user_id)
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/fallback_flow.yaml").first()
+            assert reg is not None
             ns = db.get(CatalogNamespace, reg.namespace_id)
             assert ns is not None
             assert ns.name == "default"
@@ -536,8 +628,8 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/dup_auto.yaml", "first", user_id)
-        _auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
+        auto_register_flow("/tmp/dup_auto.yaml", "first", user_id)
+        auto_register_flow("/tmp/dup_auto.yaml", "second", user_id)
 
         with get_db_context() as db:
             regs = db.query(FlowRegistration).filter_by(flow_path="/tmp/dup_auto.yaml").all()
@@ -548,7 +640,7 @@ class TestAutoRegisterFlow:
         """Should return early without creating anything when user_id is None."""
         self._ensure_default_namespace()
 
-        _auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
+        auto_register_flow("/tmp/no_user.yaml", "no_user_flow", None)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_user.yaml").first()
@@ -559,7 +651,7 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow(None, "no_path", user_id)
+        auto_register_flow(None, "no_path", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(name="no_path").first()
@@ -569,7 +661,7 @@ class TestAutoRegisterFlow:
         """Should silently do nothing when the default namespace doesn't exist."""
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
+        auto_register_flow("/tmp/no_ns.yaml", "orphan", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/no_ns.yaml").first()
@@ -580,7 +672,7 @@ class TestAutoRegisterFlow:
         self._ensure_default_namespace()
         user_id = self._get_local_user_id()
 
-        _auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
+        auto_register_flow("/tmp/my_pipeline.yaml", "", user_id)
 
         with get_db_context() as db:
             reg = db.query(FlowRegistration).filter_by(flow_path="/tmp/my_pipeline.yaml").first()
@@ -1075,3 +1167,314 @@ class TestPushTableTrigger:
 
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
             assert len(runs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Cross-namespace table resolution
+# ---------------------------------------------------------------------------
+
+
+class TestCrossNamespaceResolution:
+    """Two tables with the same name in different namespaces must be addressable
+    without collision: via `ns.name`, via `name + default_namespace_id`, or via
+    bare `name` (soft-picks + logs a warning; strict mode raises)."""
+
+    def _seed_two_foo_tables(self) -> tuple[int, int, int, int]:
+        """Create catalog with two schemas each containing a 'foo' table. Returns
+        (catalog_id, schema_a_id, schema_b_id, foo_a_id)."""
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="cat", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            schema_a = CatalogNamespace(name="ns_a", level=1, parent_id=cat.id, owner_id=1)
+            schema_b = CatalogNamespace(name="ns_b", level=1, parent_id=cat.id, owner_id=1)
+            db.add_all([schema_a, schema_b])
+            db.commit()
+            db.refresh(schema_a)
+            db.refresh(schema_b)
+
+            foo_a = CatalogTable(
+                name="foo",
+                namespace_id=schema_a.id,
+                owner_id=1,
+                file_path="/tmp/foo_a.parquet",
+                storage_format="parquet",
+            )
+            foo_b = CatalogTable(
+                name="foo",
+                namespace_id=schema_b.id,
+                owner_id=1,
+                file_path="/tmp/foo_b.parquet",
+                storage_format="parquet",
+            )
+            db.add_all([foo_a, foo_b])
+            db.commit()
+            db.refresh(foo_a)
+            return cat.id, schema_a.id, schema_b.id, foo_a.id
+
+    def test_list_tables_by_name_returns_both(self):
+        self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            matches = repo.list_tables_by_name("foo")
+            assert len(matches) == 2
+            assert {t.name for t in matches} == {"foo"}
+
+    def test_resolve_qualified_disambiguates(self):
+        _, schema_a_id, schema_b_id, _ = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            a = svc.resolve_table("ns_a.foo")
+            b = svc.resolve_table("ns_b.foo")
+            assert a.namespace_id == schema_a_id
+            assert b.namespace_id == schema_b_id
+
+    def test_resolve_bare_with_default_namespace(self):
+        _, schema_a_id, _, _ = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            t = svc.resolve_table("foo", default_namespace_id=schema_a_id)
+            assert t.namespace_id == schema_a_id
+
+    def test_resolve_bare_ambiguous_warns_and_picks(self, caplog):
+        _, schema_a_id, _, _ = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with caplog.at_level("WARNING", logger="flowfile_core.catalog.service"):
+                t = svc.resolve_table("foo")
+            assert t.namespace_id == schema_a_id  # deterministic pick (lowest namespace_id)
+            assert any("Ambiguous table reference 'foo'" in r.message for r in caplog.records)
+
+    def test_resolve_bare_ambiguous_strict_raises(self):
+        from flowfile_core.catalog.exceptions import AmbiguousTableError
+
+        self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(AmbiguousTableError) as excinfo:
+                svc.resolve_table("foo", strict=True)
+            assert len(excinfo.value.candidates) == 2
+
+    def test_resolve_missing_raises_not_found(self):
+        from flowfile_core.catalog.exceptions import TableNotFoundError
+
+        _cleanup_catalog()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(TableNotFoundError):
+                svc.resolve_table("does_not_exist")
+
+    def test_reject_dot_in_namespace_name(self):
+        _cleanup_catalog()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(ValueError, match="must not contain '.'"):
+                svc.create_namespace(name="bad.name", owner_id=1)
+
+    def test_reject_dot_in_table_name(self):
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="cat2", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            with pytest.raises(ValueError, match="must not contain '.'"):
+                svc._validate_table_registration("bad.table", cat.id)
+
+    def test_catalog_table_out_exposes_full_table_name(self):
+        _, schema_a_id, _, foo_a_id = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            out = svc.get_table(foo_a_id, user_id=1)
+            assert out.namespace_name == "ns_a"
+            assert out.full_table_name == "ns_a.foo"
+
+    def test_resolve_endpoint_soft_picks_with_warnings(self):
+        self._seed_two_foo_tables()
+        response = client.get("/catalog/tables/resolve", params={"q": "foo"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["table"]["name"] == "foo"
+        assert len(body["warnings"]) == 2
+        names = [w["namespace_name"] for w in body["warnings"]]
+        assert sorted(names) == ["ns_a", "ns_b"]
+
+    def test_resolve_endpoint_strict_returns_409(self):
+        self._seed_two_foo_tables()
+        response = client.get(
+            "/catalog/tables/resolve", params={"q": "foo", "strict": "true"}
+        )
+        assert response.status_code == 409, response.text
+        body = response.json()
+        assert body["detail"]["name"] == "foo"
+        assert len(body["detail"]["candidates"]) == 2
+
+    def test_resolve_endpoint_qualified(self):
+        _, schema_a_id, _, _ = self._seed_two_foo_tables()
+        response = client.get("/catalog/tables/resolve", params={"q": "ns_a.foo"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["table"]["namespace_id"] == schema_a_id
+        assert body["warnings"] == []
+
+    def test_execute_sql_rewrites_unquoted_qualified_names(self, monkeypatch):
+        """``FROM default.catalog_tables`` (unquoted) should be rewritten to
+        ``FROM "default.catalog_tables"`` before hitting the polars SQL engine,
+        so users can write the form polars doesn't otherwise understand."""
+        import flowfile_core.catalog.service as svc_module
+
+        _cleanup_catalog()
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="default", level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            # Use a delta-shaped path so resolve_all_queryable_tables returns it.
+            import tempfile
+
+            tmpdir = tempfile.mkdtemp()
+            # Make it look like a Delta table.
+            import os
+
+            os.makedirs(os.path.join(tmpdir, "_delta_log"))
+            table = CatalogTable(
+                name="catalog_tables",
+                namespace_id=cat.id,
+                owner_id=1,
+                file_path=tmpdir,
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+
+            captured: dict = {}
+
+            def fake_trigger(query, tables, max_rows, virtual_ipc=None):
+                captured["query"] = query
+                return {
+                    "columns": [],
+                    "dtypes": [],
+                    "rows": [],
+                    "total_rows": 0,
+                    "truncated": False,
+                    "execution_time_ms": 0.0,
+                    "used_tables": [],
+                }
+
+            monkeypatch.setattr(svc_module, "trigger_sql_query", fake_trigger)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            svc.execute_sql_query("SELECT * FROM default.catalog_tables")
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+            svc.execute_sql_query('SELECT * FROM "default.catalog_tables"')
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+            svc.execute_sql_query(
+                'SELECT t.id FROM "default.catalog_tables" AS t WHERE t.id > 0'
+            )
+            assert captured["query"] == (
+                'SELECT t.id FROM "default.catalog_tables" AS t WHERE t.id > 0'
+            )
+
+            svc.execute_sql_query('SELECT * FROM "default"."catalog_tables"')
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+            svc.execute_sql_query('SELECT * FROM "default" . "catalog_tables"')
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+            svc.execute_sql_query('SELECT * FROM default."catalog_tables"')
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+            svc.execute_sql_query('SELECT * FROM "default".catalog_tables')
+            assert captured["query"] == 'SELECT * FROM "default.catalog_tables"'
+
+    def test_queryable_tables_include_bare_and_qualified_keys(self):
+        """resolve_all_queryable_tables should expose each table under its qualified
+        name ('ns.table') and, when the bare name is unique, also under the bare name."""
+        _, schema_a_id, schema_b_id, _ = self._seed_two_foo_tables()
+        # Add a uniquely-named table in ns_a to cover the "bare is included" path.
+        with get_db_context() as db:
+            db.add(
+                CatalogTable(
+                    name="only_here",
+                    namespace_id=schema_a_id,
+                    owner_id=1,
+                    file_path="/tmp/only_here.parquet",
+                    storage_format="parquet",
+                )
+            )
+            db.commit()
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            # With our non-delta seeds the delta_map stays empty — assert against the
+            # full catalog table set via a small helper instead.
+            tables = repo.list_tables()
+            bare_counts: dict[str, int] = {}
+            for t in tables:
+                bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
+
+            # foo collides across ns_a/ns_b → bare "foo" must be excluded.
+            assert bare_counts["foo"] == 2
+            # only_here is unique → bare "only_here" must be included alongside qualified.
+            assert bare_counts["only_here"] == 1
+
+            # Verify the real method skips the bare-collision case, keeps the uniquely-named
+            # bare, and always emits qualified forms — use virtual tables so we exercise virtual_map.
+            # Convert our seeded tables to virtual for the assertion.
+            for t in tables:
+                t.table_type = "virtual"
+            db.commit()
+
+            delta_map, virtual_map = svc.resolve_all_queryable_tables()
+            assert "ns_a.foo" in virtual_map
+            assert "ns_b.foo" in virtual_map
+            assert "foo" not in virtual_map  # collision → bare dropped
+            assert "ns_a.only_here" in virtual_map
+            assert "only_here" in virtual_map  # unique → bare kept
+            # Both qualified forms point to distinct ids.
+            assert virtual_map["ns_a.foo"] != virtual_map["ns_b.foo"]
+            # Bare alias for unique name points to the same id as its qualified alias.
+            assert virtual_map["only_here"] == virtual_map["ns_a.only_here"]
+
+    def test_schedule_out_includes_namespace_fields(self):
+        _, schema_a_id, _, foo_a_id = self._seed_two_foo_tables()
+        with get_db_context() as db:
+            flow_reg = FlowRegistration(
+                name="sched_flow", namespace_id=schema_a_id, owner_id=1, flow_path="/tmp/unused.yaml"
+            )
+            db.add(flow_reg)
+            db.commit()
+            db.refresh(flow_reg)
+
+            schedule = FlowSchedule(
+                registration_id=flow_reg.id,
+                owner_id=1,
+                schedule_type="table_trigger",
+                trigger_table_id=foo_a_id,
+                enabled=True,
+            )
+            db.add(schedule)
+            db.commit()
+            db.refresh(schedule)
+
+            repo = SQLAlchemyCatalogRepository(db)
+            svc = CatalogService(repo)
+            out = svc._schedule_to_out(schedule)
+            assert out.trigger_namespace_id == schema_a_id
+            assert out.trigger_namespace_name == "ns_a"
+            assert out.trigger_full_table_name == "ns_a.foo"

@@ -174,18 +174,20 @@ df = ff.scan_delta(
 
 ## Catalog Reading
 
-Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables.
+Read tables from the Flowfile catalog. The catalog provides a managed layer for discovering and versioning datasets stored as Delta tables. Both physical and [virtual tables](../../visual-editor/catalog/virtual-tables.md) are supported.
+
+### Read a Table by Name
 
 ```python
 import flowfile as ff
 
-# Read a catalog table
+# Read a catalog table (physical or virtual)
 df = ff.read_catalog_table("my_table")
 
 # Read from a specific namespace
 df = ff.read_catalog_table("my_table", namespace_id=3)
 
-# Time travel to a specific Delta version
+# Time travel to a specific Delta version (physical tables only)
 df = ff.read_catalog_table("my_table", delta_version=5)
 ```
 
@@ -193,9 +195,44 @@ df = ff.read_catalog_table("my_table", delta_version=5)
 
 - `table_name`: Name of the catalog table to read (required)
 - `namespace_id`: Optional namespace ID to scope the lookup
-- `delta_version`: Optional Delta version for time-travel queries
+- `delta_version`: Optional Delta version for time-travel queries (physical tables only)
 
 Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
+
+!!! info "Virtual table resolution"
+    When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
+
+### Query with SQL
+
+Use `read_catalog_sql()` to execute SQL queries against all catalog tables — both physical and virtual. Tables are registered by name in a Polars SQL context.
+
+```python
+import flowfile as ff
+
+# Query a single table
+df = ff.read_catalog_sql("SELECT * FROM customers WHERE region = 'Europe'")
+
+# Join across catalog tables
+df = ff.read_catalog_sql("""
+    SELECT o.order_id, c.name, o.total
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+    WHERE o.total > 1000
+""")
+
+# Aggregate virtual and physical tables together
+df = ff.read_catalog_sql("""
+    SELECT category, SUM(amount) as total
+    FROM sales_summary
+    GROUP BY category
+""")
+```
+
+**Parameters:**
+
+- `sql_query`: SQL query string to execute (required)
+
+Returns a `FlowFrame` backed by a catalog SQL reader node. The SQL dialect is Polars SQL, which supports standard `SELECT`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `UNION`, subqueries, and window functions.
 
 ## Kafka Reading
 
