@@ -17,29 +17,19 @@
       <div class="section">
         <div v-if="settings.rename_mode === 'prefix'">
           <div class="listbox-subtitle">Prefix</div>
-          <el-input
-            v-model="settings.prefix"
-            placeholder="e.g. src_"
-            size="small"
-            clearable
-          />
+          <el-input v-model="settings.prefix" placeholder="e.g. src_" size="small" clearable />
         </div>
         <div v-else-if="settings.rename_mode === 'suffix'">
           <div class="listbox-subtitle">Suffix</div>
-          <el-input
-            v-model="settings.suffix"
-            placeholder="e.g. _raw"
-            size="small"
-            clearable
-          />
+          <el-input v-model="settings.suffix" placeholder="e.g. _raw" size="small" clearable />
         </div>
         <div v-else>
           <div class="listbox-subtitle">Formula</div>
           <div class="formula-editor">
             <FunctionEditor
               :editor-string="settings.formula"
-              :columns="['column_name']"
-              @update-editor-string="settings.formula = $event"
+              :columns="formulaColumns"
+              @update-editor-string="handleFormulaChange"
             />
           </div>
           <div class="hint">
@@ -157,6 +147,13 @@ const previewError = ref<string | null>(null);
 const previewLoading = ref(false);
 
 const dataTypeBuckets: DataTypeBucket[] = ["numeric", "string", "date"];
+const formulaColumns: string[] = ["column_name"];
+
+const handleFormulaChange = (value: string) => {
+  if (nodeDynamicRename.value) {
+    nodeDynamicRename.value.dynamic_rename_input.formula = value;
+  }
+};
 
 const matchesBucket = (dtype: string, bucket: DataTypeBucket | null): boolean => {
   if (!bucket) return false;
@@ -255,9 +252,14 @@ const refreshPreview = () => {
         previewError.value = response.data.error;
         previewRows.value = [];
       } else {
-        previewRows.value = Object.entries(response.data.rename_map).map(
-          ([oldName, newName]) => ({ oldName, newName }),
-        );
+        const rows: PreviewRow[] = [];
+        const map = response.data.rename_map;
+        for (const key in map) {
+          if (Object.prototype.hasOwnProperty.call(map, key)) {
+            rows.push({ oldName: key, newName: map[key] });
+          }
+        }
+        previewRows.value = rows;
       }
     } catch (err) {
       previewError.value = err instanceof Error ? err.message : "Preview failed";
