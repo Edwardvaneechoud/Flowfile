@@ -2225,7 +2225,20 @@ class FlowDataEngine:
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
     ) -> list[str]:
-        """Return the ordered list of column names the rename rule applies to."""
+        """Return the ordered list of column names the rename rule applies to.
+
+        Applies the `selection_mode` filter (`"all"`, `"list"`, or `"data_type"`) to
+        the incoming schema, preserving the original column order. Unknown column
+        names in `settings.selected_columns` are silently dropped so stale UI state
+        does not break execution. An unknown or unset `selection_mode` returns `[]`.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            settings: The dynamic rename configuration.
+
+        Returns:
+            The column names the rename rule should be applied to, in schema order.
+        """
         mode = settings.selection_mode
         if mode == "all":
             return [name for name, _ in columns]
@@ -2246,7 +2259,26 @@ class FlowDataEngine:
     ) -> list[str]:
         """Return new names aligned 1:1 with `targets` for the configured rename mode.
 
-        Raises `ValueError` if a formula yields a null or changes cardinality.
+        For `"prefix"` / `"suffix"` modes the transformation is applied string-wise.
+        For `"formula"` mode the user's flowfile-formula expression is evaluated once
+        against a one-column DataFrame (`column_name`) whose rows are `targets`, so
+        the formula can reference the original name via the `column_name` field. A
+        scalar/literal result (length 1) is broadcast to match `targets`; any other
+        cardinality mismatch is an error. An empty/whitespace formula is treated as
+        a no-op (returns `targets` unchanged). Non-string formula results are
+        coerced to `str`.
+
+        Args:
+            targets: Column names the rename rule applies to.
+            settings: The dynamic rename configuration.
+
+        Returns:
+            New names aligned 1:1 with `targets`.
+
+        Raises:
+            ValueError: If a formula yields a null, or changes cardinality in a way
+                that cannot be broadcast (e.g. an aggregation collapsing N rows to
+                a different N).
         """
         if not targets:
             return []
@@ -2282,7 +2314,21 @@ class FlowDataEngine:
         rename_map: dict[str, str],
         all_columns: list[tuple[str, str]],
     ) -> None:
-        """Raise `ValueError` if the rename map would yield duplicate final column names."""
+        """Raise if the rename map would yield duplicate final column names.
+
+        Checks two kinds of collision: (1) two renames producing the same new name,
+        and (2) a rename producing a name that already exists on an untouched
+        (non-renamed) column. The set of "untouched" names is derived from
+        `all_columns` minus `rename_map.keys()`.
+
+        Args:
+            rename_map: The proposed `{old_name: new_name}` map (no-ops already removed).
+            all_columns: The full incoming schema as `(column_name, data_type_group)` tuples.
+
+        Raises:
+            ValueError: If applying `rename_map` would produce duplicate column names.
+                The error message lists all offending new names in sorted order.
+        """
         untouched = {name for name, _ in all_columns} - rename_map.keys()
         duplicates: set[str] = set()
         seen: set[str] = set()

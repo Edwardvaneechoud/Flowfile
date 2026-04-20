@@ -166,3 +166,47 @@ def test_resolve_map_matches_apply_output():
     settings = transform_schema.DynamicRenameInput(rename_mode="prefix", prefix="p_")
     rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, settings)
     assert rename_map == {"name": "p_name", "age": "p_age", "score": "p_score"}
+
+
+def test_empty_formula_is_noop():
+    """An empty formula string must leave column names untouched (no `to_expr` call)."""
+    engine = _engine()
+    settings = transform_schema.DynamicRenameInput(rename_mode="formula", formula="")
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["name", "age", "score"]
+
+
+def test_whitespace_only_formula_is_noop():
+    """A whitespace-only formula is treated the same as an empty one."""
+    engine = _engine()
+    settings = transform_schema.DynamicRenameInput(rename_mode="formula", formula="   \t\n")
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["name", "age", "score"]
+
+
+def test_scalar_literal_broadcasts_to_single_target():
+    """A scalar/literal formula result (length 1) should broadcast when there is
+    exactly one target column; the test verifies the broadcast path in
+    `_compute_renamed_names` produces a valid single-column rename."""
+    engine = _engine()
+    settings = transform_schema.DynamicRenameInput(
+        rename_mode="formula",
+        formula='"renamed"',
+        selection_mode="list",
+        selected_columns=["age"],
+    )
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["name", "renamed", "score"]
+
+
+def test_formula_with_no_targets_returns_empty_map():
+    """If selection yields zero targets, `resolve_dynamic_rename_map` must short-circuit
+    before invoking the formula engine (so an otherwise-invalid formula is never parsed)."""
+    columns = [("name", "String"), ("age", "Numeric")]
+    settings = transform_schema.DynamicRenameInput(
+        rename_mode="formula",
+        formula="this would not parse (((",
+        selection_mode="list",
+        selected_columns=["does_not_exist"],
+    )
+    assert FlowDataEngine.resolve_dynamic_rename_map(columns, settings) == {}

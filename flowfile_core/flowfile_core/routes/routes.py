@@ -65,6 +65,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
@@ -225,7 +226,9 @@ async def get_active_flow_file_sessions(
 ) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
+    return [
+        flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)
+    ]
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -945,15 +948,15 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
     node's settings panel. Returns either the fully-resolved rename map (possibly
     empty) or an `error` describing a parse failure or duplicate-name collision.
     """
-    # Import locally so `routes` doesn't pick up a heavy dependency at module load.
-    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-
     columns = [(c.name, c.data_type_group) for c in request.incoming_columns]
     try:
         rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, request.settings)
     except ValueError as exc:
         return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
+        # Log the full traceback so real bugs don't get silently reported as
+        # "Formula error" to the user.
+        logger.exception("Unexpected error while resolving dynamic rename preview")
         return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
     return DynamicRenamePreviewResponse(rename_map=rename_map)
 
@@ -1311,10 +1314,7 @@ def save_flow_to_catalog(
     if existing_reg is None and os.path.exists(flow_path):
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Target file {flow_path} exists but is not catalog-registered; "
-                "refusing to overwrite"
-            ),
+            detail=(f"Target file {flow_path} exists but is not catalog-registered; " "refusing to overwrite"),
         )
 
     user_id = current_user.id if current_user else None
@@ -1422,11 +1422,7 @@ def overwrite_flow_in_catalog(
     # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
     # up files under the managed root; user-owned paths elsewhere are left
     # alone since we don't want to silently delete files the user manages.
-    if (
-        normalized_current
-        and normalized_current != target_path
-        and normalized_current.startswith(managed_root)
-    ):
+    if normalized_current and normalized_current != target_path and normalized_current.startswith(managed_root):
         try:
             os.unlink(normalized_current)
         except OSError:
