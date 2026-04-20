@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response
 
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -41,7 +42,6 @@ from flowfile_core.fileExplorer.funcs import (
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
@@ -66,12 +66,13 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
 from flowfile_core.run_lock import get_flow_run_lock
-from flowfile_core.schemas import input_schema, output_model, schemas
+from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
@@ -915,6 +916,46 @@ def get_list_of_saved_flows(path: str):
 def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
     return nodes_list
+
+
+class _DynamicRenameColumn(BaseModel):
+    name: str
+    data_type: str = ""
+
+
+class DynamicRenamePreviewRequest(BaseModel):
+    """Request body for `/dynamic_rename/preview`."""
+
+    settings: transform_schema.DynamicRenameInput
+    incoming_columns: list[_DynamicRenameColumn] = Field(default_factory=list)
+
+
+class DynamicRenamePreviewResponse(BaseModel):
+    """Response body for `/dynamic_rename/preview`."""
+
+    rename_map: dict[str, str]
+    error: str | None = None
+
+
+@router.post("/dynamic_rename/preview", response_model=DynamicRenamePreviewResponse, tags=["editor"])
+def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenamePreviewResponse:
+    """Resolves a dynamic-rename rule against a given schema without mutating any flow.
+
+    The frontend calls this to render the live old-to-new preview pane inside the
+    node's settings panel. Returns either the fully-resolved rename map (possibly
+    empty) or an `error` describing a parse failure or duplicate-name collision.
+    """
+    # Import locally so `routes` doesn't pick up a heavy dependency at module load.
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+    columns = [(c.name, c.data_type) for c in request.incoming_columns]
+    try:
+        rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, request.settings)
+    except ValueError as exc:
+        return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
+        return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
+    return DynamicRenamePreviewResponse(rename_map=rename_map)
 
 
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])

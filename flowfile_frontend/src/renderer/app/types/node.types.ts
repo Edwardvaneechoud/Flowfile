@@ -522,6 +522,23 @@ export interface RecordIdInput {
 }
 
 // ============================================================================
+// Dynamic Rename Types
+// ============================================================================
+
+export type RenameMode = "prefix" | "suffix" | "formula";
+export type ColumnSelectionMode = "all" | "list" | "data_type";
+
+export interface DynamicRenameInput {
+  rename_mode: RenameMode;
+  prefix: string;
+  suffix: string;
+  formula: string;
+  selection_mode: ColumnSelectionMode;
+  selected_columns: string[];
+  selected_data_types: string[];
+}
+
+// ============================================================================
 // Graph Solver Types
 // ============================================================================
 
@@ -818,6 +835,10 @@ export interface NodeTextToRows extends NodeSingleInput {
 
 export interface NodeRecordId extends NodeSingleInput {
   record_id_input: RecordIdInput;
+}
+
+export interface NodeDynamicRename extends NodeSingleInput {
+  dynamic_rename_input: DynamicRenameInput;
 }
 
 export interface NodeSample extends NodeBase {

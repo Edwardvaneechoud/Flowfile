@@ -2213,6 +2213,99 @@ class FlowDataEngine:
 
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
+    @staticmethod
+    def resolve_dynamic_rename_map(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DynamicRenameInput,
+    ) -> dict[str, str]:
+        """Compute the `{old_name: new_name}` map for a dynamic-rename operation.
+
+        Pure function — takes the incoming schema as `(name, dtype)` tuples and the user's
+        settings, and returns the rename map. Raises `ValueError` if the rule would
+        produce duplicate column names.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_str)` tuples, in order.
+            settings: The dynamic rename configuration.
+
+        Returns:
+            A dict mapping original column name to new column name. No-op renames are
+            omitted, so the result is safe to pass directly to `pl.DataFrame.rename`.
+        """
+        if settings.selection_mode == "all":
+            targets = [name for name, _ in columns]
+        elif settings.selection_mode == "list":
+            available = {name for name, _ in columns}
+            targets = [c for c in settings.selected_columns if c in available]
+        elif settings.selection_mode == "data_type":
+            wanted = set(settings.selected_data_types)
+            targets = [name for name, dtype in columns if dtype in wanted]
+        else:
+            targets = []
+
+        rename_map: dict[str, str] = {}
+        if settings.rename_mode == "prefix":
+            for name in targets:
+                rename_map[name] = f"{settings.prefix}{name}"
+        elif settings.rename_mode == "suffix":
+            for name in targets:
+                rename_map[name] = f"{name}{settings.suffix}"
+        elif settings.rename_mode == "formula":
+            if targets and settings.formula.strip():
+                expr = to_expr(settings.formula)
+                for name in targets:
+                    tmp = pl.DataFrame({"column_name": [name]})
+                    result = tmp.select(expr.alias("__ff_rename__"))["__ff_rename__"][0]
+                    if result is None:
+                        raise ValueError(
+                            f"Dynamic rename formula returned null for column '{name}'."
+                        )
+                    rename_map[name] = str(result)
+
+        rename_map = {old: new for old, new in rename_map.items() if old != new}
+
+        untouched = {name for name, _ in columns} - set(rename_map)
+        new_names = list(rename_map.values())
+        duplicates: set[str] = set()
+        seen: set[str] = set()
+        for new in new_names:
+            if new in seen:
+                duplicates.add(new)
+            seen.add(new)
+            if new in untouched:
+                duplicates.add(new)
+        if duplicates:
+            raise ValueError(
+                "Dynamic rename produces duplicate column name(s): " + ", ".join(sorted(duplicates))
+            )
+        return rename_map
+
+    def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
+        """Renames a subset of columns according to a single rule.
+
+        Supports prefix, suffix, and flowfile-formula rename modes, with column selection
+        by name list, by data type, or across all columns.
+
+        Args:
+            settings: The dynamic rename configuration.
+
+        Returns:
+            A new `FlowDataEngine` with the renamed columns (or this instance's DataFrame
+            unchanged if the rule resolves to no renames).
+        """
+        columns = [(c.column_name, c.data_type) for c in self.schema]
+        rename_map = self.resolve_dynamic_rename_map(columns, settings)
+        if not rename_map:
+            return FlowDataEngine(
+                self.data_frame,
+                number_of_records=self.number_of_records,
+                schema=self.schema,
+            )
+        return FlowDataEngine(
+            self.data_frame.rename(rename_map),
+            number_of_records=self.number_of_records,
+        )
+
     def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies an SQL-style formula using `pl.sql_expr`.
 

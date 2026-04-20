@@ -1024,6 +1024,31 @@ class GraphSolverInput(BaseModel):
     output_column_name: str | None = "graph_group"
 
 
+RenameMode = Literal["prefix", "suffix", "formula"]
+ColumnSelectionMode = Literal["all", "list", "data_type"]
+
+
+class DynamicRenameInput(BaseModel):
+    """Defines settings for a dynamic rename operation.
+
+    Applies a single rule (prefix / suffix / formula) to a set of selected columns,
+    rather than requiring the user to rename columns one-by-one.
+
+    In formula mode, the flowfile formula syntax is evaluated with `[column_name]`
+    bound to each target column's current name; for example `uppercase([column_name])`
+    or `"v2_" + [column_name]`.
+    """
+
+    rename_mode: RenameMode = "prefix"
+    prefix: str = ""
+    suffix: str = ""
+    formula: str = ""
+
+    selection_mode: ColumnSelectionMode = "all"
+    selected_columns: list[str] = Field(default_factory=list)
+    selected_data_types: list[str] = Field(default_factory=list)
+
+
 class PolarsCodeInput(BaseModel):
     """A simple container for a string of user-provided Polars code to be executed."""
 
