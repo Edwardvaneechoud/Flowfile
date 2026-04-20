@@ -31,13 +31,17 @@ class KMeansLabel(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _KMeansLabelSettings = _KMeansLabelSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame:
         # Imported lazily so that this module can be imported in environments
         # without scikit-learn (the node still appears in the registry but
         # raises a clear error only when actually executed).
         from sklearn.cluster import KMeans
 
         df = inputs[0]
+        # KMeans needs materialised features; the framework hands us a
+        # LazyFrame so collect before slicing.
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
         feature_cols = self.settings_schema.main_section.feature_columns.value or []
         if not feature_cols:
             return df

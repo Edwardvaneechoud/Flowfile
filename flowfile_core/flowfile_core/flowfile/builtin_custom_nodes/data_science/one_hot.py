@@ -29,8 +29,12 @@ class OneHotEncode(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _OneHotSettings = _OneHotSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame:
         df = inputs[0]
+        # to_dummies is a DataFrame-only method; the framework passes a
+        # LazyFrame here so we must collect first.
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
         cols = self.settings_schema.main_section.columns.value or []
         if not cols:
             return df

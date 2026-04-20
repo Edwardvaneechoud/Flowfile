@@ -129,6 +129,38 @@ def test_kmeans_label_appends_cluster_column() -> None:
     assert labels[0] != labels[3]
 
 
+def test_all_pack_nodes_accept_lazyframe_input(numeric_df: pl.DataFrame) -> None:
+    """The framework's local-exec path passes a LazyFrame (fde.data_frame) to
+    each node's ``process``. Every pack node must handle that without raising.
+    This guards against bugs like ``LazyFrame.to_dummies`` not existing.
+    """
+    lf = numeric_df.lazy()
+
+    std = Standardize()
+    std.settings_schema.main_section.columns.set_value(["x", "y"])
+    std.process(lf)
+
+    mm = MinMaxScale()
+    mm.settings_schema.main_section.columns.set_value(["x", "y"])
+    mm.process(lf)
+
+    oh = OneHotEncode()
+    oh.settings_schema.main_section.columns.set_value(["label"])
+    oh_out = oh.process(lf)
+    assert "label_a" in oh_out.columns
+
+    zs = ZScoreAnomaly()
+    zs.settings_schema.main_section.columns.set_value(["x"])
+    zs.settings_schema.main_section.threshold.set_value(3.0)
+    zs.process(lf)
+
+    km = KMeansLabel()
+    km.settings_schema.main_section.feature_columns.set_value(["x", "y"])
+    km.settings_schema.main_section.n_clusters.set_value(2.0)
+    km_out = km.process(lf)
+    assert "cluster" in km_out.columns
+
+
 def test_pack_is_discovered_by_builtin_registry() -> None:
     from flowfile_core.configs.node_store.builtin_custom_node_registry import get_all_builtin_custom_nodes
 
