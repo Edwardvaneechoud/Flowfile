@@ -7,7 +7,7 @@ export const createDynamicRenameInput = (): DynamicRenameInput => ({
   formula: "",
   selection_mode: "all",
   selected_columns: [],
-  selected_data_types: [],
+  selected_data_type: null,
 });
 
 export const createDynamicRenameNode = (

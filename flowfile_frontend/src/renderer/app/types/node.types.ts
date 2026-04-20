@@ -527,6 +527,7 @@ export interface RecordIdInput {
 
 export type RenameMode = "prefix" | "suffix" | "formula";
 export type ColumnSelectionMode = "all" | "list" | "data_type";
+export type DataTypeBucket = "numeric" | "string" | "date";
 
 export interface DynamicRenameInput {
   rename_mode: RenameMode;
@@ -535,7 +536,7 @@ export interface DynamicRenameInput {
   formula: string;
   selection_mode: ColumnSelectionMode;
   selected_columns: string[];
-  selected_data_types: string[];
+  selected_data_type: DataTypeBucket | null;
 }
 
 // ============================================================================

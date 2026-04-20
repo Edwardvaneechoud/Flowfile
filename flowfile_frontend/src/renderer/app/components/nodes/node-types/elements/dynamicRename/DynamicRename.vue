@@ -81,19 +81,17 @@
 
         <div v-else-if="settings.selection_mode === 'data_type'" class="selection-body">
           <el-select
-            v-model="settings.selected_data_types"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="Select data types..."
+            v-model="settings.selected_data_type"
+            placeholder="Select data type..."
             size="small"
+            clearable
             style="width: 100%"
           >
             <el-option
-              v-for="dt in dataTypes"
-              :key="dt"
-              :label="dt"
-              :value="dt"
+              v-for="bucket in dataTypeBuckets"
+              :key="bucket"
+              :label="bucket"
+              :value="bucket"
             />
           </el-select>
         </div>
@@ -134,6 +132,7 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FunctionEditor from "../../../../../features/designer/editor/FunctionEditor.vue";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type {
+  DataTypeBucket,
   DynamicRenameInput,
   NodeDynamicRename,
 } from "../../../../../types/node.types";
@@ -157,7 +156,22 @@ const previewRows = ref<PreviewRow[]>([]);
 const previewError = ref<string | null>(null);
 const previewLoading = ref(false);
 
-const dataTypes = nodeStore.getDataTypes();
+const dataTypeBuckets: DataTypeBucket[] = ["numeric", "string", "date"];
+
+const matchesBucket = (dtype: string, bucket: DataTypeBucket | null): boolean => {
+  if (!bucket) return false;
+  if (bucket === "numeric") return /^(Int|UInt|Float|Decimal)/.test(dtype);
+  if (bucket === "string") {
+    return (
+      dtype === "String" ||
+      dtype === "Utf8" ||
+      dtype.startsWith("Categorical") ||
+      dtype.startsWith("Enum")
+    );
+  }
+  if (bucket === "date") return /^(Date|Datetime|Time|Duration)/.test(dtype);
+  return false;
+};
 
 const settings = computed<DynamicRenameInput>(() => {
   return (
@@ -168,7 +182,7 @@ const settings = computed<DynamicRenameInput>(() => {
       formula: "",
       selection_mode: "all",
       selected_columns: [],
-      selected_data_types: [],
+      selected_data_type: null,
     }
   );
 });
@@ -191,8 +205,9 @@ const resolveClientPreview = (): PreviewRow[] => {
     const available = new Set(cols.map((c) => c.name));
     targets = s.selected_columns.filter((n) => available.has(n));
   } else {
-    const wanted = new Set(s.selected_data_types);
-    targets = cols.filter((c) => wanted.has(c.data_type)).map((c) => c.name);
+    targets = cols
+      .filter((c) => matchesBucket(c.data_type, s.selected_data_type))
+      .map((c) => c.name);
   }
 
   const mapped: PreviewRow[] = [];
@@ -261,7 +276,7 @@ watch(
     settings.value.formula,
     settings.value.selection_mode,
     settings.value.selected_columns,
-    settings.value.selected_data_types,
+    settings.value.selected_data_type,
     incomingColumns.value,
   ],
   () => refreshPreview(),
@@ -280,7 +295,7 @@ const loadNodeData = async (nodeId: number) => {
         formula: "",
         selection_mode: "all",
         selected_columns: [],
-        selected_data_types: [],
+        selected_data_type: null,
       };
     }
   } else {

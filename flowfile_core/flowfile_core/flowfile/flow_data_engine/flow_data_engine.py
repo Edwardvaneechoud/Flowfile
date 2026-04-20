@@ -2214,6 +2214,24 @@ class FlowDataEngine:
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
     @staticmethod
+    def _data_type_matches_bucket(dtype: str, bucket: str | None) -> bool:
+        """Whether a polars-style dtype string falls into one of the coarse buckets
+        used by the dynamic rename node (numeric / string / date).
+
+        Mirrors `polars.selectors.{numeric,string,date}` for the preview path where
+        only the dtype name (not a live DataFrame) is available.
+        """
+        if bucket is None:
+            return False
+        if bucket == "numeric":
+            return dtype.startswith(("Int", "UInt", "Float", "Decimal"))
+        if bucket == "string":
+            return dtype in ("String", "Utf8") or dtype.startswith(("Categorical", "Enum"))
+        if bucket == "date":
+            return dtype.startswith(("Date", "Datetime", "Time", "Duration"))
+        return False
+
+    @staticmethod
     def resolve_dynamic_rename_map(
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
@@ -2238,8 +2256,12 @@ class FlowDataEngine:
             available = {name for name, _ in columns}
             targets = [c for c in settings.selected_columns if c in available]
         elif settings.selection_mode == "data_type":
-            wanted = set(settings.selected_data_types)
-            targets = [name for name, dtype in columns if dtype in wanted]
+            bucket = settings.selected_data_type
+            targets = [
+                name
+                for name, dtype in columns
+                if FlowDataEngine._data_type_matches_bucket(dtype, bucket)
+            ]
         else:
             targets = []
 

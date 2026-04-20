@@ -1317,7 +1317,7 @@ class NodeDynamicRename(NodeSingleInput):
         elif s.selection_mode == "list":
             scope = f"{len(s.selected_columns)} column(s)"
         else:
-            scope = f"type(s) {', '.join(s.selected_data_types) or '(none)'}"
+            scope = f"type {s.selected_data_type or '(none)'}"
         return f"{rule} on {scope}"
 
 

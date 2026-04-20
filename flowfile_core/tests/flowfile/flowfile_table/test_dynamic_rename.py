@@ -37,17 +37,62 @@ def test_suffix_list_only_renames_listed_columns():
     assert result == ["name_raw", "age", "score"]
 
 
-def test_data_type_selection_filters_by_dtype():
+def test_data_type_numeric_bucket():
     engine = _engine()
     # incoming dtypes: name=String, age=Int64, score=Float64
     settings = transform_schema.DynamicRenameInput(
         rename_mode="prefix",
         prefix="num_",
         selection_mode="data_type",
-        selected_data_types=["Int64", "Float64"],
+        selected_data_type="numeric",
     )
     result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
     assert result == ["name", "num_age", "num_score"]
+
+
+def test_data_type_string_bucket():
+    engine = _engine()
+    settings = transform_schema.DynamicRenameInput(
+        rename_mode="suffix",
+        suffix="_text",
+        selection_mode="data_type",
+        selected_data_type="string",
+    )
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["name_text", "age", "score"]
+
+
+def test_data_type_date_bucket_matches_datetime():
+    from datetime import datetime
+
+    engine = FlowDataEngine(
+        pl.DataFrame(
+            {
+                "id": [1, 2],
+                "created_at": [datetime(2024, 1, 1), datetime(2024, 1, 2)],
+            }
+        )
+    )
+    settings = transform_schema.DynamicRenameInput(
+        rename_mode="prefix",
+        prefix="ts_",
+        selection_mode="data_type",
+        selected_data_type="date",
+    )
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["id", "ts_created_at"]
+
+
+def test_data_type_bucket_none_is_noop():
+    engine = _engine()
+    settings = transform_schema.DynamicRenameInput(
+        rename_mode="prefix",
+        prefix="x_",
+        selection_mode="data_type",
+        selected_data_type=None,
+    )
+    result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
+    assert result == ["name", "age", "score"]
 
 
 def test_formula_uppercase_uses_column_name_reference():
