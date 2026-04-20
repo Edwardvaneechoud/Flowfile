@@ -7,7 +7,11 @@
     >
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Estimator</div>
-        <el-select v-model="nodeFit.data_science_fit_input.kind" size="small" style="width: 100%">
+        <el-select
+          v-model="nodeFit.data_science_fit_input.kind"
+          size="small"
+          style="width: 100%"
+        >
           <el-option
             v-for="opt in kindOptions"
             :key="opt.value"
@@ -24,18 +28,19 @@
         />
 
         <div class="listbox-subtitle" style="margin-top: 12px">Feature columns</div>
-        <el-input
-          v-model="featureColsRaw"
-          size="small"
-          placeholder="comma-separated column names"
-          @change="syncFeatureCols"
+        <ColumnListSelector
+          v-model="nodeFit.data_science_fit_input.feature_cols"
+          :schema="tableSchema"
+          data-type-filter="Numeric"
+          placeholder="Select numeric feature columns"
         />
 
         <div class="listbox-subtitle" style="margin-top: 12px">Target column</div>
-        <el-input
+        <DropDownGeneric
           v-model="targetColInput"
-          size="small"
-          placeholder="leave empty for unsupervised"
+          :option-list="numericColumnNames"
+          :allow-other="false"
+          placeholder="Select the target column"
           @change="syncTargetCol"
         />
 
@@ -46,7 +51,9 @@
           placeholder="prediction"
         />
 
-        <div class="listbox-subtitle" style="margin-top: 12px">Hyperparameters (JSON)</div>
+        <div class="listbox-subtitle" style="margin-top: 12px">
+          Hyperparameters (JSON)
+        </div>
         <el-input
           v-model="hyperparamsRaw"
           size="small"
@@ -63,7 +70,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { ElMessage } from "element-plus";
 import type { NodeDataScienceFit } from "@/types/node.types";
@@ -71,6 +78,8 @@ import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "@/stores/node-store";
 import { useNodeSettings } from "@/composables/useNodeSettings";
 import GenericNodeSettings from "@/components/nodes/baseNode/genericNodeSettings.vue";
+import ColumnListSelector from "@/components/nodes/baseNode/page_objects/columnListSelector.vue";
+import DropDownGeneric from "@/components/nodes/baseNode/page_objects/dropDownGeneric.vue";
 import { createDataScienceFitNode } from "./utils";
 
 const nodeStore = useNodeStore();
@@ -78,32 +87,27 @@ const dataLoaded = ref(false);
 const nodeFit = ref<NodeDataScienceFit | null>(null);
 const nodeData = ref<NodeData | null>(null);
 
-const featureColsRaw = ref("");
-const targetColInput = ref("");
-const hyperparamsRaw = ref("{}");
+const targetColInput = ref<string>("");
+const hyperparamsRaw = ref<string>("{}");
 const hyperparamsError = ref<string | null>(null);
 
 const kindOptions = [
   { value: "linreg", label: "Linear Regression" },
   { value: "ridge", label: "Ridge Regression (coming soon)" },
   { value: "lasso", label: "Lasso Regression (coming soon)" },
-  { value: "kmeans", label: "KMeans (coming soon)" },
   { value: "knn_cls", label: "KNN Classifier (coming soon)" },
   { value: "knn_reg", label: "KNN Regressor (coming soon)" },
   { value: "pca", label: "PCA (coming soon)" },
 ];
 
-const syncFeatureCols = () => {
-  if (!nodeFit.value) return;
-  nodeFit.value.data_science_fit_input.feature_cols = featureColsRaw.value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-};
+const tableSchema = computed(() => nodeData.value?.main_input?.table_schema ?? []);
+const numericColumnNames = computed(() =>
+  tableSchema.value.filter((c) => c.data_type_group === "Numeric").map((c) => c.name),
+);
 
 const syncTargetCol = () => {
   if (!nodeFit.value) return;
-  const trimmed = targetColInput.value.trim();
+  const trimmed = (targetColInput.value ?? "").trim();
   nodeFit.value.data_science_fit_input.target_col = trimmed === "" ? null : trimmed;
 };
 
@@ -114,7 +118,7 @@ const syncHyperparams = () => {
       ? JSON.parse(hyperparamsRaw.value)
       : {};
     hyperparamsError.value = null;
-  } catch (e) {
+  } catch {
     hyperparamsError.value = "Invalid JSON";
   }
 };
@@ -123,7 +127,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodeFit,
   onBeforeSave: () => {
     if (!nodeFit.value) return false;
-    syncFeatureCols();
     syncTargetCol();
     syncHyperparams();
     if (hyperparamsError.value) {
@@ -149,9 +152,10 @@ const loadNodeData = async (nodeId: number) => {
   nodeFit.value = hasValidSetup
     ? (setting as NodeDataScienceFit)
     : createDataScienceFitNode(nodeStore.flow_id, nodeStore.node_id);
-  featureColsRaw.value = nodeFit.value.data_science_fit_input.feature_cols.join(", ");
   targetColInput.value = nodeFit.value.data_science_fit_input.target_col ?? "";
-  hyperparamsRaw.value = JSON.stringify(nodeFit.value.data_science_fit_input.hyperparams ?? {});
+  hyperparamsRaw.value = JSON.stringify(
+    nodeFit.value.data_science_fit_input.hyperparams ?? {},
+  );
   dataLoaded.value = true;
 };
 

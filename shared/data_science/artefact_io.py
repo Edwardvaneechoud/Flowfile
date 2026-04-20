@@ -1,8 +1,14 @@
-"""Worker-side HTTP client for the GlobalArtifact prepare → upload → finalize flow.
+"""HTTP client for the GlobalArtifact prepare → upload → finalize flow.
 
-Mirrors the shape of ``kernel_runtime.flowfile_client.publish_global`` /
-``get_global`` but lives entirely under ``flowfile_core`` so the worker
-can import it without taking a dependency on the kernel runtime.
+Lives in ``shared/`` so both the worker (for publish at fit time + download at
+predict time) and any other service can import it without reaching across
+package boundaries.
+
+Data-science artefacts are JSON blobs: a small dict of
+``{coeffs, bias, feature_names, …}`` produced by
+``shared.data_science.estimators``. JSON keeps artefacts human-inspectable
+and portable across Python versions — no pickle, no sklearn/polars-ds
+runtime version pinning.
 
 Authentication: the worker sends ``X-Internal-Token`` from the
 ``FLOWFILE_INTERNAL_TOKEN`` env var, which Core verifies via
@@ -12,8 +18,8 @@ Authentication: the worker sends ``X-Internal-Token`` from the
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-import pickle
 from pathlib import Path
 from typing import Any
 
@@ -38,16 +44,16 @@ def _auth_headers() -> dict[str, str]:
     return {"X-Internal-Token": token}
 
 
-def _serialize_to_bytes(obj: Any) -> tuple[bytes, str]:
-    """Pickle ``obj`` and return ``(blob, sha256)``."""
-    blob = pickle.dumps(obj)
+def _serialize_artefact(artefact: dict[str, Any]) -> tuple[bytes, str]:
+    """JSON-encode ``artefact`` and return ``(blob, sha256)``."""
+    blob = json.dumps(artefact, sort_keys=True).encode("utf-8")
     return blob, hashlib.sha256(blob).hexdigest()
 
 
 def publish(
     *,
     name: str,
-    obj: Any,
+    artefact: dict[str, Any],
     source_registration_id: int,
     source_flow_id: int | None = None,
     source_node_id: int | None = None,
@@ -55,10 +61,7 @@ def publish(
     description: str | None = None,
     tags: list[str] | None = None,
 ) -> int:
-    """Publish ``obj`` as a versioned global artefact and return the artefact id."""
-    python_type = f"{type(obj).__module__}.{type(obj).__name__}"
-    python_module = type(obj).__module__
-
+    """Publish ``artefact`` (a JSON-serialisable dict) and return its artefact id."""
     headers = _auth_headers()
     with httpx.Client(timeout=60.0, headers=headers) as client:
         resp = client.post(
@@ -66,21 +69,21 @@ def publish(
             json={
                 "name": name,
                 "source_registration_id": source_registration_id,
-                "serialization_format": "pickle",
+                "serialization_format": "json",
                 "description": description,
                 "tags": tags or [],
                 "namespace_id": None,
                 "source_flow_id": source_flow_id,
                 "source_node_id": source_node_id,
                 "source_kernel_id": None,
-                "python_type": python_type,
-                "python_module": python_module,
+                "python_type": "dict",
+                "python_module": "builtins",
             },
         )
         resp.raise_for_status()
         target = resp.json()
 
-        blob, sha256 = _serialize_to_bytes(obj)
+        blob, sha256 = _serialize_artefact(artefact)
         size_bytes = len(blob)
 
         if target["method"] == "file":
@@ -91,7 +94,7 @@ def publish(
             upload_resp = client.put(
                 target["path"],
                 content=blob,
-                headers={"Content-Type": "application/octet-stream"},
+                headers={"Content-Type": "application/json"},
                 timeout=600.0,
             )
             upload_resp.raise_for_status()
@@ -149,6 +152,6 @@ def download_artifact(name: str, version: int | None = None) -> bytes:
         return resp.content
 
 
-def load_estimator(blob: bytes) -> Any:
-    """Inverse of :func:`_serialize_to_bytes`."""
-    return pickle.loads(blob)
+def load_artefact(blob: bytes) -> dict[str, Any]:
+    """Inverse of :func:`_serialize_artefact`."""
+    return json.loads(blob.decode("utf-8"))

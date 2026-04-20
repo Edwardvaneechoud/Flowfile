@@ -13,7 +13,6 @@ import polars as pl
 import pytest
 
 from flowfile_core.flowfile.builtin_custom_nodes.data_science import (
-    KMeansLabel,
     MinMaxScale,
     OneHotEncode,
     Standardize,
@@ -124,34 +123,6 @@ def test_zscore_is_lazy_and_flags_anomaly() -> None:
     assert collected["is_anomaly"].to_list() == [False, False, False, False, True]
 
 
-def test_kmeans_label_is_lazy_on_the_output_path() -> None:
-    # Non-feature columns (``label``) must not be materialized by the node —
-    # they should still arrive as a lazy step in the returned plan.
-    lf = pl.LazyFrame(
-        {
-            "f1": [0.0, 0.1, 0.2, 9.0, 9.1, 9.2],
-            "f2": [0.0, 0.1, 0.2, 9.0, 9.1, 9.2],
-            "label": ["A", "B", "A", "B", "A", "B"],
-        }
-    )
-    node = KMeansLabel()
-    node.settings_schema.main_section.feature_columns.set_value(["f1", "f2"])
-    node.settings_schema.main_section.n_clusters.set_value(2.0)
-    node.settings_schema.main_section.seed.set_value(0.0)
-
-    out = node.process(lf)
-    assert isinstance(out, pl.LazyFrame)
-
-    collected = out.collect()
-    assert "cluster" in collected.columns
-    assert collected["label"].to_list() == ["A", "B", "A", "B", "A", "B"]
-    labels = collected["cluster"].to_list()
-    # The first three rows must share a cluster, distinct from the last three.
-    assert labels[0] == labels[1] == labels[2]
-    assert labels[3] == labels[4] == labels[5]
-    assert labels[0] != labels[3]
-
-
 def test_all_pack_nodes_accept_dataframe_input_too(numeric_df: pl.DataFrame) -> None:
     """Same-shape nodes must also tolerate a DataFrame (for ad-hoc callers)."""
     for node_cls, setup in (
@@ -159,13 +130,6 @@ def test_all_pack_nodes_accept_dataframe_input_too(numeric_df: pl.DataFrame) -> 
         (MinMaxScale, lambda n: n.settings_schema.main_section.columns.set_value(["x", "y"])),
         (OneHotEncode, lambda n: n.settings_schema.main_section.columns.set_value(["label"])),
         (ZScoreAnomaly, lambda n: n.settings_schema.main_section.columns.set_value(["x"])),
-        (
-            KMeansLabel,
-            lambda n: (
-                n.settings_schema.main_section.feature_columns.set_value(["x", "y"]),
-                n.settings_schema.main_section.n_clusters.set_value(2.0),
-            ),
-        ),
     ):
         node = node_cls()
         setup(node)
@@ -179,14 +143,14 @@ def test_pack_is_discovered_by_builtin_registry() -> None:
     from flowfile_core.configs.node_store.builtin_custom_node_registry import get_all_builtin_custom_nodes
 
     discovered = get_all_builtin_custom_nodes()
-    expected_items = {"standardize", "min-max_scale", "one-hot_encode", "z-score_anomaly", "kmeans_label"}
-    assert expected_items.issubset(set(discovered.keys())), discovered.keys()
+    expected_items = {"standardize", "min-max_scale", "one-hot_encode", "z-score_anomaly"}
+    assert expected_items == set(discovered.keys()), discovered.keys()
 
 
 def test_pack_is_registered_in_node_store() -> None:
     from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict
 
-    for item in ("standardize", "min-max_scale", "one-hot_encode", "z-score_anomaly", "kmeans_label"):
+    for item in ("standardize", "min-max_scale", "one-hot_encode", "z-score_anomaly"):
         assert item in CUSTOM_NODE_STORE, f"missing from CUSTOM_NODE_STORE: {item}"
         assert item in node_dict, f"missing from node_dict: {item}"
         assert node_dict[item].node_group == "data_science"

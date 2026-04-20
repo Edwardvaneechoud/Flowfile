@@ -3,20 +3,22 @@
 Each entry in ``FIT_KINDS`` maps a ``kind`` string (the user-facing dropdown
 value) to a function that fits an estimator on a Polars DataFrame and returns:
 
-    (estimator_obj, preview_df, output_schema)
+    (artefact_dict, preview_df, output_schema)
 
-* ``estimator_obj`` is the sklearn estimator (or compatible object) to be
-  pickled and uploaded to the artefact store.
+* ``artefact_dict`` is a JSON-serialisable ``dict`` capturing everything the
+  predict side needs (coefficients, bias, feature names). Persisting as JSON
+  instead of pickle makes artefacts portable across Python versions and
+  human-inspectable.
 * ``preview_df`` is a small Polars DataFrame surfaced to the flow's downstream
   graph so users can inspect coefficients/metrics without running predict.
 * ``output_schema`` is a list of ``{"name": str, "data_type": str}`` dicts
   describing the columns this artefact will produce when applied via predict.
-  It is persisted alongside the artefact so consumer nodes can compute their
+  Persisted alongside the artefact so consumer nodes can compute their
   schema lazily, before any data movement.
 
-Phase 1 ships only ``linreg`` end-to-end. The other entries are stubs that
-raise ``NotImplementedError`` so they appear in the dropdown today and
-become trivial follow-up additions.
+Phase 1 ships only ``linreg`` end-to-end via ``polars_ds.linear_models.LR``.
+The other entries are stubs that raise ``NotImplementedError`` so they
+appear in the dropdown today and become trivial follow-up additions.
 """
 
 from __future__ import annotations
@@ -43,30 +45,35 @@ def _fit_linreg(
     target_col: str,
     hyperparams: dict[str, Any],
     prediction_col: str,
-) -> tuple[Any, pl.DataFrame, list[dict[str, str]]]:
-    """Fit ``sklearn.linear_model.LinearRegression`` and return artefacts."""
-    from sklearn.linear_model import LinearRegression
+) -> tuple[dict[str, Any], pl.DataFrame, list[dict[str, str]]]:
+    """Fit OLS via ``polars_ds.linear_models.LR`` and return a JSON artefact."""
+    from polars_ds.linear_models import LR
 
     if target_col is None:
         raise ValueError("Linear regression requires a target column.")
 
-    X = df.select(feature_cols).to_numpy()
-    y = df.get_column(target_col).to_numpy()
+    model = LR(has_bias=True, **hyperparams)
+    model.fit_df(df, features=feature_cols, target=target_col)
 
-    model = LinearRegression(**hyperparams)
-    model.fit(X, y)
+    coeffs = [float(c) for c in model.coeffs().tolist()]
+    bias = float(model.bias())
 
-    preview_rows = list(zip(feature_cols, model.coef_.tolist(), strict=True))
-    preview_rows.append(("__intercept__", float(model.intercept_)))
+    artefact: dict[str, Any] = {
+        "kind": "linreg",
+        "coeffs": coeffs,
+        "bias": bias,
+        "feature_names": list(feature_cols),
+    }
+
     preview_df = pl.DataFrame(
         {
-            "feature": [r[0] for r in preview_rows],
-            "coefficient": [r[1] for r in preview_rows],
+            "feature": [*feature_cols, "__intercept__"],
+            "coefficient": [*coeffs, bias],
         }
     )
 
     output_schema = [{"name": prediction_col, "data_type": "Float64"}]
-    return model, preview_df, output_schema
+    return artefact, preview_df, output_schema
 
 
 def _not_implemented(kind: str):
@@ -100,7 +107,7 @@ def fit_estimator(
     target_col: str | None,
     hyperparams: dict[str, Any] | None = None,
     prediction_col: str = "prediction",
-) -> tuple[Any, pl.DataFrame, list[dict[str, str]]]:
+) -> tuple[dict[str, Any], pl.DataFrame, list[dict[str, str]]]:
     """Dispatch ``kind`` to the appropriate fit function with validation."""
     if kind not in FIT_KINDS:
         raise ValueError(f"Unknown estimator kind: {kind!r}. Known: {sorted(FIT_KINDS)}")

@@ -65,8 +65,6 @@ azure-storage-blob = ">=12.19.0"
 google-cloud-storage = ">=2.14.0"
 gcsfs = ">=2024.2.0"
 alembic = "^1.13.0"
-scikit-learn = "^1.4"
-joblib = "^1.4"
 
 
 [tool.poetry.scripts]

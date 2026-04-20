@@ -1881,10 +1881,7 @@ class FlowGraph:
         (e.g. coefficients/metrics) so the rest of the flow can keep building
         without round-tripping through the artefact store.
         """
-        from flowfile_core.flowfile.flow_data_engine.data_science.estimators import (
-            PREVIEW_SCHEMAS,
-            SUPERVISED_KINDS,
-        )
+        from shared.data_science.estimators import PREVIEW_SCHEMAS, SUPERVISED_KINDS
 
         fit_input = node_settings.data_science_fit_input
 
@@ -1946,7 +1943,7 @@ class FlowGraph:
         downstream graph can know its predicted columns at add time, before
         any data movement.
         """
-        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
+        from shared.data_science import artefact_io
 
         predict_input = node_settings.data_science_predict_input
 

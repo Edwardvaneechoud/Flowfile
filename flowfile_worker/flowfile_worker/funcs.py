@@ -856,13 +856,13 @@ def data_science_fit(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting data_science_fit ({kind}) -> publish '{artefact_name}'")
     try:
-        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
-        from flowfile_core.flowfile.flow_data_engine.data_science.estimators import fit_estimator
+        from shared.data_science import artefact_io
+        from shared.data_science.estimators import fit_estimator
 
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
 
-        estimator, preview_df, output_schema = fit_estimator(
+        artefact, preview_df, output_schema = fit_estimator(
             kind=kind,
             df=df,
             feature_cols=feature_cols,
@@ -873,7 +873,7 @@ def data_science_fit(
 
         artefact_io.publish(
             name=artefact_name,
-            obj=estimator,
+            artefact=artefact,
             source_registration_id=source_registration_id,
             source_flow_id=source_flow_id,
             source_node_id=source_node_id,
@@ -912,17 +912,17 @@ def data_science_predict(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting data_science_predict using artefact '{artefact_name}'")
     try:
-        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
-        from flowfile_core.flowfile.flow_data_engine.data_science.predict import apply_predict
+        from shared.data_science import artefact_io
+        from shared.data_science.predict import apply_predict
 
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        df = collect_lazy_frame(lf)
 
         blob = artefact_io.download_artifact(artefact_name, artefact_version)
-        estimator = artefact_io.load_estimator(blob)
+        artefact = artefact_io.load_artefact(blob)
 
-        result = apply_predict(df, estimator, feature_cols, prediction_col)
-        result.write_ipc(file_path)
+        # apply_predict keeps the plan lazy; collect only at the write boundary.
+        result_lf = apply_predict(lf, artefact, feature_cols, prediction_col)
+        collect_lazy_frame(result_lf).write_ipc(file_path)
         flowfile_logger.info("data_science_predict completed successfully")
         with progress.get_lock():
             progress.value = 100
