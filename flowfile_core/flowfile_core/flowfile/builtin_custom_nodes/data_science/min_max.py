@@ -20,6 +20,7 @@ class MinMaxScale(CustomNodeBase):
     node_name: str = "Min-Max Scale"
     node_category: str = "Data Science"
     node_group: str = "data_science"
+    node_icon: str = "data_science_transform.svg"
     title: str = "Min-Max scale columns"
     intro: str = "Rescale selected numeric columns into [0, 1]."
     number_of_inputs: int = 1

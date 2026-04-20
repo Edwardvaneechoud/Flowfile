@@ -26,6 +26,7 @@ class ZScoreAnomaly(CustomNodeBase):
     node_name: str = "Z-Score Anomaly"
     node_category: str = "Data Science"
     node_group: str = "data_science"
+    node_icon: str = "data_science_transform.svg"
     title: str = "Z-score anomaly flagging"
     intro: str = "Append <col>_zscore for each selected column and an is_anomaly flag."
     number_of_inputs: int = 1

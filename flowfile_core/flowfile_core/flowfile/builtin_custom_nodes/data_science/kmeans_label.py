@@ -24,6 +24,7 @@ class KMeansLabel(CustomNodeBase):
     node_name: str = "KMeans Label"
     node_category: str = "Data Science"
     node_group: str = "data_science"
+    node_icon: str = "data_science_transform.svg"
     title: str = "KMeans cluster labels (in-place)"
     intro: str = "Run KMeans on the selected feature columns and append a cluster label column."
     number_of_inputs: int = 1

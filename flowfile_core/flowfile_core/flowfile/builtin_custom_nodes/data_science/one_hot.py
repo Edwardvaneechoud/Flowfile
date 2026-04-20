@@ -22,6 +22,7 @@ class OneHotEncode(CustomNodeBase):
     node_name: str = "One-Hot Encode"
     node_category: str = "Data Science"
     node_group: str = "data_science"
+    node_icon: str = "data_science_transform.svg"
     title: str = "One-hot encode columns"
     intro: str = "Convert selected categorical columns into binary indicator columns."
     number_of_inputs: int = 1

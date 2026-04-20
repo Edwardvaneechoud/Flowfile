@@ -20,6 +20,7 @@ class Standardize(CustomNodeBase):
     node_name: str = "Standardize"
     node_category: str = "Data Science"
     node_group: str = "data_science"
+    node_icon: str = "data_science_transform.svg"
     title: str = "Standardize columns"
     intro: str = "Z-score scale selected numeric columns: (x - mean) / std."
     number_of_inputs: int = 1

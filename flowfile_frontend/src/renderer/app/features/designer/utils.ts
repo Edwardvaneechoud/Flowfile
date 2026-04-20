@@ -36,6 +36,7 @@ const BUILTIN_ICONS = new Set([
   "random_split.svg",
   "data_science_fit.svg",
   "data_science_predict.svg",
+  "data_science_transform.svg",
   "sample.png",
   "select.png",
   "sort.png",
