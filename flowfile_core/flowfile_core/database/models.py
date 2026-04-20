@@ -312,6 +312,10 @@ class GlobalArtifact(Base):
     # Metadata
     description = Column(Text, nullable=True)
     tags = Column(Text, nullable=True)  # JSON array: ["ml", "classification"]
+    # JSON array describing the columns this artefact produces when applied,
+    # so consumer nodes can resolve their downstream schema without loading
+    # the artefact: [{"name": str, "data_type": str}, ...]
+    output_schema = Column(Text, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)

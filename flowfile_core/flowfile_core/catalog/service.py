@@ -7,8 +7,7 @@ raises ``HTTPException`` — only domain-specific exceptions from
 """
 
 from __future__ import annotations
-from collections.abc import Iterable
-from typing import Literal
+
 import base64
 import io
 import json
@@ -16,15 +15,17 @@ import logging
 import os
 import re
 import signal
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import polars as pl
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
-from flowfile_core.configs.flow_logger import NodeLogger, FlowLogger
+
 from flowfile_core.catalog.delta_utils import (
     check_source_versions_current,
     delete_table_storage,
@@ -52,6 +53,7 @@ from flowfile_core.catalog.exceptions import (
     TableNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
@@ -497,6 +499,17 @@ class CatalogService:
                 except (json.JSONDecodeError, TypeError):
                     tags = [t.strip() for t in artifact.tags.split(",") if t.strip()]
 
+        output_schema: list[dict] | None = None
+        raw_output_schema = getattr(artifact, "output_schema", None)
+        if raw_output_schema:
+            if isinstance(raw_output_schema, str):
+                try:
+                    output_schema = json.loads(raw_output_schema)
+                except (json.JSONDecodeError, TypeError):
+                    output_schema = None
+            else:
+                output_schema = raw_output_schema
+
         return GlobalArtifactOut(
             id=artifact.id,
             name=artifact.name,
@@ -516,6 +529,7 @@ class CatalogService:
             owner_id=getattr(artifact, "owner_id", None),
             created_at=getattr(artifact, "created_at", None),
             updated_at=getattr(artifact, "updated_at", None),
+            output_schema=output_schema,
         )
 
     # ------------------------------------------------------------------ #

@@ -204,6 +204,7 @@ class ArtifactService:
         storage_key: str,
         sha256: str,
         size_bytes: int,
+        output_schema: list[dict] | None = None,
     ) -> FinalizeUploadResponse:
         """Verify blob and activate artifact.
 
@@ -214,6 +215,8 @@ class ArtifactService:
             storage_key: Storage key from prepare_upload response.
             sha256: SHA-256 hash of the uploaded blob.
             size_bytes: Size of the uploaded blob in bytes.
+            output_schema: Optional column descriptors describing the data
+                shape this artefact produces when applied.
 
         Returns:
             FinalizeUploadResponse confirming activation.
@@ -247,6 +250,8 @@ class ArtifactService:
         artifact.storage_key = storage_key
         artifact.sha256 = sha256
         artifact.size_bytes = verified_size
+        if output_schema is not None:
+            artifact.output_schema = json.dumps(output_schema)
         self.db.commit()
 
         return FinalizeUploadResponse(
@@ -578,6 +583,7 @@ class ArtifactService:
             sha256=artifact.sha256,
             description=artifact.description,
             tags=json.loads(artifact.tags) if artifact.tags else [],
+            output_schema=json.loads(artifact.output_schema) if artifact.output_schema else None,
             created_at=artifact.created_at,
             updated_at=artifact.updated_at,
             download_source=download_source,

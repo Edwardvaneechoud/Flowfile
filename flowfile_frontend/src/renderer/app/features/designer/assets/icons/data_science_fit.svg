@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <style>
+    svg {
+      --ff-icon-bg: #ECFDF5;
+      --ff-icon-primary: #047857;
+      --ff-icon-secondary: #34D399;
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --ff-icon-bg: #064E3B;
+        --ff-icon-primary: #A7F3D0;
+        --ff-icon-secondary: #6EE7B7;
+      }
+    }
+  </style>
+  <circle cx="50" cy="50" r="46" fill="var(--ff-icon-bg)"/>
+  <circle cx="32" cy="68" r="5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="42" cy="58" r="5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="52" cy="50" r="5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="62" cy="42" r="5" fill="var(--ff-icon-secondary)"/>
+  <circle cx="72" cy="32" r="5" fill="var(--ff-icon-secondary)"/>
+  <path d="M22 78 L82 22" stroke="var(--ff-icon-primary)" stroke-width="4" stroke-linecap="round" fill="none"/>
+</svg>

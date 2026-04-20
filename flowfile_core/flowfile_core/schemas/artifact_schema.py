@@ -62,6 +62,16 @@ class FinalizeUploadRequest(BaseModel):
     storage_key: str = Field(..., description="Storage key from prepare response")
     sha256: str = Field(..., description="SHA-256 hash of the uploaded blob")
     size_bytes: int = Field(..., description="Size of the uploaded blob in bytes")
+    output_schema: list[dict] | None = Field(
+        None,
+        description=(
+            "Optional list of column descriptors describing the data shape this "
+            "artefact produces when applied — e.g. "
+            '[{"name": "prediction", "data_type": "Float64"}]. Consumed by '
+            "downstream nodes (e.g. data_science_predict) to compute their "
+            "schema lazily."
+        ),
+    )
 
 
 class FinalizeUploadResponse(BaseModel):
@@ -117,6 +127,7 @@ class ArtifactOut(BaseModel):
     # Metadata
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    output_schema: list[dict] | None = None
 
     # Timestamps
     created_at: datetime

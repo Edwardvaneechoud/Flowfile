@@ -173,6 +173,7 @@ class GlobalArtifactOut(BaseModel):
     size_bytes: int | None = None
     sha256: str | None = None
     tags: list[str] = Field(default_factory=list)
+    output_schema: list[dict] | None = None
     namespace_id: int | None = None
     source_registration_id: int | None = None
     source_flow_id: int | None = None

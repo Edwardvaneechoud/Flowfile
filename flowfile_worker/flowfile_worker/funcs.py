@@ -819,3 +819,116 @@ def generic_task(
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
     # Put raw bytes in queue - encoding happens at the transport boundary
     queue.put(lf.serialize())
+
+
+def _signal_error(error_message: Array, progress: Value, exc: Exception, logger_) -> None:
+    logger_.error(f"Error during data science operation: {exc}")
+    error_msg = str(exc).encode()[:1024]
+    with error_message.get_lock():
+        error_message[: len(error_msg)] = error_msg
+    with progress.get_lock():
+        progress.value = -1
+
+
+def data_science_fit(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    kind: str,
+    feature_cols: list[str],
+    target_col: str | None,
+    artefact_name: str,
+    prediction_col: str,
+    hyperparams: dict,
+    source_registration_id: int,
+    source_flow_id: int | None = None,
+    source_node_id: int | None = None,
+):
+    """Fit an estimator on the incoming LazyFrame and publish it to the Catalog.
+
+    Writes a small preview DataFrame (e.g. coefficients) to ``file_path`` so
+    the calling node can surface it to the downstream graph.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting data_science_fit ({kind}) -> publish '{artefact_name}'")
+    try:
+        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
+        from flowfile_core.flowfile.flow_data_engine.data_science.estimators import fit_estimator
+
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+
+        estimator, preview_df, output_schema = fit_estimator(
+            kind=kind,
+            df=df,
+            feature_cols=feature_cols,
+            target_col=target_col,
+            hyperparams=hyperparams or {},
+            prediction_col=prediction_col,
+        )
+
+        artefact_io.publish(
+            name=artefact_name,
+            obj=estimator,
+            source_registration_id=source_registration_id,
+            source_flow_id=source_flow_id,
+            source_node_id=source_node_id,
+            output_schema=output_schema,
+        )
+
+        preview_df.write_ipc(file_path)
+        flowfile_logger.info("data_science_fit completed successfully")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        _signal_error(error_message, progress, e, flowfile_logger)
+        return
+
+    out = pl.scan_ipc(file_path)
+    queue.put(out.serialize())
+
+
+def data_science_predict(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    artefact_name: str,
+    artefact_version: int | None,
+    feature_cols: list[str],
+    prediction_col: str,
+):
+    """Apply a Catalog estimator to the incoming LazyFrame.
+
+    Writes the resulting DataFrame (input + prediction column) to ``file_path``.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting data_science_predict using artefact '{artefact_name}'")
+    try:
+        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
+        from flowfile_core.flowfile.flow_data_engine.data_science.predict import apply_predict
+
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        df = collect_lazy_frame(lf)
+
+        blob = artefact_io.download_artifact(artefact_name, artefact_version)
+        estimator = artefact_io.load_estimator(blob)
+
+        result = apply_predict(df, estimator, feature_cols, prediction_col)
+        result.write_ipc(file_path)
+        flowfile_logger.info("data_science_predict completed successfully")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        _signal_error(error_message, progress, e, flowfile_logger)
+        return
+
+    out = pl.scan_ipc(file_path)
+    queue.put(out.serialize())

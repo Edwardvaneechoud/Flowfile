@@ -1322,6 +1322,47 @@ class NodeSqlQuery(NodeMultiInput):
         return first_line
 
 
+class DataScienceFitInput(BaseModel):
+    """Input parameters for the data_science_fit native node."""
+
+    kind: Literal["linreg", "ridge", "lasso", "kmeans", "knn_cls", "knn_reg", "pca"] = "linreg"
+    feature_cols: list[str] = Field(default_factory=list)
+    target_col: str | None = None
+    artefact_name: str = ""
+    prediction_col: str = "prediction"
+    hyperparams: dict = Field(default_factory=dict)
+
+
+class NodeDataScienceFit(NodeSingleInput):
+    """Settings for a node that fits an estimator and publishes it to the Catalog."""
+
+    data_science_fit_input: DataScienceFitInput
+
+    def get_default_description(self) -> str:
+        f = self.data_science_fit_input
+        return f"Fit {f.kind} → publish '{f.artefact_name or '<unnamed>'}'"
+
+
+class DataSciencePredictInput(BaseModel):
+    """Input parameters for the data_science_predict native node."""
+
+    artefact_name: str = ""
+    artefact_version: int | None = None
+    feature_cols: list[str] = Field(default_factory=list)
+    prediction_col: str = "prediction"
+
+
+class NodeDataSciencePredict(NodeSingleInput):
+    """Settings for a node that loads a Catalog estimator and applies it to incoming data."""
+
+    data_science_predict_input: DataSciencePredictInput
+
+    def get_default_description(self) -> str:
+        p = self.data_science_predict_input
+        v = "" if p.artefact_version is None else f" v{p.artefact_version}"
+        return f"Predict using '{p.artefact_name or '<unnamed>'}{v}'"
+
+
 class NotebookCell(BaseModel):
     """A single cell in the notebook editor.
 

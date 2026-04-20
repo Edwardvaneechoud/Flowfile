@@ -1873,6 +1873,144 @@ class FlowGraph:
             if node is not None:
                 node.node_template = node.node_template.model_copy(update={"output": len(output_names)})
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_data_science_fit(self, node_settings: input_schema.NodeDataScienceFit):
+        """Adds a node that fits an estimator on the worker and publishes it to the Catalog.
+
+        The node's downstream output is a small preview DataFrame
+        (e.g. coefficients/metrics) so the rest of the flow can keep building
+        without round-tripping through the artefact store.
+        """
+        from flowfile_core.flowfile.flow_data_engine.data_science.estimators import (
+            PREVIEW_SCHEMAS,
+            SUPERVISED_KINDS,
+        )
+
+        fit_input = node_settings.data_science_fit_input
+
+        def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+            kwargs = {
+                "kind": fit_input.kind,
+                "feature_cols": fit_input.feature_cols,
+                "target_col": fit_input.target_col,
+                "artefact_name": fit_input.artefact_name,
+                "prediction_col": fit_input.prediction_col,
+                "hyperparams": fit_input.hyperparams or {},
+                "source_registration_id": self._flow_settings.source_registration_id,
+                "source_flow_id": self.flow_id,
+                "source_node_id": node_settings.node_id,
+            }
+            fetcher = ExternalDfFetcher(
+                flow_id=self.flow_id,
+                node_id=node_settings.node_id,
+                lf=flowfile_table.data_frame,
+                wait_on_completion=True,
+                operation_type="data_science_fit",
+                kwargs=kwargs,
+            )
+            if fetcher.has_error:
+                raise RuntimeError(f"data_science_fit failed: {fetcher.error_info[1]}")
+            return FlowDataEngine(fetcher.get_result())
+
+        def schema_callback() -> list[FlowfileColumn]:
+            preview = PREVIEW_SCHEMAS.get(fit_input.kind)
+            if not preview:
+                return []
+            return [FlowfileColumn.from_input(column_name=c["name"], data_type=c["data_type"]) for c in preview]
+
+        self.add_node_step(
+            node_id=node_settings.node_id,
+            function=_func,
+            node_type="data_science_fit",
+            setting_input=node_settings,
+            input_node_ids=[node_settings.depending_on_id],
+            schema_callback=schema_callback,
+        )
+
+        node = self.get_node(node_settings.node_id)
+        errors = []
+        if not fit_input.artefact_name:
+            errors.append("artefact_name is required")
+        if not fit_input.feature_cols:
+            errors.append("feature_cols is required")
+        if fit_input.kind in SUPERVISED_KINDS and not fit_input.target_col:
+            errors.append(f"target_col is required for supervised estimator '{fit_input.kind}'")
+        if errors and node is not None:
+            node.results.errors = "; ".join(errors)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_data_science_predict(self, node_settings: input_schema.NodeDataSciencePredict):
+        """Adds a node that loads a Catalog estimator and applies it to incoming data.
+
+        ``schema_callback`` consults the artefact's ``output_schema`` so the
+        downstream graph can know its predicted columns at add time, before
+        any data movement.
+        """
+        from flowfile_core.flowfile.flow_data_engine.data_science import artefact_io
+
+        predict_input = node_settings.data_science_predict_input
+
+        def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
+            kwargs = {
+                "artefact_name": predict_input.artefact_name,
+                "artefact_version": predict_input.artefact_version,
+                "feature_cols": predict_input.feature_cols,
+                "prediction_col": predict_input.prediction_col,
+            }
+            fetcher = ExternalDfFetcher(
+                flow_id=self.flow_id,
+                node_id=node_settings.node_id,
+                lf=flowfile_table.data_frame,
+                wait_on_completion=True,
+                operation_type="data_science_predict",
+                kwargs=kwargs,
+            )
+            if fetcher.has_error:
+                raise RuntimeError(f"data_science_predict failed: {fetcher.error_info[1]}")
+            return FlowDataEngine(fetcher.get_result())
+
+        def schema_callback() -> list[FlowfileColumn]:
+            try:
+                node = self.get_node(node_settings.node_id)
+                input_schema_cols: list[FlowfileColumn] = []
+                if node is not None and node.node_inputs.main_inputs:
+                    input_schema_cols = list(node.node_inputs.main_inputs[0].schema or [])
+
+                if not predict_input.artefact_name:
+                    return input_schema_cols
+
+                meta = artefact_io.get_artefact_metadata(
+                    predict_input.artefact_name, predict_input.artefact_version
+                )
+                output_schema = meta.get("output_schema") or [
+                    {"name": predict_input.prediction_col, "data_type": "Float64"}
+                ]
+                return input_schema_cols + [
+                    FlowfileColumn.from_input(column_name=c["name"], data_type=c["data_type"])
+                    for c in output_schema
+                ]
+            except Exception:
+                # Schema callbacks must be best-effort and never raise.
+                return []
+
+        self.add_node_step(
+            node_id=node_settings.node_id,
+            function=_func,
+            node_type="data_science_predict",
+            setting_input=node_settings,
+            input_node_ids=[node_settings.depending_on_id],
+            schema_callback=schema_callback,
+        )
+
+        node = self.get_node(node_settings.node_id)
+        errors = []
+        if not predict_input.artefact_name:
+            errors.append("artefact_name is required")
+        if not predict_input.feature_cols:
+            errors.append("feature_cols is required")
+        if errors and node is not None:
+            node.results.errors = "; ".join(errors)
+
     def add_dependency_on_polars_lazy_frame(self, lazy_frame: pl.LazyFrame, node_id: int):
         """Adds a special node that directly injects a Polars LazyFrame into the graph.
 

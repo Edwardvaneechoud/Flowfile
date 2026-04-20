@@ -104,6 +104,7 @@ def finalize_upload(
             storage_key=body.storage_key,
             sha256=body.sha256,
             size_bytes=body.size_bytes,
+            output_schema=body.output_schema,
         )
         return result
     except ArtifactNotFoundError:

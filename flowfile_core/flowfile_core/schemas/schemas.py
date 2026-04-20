@@ -51,6 +51,8 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
+    "data_science_fit": input_schema.NodeDataScienceFit,
+    "data_science_predict": input_schema.NodeDataSciencePredict,
 }
 
 

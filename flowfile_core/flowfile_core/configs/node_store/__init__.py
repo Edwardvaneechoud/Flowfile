@@ -1,5 +1,6 @@
 import logging
 
+from flowfile_core.configs.node_store.builtin_custom_node_registry import get_all_builtin_custom_nodes
 from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.configs.node_store.user_defined_node_registry import (
     get_all_nodes_from_standard_location,
@@ -104,7 +105,9 @@ def remove_from_custom_node_store(node_key: str, file_stem: str = None) -> bool:
     return removed
 
 
-CUSTOM_NODE_STORE = get_all_nodes_from_standard_location()
+CUSTOM_NODE_STORE = get_all_builtin_custom_nodes()
+# User-defined nodes win on key collision so users can override built-ins.
+CUSTOM_NODE_STORE.update(get_all_nodes_from_standard_location())
 nodes_list, node_dict, node_defaults = get_all_standard_nodes()
 
 for custom_node in CUSTOM_NODE_STORE.values():

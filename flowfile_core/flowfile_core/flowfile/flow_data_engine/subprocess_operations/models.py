@@ -13,6 +13,8 @@ OperationType = Literal[
     "write_parquet",
     "write_delta",
     "merge_delta",
+    "data_science_fit",
+    "data_science_predict",
 ]
 
 

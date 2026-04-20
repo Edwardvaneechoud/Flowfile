@@ -838,6 +838,30 @@ export interface NodePolarsCode extends NodeSingleInput {
   polars_code_input: PolarsCodeInput;
 }
 
+export interface DataScienceFitInput {
+  kind: "linreg" | "ridge" | "lasso" | "kmeans" | "knn_cls" | "knn_reg" | "pca";
+  feature_cols: string[];
+  target_col: string | null;
+  artefact_name: string;
+  prediction_col: string;
+  hyperparams: Record<string, unknown>;
+}
+
+export interface NodeDataScienceFit extends NodeSingleInput {
+  data_science_fit_input: DataScienceFitInput;
+}
+
+export interface DataSciencePredictInput {
+  artefact_name: string;
+  artefact_version: number | null;
+  feature_cols: string[];
+  prediction_col: string;
+}
+
+export interface NodeDataSciencePredict extends NodeSingleInput {
+  data_science_predict_input: DataSciencePredictInput;
+}
+
 export interface SqlQueryInput {
   sql_code: string;
 }

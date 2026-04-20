@@ -1,0 +1,111 @@
+"""Estimator dispatch for the Data Science Fit node.
+
+Each entry in ``FIT_KINDS`` maps a ``kind`` string (the user-facing dropdown
+value) to a function that fits an estimator on a Polars DataFrame and returns:
+
+    (estimator_obj, preview_df, output_schema)
+
+* ``estimator_obj`` is the sklearn estimator (or compatible object) to be
+  pickled and uploaded to the artefact store.
+* ``preview_df`` is a small Polars DataFrame surfaced to the flow's downstream
+  graph so users can inspect coefficients/metrics without running predict.
+* ``output_schema`` is a list of ``{"name": str, "data_type": str}`` dicts
+  describing the columns this artefact will produce when applied via predict.
+  It is persisted alongside the artefact so consumer nodes can compute their
+  schema lazily, before any data movement.
+
+Phase 1 ships only ``linreg`` end-to-end. The other entries are stubs that
+raise ``NotImplementedError`` so they appear in the dropdown today and
+become trivial follow-up additions.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+import polars as pl
+
+FitKind = Literal["linreg", "ridge", "lasso", "kmeans", "knn_cls", "knn_reg", "pca"]
+
+# Schema of the preview DataFrame each fit emits — used by add-time
+# schema_callback so that the downstream graph knows the shape before run.
+PREVIEW_SCHEMAS: dict[str, list[dict[str, str]]] = {
+    "linreg": [
+        {"name": "feature", "data_type": "String"},
+        {"name": "coefficient", "data_type": "Float64"},
+    ],
+}
+
+
+def _fit_linreg(
+    df: pl.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    hyperparams: dict[str, Any],
+    prediction_col: str,
+) -> tuple[Any, pl.DataFrame, list[dict[str, str]]]:
+    """Fit ``sklearn.linear_model.LinearRegression`` and return artefacts."""
+    from sklearn.linear_model import LinearRegression
+
+    if target_col is None:
+        raise ValueError("Linear regression requires a target column.")
+
+    X = df.select(feature_cols).to_numpy()
+    y = df.get_column(target_col).to_numpy()
+
+    model = LinearRegression(**hyperparams)
+    model.fit(X, y)
+
+    preview_rows = list(zip(feature_cols, model.coef_.tolist(), strict=True))
+    preview_rows.append(("__intercept__", float(model.intercept_)))
+    preview_df = pl.DataFrame(
+        {
+            "feature": [r[0] for r in preview_rows],
+            "coefficient": [r[1] for r in preview_rows],
+        }
+    )
+
+    output_schema = [{"name": prediction_col, "data_type": "Float64"}]
+    return model, preview_df, output_schema
+
+
+def _not_implemented(kind: str):
+    def _stub(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"Estimator '{kind}' is registered but not yet wired. "
+            "Open an issue or PR to add it; the surrounding plumbing is "
+            "already in place — only the fit function is missing."
+        )
+
+    return _stub
+
+
+FIT_KINDS = {
+    "linreg": _fit_linreg,
+    "ridge": _not_implemented("ridge"),
+    "lasso": _not_implemented("lasso"),
+    "kmeans": _not_implemented("kmeans"),
+    "knn_cls": _not_implemented("knn_cls"),
+    "knn_reg": _not_implemented("knn_reg"),
+    "pca": _not_implemented("pca"),
+}
+
+SUPERVISED_KINDS = {"linreg", "ridge", "lasso", "knn_cls", "knn_reg"}
+
+
+def fit_estimator(
+    kind: str,
+    df: pl.DataFrame,
+    feature_cols: list[str],
+    target_col: str | None,
+    hyperparams: dict[str, Any] | None = None,
+    prediction_col: str = "prediction",
+) -> tuple[Any, pl.DataFrame, list[dict[str, str]]]:
+    """Dispatch ``kind`` to the appropriate fit function with validation."""
+    if kind not in FIT_KINDS:
+        raise ValueError(f"Unknown estimator kind: {kind!r}. Known: {sorted(FIT_KINDS)}")
+    if kind in SUPERVISED_KINDS and not target_col:
+        raise ValueError(f"Estimator '{kind}' is supervised and requires target_col.")
+    if not feature_cols:
+        raise ValueError("feature_cols must contain at least one column.")
+    return FIT_KINDS[kind](df, feature_cols, target_col, hyperparams or {}, prediction_col)
