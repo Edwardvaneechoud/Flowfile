@@ -67,9 +67,10 @@ export const testGoogleAnalyticsConnection = async (
   serviceAccountJson: string,
 ): Promise<GoogleAnalyticsConnectionTestResult> => {
   try {
+    const payload = { service_account_json: serviceAccountJson };
     const response = await axios.post<GoogleAnalyticsConnectionTestResult>(
       `${API_BASE_URL}/test`,
-      { service_account_json: serviceAccountJson },
+      payload,
     );
     return response.data;
   } catch (error) {
