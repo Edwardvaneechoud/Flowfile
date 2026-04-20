@@ -31,26 +31,29 @@ class KMeansLabel(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _KMeansLabelSettings = _KMeansLabelSettings()
 
-    def process(self, *inputs: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
         # Imported lazily so that this module can be imported in environments
         # without scikit-learn (the node still appears in the registry but
         # raises a clear error only when actually executed).
         from sklearn.cluster import KMeans
 
         df = inputs[0]
-        # KMeans needs materialised features; the framework hands us a
-        # LazyFrame so collect before slicing.
-        if isinstance(df, pl.LazyFrame):
-            df = df.collect()
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+
         feature_cols = self.settings_schema.main_section.feature_columns.value or []
         if not feature_cols:
-            return df
+            return lf
 
         n_clusters = int(self.settings_schema.main_section.n_clusters.value or 3)
         seed = int(self.settings_schema.main_section.seed.value or 0)
         label_col = self.settings_schema.main_section.label_column.value or "cluster"
 
-        features = df.select(feature_cols).to_numpy()
+        # KMeans's fit step is inherently eager — sklearn needs real values.
+        # We only collect the *feature* columns, not the full frame, and
+        # attach the resulting labels back as a literal Series so the other
+        # columns stay lazy in the returned plan.
+        features = lf.select(feature_cols).collect().to_numpy()
         model = KMeans(n_clusters=n_clusters, random_state=seed, n_init="auto")
         labels = model.fit_predict(features)
-        return df.with_columns(pl.Series(name=label_col, values=labels))
+
+        return lf.with_columns(pl.Series(name=label_col, values=labels))

@@ -33,17 +33,18 @@ class ZScoreAnomaly(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _ZScoreSettings = _ZScoreSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
         df = inputs[0]
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
         cols = self.settings_schema.main_section.columns.value or []
         if not cols:
-            return df
+            return lf
         threshold = float(self.settings_schema.main_section.threshold.value or 3.0)
 
         zscore_exprs = [((pl.col(c) - pl.col(c).mean()) / pl.col(c).std()).alias(f"{c}_zscore") for c in cols]
-        df = df.with_columns(zscore_exprs)
+        lf = lf.with_columns(zscore_exprs)
 
         anomaly = pl.lit(False)
         for c in cols:
             anomaly = anomaly | (pl.col(f"{c}_zscore").abs() > threshold)
-        return df.with_columns(anomaly.alias("is_anomaly"))
+        return lf.with_columns(anomaly.alias("is_anomaly"))

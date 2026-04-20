@@ -27,11 +27,12 @@ class MinMaxScale(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _MinMaxSettings = _MinMaxSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
         df = inputs[0]
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
         cols = self.settings_schema.main_section.columns.value or []
         if not cols:
-            return df
+            return lf
         exprs = []
         for c in cols:
             col = pl.col(c)
@@ -39,4 +40,4 @@ class MinMaxScale(CustomNodeBase):
             # When max == min the range is zero; emit zeros to keep the column shape.
             scaled = pl.when(denom == 0).then(pl.lit(0.0)).otherwise((col - col.min()) / denom)
             exprs.append(scaled.alias(c))
-        return df.with_columns(exprs)
+        return lf.with_columns(exprs)

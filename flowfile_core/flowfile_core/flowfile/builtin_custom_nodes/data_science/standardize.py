@@ -27,10 +27,11 @@ class Standardize(CustomNodeBase):
     number_of_outputs: int = 1
     settings_schema: _StandardizeSettings = _StandardizeSettings()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
         df = inputs[0]
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
         cols = self.settings_schema.main_section.columns.value or []
         if not cols:
-            return df
+            return lf
         exprs = [((pl.col(c) - pl.col(c).mean()) / pl.col(c).std()).alias(c) for c in cols]
-        return df.with_columns(exprs)
+        return lf.with_columns(exprs)
