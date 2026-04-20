@@ -6,7 +6,7 @@
     </div>
 
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
-      <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
+      <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="40" />
     </button>
   </div>
 </template>

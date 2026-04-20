@@ -647,7 +647,6 @@ def execute_sql_query(
 
     ctx = pl.SQLContext()
     registered_names: list[str] = []
-
     for name, dir_name in tables.items():
         p = _validate_catalog_path(dir_name)
         if not p.is_dir() or not (p / "_delta_log").is_dir():
@@ -662,7 +661,6 @@ def execute_sql_query(
             lf = pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
             ctx.register(name, lf)
             registered_names.append(name)
-
 
     result_lf = ctx.execute(query)
 

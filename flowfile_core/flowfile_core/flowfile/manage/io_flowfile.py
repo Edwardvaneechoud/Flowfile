@@ -4,6 +4,7 @@ from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
@@ -216,6 +217,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             right_input_id=node.right_input_id,
             input_ids=node.input_ids,
             outputs=node.outputs,
+            output_handles=node.output_handles,
             setting_input=setting_input,
         )
         nodes_dict[node.id] = node_info
@@ -264,6 +266,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     """
     flow_path = _validate_flow_path(flow_path)
     suffix = flow_path.suffix.lower()
+    # legacy method
     if suffix == ".flowfile":
         try:
             flow_storage_obj = load_flowfile_pickle(str(flow_path))
@@ -341,7 +344,9 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
 
         # Setup connections
         from_node = new_flow.get_node(node_id)
-        for output_node_id in node_info.outputs or []:
+        # Legacy pickled NodeInformation may lack the field entirely.
+        output_handles = getattr(node_info, "output_handles", None) or []
+        for idx, output_node_id in enumerate(node_info.outputs or []):
             to_node = new_flow.get_node(output_node_id)
             if to_node is not None:
                 output_node_obj = flow_storage_obj.data[output_node_id]
@@ -361,7 +366,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
                     insert_type = "main"
                 else:
                     continue
-                to_node.add_node_connection(from_node, insert_type)
+                output_handle = output_handles[idx] if idx < len(output_handles) else DEFAULT_OUTPUT_HANDLE
+                to_node.add_node_connection(from_node, insert_type, output_handle=output_handle)
             else:
                 from_node.delete_lead_to_node(output_node_id)
                 if (from_node.node_id, output_node_id) not in flow_storage_obj.node_connections:
@@ -379,6 +385,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
             if from_node:
                 to_node.add_node_connection(from_node)
 
+    new_flow.mark_as_saved()
     return new_flow
 
 

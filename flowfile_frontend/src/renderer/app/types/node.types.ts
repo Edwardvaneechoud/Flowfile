@@ -74,7 +74,7 @@ export interface NodeResult {
   end_timestamp: number;
   success?: boolean;
   error: string;
-  run_time: number;
+  run_time_ms: number;
   is_running: boolean;
 }
 
@@ -760,6 +760,7 @@ export interface NodeCatalogWriter extends NodeBase {
 
 export interface NodeCatalogReader extends NodeBase {
   catalog_table_id: number | null;
+  catalog_full_table_name: string | null;
   catalog_table_name: string | null;
   catalog_namespace_id: number | null;
   delta_version: number | null;
@@ -821,6 +822,16 @@ export interface NodeRecordId extends NodeSingleInput {
 
 export interface NodeSample extends NodeBase {
   sample_size: number;
+}
+
+export interface RandomSplitGroup {
+  name: string;
+  percentage: number;
+}
+
+export interface NodeRandomSplit extends NodeBase {
+  splits: RandomSplitGroup[];
+  seed: number | null;
 }
 
 export interface NodePolarsCode extends NodeSingleInput {

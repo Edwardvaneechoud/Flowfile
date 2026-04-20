@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -1605,6 +1606,46 @@ class FlowDataEngine:
             sample_df = self.data_frame.head(n_rows)
 
         return FlowDataEngine(sample_df, schema=self.schema)
+
+    def random_split(
+        self,
+        splits: list[tuple[str, float]],
+        seed: int | None = None,
+    ) -> "NamedOutputs":
+        """Randomly partition rows into N labeled groups.
+
+        The shuffled frame is materialized once so that each output shares the
+        same shuffle — otherwise every handle's ``.collect()`` would re-run the
+        full shuffle+sort independently (O(N·n log n) instead of O(n log n)).
+
+        Args:
+            splits: Ordered (name, percentage) pairs; percentages must sum to
+                100 (validated upstream in ``NodeRandomSplit``).
+            seed: Random seed; if None, one is generated per call.
+
+        Returns:
+            ``NamedOutputs`` mapping each split name to a fresh ``FlowDataEngine``.
+        """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+        shuffled = (
+            self.data_frame.with_columns(
+                pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__")
+            )
+            .sort("__split_rank__")
+            .drop("__split_rank__")
+            .collect()
+        )
+        total = shuffled.height
+        out: dict[str, FlowDataEngine] = {}
+        offset = 0
+        for i, (name, percentage) in enumerate(splits):
+            length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
+            out[name] = FlowDataEngine(shuffled.slice(offset, max(0, length)).lazy())
+            offset += length
+        return NamedOutputs(out)
 
     def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
         """Gets the first `n_rows` from the DataFrame.

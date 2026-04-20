@@ -244,6 +244,8 @@ class CatalogTableOut(BaseModel):
     id: int
     name: str
     namespace_id: int | None = None
+    namespace_name: str | None = None
+    full_table_name: str | None = None
     description: str | None = None
     owner_id: int
     file_exists: bool = True
@@ -262,6 +264,8 @@ class CatalogTableOut(BaseModel):
     is_optimized: bool | None = None
     laziness_blockers: list[str] | None = None
     sql_query: str | None = None
+    polars_plan: str | None = None
+    source_table_versions: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -275,6 +279,23 @@ class FlowSummary(BaseModel):
     name: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ResolveTableCandidate(BaseModel):
+    id: int
+    name: str
+    namespace_id: int | None = None
+    namespace_name: str | None = None
+
+
+class ResolveTableResult(BaseModel):
+    """Response body for ``GET /catalog/tables/resolve``.
+
+    When a bare reference matches multiple rows the resolver soft-picks the
+    deterministic candidate and reports the full list under ``warnings``."""
+
+    table: CatalogTableOut
+    warnings: list[ResolveTableCandidate] = Field(default_factory=list)
 
 
 class CatalogTablePreview(BaseModel):
@@ -370,8 +391,12 @@ class FlowScheduleOut(BaseModel):
     interval_seconds: int | None = None
     trigger_table_id: int | None = None
     trigger_table_name: str | None = None
+    trigger_namespace_id: int | None = None
+    trigger_namespace_name: str | None = None
+    trigger_full_table_name: str | None = None
     trigger_table_ids: list[int] = Field(default_factory=list)
     trigger_table_names: list[str] = Field(default_factory=list)
+    trigger_full_table_names: list[str] = Field(default_factory=list)
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime

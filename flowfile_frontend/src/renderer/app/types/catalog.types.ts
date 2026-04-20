@@ -156,6 +156,8 @@ export interface CatalogTable {
   id: number;
   name: string;
   namespace_id: number | null;
+  namespace_name: string | null;
+  full_table_name: string | null;
   description: string | null;
   owner_id: number;
   file_exists: boolean;
@@ -174,6 +176,8 @@ export interface CatalogTable {
   is_optimized: boolean | null;
   laziness_blockers: string[] | null;
   sql_query: string | null;
+  polars_plan: string | null;
+  source_table_versions: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -250,8 +254,12 @@ export interface FlowSchedule {
   interval_seconds: number | null;
   trigger_table_id: number | null;
   trigger_table_name: string | null;
+  trigger_namespace_id: number | null;
+  trigger_namespace_name: string | null;
+  trigger_full_table_name: string | null;
   trigger_table_ids: number[];
   trigger_table_names: string[];
+  trigger_full_table_names: string[];
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;

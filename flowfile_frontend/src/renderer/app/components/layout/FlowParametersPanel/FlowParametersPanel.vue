@@ -65,11 +65,13 @@ import { ref, computed, watch, onMounted } from "vue";
 import { Delete } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 import { FlowApi } from "@/api";
 import type { FlowSettings } from "../../../types/flow.types";
 import type { FlowParameter } from "../../../types/flow.types";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const flowSettings = ref<FlowSettings | null>(null);
 const saveError = ref<string | null>(null);
@@ -90,6 +92,7 @@ async function save() {
   saveError.value = null;
   try {
     await FlowApi.updateFlowSettings(flowSettings.value);
+    editorStore.bumpGraphVersion();
   } catch (e: any) {
     saveError.value = e?.message ?? "Failed to save parameters";
     ElMessage.error("Failed to save parameters");

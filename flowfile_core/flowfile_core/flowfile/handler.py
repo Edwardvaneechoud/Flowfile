@@ -7,15 +7,19 @@ from pathlib import Path
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.schemas.schemas import FlowSettings
+from flowfile_core.schemas.schemas import FlowSettings, FlowSettingsResponse
 from shared.storage_config import storage
 
 
 def get_flow_save_location(flow_name: str) -> Path:
-    """Gets the initial save location for flow files"""
+    """Gets the initial save location for unnamed / quick-created flow files.
+
+    Persisted under ``~/.flowfile/flows/unnamed_flows`` (not a temp directory)
+    so quick-created flows survive auto-cleanup and remain user-accessible.
+    """
     if ".yaml" not in flow_name and ".yml" not in flow_name:
         flow_name += ".yaml"
-    return storage.temp_directory_for_flows / flow_name
+    return storage.unnamed_flows_directory / flow_name
 
 
 def create_flow_name() -> str:
@@ -206,6 +210,18 @@ class FlowfileHandler:
         last_modified_ts = os.path.getmtime(flow.flow_settings.path) if flow_exists else -1
         flow.flow_settings.modified_on = last_modified_ts
         return flow.flow_settings
+
+    def get_flow_info_with_runtime(self, flow_id: int) -> FlowSettingsResponse:
+        """Like ``get_flow_info`` but includes runtime-only state (``has_unsaved_changes``)."""
+        flow_settings = self.get_flow_info(flow_id)
+        flow = self.get_flow(flow_id)
+        try:
+            dirty = flow.has_unsaved_changes()
+        except Exception:
+            # Match HistoryManager.has_unsaved_changes: on error, assume dirty so
+            # unsaved-changes prompts err on the safe side.
+            dirty = True
+        return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 
     def get_node(self, flow_id: int, node_id: int):
         flow = self.get_flow(flow_id)

@@ -44,6 +44,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Read Data",
             drawer_intro="Load data from CSV, Excel, or Parquet files",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(
@@ -177,6 +179,20 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             laziness="lazy",
         ),
         NodeTemplate(
+            name="Random Split",
+            item="random_split",
+            input=1,
+            output=2,
+            output_names=["train", "test"],
+            transform_type="narrow",
+            node_type="process",
+            image="random_split.svg",
+            node_group="transform",
+            drawer_title="Random Split",
+            drawer_intro="Randomly partition rows into named groups (e.g. train/test)",
+            laziness="lazy",
+        ),
+        NodeTemplate(
             name="Explore data",
             item="explore_data",
             input=1,
@@ -307,6 +323,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             can_be_start=True,
             drawer_title="Polars Code",
             drawer_intro="Write custom Polars DataFrame transformations",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(
@@ -376,6 +394,8 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             node_group="input",
             drawer_title="Cloud Storage Reader",
             drawer_intro="Read data from AWS S3 and other cloud storage",
+            # TODO: resolve laziness in check_upstream_laziness via isinstance check (like catalog_reader),
+            # then change to "lazy"
             laziness="conditional",
         ),
         NodeTemplate(

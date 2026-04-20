@@ -35,6 +35,7 @@ import {
   NodeConnection,
 } from "./backendInterface";
 import { FlowApi } from "../../api";
+import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
@@ -433,7 +434,7 @@ const copySelectedNodes = () => {
       .map((edge) => ({
         sourceNodeId: parseInt(edge.source),
         targetNodeId: parseInt(edge.target),
-        sourceHandle: edge.sourceHandle || "output-0",
+        sourceHandle: edge.sourceHandle || DEFAULT_OUTPUT_HANDLE,
         targetHandle: edge.targetHandle || "input-0",
       }));
 
@@ -723,7 +724,7 @@ defineExpose({
         :node-types="nodeTypes"
         class="custom-node-flow"
         :connection-mode="ConnectionMode.Strict"
-        :connection-radius="30"
+        :connection-radius="60"
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
         @edge-update="onEdgeUpdate"

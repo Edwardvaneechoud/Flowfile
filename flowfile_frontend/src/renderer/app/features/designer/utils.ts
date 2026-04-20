@@ -34,6 +34,7 @@ const BUILTIN_ICONS = new Set([
   "sql_query.svg",
   "record_count.png",
   "record_id.png",
+  "random_split.svg",
   "sample.png",
   "select.png",
   "sort.png",

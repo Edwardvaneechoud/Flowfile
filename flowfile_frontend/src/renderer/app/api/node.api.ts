@@ -17,9 +17,15 @@ export class NodeApi {
   /**
    * Get table example/preview data for a node
    */
-  static async getTableExample(flowId: number, nodeId: number): Promise<TableExample> {
+  static async getTableExample(
+    flowId: number,
+    nodeId: number,
+    outputHandle?: string,
+  ): Promise<TableExample> {
+    const params: Record<string, string | number> = { flow_id: flowId, node_id: nodeId };
+    if (outputHandle) params.output_handle = outputHandle;
     const response = await axios.get<TableExample>("/node/data", {
-      params: { flow_id: flowId, node_id: nodeId },
+      params,
       headers: { accept: "application/json" },
     });
     return response.data;

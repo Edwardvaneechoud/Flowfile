@@ -5,6 +5,7 @@
       @view-run="$emit('viewRun', $event)"
       @view-flow="$emit('viewFlow', $event)"
       @view-schedule-runs="$emit('viewScheduleRuns', $event)"
+      @open-snapshot="$emit('openSnapshot', $event)"
     />
   </div>
 </template>
@@ -12,7 +13,7 @@
 <script setup lang="ts">
 import RunHistoryTable from "./RunHistoryTable.vue";
 
-defineEmits(["viewRun", "viewFlow", "viewScheduleRuns"]);
+defineEmits(["viewRun", "viewFlow", "viewScheduleRuns", "openSnapshot"]);
 </script>
 
 <style scoped>

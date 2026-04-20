@@ -36,6 +36,10 @@ export const useEditorStore = defineStore("editor", {
 
     // Parameters panel state
     showParametersPanel: false,
+
+    // Incremented whenever a graph-mutating action completes. Consumers (e.g.
+    // the flow tab strip) watch this to refresh dirty state.
+    graphVersion: 0,
   }),
 
   getters: {
@@ -162,6 +166,11 @@ export const useEditorStore = defineStore("editor", {
 
     setIsRunning(running: boolean) {
       this.isRunning = running;
+    },
+
+    // ========== Graph version (dirty tracking) ==========
+    bumpGraphVersion() {
+      this.graphVersion += 1;
     },
 
     // ========== Parameters Panel ==========

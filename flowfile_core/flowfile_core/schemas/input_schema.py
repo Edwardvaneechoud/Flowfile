@@ -528,6 +528,52 @@ class NodeSample(NodeSingleInput):
         return f"Sample {self.sample_size} rows"
 
 
+class RandomSplitGroup(BaseModel):
+    """A single output partition in a random split."""
+
+    name: str
+    percentage: float
+
+
+class NodeRandomSplit(NodeSingleInput):
+    """Settings for a node that randomly partitions rows into N labeled outputs."""
+
+    splits: list[RandomSplitGroup] = Field(
+        default_factory=lambda: [
+            RandomSplitGroup(name="train", percentage=80.0),
+            RandomSplitGroup(name="test", percentage=20.0),
+        ]
+    )
+    seed: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_splits(self) -> "NodeRandomSplit":
+        if not self.splits:
+            raise ValueError("At least one split is required")
+        if len(self.splits) > 10:
+            raise ValueError("At most 10 splits are supported")
+        names = [s.name for s in self.splits]
+        if len(set(names)) != len(names):
+            raise ValueError("Split names must be unique")
+        for s in self.splits:
+            if not s.name or not s.name[0].isalpha() or not all(c.isalnum() or c == "_" for c in s.name):
+                raise ValueError(
+                    f"Invalid split name: {s.name!r} (must start with a letter; alphanumeric/underscore only)"
+                )
+            if s.percentage <= 0:
+                raise ValueError(f"Split {s.name!r} percentage must be > 0")
+        if abs(sum(s.percentage for s in self.splits) - 100.0) > 0.01:
+            raise ValueError("Split percentages must sum to 100")
+        return self
+
+    @property
+    def output_names(self) -> list[str]:
+        return [s.name for s in self.splits]
+
+    def get_default_description(self) -> str:
+        return " / ".join(f"{s.name} {s.percentage:g}%" for s in self.splits)
+
+
 class NodeRecordId(NodeSingleInput):
     """Settings for a node that adds a unique record ID column."""
 
@@ -1189,13 +1235,21 @@ class NodeCatalogWriter(NodeSingleInput):
 
 
 class NodeCatalogReader(NodeBase):
-    """Settings for a node that reads a table from the catalog."""
+    """Settings for a node that reads a table from the catalog.
+
+    Resolution priority at runtime: ``catalog_table_id`` > ``catalog_full_table_name`` >
+    ``(catalog_table_name, catalog_namespace_id)``. The qualified form
+    (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
+    identifier when an id isn't available.
+    """
 
     catalog_table_id: int | None = None
+    catalog_full_table_name: str | None = None
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
     sql_query: str | None = None
+    is_virtual_optimized: bool | None = None
 
     def get_default_description(self) -> str:
         if self.sql_query:
@@ -1203,9 +1257,10 @@ class NodeCatalogReader(NodeBase):
             if len(first_line) > 80:
                 first_line = first_line[:77] + "..."
             return f"SQL: {first_line}"
-        if self.catalog_table_name:
+        display = self.catalog_full_table_name or self.catalog_table_name
+        if display:
             suffix = f" (v{self.delta_version})" if self.delta_version is not None else ""
-            return f"Catalog: {self.catalog_table_name}{suffix}"
+            return f"Catalog: {display}{suffix}"
         return "Read from Catalog"
 
 
