@@ -1,8 +1,9 @@
 """CRUD helpers for Google Analytics 4 connections.
 
-The service-account JSON is stored as an encrypted Secret referenced by foreign
-key, mirroring the pattern used for cloud-storage and database connection
-credentials. See ``db_connections.py`` for the sibling implementation.
+Each connection stores an OAuth refresh token as an encrypted Secret (Fernet +
+per-user HKDF key), referenced by foreign key. The refresh token is minted by
+the OAuth callback in ``routes/ga_connections.py`` — there is no code path that
+accepts a raw credential over the public API.
 """
 
 from pydantic import SecretStr
@@ -10,13 +11,10 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import GoogleAnalyticsConnection as DBGoogleAnalyticsConnection
 from flowfile_core.database.models import Secret
-from flowfile_core.schemas.google_analytics_schemas import (
-    FullGoogleAnalyticsConnection,
-    FullGoogleAnalyticsConnectionInterface,
-)
-from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
+from flowfile_core.schemas.google_analytics_schemas import FullGoogleAnalyticsConnectionInterface
+from flowfile_core.secret_manager.secret_manager import SecretInput, encrypt_secret, store_secret
 
-_SECRET_SUFFIX = "_ga_service_account_key"
+_SECRET_SUFFIX = "_ga_oauth_refresh_token"
 
 
 def _secret_name(connection_name: str) -> str:
@@ -24,7 +22,6 @@ def _secret_name(connection_name: str) -> str:
 
 
 def get_ga_connection(db: Session, connection_name: str, user_id: int) -> DBGoogleAnalyticsConnection | None:
-    """Fetch a GA connection row by name + owner."""
     return (
         db.query(DBGoogleAnalyticsConnection)
         .filter(
@@ -35,30 +32,55 @@ def get_ga_connection(db: Session, connection_name: str, user_id: int) -> DBGoog
     )
 
 
-def store_ga_connection(
-    db: Session, connection: FullGoogleAnalyticsConnection, user_id: int
+def upsert_ga_connection_with_refresh_token(
+    db: Session,
+    *,
+    connection_name: str,
+    user_id: int,
+    refresh_token: str,
+    oauth_user_email: str | None,
+    description: str | None = None,
+    default_property_id: str | None = None,
 ) -> DBGoogleAnalyticsConnection:
-    """Persist a new GA connection + its encrypted service-account key."""
-    if connection.service_account_json is None:
-        raise ValueError("service_account_json is required")
+    """Create or update a GA connection after a successful OAuth exchange.
 
-    existing = get_ga_connection(db, connection.connection_name, user_id)
+    Existing rows keep their ``description`` and ``default_property_id`` if the
+    caller passes ``None`` (so a *Reconnect* doesn't wipe metadata).
+    """
+    existing = get_ga_connection(db, connection_name, user_id)
+    encrypted = encrypt_secret(refresh_token, user_id)
+
     if existing:
-        raise ValueError(
-            f"Google Analytics connection '{connection.connection_name}' already exists for user {user_id}."
-        )
+        secret_record = db.query(Secret).filter(Secret.id == existing.credential_secret_id).first()
+        if secret_record:
+            secret_record.encrypted_value = encrypted
+        else:
+            new_secret = store_secret(
+                db,
+                SecretInput(name=_secret_name(connection_name), value=SecretStr(refresh_token)),
+                user_id,
+            )
+            existing.credential_secret_id = new_secret.id
+        if description is not None:
+            existing.description = description
+        if default_property_id is not None:
+            existing.default_property_id = default_property_id
+        existing.oauth_user_email = oauth_user_email
+        db.commit()
+        db.refresh(existing)
+        return existing
 
     secret_id = store_secret(
         db,
-        SecretInput(name=_secret_name(connection.connection_name), value=connection.service_account_json),
+        SecretInput(name=_secret_name(connection_name), value=SecretStr(refresh_token)),
         user_id,
     ).id
-
     db_conn = DBGoogleAnalyticsConnection(
-        connection_name=connection.connection_name,
-        description=connection.description,
-        default_property_id=connection.default_property_id,
-        service_account_key_id=secret_id,
+        connection_name=connection_name,
+        description=description,
+        default_property_id=default_property_id,
+        oauth_user_email=oauth_user_email,
+        credential_secret_id=secret_id,
         user_id=user_id,
     )
     db.add(db_conn)
@@ -67,64 +89,46 @@ def store_ga_connection(
     return db_conn
 
 
-def update_ga_connection(
-    db: Session, connection: FullGoogleAnalyticsConnection, user_id: int
+def update_ga_connection_metadata(
+    db: Session,
+    *,
+    connection_name: str,
+    user_id: int,
+    description: str | None,
+    default_property_id: str | None,
 ) -> DBGoogleAnalyticsConnection:
-    """Update an existing GA connection. If ``service_account_json`` is empty,
-    the existing key is preserved (same UX as cloud connection updates)."""
-    db_conn = get_ga_connection(db, connection.connection_name, user_id)
+    """Update description + default property id only. The OAuth credential is
+    never touched by this path — use the OAuth callback for that."""
+    db_conn = get_ga_connection(db, connection_name, user_id)
     if db_conn is None:
-        raise ValueError(f"Google Analytics connection '{connection.connection_name}' not found for user {user_id}.")
-
-    db_conn.description = connection.description
-    db_conn.default_property_id = connection.default_property_id
-
-    new_key_value = connection.service_account_json.get_secret_value() if connection.service_account_json else ""
-    if new_key_value:
-        secret_record = db.query(Secret).filter(Secret.id == db_conn.service_account_key_id).first()
-        if secret_record:
-            secret_record.encrypted_value = encrypt_secret(new_key_value, user_id)
-        else:
-            new_secret = store_secret(
-                db,
-                SecretInput(name=_secret_name(connection.connection_name), value=SecretStr(new_key_value)),
-                user_id,
-            )
-            db_conn.service_account_key_id = new_secret.id
-
+        raise ValueError(f"Google Analytics connection '{connection_name}' not found for user {user_id}.")
+    db_conn.description = description
+    db_conn.default_property_id = default_property_id
     db.commit()
     db.refresh(db_conn)
     return db_conn
 
 
 def delete_ga_connection(db: Session, connection_name: str, user_id: int) -> None:
-    """Delete the connection row and its associated Secret."""
     db_conn = get_ga_connection(db, connection_name, user_id)
     if not db_conn:
         return
 
-    secret_id = db_conn.service_account_key_id
+    secret_id = db_conn.credential_secret_id
     db.delete(db_conn)
     if secret_id is not None:
         db.query(Secret).filter(Secret.id == secret_id).delete(synchronize_session=False)
     db.commit()
 
 
-def get_ga_connection_schema(db: Session, connection_name: str, user_id: int) -> FullGoogleAnalyticsConnection | None:
-    """Return the full connection with the service-account JSON decrypted."""
+def get_encrypted_refresh_token(db: Session, connection_name: str, user_id: int) -> str | None:
+    """Return the stored ``$ffsec$1$...`` token, or ``None`` if the connection
+    or its secret row is missing."""
     db_conn = get_ga_connection(db, connection_name, user_id)
     if not db_conn:
         return None
-
-    secret_record = db.query(Secret).filter(Secret.id == db_conn.service_account_key_id).first()
-    decrypted_json = decrypt_secret(secret_record.encrypted_value) if secret_record else None
-
-    return FullGoogleAnalyticsConnection(
-        connection_name=db_conn.connection_name,
-        description=db_conn.description,
-        default_property_id=db_conn.default_property_id,
-        service_account_json=decrypted_json,
-    )
+    secret_record = db.query(Secret).filter(Secret.id == db_conn.credential_secret_id).first()
+    return secret_record.encrypted_value if secret_record else None
 
 
 def ga_connection_interface_from_db(
@@ -134,6 +138,7 @@ def ga_connection_interface_from_db(
         connection_name=db_conn.connection_name,
         description=db_conn.description,
         default_property_id=db_conn.default_property_id,
+        oauth_user_email=db_conn.oauth_user_email,
     )
 
 

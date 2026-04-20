@@ -15,151 +15,100 @@
 
     <el-form-item label="Default GA4 Property ID">
       <el-input v-model="form.defaultPropertyId" placeholder="e.g. 123456789" />
-      <div class="hint-text">
-        Optional default property ID. Nodes can override this value.
-      </div>
+      <div class="hint-text">Optional default property ID. Nodes can override this value.</div>
     </el-form-item>
 
-    <el-form-item :label="isEditing ? 'Service Account JSON (leave blank to keep existing)' : 'Service Account JSON'">
-      <div class="sa-input-row">
-        <el-input
-          v-model="form.serviceAccountJson"
-          type="textarea"
-          :rows="8"
-          :placeholder="saPlaceholder"
-          :show-password="!showKey"
-          class="mono"
-        />
-        <div class="sa-actions">
-          <el-button size="small" @click="triggerFilePicker">
-            <i class="fa-solid fa-upload"></i>&nbsp;Upload JSON
-          </el-button>
-          <el-button size="small" @click="showKey = !showKey">
-            <i :class="showKey ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
-            &nbsp;{{ showKey ? "Hide" : "Show" }}
-          </el-button>
-          <el-button
-            size="small"
-            :disabled="!form.serviceAccountJson"
-            :loading="isTesting"
-            @click="handleTest"
-          >
-            <i class="fa-solid fa-plug"></i>&nbsp;Test
-          </el-button>
-        </div>
+    <el-form-item label="Google Account">
+      <div v-if="isEditing && initialConnection?.oauthUserEmail" class="connected-row">
+        <span class="connected-pill">
+          <i class="fa-solid fa-circle-check"></i>
+          Connected as {{ initialConnection.oauthUserEmail }}
+        </span>
+        <el-button size="small" :loading="isConnecting" @click="handleConnect">
+          <i class="fa-solid fa-rotate-right"></i>&nbsp;Reconnect
+        </el-button>
       </div>
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".json,application/json"
-        style="display: none"
-        @change="handleFileUpload"
-      />
-      <div class="hint-text">
-        Paste the full contents of a GA4 service-account JSON key. It is encrypted at
-        rest with your user-derived key and never sent back to the browser.
+      <div v-else>
+        <el-button
+          type="primary"
+          :loading="isConnecting"
+          :disabled="!form.connectionName.trim()"
+          @click="handleConnect"
+        >
+          <i class="fa-brands fa-google"></i>&nbsp;Connect Google Account
+        </el-button>
+        <div class="hint-text">
+          Opens Google sign-in in a new window. Flowfile stores a refresh token (encrypted at rest)
+          so it can read GA4 data on your behalf — no service-account key is required.
+        </div>
       </div>
     </el-form-item>
 
     <div class="form-actions">
       <el-button @click="$emit('cancel')">Cancel</el-button>
-      <el-button type="primary" :loading="isSubmitting" @click="handleSubmit">
-        {{ isEditing ? "Update" : "Create" }}
+      <el-button
+        v-if="isEditing"
+        type="primary"
+        :loading="isSubmitting"
+        @click="handleSaveMetadata"
+      >
+        Save
       </el-button>
     </div>
   </el-form>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from "vue";
-import { ElForm, ElFormItem, ElInput, ElButton, ElMessage } from "element-plus";
-import type { GoogleAnalyticsConnection } from "./GoogleAnalyticsConnectionTypes";
-import { testGoogleAnalyticsConnection } from "./api";
+import { reactive, watch } from "vue";
+import { ElButton, ElForm, ElFormItem, ElInput, ElMessage } from "element-plus";
+import type {
+  GoogleAnalyticsConnectionInterface,
+  GoogleAnalyticsConnectionMetadata,
+} from "./GoogleAnalyticsConnectionTypes";
 
 const props = defineProps<{
-  initialConnection?: GoogleAnalyticsConnection;
+  initialConnection?: GoogleAnalyticsConnectionInterface;
   isEditing: boolean;
   isSubmitting: boolean;
+  isConnecting: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: "submit", connection: GoogleAnalyticsConnection): void;
+  (e: "save-metadata", metadata: GoogleAnalyticsConnectionMetadata): void;
+  (e: "connect-oauth", metadata: GoogleAnalyticsConnectionMetadata): void;
   (e: "cancel"): void;
 }>();
 
-const form = reactive<GoogleAnalyticsConnection>({
+const form = reactive<GoogleAnalyticsConnectionMetadata>({
   connectionName: "",
   description: "",
   defaultPropertyId: "",
-  serviceAccountJson: "",
 });
-
-const showKey = ref(false);
-const isTesting = ref(false);
-const fileInput = ref<HTMLInputElement | null>(null);
-
-const saPlaceholder = `{"type": "service_account", "project_id": "...", ...}`;
 
 watch(
   () => props.initialConnection,
   (value) => {
-    if (value) {
-      form.connectionName = value.connectionName;
-      form.description = value.description ?? "";
-      form.defaultPropertyId = value.defaultPropertyId ?? "";
-      form.serviceAccountJson = "";
-    } else {
-      form.connectionName = "";
-      form.description = "";
-      form.defaultPropertyId = "";
-      form.serviceAccountJson = "";
-    }
+    form.connectionName = value?.connectionName ?? "";
+    form.description = value?.description ?? "";
+    form.defaultPropertyId = value?.defaultPropertyId ?? "";
   },
   { immediate: true },
 );
 
-function triggerFilePicker() {
-  fileInput.value?.click();
-}
-
-function handleFileUpload(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    form.serviceAccountJson = String(reader.result ?? "");
-  };
-  reader.onerror = () => ElMessage.error("Could not read file");
-  reader.readAsText(file);
-  input.value = "";
-}
-
-async function handleTest() {
-  if (!form.serviceAccountJson) return;
-  isTesting.value = true;
-  try {
-    const result = await testGoogleAnalyticsConnection(form.serviceAccountJson);
-    if (result.success) {
-      ElMessage.success(result.message);
-    } else {
-      ElMessage.error(result.message);
-    }
-  } finally {
-    isTesting.value = false;
-  }
-}
-
-function handleSubmit() {
+function handleConnect() {
   if (!form.connectionName.trim()) {
     ElMessage.error("Connection name is required");
     return;
   }
-  if (!props.isEditing && !form.serviceAccountJson?.trim()) {
-    ElMessage.error("Service account JSON is required");
+  emit("connect-oauth", { ...form });
+}
+
+function handleSaveMetadata() {
+  if (!form.connectionName.trim()) {
+    ElMessage.error("Connection name is required");
     return;
   }
-  emit("submit", { ...form });
+  emit("save-metadata", { ...form });
 }
 </script>
 
@@ -170,20 +119,22 @@ function handleSubmit() {
   margin-top: var(--spacing-1);
 }
 
-.sa-input-row {
+.connected-row {
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
+  align-items: center;
+  gap: var(--spacing-3);
+  flex-wrap: wrap;
 }
 
-.sa-actions {
-  display: flex;
+.connected-pill {
+  display: inline-flex;
+  align-items: center;
   gap: var(--spacing-2);
-}
-
-.mono :deep(.el-textarea__inner) {
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs);
+  padding: var(--spacing-1) var(--spacing-3);
+  background: var(--color-accent-subtle, #ebf4ff);
+  color: var(--color-accent, #2b6cb0);
+  border-radius: var(--border-radius-full, 9999px);
+  font-size: var(--font-size-sm);
 }
 
 .form-actions {

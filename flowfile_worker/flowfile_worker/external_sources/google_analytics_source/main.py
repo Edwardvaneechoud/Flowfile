@@ -10,7 +10,7 @@ pagination — happens entirely in this process so the core stays responsive.
 
 from __future__ import annotations
 
-import json
+import os
 import re
 
 import polars as pl
@@ -149,7 +149,8 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
             Metric,
             RunReportRequest,
         )
-        from google.oauth2 import service_account
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
     except ImportError as e:
         raise RuntimeError(
             "google-analytics-data is not installed on the worker. "
@@ -163,18 +164,24 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
         ga_read_settings.end_date,
     )
 
-    plaintext_key = ga_read_settings.get_decrypted_service_account_json()
-    try:
-        key_info = json.loads(plaintext_key)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Service account JSON is not valid JSON: {e.msg}") from e
-    finally:
-        # Drop the plaintext ASAP.
-        plaintext_key = None  # noqa: F841
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set on the worker. "
+            "They must match the values used by the core when the connection was authorised."
+        )
 
-    creds = service_account.Credentials.from_service_account_info(
-        key_info, scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+    refresh_token = ga_read_settings.get_decrypted_refresh_token()
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=["https://www.googleapis.com/auth/analytics.readonly"],
     )
+    creds.refresh(Request())
     client = BetaAnalyticsDataClient(credentials=creds)
 
     dim_objs = [Dimension(name=d) for d in ga_read_settings.dimensions]

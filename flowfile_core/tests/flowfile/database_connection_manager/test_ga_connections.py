@@ -1,25 +1,20 @@
-"""Tests for GA connection CRUD + secret encryption round-trip."""
+"""Tests for GA connection CRUD + OAuth refresh-token encryption round-trip."""
 
 from __future__ import annotations
-
-from pydantic import SecretStr
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     delete_ga_connection,
     get_all_ga_connections_interface,
+    get_encrypted_refresh_token,
     get_ga_connection,
-    get_ga_connection_schema,
-    store_ga_connection,
-    update_ga_connection,
+    update_ga_connection_metadata,
+    upsert_ga_connection_with_refresh_token,
 )
-from flowfile_core.schemas.google_analytics_schemas import (
-    FullGoogleAnalyticsConnection,
-    FullGoogleAnalyticsConnectionInterface,
-)
-from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
+from flowfile_core.schemas.google_analytics_schemas import FullGoogleAnalyticsConnectionInterface
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 
-_TEST_KEY = '{"type": "service_account", "project_id": "proj-x", "client_email": "sa@proj-x.iam"}'
+_TEST_REFRESH_TOKEN = "1//0g-some-fake-refresh-token-value-for-tests"
 
 
 def _cleanup(user_id: int = 1) -> None:
@@ -28,121 +23,97 @@ def _cleanup(user_id: int = 1) -> None:
             delete_ga_connection(db, conn.connection_name, user_id)
 
 
-def test_store_and_retrieve_ga_connection() -> None:
-    """Round-trip: store -> fetch schema -> verify JSON key is decrypted correctly."""
+def test_upsert_creates_connection_and_encrypts_token() -> None:
     user_id = 1
     _cleanup(user_id)
-    connection = FullGoogleAnalyticsConnection(
-        connection_name="ga-test",
-        description="Test GA connection",
-        default_property_id="123456789",
-        service_account_json=SecretStr(_TEST_KEY),
-    )
 
     with get_db_context() as db:
-        stored = store_ga_connection(db, connection, user_id)
-        assert stored is not None
+        stored = upsert_ga_connection_with_refresh_token(
+            db,
+            connection_name="ga-test",
+            user_id=user_id,
+            refresh_token=_TEST_REFRESH_TOKEN,
+            oauth_user_email="user@example.com",
+            description="Test GA connection",
+            default_property_id="123456789",
+        )
         assert stored.id is not None
-        assert stored.service_account_key_id is not None
+        assert stored.credential_secret_id is not None
+        assert stored.oauth_user_email == "user@example.com"
 
     with get_db_context() as db:
-        schema = get_ga_connection_schema(db, connection.connection_name, user_id)
-        assert isinstance(schema, FullGoogleAnalyticsConnection)
-        assert schema.connection_name == connection.connection_name
-        assert schema.default_property_id == "123456789"
-        assert schema.description == "Test GA connection"
-        assert schema.service_account_json.get_secret_value() == _TEST_KEY
+        encrypted = get_encrypted_refresh_token(db, "ga-test", user_id)
+        assert encrypted is not None
+        assert encrypted.startswith("$ffsec$1$")
+        assert _TEST_REFRESH_TOKEN not in encrypted
+        assert decrypt_secret(encrypted).get_secret_value() == _TEST_REFRESH_TOKEN
 
     _cleanup(user_id)
 
 
-def test_duplicate_name_is_rejected() -> None:
+def test_upsert_replaces_token_on_reconnect() -> None:
+    """Calling upsert a second time for the same (name, user) rotates the token."""
     user_id = 1
     _cleanup(user_id)
-    connection = FullGoogleAnalyticsConnection(
-        connection_name="ga-dup",
-        service_account_json=SecretStr(_TEST_KEY),
-    )
+    new_token = "1//0g-rotated-refresh-token"
 
     with get_db_context() as db:
-        store_ga_connection(db, connection, user_id)
-
-    with get_db_context() as db:
-        try:
-            store_ga_connection(db, connection, user_id)
-        except ValueError as e:
-            assert "already exists" in str(e)
-        else:
-            raise AssertionError("Expected ValueError for duplicate connection name")
-
-    _cleanup(user_id)
-
-
-def test_update_preserves_key_when_blank() -> None:
-    """Updating with ``service_account_json=None`` keeps the stored key."""
-    user_id = 1
-    _cleanup(user_id)
-    connection = FullGoogleAnalyticsConnection(
-        connection_name="ga-update",
-        description="initial",
-        default_property_id="1",
-        service_account_json=SecretStr(_TEST_KEY),
-    )
-
-    with get_db_context() as db:
-        store_ga_connection(db, connection, user_id)
-
-    # Update without providing a new key.
-    with get_db_context() as db:
-        update_ga_connection(
+        upsert_ga_connection_with_refresh_token(
             db,
-            FullGoogleAnalyticsConnection(
-                connection_name="ga-update",
-                description="updated",
-                default_property_id="2",
-                service_account_json=None,
-            ),
-            user_id,
+            connection_name="ga-rotate",
+            user_id=user_id,
+            refresh_token=_TEST_REFRESH_TOKEN,
+            oauth_user_email="a@example.com",
         )
 
     with get_db_context() as db:
-        schema = get_ga_connection_schema(db, "ga-update", user_id)
-        assert schema.description == "updated"
-        assert schema.default_property_id == "2"
-        # The key was preserved.
-        assert schema.service_account_json.get_secret_value() == _TEST_KEY
+        upsert_ga_connection_with_refresh_token(
+            db,
+            connection_name="ga-rotate",
+            user_id=user_id,
+            refresh_token=new_token,
+            oauth_user_email="b@example.com",
+        )
+
+    with get_db_context() as db:
+        encrypted = get_encrypted_refresh_token(db, "ga-rotate", user_id)
+        assert decrypt_secret(encrypted).get_secret_value() == new_token
+        conn = get_ga_connection(db, "ga-rotate", user_id)
+        assert conn.oauth_user_email == "b@example.com"
 
     _cleanup(user_id)
 
 
-def test_update_replaces_key_when_provided() -> None:
+def test_update_metadata_leaves_token_intact() -> None:
     user_id = 1
     _cleanup(user_id)
-    new_key = '{"type": "service_account", "project_id": "replaced", "client_email": "sa@new.iam"}'
 
     with get_db_context() as db:
-        store_ga_connection(
+        upsert_ga_connection_with_refresh_token(
             db,
-            FullGoogleAnalyticsConnection(
-                connection_name="ga-replace",
-                service_account_json=SecretStr(_TEST_KEY),
-            ),
-            user_id,
+            connection_name="ga-meta",
+            user_id=user_id,
+            refresh_token=_TEST_REFRESH_TOKEN,
+            oauth_user_email="user@example.com",
+            description="initial",
+            default_property_id="1",
         )
 
     with get_db_context() as db:
-        update_ga_connection(
+        update_ga_connection_metadata(
             db,
-            FullGoogleAnalyticsConnection(
-                connection_name="ga-replace",
-                service_account_json=SecretStr(new_key),
-            ),
-            user_id,
+            connection_name="ga-meta",
+            user_id=user_id,
+            description="updated",
+            default_property_id="2",
         )
 
     with get_db_context() as db:
-        schema = get_ga_connection_schema(db, "ga-replace", user_id)
-        assert schema.service_account_json.get_secret_value() == new_key
+        conn = get_ga_connection(db, "ga-meta", user_id)
+        assert conn.description == "updated"
+        assert conn.default_property_id == "2"
+        encrypted = get_encrypted_refresh_token(db, "ga-meta", user_id)
+        assert decrypt_secret(encrypted).get_secret_value() == _TEST_REFRESH_TOKEN
 
     _cleanup(user_id)
 
@@ -150,14 +121,16 @@ def test_update_replaces_key_when_provided() -> None:
 def test_delete_removes_row_and_secret() -> None:
     user_id = 1
     _cleanup(user_id)
-    secret_name = "ga-delete_ga_service_account_key"
-    connection = FullGoogleAnalyticsConnection(
-        connection_name="ga-delete",
-        service_account_json=SecretStr(_TEST_KEY),
-    )
+    secret_name = "ga-delete_ga_oauth_refresh_token"
 
     with get_db_context() as db:
-        store_ga_connection(db, connection, user_id)
+        upsert_ga_connection_with_refresh_token(
+            db,
+            connection_name="ga-delete",
+            user_id=user_id,
+            refresh_token=_TEST_REFRESH_TOKEN,
+            oauth_user_email=None,
+        )
 
     assert get_encrypted_secret(user_id, secret_name) is not None
 
@@ -169,46 +142,38 @@ def test_delete_removes_row_and_secret() -> None:
     assert get_encrypted_secret(user_id, secret_name) is None
 
 
-def test_interface_list_hides_secret() -> None:
+def test_interface_list_exposes_email_but_not_secret() -> None:
     user_id = 1
     _cleanup(user_id)
+
     with get_db_context() as db:
-        store_ga_connection(
+        upsert_ga_connection_with_refresh_token(
             db,
-            FullGoogleAnalyticsConnection(
-                connection_name="ga-interface",
-                description="visible",
-                default_property_id="999",
-                service_account_json=SecretStr(_TEST_KEY),
-            ),
-            user_id,
+            connection_name="ga-iface",
+            user_id=user_id,
+            refresh_token=_TEST_REFRESH_TOKEN,
+            oauth_user_email="vis@example.com",
+            description="visible",
+            default_property_id="999",
         )
 
     with get_db_context() as db:
         interfaces = get_all_ga_connections_interface(db, user_id)
 
-    assert interfaces, "Expected at least one connection"
-    match = next(i for i in interfaces if i.connection_name == "ga-interface")
+    match = next(i for i in interfaces if i.connection_name == "ga-iface")
     assert isinstance(match, FullGoogleAnalyticsConnectionInterface)
-    # The public interface must not expose the secret.
-    assert not hasattr(match, "service_account_json")
     assert match.description == "visible"
     assert match.default_property_id == "999"
+    assert match.oauth_user_email == "vis@example.com"
+    # No credential field on the public interface.
+    assert not hasattr(match, "refresh_token")
+    assert not hasattr(match, "service_account_json")
 
     _cleanup(user_id)
 
 
-def test_worker_interface_encrypts_secret() -> None:
-    """``get_worker_interface`` emits an encrypted token, not plaintext."""
-    user_id = 7
-    connection = FullGoogleAnalyticsConnection(
-        connection_name="ga-worker-iface",
-        service_account_json=SecretStr(_TEST_KEY),
-    )
-    worker_iface = connection.get_worker_interface(user_id)
-
-    assert worker_iface.connection_name == "ga-worker-iface"
-    token = worker_iface.service_account_json_encrypted
-    # Fernet token format used by ``encrypt_secret``: "$ffsec$1$<user_id>$<fernet_token>".
-    assert token.startswith("$ffsec$1$")
-    assert _TEST_KEY not in token  # Plaintext must not appear anywhere.
+def test_get_encrypted_refresh_token_returns_none_for_unknown() -> None:
+    user_id = 1
+    _cleanup(user_id)
+    with get_db_context() as db:
+        assert get_encrypted_refresh_token(db, "does-not-exist", user_id) is None

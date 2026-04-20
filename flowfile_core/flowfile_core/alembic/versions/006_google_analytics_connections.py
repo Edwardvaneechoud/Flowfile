@@ -1,8 +1,8 @@
-"""Add google_analytics_connections table for GA4 reader credentials.
+"""Add google_analytics_connections table for GA4 OAuth credentials.
 
-Revision ID: 004
-Revises: 003
-Create Date: 2026-04-15
+Revision ID: 006
+Revises: 005
+Create Date: 2026-04-20
 """
 
 from collections.abc import Sequence
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "004"
-down_revision: str | None = "003"
+revision: str = "006"
+down_revision: str | None = "005"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -23,8 +23,9 @@ def upgrade() -> None:
         sa.Column("connection_name", sa.String, nullable=False, index=True),
         sa.Column("description", sa.Text, nullable=True),
         sa.Column("default_property_id", sa.String, nullable=True),
+        sa.Column("oauth_user_email", sa.String, nullable=True),
         sa.Column(
-            "service_account_key_id",
+            "credential_secret_id",
             sa.Integer,
             sa.ForeignKey("secrets.id"),
             nullable=False,

@@ -1,4 +1,7 @@
-import type { GoogleAnalyticsSettings, NodeGoogleAnalyticsReader } from "../../../../../types/node.types";
+import type {
+  GoogleAnalyticsSettings,
+  NodeGoogleAnalyticsReader,
+} from "../../../../../types/node.types";
 
 export const createNodeGoogleAnalyticsReader = (
   flowId: number,

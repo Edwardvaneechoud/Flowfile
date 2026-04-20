@@ -3,9 +3,9 @@
     <div class="mb-3">
       <h2 class="page-title">Google Analytics Connections</h2>
       <p class="description-text">
-        Google Analytics connections store the service-account JSON key needed to query
-        GA4 properties. Keys are encrypted at rest with your user-derived key and are
-        never transmitted to the browser after creation.
+        Google Analytics connections store the OAuth refresh token minted when you sign in with
+        Google. Tokens are encrypted at rest with your user-derived key and are never transmitted
+        back to the browser after creation.
       </p>
     </div>
 
@@ -20,11 +20,13 @@
         <div class="info-box mb-3">
           <i class="fa-solid fa-info-circle"></i>
           <div>
-            <p><strong>What are Google Analytics connections?</strong></p>
+            <p><strong>How it works</strong></p>
             <p>
-              A connection is a reusable, per-user bundle that holds a GA4 service-account
-              key (and optional default property ID). Use connections inside a Google
-              Analytics Reader node to load reports without re-entering credentials.
+              Click <em>Add Connection</em>, give it a name, then click
+              <em>Connect Google Account</em>. You'll sign in with the Google account that has
+              Viewer access to your GA4 property. Flowfile stores a refresh token (encrypted at rest
+              with your user-derived key) so it can read GA4 on your behalf — no service-account key
+              is ever required.
             </p>
           </div>
         </div>
@@ -37,9 +39,7 @@
         <div v-else-if="connections.length === 0" class="empty-state">
           <i class="fa-solid fa-chart-line"></i>
           <p>You haven't added any Google Analytics connections yet</p>
-          <p class="hint-text">
-            Click "Add Connection" to create your first one.
-          </p>
+          <p class="hint-text">Click "Add Connection" to create your first one.</p>
         </div>
 
         <div v-else class="connections-list">
@@ -56,6 +56,9 @@
                   Property {{ connection.defaultPropertyId }}
                 </span>
               </div>
+              <div v-if="connection.oauthUserEmail" class="connection-details">
+                Connected as {{ connection.oauthUserEmail }}
+              </div>
               <div v-if="connection.description" class="connection-details">
                 {{ connection.description }}
               </div>
@@ -65,11 +68,7 @@
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
               </button>
-              <button
-                type="button"
-                class="btn btn-danger"
-                @click="showDeleteModal(connection)"
-              >
+              <button type="button" class="btn btn-danger" @click="showDeleteModal(connection)">
                 <i class="fa-solid fa-trash-alt"></i>
                 <span>Delete</span>
               </button>
@@ -89,7 +88,9 @@
         :initial-connection="activeConnection"
         :is-editing="isEditing"
         :is-submitting="isSubmitting"
-        @submit="handleFormSubmit"
+        :is-connecting="isConnecting"
+        @save-metadata="handleMetadataSave"
+        @connect-oauth="handleConnectOAuth"
         @cancel="dialogVisible = false"
       />
     </el-dialog>
@@ -121,17 +122,17 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onBeforeUnmount } from "vue";
 import { ElDialog, ElButton, ElMessage } from "element-plus";
 import {
-  fetchGoogleAnalyticsConnections,
-  createGoogleAnalyticsConnection,
-  updateGoogleAnalyticsConnection,
   deleteGoogleAnalyticsConnection,
+  fetchGoogleAnalyticsConnections,
+  startGoogleAnalyticsOAuth,
+  updateGoogleAnalyticsConnectionMetadata,
 } from "./api";
 import type {
-  GoogleAnalyticsConnection,
   GoogleAnalyticsConnectionInterface,
+  GoogleAnalyticsConnectionMetadata,
 } from "./GoogleAnalyticsConnectionTypes";
 import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettings.vue";
 
@@ -142,8 +143,11 @@ const deleteDialogVisible = ref(false);
 const isEditing = ref(false);
 const isSubmitting = ref(false);
 const isDeleting = ref(false);
+const isConnecting = ref(false);
 const connectionToDelete = ref<GoogleAnalyticsConnectionInterface | null>(null);
-const activeConnection = ref<GoogleAnalyticsConnection | undefined>(undefined);
+const activeConnection = ref<GoogleAnalyticsConnectionInterface | undefined>(undefined);
+
+let oauthPopup: Window | null = null;
 
 const fetchConnections = async () => {
   isLoading.value = true;
@@ -165,14 +169,7 @@ const showAddModal = () => {
 
 const showEditModal = (connection: GoogleAnalyticsConnectionInterface) => {
   isEditing.value = true;
-  activeConnection.value = {
-    connectionName: connection.connectionName,
-    description: connection.description ?? "",
-    defaultPropertyId: connection.defaultPropertyId ?? "",
-    // Secrets are never sent to the browser; leave blank so the backend
-    // keeps the stored value unless the user enters a new one.
-    serviceAccountJson: "",
-  };
+  activeConnection.value = { ...connection };
   dialogVisible.value = true;
 };
 
@@ -181,24 +178,53 @@ const showDeleteModal = (connection: GoogleAnalyticsConnectionInterface) => {
   deleteDialogVisible.value = true;
 };
 
-const handleFormSubmit = async (connection: GoogleAnalyticsConnection) => {
+const handleMetadataSave = async (metadata: GoogleAnalyticsConnectionMetadata) => {
   isSubmitting.value = true;
   try {
-    if (isEditing.value) {
-      await updateGoogleAnalyticsConnection(connection);
-    } else {
-      await createGoogleAnalyticsConnection(connection);
-    }
+    await updateGoogleAnalyticsConnectionMetadata(metadata);
     await fetchConnections();
     dialogVisible.value = false;
-    ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);
-  } catch (error: any) {
-    ElMessage.error(
-      `Failed to ${isEditing.value ? "update" : "create"} connection: ${error.message || "Unknown error"}`,
-    );
+    ElMessage.success("Connection updated");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    ElMessage.error(`Failed to update connection: ${message}`);
   } finally {
     isSubmitting.value = false;
   }
+};
+
+const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) => {
+  if (!metadata.connectionName.trim()) {
+    ElMessage.error("Connection name is required before connecting");
+    return;
+  }
+  isConnecting.value = true;
+  try {
+    const { authUrl } = await startGoogleAnalyticsOAuth(metadata);
+    oauthPopup = window.open(authUrl, "flowfile-ga-oauth", "width=520,height=720");
+    if (!oauthPopup) {
+      ElMessage.error("Popup blocked — allow popups for this site and try again");
+      isConnecting.value = false;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    ElMessage.error(`Could not start OAuth: ${message}`);
+    isConnecting.value = false;
+  }
+};
+
+const handleOAuthMessage = async (event: MessageEvent) => {
+  const data = event.data;
+  if (!data || data.source !== "flowfile-ga-oauth") return;
+  isConnecting.value = false;
+  if (data.status === "ok") {
+    await fetchConnections();
+    dialogVisible.value = false;
+    ElMessage.success(data.message || "Connected");
+  } else {
+    ElMessage.error(data.message || "Google sign-in failed");
+  }
+  oauthPopup = null;
 };
 
 const handleDeleteConnection = async () => {
@@ -210,6 +236,7 @@ const handleDeleteConnection = async () => {
     deleteDialogVisible.value = false;
     ElMessage.success("Connection deleted successfully");
   } catch (error) {
+    console.error(error);
     ElMessage.error("Failed to delete connection");
   } finally {
     isDeleting.value = false;
@@ -218,7 +245,7 @@ const handleDeleteConnection = async () => {
 };
 
 const handleCloseDialog = (done: () => void) => {
-  if (isSubmitting.value) return;
+  if (isSubmitting.value || isConnecting.value) return;
   done();
 };
 
@@ -229,6 +256,11 @@ const handleCloseDeleteDialog = (done: () => void) => {
 
 onMounted(() => {
   fetchConnections();
+  window.addEventListener("message", handleOAuthMessage);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("message", handleOAuthMessage);
 });
 </script>
 

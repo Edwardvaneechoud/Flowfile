@@ -2924,7 +2924,7 @@ class FlowGraph:
         is made during schema prediction, keeping downstream nodes lazy.
         """
         from flowfile_core.flowfile.database_connection_manager.ga_connections import (
-            get_ga_connection_schema,
+            get_encrypted_refresh_token,
         )
         from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
         from flowfile_worker.external_sources.google_analytics_source.models import (
@@ -2939,18 +2939,20 @@ class FlowGraph:
         ga_settings = node_ga_reader.google_analytics_settings
 
         with get_db_context() as db:
-            full_connection = get_ga_connection_schema(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
-            if full_connection is None:
+            encrypted_refresh_token = get_encrypted_refresh_token(
+                db, ga_settings.ga_connection_name, node_ga_reader.user_id
+            )
+            if encrypted_refresh_token is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Google Analytics connection '{ga_settings.ga_connection_name}' not found",
+                    detail=(
+                        f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
+                        "or has not completed OAuth sign-in"
+                    ),
                 )
 
-        # Re-encrypt the service-account JSON with the user's key before handing
-        # it to the worker. The worker reverses this via ``decrypt_secret``.
-        worker_interface = full_connection.get_worker_interface(node_ga_reader.user_id)
         worker_settings = WorkerGoogleAnalyticsReadSettings(
-            service_account_json_encrypted=worker_interface.service_account_json_encrypted,
+            refresh_token_encrypted=encrypted_refresh_token,
             property_id=ga_settings.property_id,
             start_date=ga_settings.start_date,
             end_date=ga_settings.end_date,

@@ -42,10 +42,7 @@
         </div>
       </div>
 
-      <div
-        v-if="nodeGaReader.google_analytics_settings.ga_connection_name"
-        class="listbox-wrapper"
-      >
+      <div v-if="nodeGaReader.google_analytics_settings.ga_connection_name" class="listbox-wrapper">
         <h4 class="section-subtitle">Report</h4>
 
         <div class="form-group">
@@ -78,8 +75,8 @@
           </select>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow
-            run evaluates a rolling window against the current date.
+            Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow run
+            evaluates a rolling window against the current date.
           </div>
         </div>
 
@@ -161,10 +158,7 @@
       </div>
 
       <!-- Filters -->
-      <div
-        v-if="nodeGaReader.google_analytics_settings.ga_connection_name"
-        class="listbox-wrapper"
-      >
+      <div v-if="nodeGaReader.google_analytics_settings.ga_connection_name" class="listbox-wrapper">
         <h4 class="section-subtitle">Filters</h4>
         <div
           v-if="
@@ -215,11 +209,7 @@
             </select>
 
             <select v-model="filter.operator" class="form-control filter-operator">
-              <option
-                v-for="op in operatorsFor(filter.field)"
-                :key="op.value"
-                :value="op.value"
-              >
+              <option v-for="op in operatorsFor(filter.field)" :key="op.value" :value="op.value">
                 {{ op.label }}
               </option>
             </select>
@@ -257,8 +247,8 @@
           </button>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Multiple filters on the same kind (dimension or metric) are AND-combined.
-            Use <code>in_list</code> / <code>between</code> with comma-separated values.
+            Multiple filters on the same kind (dimension or metric) are AND-combined. Use
+            <code>in_list</code> / <code>between</code> with comma-separated values.
           </div>
         </div>
       </div>
