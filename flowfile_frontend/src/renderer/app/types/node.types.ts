@@ -8,7 +8,7 @@ import type { DisplayOutput } from "./kernel.types";
 // Data Type Definitions
 // ============================================================================
 
-type DataTypeGroup = "String" | "Date" | "Numeric";
+type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
 // ============================================================================
 // Column and Table Types
@@ -527,7 +527,14 @@ export interface RecordIdInput {
 
 export type RenameMode = "prefix" | "suffix" | "formula";
 export type ColumnSelectionMode = "all" | "list" | "data_type";
-export type DataTypeBucket = "numeric" | "string" | "date";
+export type ReadableDataTypeGroup =
+  | "Numeric"
+  | "String"
+  | "Date"
+  | "Other"
+  | "Boolean"
+  | "Binary"
+  | "Complex";
 
 export interface DynamicRenameInput {
   rename_mode: RenameMode;
@@ -536,7 +543,7 @@ export interface DynamicRenameInput {
   formula: string;
   selection_mode: ColumnSelectionMode;
   selected_columns: string[];
-  selected_data_type: DataTypeBucket | null;
+  selected_data_type: ReadableDataTypeGroup | null;
 }
 
 // ============================================================================

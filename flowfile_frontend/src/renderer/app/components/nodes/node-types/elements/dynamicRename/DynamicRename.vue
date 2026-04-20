@@ -78,10 +78,10 @@
             style="width: 100%"
           >
             <el-option
-              v-for="bucket in dataTypeBuckets"
-              :key="bucket"
-              :label="bucket"
-              :value="bucket"
+              v-for="group in dataTypeGroups"
+              :key="group"
+              :label="group"
+              :value="group"
             />
           </el-select>
         </div>
@@ -122,9 +122,9 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FunctionEditor from "../../../../../features/designer/editor/FunctionEditor.vue";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type {
-  DataTypeBucket,
   DynamicRenameInput,
   NodeDynamicRename,
+  ReadableDataTypeGroup,
 } from "../../../../../types/node.types";
 import { createDynamicRenameNode } from "./dynamicRename";
 
@@ -146,28 +146,21 @@ const previewRows = ref<PreviewRow[]>([]);
 const previewError = ref<string | null>(null);
 const previewLoading = ref(false);
 
-const dataTypeBuckets: DataTypeBucket[] = ["numeric", "string", "date"];
+const dataTypeGroups: ReadableDataTypeGroup[] = [
+  "Numeric",
+  "String",
+  "Date",
+  "Boolean",
+  "Binary",
+  "Complex",
+  "Other",
+];
 const formulaColumns: string[] = ["column_name"];
 
 const handleFormulaChange = (value: string) => {
   if (nodeDynamicRename.value) {
     nodeDynamicRename.value.dynamic_rename_input.formula = value;
   }
-};
-
-const matchesBucket = (dtype: string, bucket: DataTypeBucket | null): boolean => {
-  if (!bucket) return false;
-  if (bucket === "numeric") return /^(Int|UInt|Float|Decimal)/.test(dtype);
-  if (bucket === "string") {
-    return (
-      dtype === "String" ||
-      dtype === "Utf8" ||
-      dtype.startsWith("Categorical") ||
-      dtype.startsWith("Enum")
-    );
-  }
-  if (bucket === "date") return /^(Date|Datetime|Time|Duration)/.test(dtype);
-  return false;
 };
 
 const settings = computed<DynamicRenameInput>(() => {
@@ -202,9 +195,12 @@ const resolveClientPreview = (): PreviewRow[] => {
     const available = new Set(cols.map((c) => c.name));
     targets = s.selected_columns.filter((n) => available.has(n));
   } else {
-    targets = cols
-      .filter((c) => matchesBucket(c.data_type, s.selected_data_type))
-      .map((c) => c.name);
+    const wanted = s.selected_data_type;
+    if (!wanted) {
+      targets = [];
+    } else {
+      targets = cols.filter((c) => c.data_type_group === wanted).map((c) => c.name);
+    }
   }
 
   const mapped: PreviewRow[] = [];
@@ -245,7 +241,7 @@ const refreshPreview = () => {
         settings: s,
         incoming_columns: incomingColumns.value.map((c) => ({
           name: c.name,
-          data_type: c.data_type,
+          data_type_group: c.data_type_group,
         })),
       });
       if (response.data.error) {

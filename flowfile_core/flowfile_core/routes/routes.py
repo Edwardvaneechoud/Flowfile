@@ -920,7 +920,7 @@ def get_node_list() -> list[schemas.NodeTemplate]:
 
 class _DynamicRenameColumn(BaseModel):
     name: str
-    data_type: str = ""
+    data_type_group: str = ""
 
 
 class DynamicRenamePreviewRequest(BaseModel):
@@ -948,7 +948,7 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
     # Import locally so `routes` doesn't pick up a heavy dependency at module load.
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
-    columns = [(c.name, c.data_type) for c in request.incoming_columns]
+    columns = [(c.name, c.data_type_group) for c in request.incoming_columns]
     try:
         rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, request.settings)
     except ValueError as exc:

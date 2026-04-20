@@ -1026,7 +1026,7 @@ class GraphSolverInput(BaseModel):
 
 RenameMode = Literal["prefix", "suffix", "formula"]
 ColumnSelectionMode = Literal["all", "list", "data_type"]
-DataTypeBucket = Literal["numeric", "string", "date"]
+ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"]
 
 
 class DynamicRenameInput(BaseModel):
@@ -1047,7 +1047,7 @@ class DynamicRenameInput(BaseModel):
 
     selection_mode: ColumnSelectionMode = "all"
     selected_columns: list[str] = Field(default_factory=list)
-    selected_data_type: DataTypeBucket | None = None
+    selected_data_type: ReadableDataTypeGroup | None = None
 
 
 class PolarsCodeInput(BaseModel):

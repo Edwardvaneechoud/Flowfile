@@ -107,7 +107,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             output=1,
             transform_type="narrow",
             node_type="process",
-            image="select.png",
+            image="dynamic_rename.svg",
             node_group="transform",
             drawer_title="Rename Columns",
             drawer_intro="Bulk-rename columns by prefix, suffix, or a formula",

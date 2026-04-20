@@ -2214,36 +2214,19 @@ class FlowDataEngine:
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
     @staticmethod
-    def _data_type_matches_bucket(dtype: str, bucket: str | None) -> bool:
-        """Whether a polars-style dtype string falls into one of the coarse buckets
-        used by the dynamic rename node (numeric / string / date).
-
-        Mirrors `polars.selectors.{numeric,string,date}` for the preview path where
-        only the dtype name (not a live DataFrame) is available.
-        """
-        if bucket is None:
-            return False
-        if bucket == "numeric":
-            return dtype.startswith(("Int", "UInt", "Float", "Decimal"))
-        if bucket == "string":
-            return dtype in ("String", "Utf8") or dtype.startswith(("Categorical", "Enum"))
-        if bucket == "date":
-            return dtype.startswith(("Date", "Datetime", "Time", "Duration"))
-        return False
-
-    @staticmethod
     def resolve_dynamic_rename_map(
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
     ) -> dict[str, str]:
         """Compute the `{old_name: new_name}` map for a dynamic-rename operation.
 
-        Pure function — takes the incoming schema as `(name, dtype)` tuples and the user's
-        settings, and returns the rename map. Raises `ValueError` if the rule would
-        produce duplicate column names.
+        Pure function — takes the incoming schema as `(name, data_type_group)` tuples
+        (where `data_type_group` is `FlowfileColumn.data_type_group`, e.g. `"Numeric"`,
+        `"String"`, `"Date"`, …) and the user's settings, and returns the rename map.
+        Raises `ValueError` if the rule would produce duplicate column names.
 
         Args:
-            columns: Incoming schema as `(column_name, data_type_str)` tuples, in order.
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
             settings: The dynamic rename configuration.
 
         Returns:
@@ -2256,12 +2239,11 @@ class FlowDataEngine:
             available = {name for name, _ in columns}
             targets = [c for c in settings.selected_columns if c in available]
         elif settings.selection_mode == "data_type":
-            bucket = settings.selected_data_type
-            targets = [
-                name
-                for name, dtype in columns
-                if FlowDataEngine._data_type_matches_bucket(dtype, bucket)
-            ]
+            wanted = settings.selected_data_type
+            if wanted is None:
+                targets = []
+            else:
+                targets = [name for name, group in columns if group == wanted]
         else:
             targets = []
 
@@ -2315,7 +2297,7 @@ class FlowDataEngine:
             A new `FlowDataEngine` with the renamed columns (or this instance's DataFrame
             unchanged if the rule resolves to no renames).
         """
-        columns = [(c.column_name, c.data_type) for c in self.schema]
+        columns = [(c.column_name, c.data_type_group) for c in self.schema]
         rename_map = self.resolve_dynamic_rename_map(columns, settings)
         if not rename_map:
             return FlowDataEngine(

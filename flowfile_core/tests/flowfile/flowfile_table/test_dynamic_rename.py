@@ -37,39 +37,39 @@ def test_suffix_list_only_renames_listed_columns():
     assert result == ["name_raw", "age", "score"]
 
 
-def test_data_type_numeric_bucket():
+def test_data_type_numeric_group():
     engine = _engine()
-    # incoming dtypes: name=String, age=Int64, score=Float64
+    # data_type_group: name=String, age=Numeric, score=Numeric
     settings = transform_schema.DynamicRenameInput(
         rename_mode="prefix",
         prefix="num_",
         selection_mode="data_type",
-        selected_data_type="numeric",
+        selected_data_type="Numeric",
     )
     result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
     assert result == ["name", "num_age", "num_score"]
 
 
-def test_data_type_string_bucket():
+def test_data_type_string_group():
     engine = _engine()
     settings = transform_schema.DynamicRenameInput(
         rename_mode="suffix",
         suffix="_text",
         selection_mode="data_type",
-        selected_data_type="string",
+        selected_data_type="String",
     )
     result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
     assert result == ["name_text", "age", "score"]
 
 
-def test_data_type_date_bucket_matches_datetime():
-    from datetime import datetime
+def test_data_type_date_group_matches_date_columns():
+    from datetime import date
 
     engine = FlowDataEngine(
         pl.DataFrame(
             {
                 "id": [1, 2],
-                "created_at": [datetime(2024, 1, 1), datetime(2024, 1, 2)],
+                "booked_on": [date(2024, 1, 1), date(2024, 1, 2)],
             }
         )
     )
@@ -77,13 +77,13 @@ def test_data_type_date_bucket_matches_datetime():
         rename_mode="prefix",
         prefix="ts_",
         selection_mode="data_type",
-        selected_data_type="date",
+        selected_data_type="Date",
     )
     result = engine.apply_dynamic_rename(settings).data_frame.collect_schema().names()
-    assert result == ["id", "ts_created_at"]
+    assert result == ["id", "ts_booked_on"]
 
 
-def test_data_type_bucket_none_is_noop():
+def test_data_type_group_none_is_noop():
     engine = _engine()
     settings = transform_schema.DynamicRenameInput(
         rename_mode="prefix",
@@ -162,7 +162,7 @@ def test_empty_list_selection_is_noop():
 
 def test_resolve_map_matches_apply_output():
     engine = _engine()
-    columns = [(c.column_name, c.data_type) for c in engine.schema]
+    columns = [(c.column_name, c.data_type_group) for c in engine.schema]
     settings = transform_schema.DynamicRenameInput(rename_mode="prefix", prefix="p_")
     rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, settings)
     assert rename_map == {"name": "p_name", "age": "p_age", "score": "p_score"}

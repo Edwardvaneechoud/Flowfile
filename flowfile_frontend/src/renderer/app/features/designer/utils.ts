@@ -14,6 +14,7 @@ const BUILTIN_ICONS = new Set([
   "kafka_source.svg",
   "database_reader.svg",
   "database_writer.svg",
+  "dynamic_rename.svg",
   "explore_data.png",
   "external_source.png",
   "filter.png",
