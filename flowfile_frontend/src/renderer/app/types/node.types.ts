@@ -445,12 +445,15 @@ export type WindowFunctionName =
 
 export type RankMethod = "ordinal" | "dense" | "min" | "max" | "average";
 
+export type RollingEdgeBehavior = "require_full" | "partial" | "fill_zero";
+
 export interface WindowFunctionInput {
   column?: string | null;
   function: WindowFunctionName;
   new_column_name: string;
   window_size?: number | null;
   min_periods?: number | null;
+  edge_behavior?: RollingEdgeBehavior | null;
   number_of_groups?: number | null;
   rank_method?: RankMethod | null;
   output_type?: string | null;

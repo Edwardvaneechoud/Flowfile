@@ -882,10 +882,15 @@ class FlowGraphCodeConverter:
 
         func = w.function
         if func.startswith("rolling_"):
+            behavior = w.edge_behavior or "require_full"
             kwargs = f"window_size={w.window_size}"
-            if w.min_periods is not None:
+            if behavior in ("partial", "fill_zero"):
+                kwargs += ", min_samples=1"
+            elif w.min_periods is not None:
                 kwargs += f", min_samples={w.min_periods}"
             base = f'{fw}.col("{w.column}").{func}({kwargs})'
+            if behavior == "fill_zero":
+                base = f"{base}.fill_null(0)"
             return f'{over(base)}.alias("{w.new_column_name}")'
         if func.startswith("cum_"):
             base = f'{fw}.col("{w.column}").{func}()'

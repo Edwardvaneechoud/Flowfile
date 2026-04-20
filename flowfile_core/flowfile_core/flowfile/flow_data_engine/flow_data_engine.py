@@ -171,10 +171,15 @@ def _build_window_expr(
     func = w.function
 
     if func.startswith("rolling_"):
+        behavior = w.edge_behavior or "require_full"
         kwargs: dict[str, Any] = {"window_size": w.window_size}
-        if w.min_periods is not None:
+        if behavior in ("partial", "fill_zero"):
+            kwargs["min_samples"] = 1
+        elif w.min_periods is not None:
             kwargs["min_samples"] = w.min_periods
         expr = getattr(pl.col(w.column), func)(**kwargs)
+        if behavior == "fill_zero":
+            expr = expr.fill_null(0)
         return over(expr).alias(w.new_column_name)
 
     if func.startswith("cum_"):

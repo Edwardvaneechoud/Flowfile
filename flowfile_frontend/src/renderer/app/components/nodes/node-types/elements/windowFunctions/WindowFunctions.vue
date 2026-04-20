@@ -106,7 +106,7 @@
                   <span>Parameter</span>
                   <el-tooltip
                     placement="top"
-                    content="Rolling: how many rows to include in the window (e.g. 3 = current row + 2 previous). Tile: how many equal-sized groups to split into. Rank: tie-breaking strategy."
+                    content="Rolling: window size in rows (e.g. 3 = current row + 2 previous) plus how to handle the first rows before the window is full. Tile: how many equal-sized groups to split into. Rank: tie-breaking strategy."
                   >
                     <span class="help-icon">?</span>
                   </el-tooltip>
@@ -180,6 +180,16 @@
                       class="param-input"
                     />
                     <span class="param-label">window size (rows)</span>
+                    <el-select
+                      v-model="item.edge_behavior"
+                      size="small"
+                      class="param-input edge-select"
+                    >
+                      <el-option label="Leave empty (null)" value="require_full" />
+                      <el-option label="Use partial window" value="partial" />
+                      <el-option label="Fill with 0" value="fill_zero" />
+                    </el-select>
+                    <span class="param-label">incomplete windows</span>
                   </div>
                   <div v-else-if="item.function === 'tile'" class="param-cell">
                     <el-input-number
@@ -304,6 +314,7 @@ const addOp = () => {
     new_column_name: "",
     window_size: 3,
     min_periods: null,
+    edge_behavior: "require_full",
     number_of_groups: null,
     rank_method: "ordinal",
   };
@@ -318,8 +329,9 @@ const removeOp = (index: number) => {
 };
 
 const onFunctionChange = (item: WindowFunctionInput, index: number) => {
-  if (isRolling(item.function) && (!item.window_size || item.window_size < 1)) {
-    item.window_size = 3;
+  if (isRolling(item.function)) {
+    if (!item.window_size || item.window_size < 1) item.window_size = 3;
+    if (!item.edge_behavior) item.edge_behavior = "require_full";
   }
   if (item.function === "tile" && (!item.number_of_groups || item.number_of_groups < 2)) {
     item.number_of_groups = 4;
@@ -485,6 +497,9 @@ defineExpose({
 }
 .param-input {
   width: 100%;
+}
+.edge-select {
+  margin-top: 4px;
 }
 .param-label {
   font-size: 10px;

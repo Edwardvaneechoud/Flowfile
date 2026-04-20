@@ -985,6 +985,8 @@ WindowFunctionName = Literal[
 
 RankMethod = Literal["ordinal", "dense", "min", "max", "average"]
 
+RollingEdgeBehavior = Literal["require_full", "partial", "fill_zero"]
+
 _ROLLING_FUNCTIONS = {"rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std"}
 _CUMULATIVE_FUNCTIONS = {"cum_sum", "cum_count", "cum_min", "cum_max"}
 
@@ -1023,6 +1025,7 @@ class WindowFunctionInput(BaseModel):
     new_column_name: str
     window_size: int | None = None
     min_periods: int | None = None
+    edge_behavior: RollingEdgeBehavior | None = "require_full"
     number_of_groups: int | None = None
     rank_method: RankMethod | None = "ordinal"
     output_type: str | None = None

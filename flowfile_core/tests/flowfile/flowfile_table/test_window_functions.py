@@ -49,6 +49,86 @@ def test_rolling_mean_with_partition_and_order() -> None:
     assert out.sort(["group", "t"]).equals(expected)
 
 
+def test_rolling_edge_behavior_require_full() -> None:
+    fde = FlowDataEngine(pl.DataFrame({"t": [1, 2, 3, 4], "value": [10.0, 20.0, 30.0, 40.0]}))
+    settings = transform_schema.WindowFunctionsInput(
+        order_by=[transform_schema.SortByInput(column="t", how="asc")],
+        window_functions=[
+            transform_schema.WindowFunctionInput(
+                column="value",
+                function="rolling_sum",
+                new_column_name="v",
+                window_size=3,
+                edge_behavior="require_full",
+            )
+        ],
+    )
+    out = _collect(fde.do_window_functions(settings)).sort("t")
+    assert out["v"].to_list() == [None, None, 60.0, 90.0]
+
+
+def test_rolling_edge_behavior_partial() -> None:
+    fde = FlowDataEngine(pl.DataFrame({"t": [1, 2, 3, 4], "value": [10.0, 20.0, 30.0, 40.0]}))
+    settings = transform_schema.WindowFunctionsInput(
+        order_by=[transform_schema.SortByInput(column="t", how="asc")],
+        window_functions=[
+            transform_schema.WindowFunctionInput(
+                column="value",
+                function="rolling_sum",
+                new_column_name="v",
+                window_size=3,
+                edge_behavior="partial",
+            )
+        ],
+    )
+    out = _collect(fde.do_window_functions(settings)).sort("t")
+    assert out["v"].to_list() == [10.0, 30.0, 60.0, 90.0]
+
+
+def test_rolling_edge_behavior_fill_zero() -> None:
+    fde = FlowDataEngine(pl.DataFrame({"t": [1, 2, 3, 4], "value": [10.0, 20.0, 30.0, 40.0]}))
+    settings = transform_schema.WindowFunctionsInput(
+        order_by=[transform_schema.SortByInput(column="t", how="asc")],
+        window_functions=[
+            transform_schema.WindowFunctionInput(
+                column="value",
+                function="rolling_sum",
+                new_column_name="v",
+                window_size=3,
+                edge_behavior="fill_zero",
+            )
+        ],
+    )
+    out = _collect(fde.do_window_functions(settings)).sort("t")
+    # fill_zero uses partial windows under the hood, so the rolling sums are
+    # computed on 1, 2, 3 rows respectively — no nulls to fill in this case.
+    assert out["v"].to_list() == [10.0, 30.0, 60.0, 90.0]
+
+
+def test_rolling_edge_behavior_fill_zero_with_nulls() -> None:
+    fde = FlowDataEngine(
+        pl.DataFrame({"t": [1, 2, 3, 4], "value": [None, None, 30.0, 40.0]})
+    )
+    settings = transform_schema.WindowFunctionsInput(
+        order_by=[transform_schema.SortByInput(column="t", how="asc")],
+        window_functions=[
+            transform_schema.WindowFunctionInput(
+                column="value",
+                function="rolling_sum",
+                new_column_name="v",
+                window_size=2,
+                edge_behavior="fill_zero",
+            )
+        ],
+    )
+    out = _collect(fde.do_window_functions(settings)).sort("t")
+    # Row 1: partial window with only null -> null -> filled with 0
+    # Row 2: two nulls -> null -> filled with 0
+    # Row 3: null + 30 -> 30
+    # Row 4: 30 + 40 -> 70
+    assert out["v"].to_list() == [0.0, 0.0, 30.0, 70.0]
+
+
 def test_cumulative_sum_partitioned() -> None:
     fde = FlowDataEngine(
         pl.DataFrame(
