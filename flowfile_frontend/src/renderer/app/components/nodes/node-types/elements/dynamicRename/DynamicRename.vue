@@ -35,12 +35,13 @@
         </div>
         <div v-else>
           <div class="listbox-subtitle">Formula</div>
-          <el-input
-            v-model="settings.formula"
-            placeholder='e.g. uppercase([column_name]) or "v2_" + [column_name]'
-            size="small"
-            clearable
-          />
+          <div class="formula-editor">
+            <FunctionEditor
+              :editor-string="settings.formula"
+              :columns="['column_name']"
+              @update-editor-string="settings.formula = $event"
+            />
+          </div>
           <div class="hint">
             Use <code>[column_name]</code> to reference the current column name.
           </div>
@@ -130,6 +131,7 @@ import axios from "../../../../../services/axios.config";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import FunctionEditor from "../../../../../features/designer/editor/FunctionEditor.vue";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import type {
   DynamicRenameInput,
@@ -314,6 +316,12 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 
 .selection-body {
   margin-top: 8px;
+}
+
+.formula-editor {
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .column-type {
