@@ -28,6 +28,10 @@ class GoogleAnalyticsReadSettings(BaseModel):
     """Payload for ``POST /store_google_analytics_read_result``."""
 
     refresh_token_encrypted: str
+    oauth_client_id: str
+    # Master-key encrypted (Fernet). The worker's ``decrypt_secret`` falls
+    # back to master-key decryption for tokens without the ``$ffsec$`` prefix.
+    oauth_client_secret_encrypted: str
 
     property_id: str
     start_date: str = "7daysAgo"
@@ -46,3 +50,7 @@ class GoogleAnalyticsReadSettings(BaseModel):
     def get_decrypted_refresh_token(self) -> str:
         """Return the plaintext OAuth refresh token. Never logged."""
         return decrypt_secret(self.refresh_token_encrypted).get_secret_value()
+
+    def get_decrypted_client_secret(self) -> str:
+        """Return the plaintext OAuth client secret. Never logged."""
+        return decrypt_secret(self.oauth_client_secret_encrypted).get_secret_value()

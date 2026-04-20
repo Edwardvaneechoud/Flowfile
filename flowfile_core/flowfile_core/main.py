@@ -22,6 +22,7 @@ from flowfile_core.configs.settings import (
     WORKER_URL,
 )
 from flowfile_core.kernel import router as kernel_router
+from flowfile_core.routes.admin_settings import router as admin_settings_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
@@ -132,6 +133,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
+app.include_router(admin_settings_router, prefix="/admin", tags=["admin_settings"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(kernel_router, tags=["kernels"])

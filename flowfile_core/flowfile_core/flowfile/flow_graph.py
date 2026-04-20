@@ -2923,10 +2923,12 @@ class FlowGraph:
         derived locally from the selected metrics/dimensions — no network call
         is made during schema prediction, keeping downstream nodes lazy.
         """
+        from flowfile_core.configs.app_settings import get_google_oauth_config
         from flowfile_core.flowfile.database_connection_manager.ga_connections import (
             get_encrypted_refresh_token,
         )
         from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
+        from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key
         from flowfile_worker.external_sources.google_analytics_source.models import (
             GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
         )
@@ -2950,9 +2952,23 @@ class FlowGraph:
                         "or has not completed OAuth sign-in"
                     ),
                 )
+            oauth_cfg = get_google_oauth_config(db)
+
+        if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Google OAuth is not configured on this instance. Open Admin → Google OAuth "
+                    "and paste your OAuth client credentials before running this flow."
+                ),
+            )
+
+        client_secret_encrypted = _encrypt_with_master_key(oauth_cfg["client_secret"])
 
         worker_settings = WorkerGoogleAnalyticsReadSettings(
             refresh_token_encrypted=encrypted_refresh_token,
+            oauth_client_id=oauth_cfg["client_id"],
+            oauth_client_secret_encrypted=client_secret_encrypted,
             property_id=ga_settings.property_id,
             start_date=ga_settings.start_date,
             end_date=ga_settings.end_date,

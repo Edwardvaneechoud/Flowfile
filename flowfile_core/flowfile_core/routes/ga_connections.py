@@ -88,14 +88,22 @@ def _verify_oauth_state(state: str) -> dict:
     return payload
 
 
-def _require_oauth_config() -> None:
-    if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
+def _resolve_oauth_config(db: Session) -> dict[str, str]:
+    """Return the resolved Google OAuth client config or raise 500 if missing.
+
+    Looks in ``app_settings`` first (set via the admin UI) then falls back to
+    env vars. Either way the caller gets a usable ``{client_id, client_secret,
+    redirect_uri}`` dict or a clean error explaining how to configure it.
+    """
+    cfg = get_google_oauth_config(db)
+    if not cfg["client_id"] or not cfg["client_secret"] or not cfg["redirect_uri"]:
         raise HTTPException(
             500,
-            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not configured. "
-            "Register a Web application OAuth client at "
-            "https://console.cloud.google.com/apis/credentials and set the env vars.",
+            "Google OAuth is not configured. Open Admin → Google OAuth and paste "
+            "your Web application OAuth client credentials from "
+            "https://console.cloud.google.com/apis/credentials.",
         )
+    return cfg
 
 
 def _callback_html(status: str, message: str) -> str:
@@ -129,11 +137,12 @@ def oauth_start(
     description: str | None = Query(None),
     default_property_id: str | None = Query(None),
     current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
 ) -> OAuthStartResponse:
     """Return the Google auth URL to open in a popup. The state JWT carries
     the user id + form values, signed with Flowfile's JWT secret so the
     (unauthenticated) callback can trust them."""
-    _require_oauth_config()
+    cfg = _resolve_oauth_config(db)
     state = _sign_oauth_state(
         user_id=current_user.id,
         connection_name=connection_name,
@@ -142,8 +151,8 @@ def oauth_start(
     )
     params = {
         "response_type": "code",
-        "client_id": GOOGLE_OAUTH_CLIENT_ID,
-        "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
+        "client_id": cfg["client_id"],
+        "redirect_uri": cfg["redirect_uri"],
         "scope": _OAUTH_SCOPES,
         "access_type": "offline",
         "prompt": "consent",
@@ -174,15 +183,15 @@ def oauth_callback(
     except HTTPException as e:
         return HTMLResponse(_callback_html("error", e.detail), status_code=400)
 
-    _require_oauth_config()
+    cfg = _resolve_oauth_config(db)
 
     token_resp = requests.post(
         _OAUTH_TOKEN_URL,
         data={
             "code": code,
-            "client_id": GOOGLE_OAUTH_CLIENT_ID,
-            "client_secret": GOOGLE_OAUTH_CLIENT_SECRET,
-            "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "redirect_uri": cfg["redirect_uri"],
             "grant_type": "authorization_code",
         },
         timeout=20,
@@ -292,7 +301,7 @@ def test_ga_connection(
 ) -> GoogleAnalyticsConnectionTestResponse:
     """Refresh the stored OAuth token. Proves the refresh token is still valid
     without touching the Analytics Data API (so no property-level IAM needed)."""
-    _require_oauth_config()
+    cfg = _resolve_oauth_config(db)
     encrypted = get_encrypted_refresh_token(db, request.connection_name, current_user.id)
     if encrypted is None:
         raise HTTPException(404, "Google Analytics connection not found")
@@ -318,8 +327,8 @@ def test_ga_connection(
             token=None,
             refresh_token=refresh_token,
             token_uri=_OAUTH_TOKEN_URL,
-            client_id=GOOGLE_OAUTH_CLIENT_ID,
-            client_secret=GOOGLE_OAUTH_CLIENT_SECRET,
+            client_id=cfg["client_id"],
+            client_secret=cfg["client_secret"],
             scopes=["https://www.googleapis.com/auth/analytics.readonly"],
         )
         creds.refresh(Request())

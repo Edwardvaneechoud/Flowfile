@@ -10,7 +10,6 @@ pagination — happens entirely in this process so the core stays responsive.
 
 from __future__ import annotations
 
-import os
 import re
 
 import polars as pl
@@ -164,20 +163,19 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
         ga_read_settings.end_date,
     )
 
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
+    if not ga_read_settings.oauth_client_id or not ga_read_settings.oauth_client_secret_encrypted:
         raise RuntimeError(
-            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set on the worker. "
-            "They must match the values used by the core when the connection was authorised."
+            "OAuth client credentials missing from read settings. "
+            "Configure them under Admin → Google OAuth in the Flowfile UI."
         )
 
     refresh_token = ga_read_settings.get_decrypted_refresh_token()
+    client_secret = ga_read_settings.get_decrypted_client_secret()
     creds = Credentials(
         token=None,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
+        client_id=ga_read_settings.oauth_client_id,
         client_secret=client_secret,
         scopes=["https://www.googleapis.com/auth/analytics.readonly"],
     )

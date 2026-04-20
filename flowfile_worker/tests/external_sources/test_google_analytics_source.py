@@ -17,10 +17,8 @@ import polars as pl
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _oauth_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+_TEST_CLIENT_ID = "test-client-id"
+_TEST_CLIENT_SECRET_ENCRYPTED = "$ffsec$1$1$ignored-master-key-token"
 
 
 @pytest.fixture
@@ -181,17 +179,21 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
 
 def _build_settings(monkeypatch: pytest.MonkeyPatch, limit: int | None = None):
     """Build a GoogleAnalyticsReadSettings whose ``decrypt_secret`` returns a
-    fixed plaintext refresh token without doing real Fernet work."""
+    fixed plaintext token without doing real Fernet work. Used for both the
+    per-user refresh token and the master-key client-secret decrypt paths."""
     from flowfile_worker.external_sources.google_analytics_source import models as ga_models
 
-    fake_token = "1//0g-fake-refresh-token"
-    monkeypatch.setattr(
-        ga_models,
-        "decrypt_secret",
-        lambda _token: mock.MagicMock(get_secret_value=lambda: fake_token),
-    )
+    def fake_decrypt(token: str):
+        # Distinguish refresh-token vs client-secret by the encrypted value.
+        if token == _TEST_CLIENT_SECRET_ENCRYPTED:
+            return mock.MagicMock(get_secret_value=lambda: "plaintext-client-secret")
+        return mock.MagicMock(get_secret_value=lambda: "1//0g-fake-refresh-token")
+
+    monkeypatch.setattr(ga_models, "decrypt_secret", fake_decrypt)
     return ga_models.GoogleAnalyticsReadSettings(
         refresh_token_encrypted="$ffsec$1$1$ignored-by-fake",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
         property_id="999",
         start_date="7daysAgo",
         end_date="yesterday",
@@ -280,13 +282,15 @@ def test_read_google_analytics_empty_result(monkeypatch, fake_google_sdk):
     assert df.schema["sessions"] == pl.Int64
 
 
-def test_refresh_token_is_decrypted_and_credentials_built(monkeypatch, fake_google_sdk):
-    """The refresh token must be decrypted and passed to the OAuth Credentials
-    constructor, which must then refresh() into an access token."""
-    captured: dict[str, Any] = {}
+def test_refresh_token_and_client_secret_are_decrypted(monkeypatch, fake_google_sdk):
+    """Both the per-user refresh token and the master-key-encrypted client
+    secret must be decrypted and handed to the OAuth ``Credentials`` constructor."""
+    decrypt_calls: list[str] = []
 
     def fake_decrypt(token: str):
-        captured["token"] = token
+        decrypt_calls.append(token)
+        if token == "MASTER-KEY-TOKEN":
+            return mock.MagicMock(get_secret_value=lambda: "plaintext-client-secret")
         return mock.MagicMock(get_secret_value=lambda: "plaintext-refresh-token")
 
     from flowfile_worker.external_sources.google_analytics_source import models as ga_models
@@ -296,6 +300,8 @@ def test_refresh_token_is_decrypted_and_credentials_built(monkeypatch, fake_goog
     _, creds_cls = fake_google_sdk([[]])
     settings = ga_models.GoogleAnalyticsReadSettings(
         refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id="real-client-id",
+        oauth_client_secret_encrypted="MASTER-KEY-TOKEN",
         property_id="1",
         start_date="2024-01-01",
         end_date="2024-01-02",
@@ -309,26 +315,43 @@ def test_refresh_token_is_decrypted_and_credentials_built(monkeypatch, fake_goog
 
     read_google_analytics(settings)
 
-    assert captured["token"] == "$ffsec$1$1$mock"
+    assert "$ffsec$1$1$mock" in decrypt_calls
+    assert "MASTER-KEY-TOKEN" in decrypt_calls
     built = creds_cls.last_built
     assert built is not None
     assert built.refresh_token == "plaintext-refresh-token"
-    assert built.client_id == "test-client-id"
-    assert built.client_secret == "test-client-secret"
+    assert built.client_id == "real-client-id"
+    assert built.client_secret == "plaintext-client-secret"
     assert built.refreshed is True
 
 
-def test_missing_oauth_env_raises(monkeypatch, fake_google_sdk):
-    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
-    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+def test_missing_oauth_client_id_raises(monkeypatch, fake_google_sdk):
+    """If the core forgot to inject OAuth client credentials, the worker
+    must fail with a clear message rather than a confusing Google error."""
     fake_google_sdk([[]])
-    settings = _build_settings(monkeypatch)
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: "x"),
+    )
+    settings = ga_models.GoogleAnalyticsReadSettings(
+        refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id="",
+        oauth_client_secret_encrypted="",
+        property_id="1",
+        start_date="2024-01-01",
+        end_date="2024-01-02",
+        metrics=["sessions"],
+        dimensions=["date"],
+    )
 
     from flowfile_worker.external_sources.google_analytics_source.main import (
         read_google_analytics,
     )
 
-    with pytest.raises(RuntimeError, match="GOOGLE_OAUTH_CLIENT_ID"):
+    with pytest.raises(RuntimeError, match="OAuth client credentials missing"):
         read_google_analytics(settings)
 
 
