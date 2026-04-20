@@ -454,12 +454,18 @@ class FlowDataEngine:
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings,
                 use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings,
                 use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "json":
@@ -519,21 +525,24 @@ class FlowDataEngine:
 
     @staticmethod
     def _get_schema_from_first_file_in_dir(
-            source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"],
-            use_pyarrow: bool = False,
+        source: str,
+        storage_options: dict[str, Any],
+        file_format: Literal["csv", "parquet", "json", "delta"],
+        use_pyarrow: bool = False,
     ) -> list[FlowfileColumn] | None:
         """Infers the schema by scanning the first file in a cloud directory."""
         from pyarrow import parquet as pq
+
         try:
             first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
 
             if use_pyarrow:
                 import gcsfs
+
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 return convert_stats_to_column_info(
                     FlowDataEngine._create_schema_stats_from_pl_schema(
-                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table())
-                        .collect_schema()
+                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table()).collect_schema()
                     )
                 )
             else:
@@ -579,14 +588,15 @@ class FlowDataEngine:
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
             if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet",
-                                                                use_pyarrow=use_pyarrow)
+                schema = cls._get_schema_from_first_file_in_dir(
+                    resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
+                )
             else:
                 schema = None
             if use_pyarrow:
-                lf = get_lazy_frame_from_gcs_pyarrow_dataset(resource_path=resource_path,
-                                                             storage_options=storage_options,
-                                                             is_directory=is_directory)
+                lf = get_lazy_frame_from_gcs_pyarrow_dataset(
+                    resource_path=resource_path, storage_options=storage_options, is_directory=is_directory
+                )
             else:
                 lf = pl.scan_parquet(**scan_kwargs)
             return cls(
@@ -615,9 +625,7 @@ class FlowDataEngine:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
             if use_pyarrow:
-                lf = scan_delta_from_gcs(
-                    resource_path, storage_options, delta_version=read_settings.delta_version
-                )
+                lf = scan_delta_from_gcs(resource_path, storage_options, delta_version=read_settings.delta_version)
             else:
                 scan_kwargs = {"source": normalize_delta_path(resource_path)}
                 if read_settings.delta_version:
@@ -715,6 +723,7 @@ class FlowDataEngine:
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
                 import gcsfs
+
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:
@@ -1631,9 +1640,7 @@ class FlowDataEngine:
         if seed is None:
             seed = random.randint(0, 2**31 - 1)
         shuffled = (
-            self.data_frame.with_columns(
-                pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__")
-            )
+            self.data_frame.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__"))
             .sort("__split_rank__")
             .drop("__split_rank__")
             .collect()
@@ -2214,6 +2221,79 @@ class FlowDataEngine:
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
     @staticmethod
+    def _select_rename_targets(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DynamicRenameInput,
+    ) -> list[str]:
+        """Return the ordered list of column names the rename rule applies to."""
+        mode = settings.selection_mode
+        if mode == "all":
+            return [name for name, _ in columns]
+        if mode == "list":
+            available = {name for name, _ in columns}
+            return [c for c in settings.selected_columns if c in available]
+        if mode == "data_type":
+            wanted = settings.selected_data_type
+            if wanted is None:
+                return []
+            return [name for name, group in columns if group == wanted]
+        return []
+
+    @staticmethod
+    def _compute_renamed_names(
+        targets: list[str],
+        settings: transform_schemas.DynamicRenameInput,
+    ) -> list[str]:
+        """Return new names aligned 1:1 with `targets` for the configured rename mode.
+
+        Raises `ValueError` if a formula yields a null or changes cardinality.
+        """
+        if not targets:
+            return []
+        mode = settings.rename_mode
+        if mode == "prefix":
+            return [f"{settings.prefix}{n}" for n in targets]
+        if mode == "suffix":
+            return [f"{n}{settings.suffix}" for n in targets]
+        if mode == "formula":
+            if not settings.formula.strip():
+                return list(targets)
+            expr = to_expr(settings.formula)
+            tmp = pl.DataFrame({"column_name": targets})
+            results = tmp.select(expr.alias("__ff_rename__"))["__ff_rename__"].to_list()
+            # A scalar/literal formula (e.g. `"x"`) returns a single row; broadcast
+            # it to match `targets`. Any other length mismatch means the formula
+            # changed cardinality (e.g. an aggregation), which is not a valid rename.
+            if len(results) == 1 and len(targets) > 1:
+                results = results * len(targets)
+            elif len(results) != len(targets):
+                raise ValueError(
+                    "Dynamic rename formula must produce one value per column "
+                    f"(got {len(results)} for {len(targets)} target column(s))."
+                )
+            for original, new in zip(targets, results, strict=True):
+                if new is None:
+                    raise ValueError(f"Dynamic rename formula returned null for column '{original}'.")
+            return [str(n) for n in results]
+        return list(targets)
+
+    @staticmethod
+    def _assert_rename_has_no_duplicates(
+        rename_map: dict[str, str],
+        all_columns: list[tuple[str, str]],
+    ) -> None:
+        """Raise `ValueError` if the rename map would yield duplicate final column names."""
+        untouched = {name for name, _ in all_columns} - rename_map.keys()
+        duplicates: set[str] = set()
+        seen: set[str] = set()
+        for new in rename_map.values():
+            if new in seen or new in untouched:
+                duplicates.add(new)
+            seen.add(new)
+        if duplicates:
+            raise ValueError("Dynamic rename produces duplicate column name(s): " + ", ".join(sorted(duplicates)))
+
+    @staticmethod
     def resolve_dynamic_rename_map(
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
@@ -2233,55 +2313,10 @@ class FlowDataEngine:
             A dict mapping original column name to new column name. No-op renames are
             omitted, so the result is safe to pass directly to `pl.DataFrame.rename`.
         """
-        if settings.selection_mode == "all":
-            targets = [name for name, _ in columns]
-        elif settings.selection_mode == "list":
-            available = {name for name, _ in columns}
-            targets = [c for c in settings.selected_columns if c in available]
-        elif settings.selection_mode == "data_type":
-            wanted = settings.selected_data_type
-            if wanted is None:
-                targets = []
-            else:
-                targets = [name for name, group in columns if group == wanted]
-        else:
-            targets = []
-
-        rename_map: dict[str, str] = {}
-        if settings.rename_mode == "prefix":
-            for name in targets:
-                rename_map[name] = f"{settings.prefix}{name}"
-        elif settings.rename_mode == "suffix":
-            for name in targets:
-                rename_map[name] = f"{name}{settings.suffix}"
-        elif settings.rename_mode == "formula":
-            if targets and settings.formula.strip():
-                expr = to_expr(settings.formula)
-                for name in targets:
-                    tmp = pl.DataFrame({"column_name": [name]})
-                    result = tmp.select(expr.alias("__ff_rename__"))["__ff_rename__"][0]
-                    if result is None:
-                        raise ValueError(
-                            f"Dynamic rename formula returned null for column '{name}'."
-                        )
-                    rename_map[name] = str(result)
-
-        rename_map = {old: new for old, new in rename_map.items() if old != new}
-
-        untouched = {name for name, _ in columns} - set(rename_map)
-        new_names = list(rename_map.values())
-        duplicates: set[str] = set()
-        seen: set[str] = set()
-        for new in new_names:
-            if new in seen:
-                duplicates.add(new)
-            seen.add(new)
-            if new in untouched:
-                duplicates.add(new)
-        if duplicates:
-            raise ValueError(
-                "Dynamic rename produces duplicate column name(s): " + ", ".join(sorted(duplicates))
-            )
+        targets = FlowDataEngine._select_rename_targets(columns, settings)
+        new_names = FlowDataEngine._compute_renamed_names(targets, settings)
+        rename_map = {old: new for old, new in zip(targets, new_names, strict=True) if old != new}
+        FlowDataEngine._assert_rename_has_no_duplicates(rename_map, columns)
         return rename_map
 
     def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
