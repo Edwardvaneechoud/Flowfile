@@ -110,10 +110,10 @@
             <span>&rarr;</span>
             <span>Renamed</span>
           </div>
-          <div v-for="row in previewRows" :key="row.old" class="preview-row">
-            <span class="preview-old">{{ row.old }}</span>
+          <div v-for="row in previewRows" :key="row.oldName" class="preview-row">
+            <span class="preview-old">{{ row.oldName }}</span>
             <span class="preview-arrow">&rarr;</span>
-            <span class="preview-new">{{ row.new }}</span>
+            <span class="preview-new">{{ row.newName }}</span>
           </div>
         </div>
       </div>
@@ -139,8 +139,8 @@ import type {
 import { createDynamicRenameNode } from "./dynamicRename";
 
 interface PreviewRow {
-  old: string;
-  new: string;
+  oldName: string;
+  newName: string;
 }
 
 interface PreviewResponse {
@@ -214,12 +214,12 @@ const resolveClientPreview = (): PreviewRow[] => {
   if (s.rename_mode === "prefix") {
     for (const name of targets) {
       const newName = `${s.prefix}${name}`;
-      if (newName !== name) mapped.push({ old: name, new: newName });
+      if (newName !== name) mapped.push({ oldName: name, newName });
     }
   } else if (s.rename_mode === "suffix") {
     for (const name of targets) {
       const newName = `${name}${s.suffix}`;
-      if (newName !== name) mapped.push({ old: name, new: newName });
+      if (newName !== name) mapped.push({ oldName: name, newName });
     }
   }
   return mapped;
@@ -256,7 +256,7 @@ const refreshPreview = () => {
         previewRows.value = [];
       } else {
         previewRows.value = Object.entries(response.data.rename_map).map(
-          ([oldName, newName]) => ({ old: oldName, new: newName }),
+          ([oldName, newName]) => ({ oldName, newName }),
         );
       }
     } catch (err) {
