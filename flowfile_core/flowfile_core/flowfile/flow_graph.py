@@ -2733,6 +2733,7 @@ class FlowGraph:
                     fields=node_database_reader.fields,
                 )
                 fl = FlowDataEngine(local_source.get_pl_df())
+                fl.lazy = True
                 node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
                 return fl
 
