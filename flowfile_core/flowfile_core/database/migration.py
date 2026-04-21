@@ -14,6 +14,8 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
@@ -54,9 +56,48 @@ def _catalog_db_exists() -> bool:
     return False
 
 
+def _ensure_known_revision(cfg: Config) -> None:
+    """Re-stamp the catalog DB to the local head if it points at an unknown revision.
+
+    A DB stamped at a revision missing from the local migration scripts (e.g.
+    after switching back to an older branch) would crash ``command.upgrade``.
+    Schema artifacts from the unknown revision are not reverted — only the
+    ``alembic_version`` pointer is corrected so startup can proceed.
+    """
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    try:
+        if not inspect(engine).has_table("alembic_version"):
+            return
+        with engine.connect() as conn:
+            current = MigrationContext.configure(conn).get_current_revision()
+        if current is None:
+            return
+
+        script = ScriptDirectory.from_config(cfg)
+        try:
+            script.get_revision(current)
+            return
+        except Exception:
+            pass
+
+        head = script.get_current_head()
+        logger.warning(
+            "Catalog DB stamped at unknown revision '%s' (not in local migration "
+            "scripts). Rolling back stamp to last known head '%s'. Schema changes "
+            "from the unknown revision are NOT reverted; manual cleanup may be "
+            "required if columns/tables conflict.",
+            current,
+            head,
+        )
+        command.stamp(cfg, head, purge=True)
+    finally:
+        engine.dispose()
+
+
 def run_alembic_upgrade() -> None:
     """Run all pending Alembic migrations up to *head*."""
     cfg = _get_alembic_config()
+    _ensure_known_revision(cfg)
     command.upgrade(cfg, "head")
     logger.info("Alembic migrations applied successfully")
 
