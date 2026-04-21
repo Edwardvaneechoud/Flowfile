@@ -21,7 +21,13 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user, get_jwt_secret
 from flowfile_core.configs import logger
-from flowfile_core.configs.app_settings import get_google_oauth_config
+from flowfile_core.configs.app_settings import (
+    GOOGLE_OAUTH_CLIENT_SECRET_KEY,
+    clear_google_oauth_config,
+    get_google_oauth_config,
+    get_user_secret,
+    set_google_oauth_config,
+)
 from flowfile_core.configs.settings import ALGORITHM
 from flowfile_core.database.connection import get_db
 from flowfile_core.flowfile.database_connection_manager.ga_connections import (
@@ -60,6 +66,19 @@ class OAuthStartResponse(BaseModel):
     auth_url: str
 
 
+class GoogleOAuthClientView(BaseModel):
+    client_id: str
+    redirect_uri: str
+    is_configured: bool
+
+
+class GoogleOAuthClientInput(BaseModel):
+    client_id: str
+    # Blank means "keep the existing stored secret" — matches the form UX.
+    client_secret: str = ""
+    redirect_uri: str
+
+
 def _sign_oauth_state(
     *,
     user_id: int,
@@ -88,19 +107,20 @@ def _verify_oauth_state(state: str) -> dict:
     return payload
 
 
-def _resolve_oauth_config(db: Session) -> dict[str, str]:
+def _resolve_oauth_config(db: Session, user_id: int) -> dict[str, str]:
     """Return the resolved Google OAuth client config or raise 500 if missing.
 
-    Looks in ``app_settings`` first (set via the admin UI) then falls back to
-    env vars. Either way the caller gets a usable ``{client_id, client_secret,
-    redirect_uri}`` dict or a clean error explaining how to configure it.
+    Looks in the user's own Secret rows first (set via the Google OAuth card on
+    the GA Connections page) then falls back to env vars. Either way the caller
+    gets a usable ``{client_id, client_secret, redirect_uri}`` dict or a clean
+    error explaining how to configure it.
     """
-    cfg = get_google_oauth_config(db)
+    cfg = get_google_oauth_config(db, user_id)
     if not cfg["client_id"] or not cfg["client_secret"] or not cfg["redirect_uri"]:
         raise HTTPException(
             500,
-            "Google OAuth is not configured. Open Admin → Google OAuth and paste "
-            "your Web application OAuth client credentials from "
+            "Google OAuth is not configured. Open Connections → Google Analytics and "
+            "paste your Web application OAuth client credentials from "
             "https://console.cloud.google.com/apis/credentials.",
         )
     return cfg
@@ -142,7 +162,7 @@ def oauth_start(
     """Return the Google auth URL to open in a popup. The state JWT carries
     the user id + form values, signed with Flowfile's JWT secret so the
     (unauthenticated) callback can trust them."""
-    cfg = _resolve_oauth_config(db)
+    cfg = _resolve_oauth_config(db, current_user.id)
     state = _sign_oauth_state(
         user_id=current_user.id,
         connection_name=connection_name,
@@ -183,7 +203,7 @@ def oauth_callback(
     except HTTPException as e:
         return HTMLResponse(_callback_html("error", e.detail), status_code=400)
 
-    cfg = _resolve_oauth_config(db)
+    cfg = _resolve_oauth_config(db, int(state_payload["user_id"]))
 
     token_resp = requests.post(
         _OAUTH_TOKEN_URL,
@@ -301,7 +321,7 @@ def test_ga_connection(
 ) -> GoogleAnalyticsConnectionTestResponse:
     """Refresh the stored OAuth token. Proves the refresh token is still valid
     without touching the Analytics Data API (so no property-level IAM needed)."""
-    cfg = _resolve_oauth_config(db)
+    cfg = _resolve_oauth_config(db, current_user.id)
     encrypted = get_encrypted_refresh_token(db, request.connection_name, current_user.id)
     if encrypted is None:
         raise HTTPException(404, "Google Analytics connection not found")
@@ -340,3 +360,53 @@ def test_ga_connection(
     return GoogleAnalyticsConnectionTestResponse(
         success=True, message="Refresh token is valid"
     )
+
+
+@router.get("/oauth/client_config", response_model=GoogleOAuthClientView, tags=["ga_connections"])
+def get_oauth_client(
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> GoogleOAuthClientView:
+    """Return the stored OAuth client config (client secret is never echoed)."""
+    cfg = get_google_oauth_config(db, current_user.id)
+    return GoogleOAuthClientView(
+        client_id=cfg["client_id"],
+        redirect_uri=cfg["redirect_uri"],
+        is_configured=bool(cfg["client_id"] and cfg["client_secret"] and cfg["redirect_uri"]),
+    )
+
+
+@router.put("/oauth/client_config", tags=["ga_connections"])
+def put_oauth_client(
+    body: GoogleOAuthClientInput,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Persist the OAuth client config. A blank ``client_secret`` preserves the
+    existing stored value so the form can round-trip without the user re-typing
+    the secret on every edit."""
+    if not body.client_id.strip() or not body.redirect_uri.strip():
+        raise HTTPException(422, "client_id and redirect_uri are required")
+
+    existing_secret = get_user_secret(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, current_user.id)
+    effective_secret = body.client_secret or existing_secret
+    if not effective_secret:
+        raise HTTPException(422, "client_secret is required when no existing value is stored")
+
+    set_google_oauth_config(
+        db,
+        user_id=current_user.id,
+        client_id=body.client_id,
+        client_secret=effective_secret,
+        redirect_uri=body.redirect_uri,
+    )
+    return {"message": "OAuth client config saved"}
+
+
+@router.delete("/oauth/client_config", tags=["ga_connections"])
+def delete_oauth_client(
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    clear_google_oauth_config(db, current_user.id)
+    return {"message": "OAuth client config cleared"}

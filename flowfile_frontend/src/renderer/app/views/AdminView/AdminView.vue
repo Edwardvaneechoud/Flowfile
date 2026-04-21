@@ -240,8 +240,6 @@
       </div>
     </div>
 
-    <GoogleOAuthSettingsCard />
-
     <!-- Edit User Modal -->
     <div v-if="showEditModal" class="modal-overlay" @click="closeEditModal">
       <div class="modal-container" @click.stop>
@@ -354,7 +352,6 @@ import userService, {
   type UserCreate,
   type UserUpdate,
 } from "../../services/user.service";
-import GoogleOAuthSettingsCard from "./GoogleOAuthSettingsCard.vue";
 
 const authStore = useAuthStore();
 const currentUserId = computed(() => authStore.currentUser?.id);

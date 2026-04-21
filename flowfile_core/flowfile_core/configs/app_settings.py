@@ -1,72 +1,83 @@
-"""Instance-wide configuration storage, encrypted with the master key.
+"""Per-user OAuth client config for the Google Analytics connector.
 
-For values that aren't per-user — e.g. the Google OAuth client ID/secret the
-server uses to talk to Google on any user's behalf. Keys used today:
-
-- ``google_oauth_client_id``
-- ``google_oauth_client_secret``
-- ``google_oauth_redirect_uri``
-
-All values round-trip as strings. Readers call ``get_app_setting`` or the
-typed helper ``get_google_oauth_config`` (which also falls back to env vars).
+Stored as three well-known rows in the per-user ``Secret`` table so they show
+up in the Secrets UI next to the refresh tokens and can be deleted from the
+same place. Env vars act as a fallback for bootstrap / Docker deployments.
 """
 
 from __future__ import annotations
 
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth.models import SecretInput
 from flowfile_core.configs.settings import (
     GOOGLE_OAUTH_CLIENT_ID,
     GOOGLE_OAUTH_CLIENT_SECRET,
     GOOGLE_OAUTH_REDIRECT_URI,
 )
-from flowfile_core.database.models import AppSetting
-from flowfile_core.secret_manager.secret_manager import (
-    _decrypt_with_master_key,
-    _encrypt_with_master_key,
+from flowfile_core.database.models import Secret
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, store_secret
+
+GOOGLE_OAUTH_CLIENT_ID_KEY = "ga_oauth_client_id"
+GOOGLE_OAUTH_CLIENT_SECRET_KEY = "ga_oauth_client_secret"
+GOOGLE_OAUTH_REDIRECT_URI_KEY = "ga_oauth_redirect_uri"
+
+_OAUTH_KEYS = (
+    GOOGLE_OAUTH_CLIENT_ID_KEY,
+    GOOGLE_OAUTH_CLIENT_SECRET_KEY,
+    GOOGLE_OAUTH_REDIRECT_URI_KEY,
 )
 
-GOOGLE_OAUTH_CLIENT_ID_KEY = "google_oauth_client_id"
-GOOGLE_OAUTH_CLIENT_SECRET_KEY = "google_oauth_client_secret"
-GOOGLE_OAUTH_REDIRECT_URI_KEY = "google_oauth_redirect_uri"
+
+def _get_secret_row(db: Session, name: str, user_id: int) -> Secret | None:
+    return (
+        db.query(Secret)
+        .filter(Secret.name == name, Secret.user_id == user_id)
+        .first()
+    )
 
 
-def get_app_setting(db: Session, name: str) -> str | None:
-    row = db.query(AppSetting).filter(AppSetting.name == name).first()
+def get_user_secret(db: Session, name: str, user_id: int) -> str | None:
+    row = _get_secret_row(db, name, user_id)
     if row is None:
         return None
-    return _decrypt_with_master_key(row.encrypted_value).get_secret_value()
+    return decrypt_secret(row.encrypted_value, user_id).get_secret_value()
 
 
-def set_app_setting(db: Session, name: str, value: str, user_id: int | None) -> None:
-    encrypted = _encrypt_with_master_key(value)
-    row = db.query(AppSetting).filter(AppSetting.name == name).first()
+def set_user_secret(db: Session, name: str, value: str, user_id: int) -> None:
+    row = _get_secret_row(db, name, user_id)
     if row is None:
-        row = AppSetting(name=name, encrypted_value=encrypted, updated_by_user_id=user_id)
-        db.add(row)
+        store_secret(db, SecretInput(name=name, value=SecretStr(value)), user_id)
     else:
-        row.encrypted_value = encrypted
-        row.updated_by_user_id = user_id
+        # Re-encrypt through store_secret to keep a single encryption code path.
+        # Simpler to update the row in place via encrypt_secret, but SecretInput
+        # guarantees the value never appears unencrypted on any intermediate row.
+        from flowfile_core.secret_manager.secret_manager import encrypt_secret
+
+        row.encrypted_value = encrypt_secret(value, user_id)
+        db.commit()
+
+
+def delete_user_secret(db: Session, name: str, user_id: int) -> None:
+    db.query(Secret).filter(Secret.name == name, Secret.user_id == user_id).delete(
+        synchronize_session=False
+    )
     db.commit()
 
 
-def delete_app_setting(db: Session, name: str) -> None:
-    db.query(AppSetting).filter(AppSetting.name == name).delete(synchronize_session=False)
-    db.commit()
-
-
-def get_google_oauth_config(db: Session) -> dict[str, str]:
-    """Resolve the Google OAuth client config: DB first, env vars as fallback.
+def get_google_oauth_config(db: Session, user_id: int) -> dict[str, str]:
+    """Resolve the Google OAuth client config: user's Secret rows first, env vars as fallback.
 
     Returns keys ``client_id``, ``client_secret``, ``redirect_uri``. Any
     unresolved key is returned as an empty string (callers check for truthiness).
     """
-    client_id = get_app_setting(db, GOOGLE_OAUTH_CLIENT_ID_KEY) or GOOGLE_OAUTH_CLIENT_ID
+    client_id = get_user_secret(db, GOOGLE_OAUTH_CLIENT_ID_KEY, user_id) or GOOGLE_OAUTH_CLIENT_ID
     client_secret = (
-        get_app_setting(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY) or GOOGLE_OAUTH_CLIENT_SECRET
+        get_user_secret(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, user_id) or GOOGLE_OAUTH_CLIENT_SECRET
     )
     redirect_uri = (
-        get_app_setting(db, GOOGLE_OAUTH_REDIRECT_URI_KEY) or GOOGLE_OAUTH_REDIRECT_URI
+        get_user_secret(db, GOOGLE_OAUTH_REDIRECT_URI_KEY, user_id) or GOOGLE_OAUTH_REDIRECT_URI
     )
     return {
         "client_id": client_id or "",
@@ -78,22 +89,16 @@ def get_google_oauth_config(db: Session) -> dict[str, str]:
 def set_google_oauth_config(
     db: Session,
     *,
+    user_id: int,
     client_id: str,
     client_secret: str,
     redirect_uri: str,
-    user_id: int | None,
 ) -> None:
-    set_app_setting(db, GOOGLE_OAUTH_CLIENT_ID_KEY, client_id, user_id)
-    set_app_setting(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, client_secret, user_id)
-    set_app_setting(db, GOOGLE_OAUTH_REDIRECT_URI_KEY, redirect_uri, user_id)
+    set_user_secret(db, GOOGLE_OAUTH_CLIENT_ID_KEY, client_id, user_id)
+    set_user_secret(db, GOOGLE_OAUTH_CLIENT_SECRET_KEY, client_secret, user_id)
+    set_user_secret(db, GOOGLE_OAUTH_REDIRECT_URI_KEY, redirect_uri, user_id)
 
 
-def clear_google_oauth_config(db: Session) -> None:
-    for name in (
-        GOOGLE_OAUTH_CLIENT_ID_KEY,
-        GOOGLE_OAUTH_CLIENT_SECRET_KEY,
-        GOOGLE_OAUTH_REDIRECT_URI_KEY,
-    ):
-        delete_app_setting(db, name)
-
-
+def clear_google_oauth_config(db: Session, user_id: int) -> None:
+    for name in _OAUTH_KEYS:
+        delete_user_secret(db, name, user_id)

@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL = "/admin/settings/google_oauth";
+const API_BASE_URL = "/ga_connections/oauth/client_config";
 
 export interface GoogleOAuthConfigView {
   clientId: string;

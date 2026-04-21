@@ -9,6 +9,8 @@
       </p>
     </div>
 
+    <GoogleOAuthClientCard />
+
     <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Your Connections ({{ connections.length }})</h3>
@@ -135,6 +137,7 @@ import type {
   GoogleAnalyticsConnectionMetadata,
 } from "./GoogleAnalyticsConnectionTypes";
 import GoogleAnalyticsConnectionSettings from "./GoogleAnalyticsConnectionSettings.vue";
+import GoogleOAuthClientCard from "./GoogleOAuthClientCard.vue";
 
 const connections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const isLoading = ref(true);

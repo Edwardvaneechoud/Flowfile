@@ -2952,7 +2952,7 @@ class FlowGraph:
                         "or has not completed OAuth sign-in"
                     ),
                 )
-            oauth_cfg = get_google_oauth_config(db)
+            oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id)
 
         if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
             raise HTTPException(

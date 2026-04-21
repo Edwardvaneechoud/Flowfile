@@ -375,14 +375,15 @@ def test_filters_are_forwarded_to_run_report(monkeypatch, fake_google_sdk):
 
     from flowfile_worker.external_sources.google_analytics_source import models as ga_models
 
-    fake_token = "plaintext"
     monkeypatch.setattr(
         ga_models,
         "decrypt_secret",
-        lambda _token: mock.MagicMock(get_secret_value=lambda: fake_token),
+        lambda _token: mock.MagicMock(get_secret_value=lambda: "plaintext"),
     )
     settings = ga_models.GoogleAnalyticsReadSettings(
         refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
         property_id="1",
         start_date="7daysAgo",
         end_date="yesterday",
@@ -410,14 +411,15 @@ def test_invalid_filter_raises_before_api_call(monkeypatch, fake_google_sdk):
     client_cls, _ = fake_google_sdk([[]])
     from flowfile_worker.external_sources.google_analytics_source import models as ga_models
 
-    fake_token = "plaintext"
     monkeypatch.setattr(
         ga_models,
         "decrypt_secret",
-        lambda _token: mock.MagicMock(get_secret_value=lambda: fake_token),
+        lambda _token: mock.MagicMock(get_secret_value=lambda: "plaintext"),
     )
     settings = ga_models.GoogleAnalyticsReadSettings(
         refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
         property_id="1",
         start_date="2024-01-01",
         end_date="2024-01-31",
@@ -473,6 +475,8 @@ def test_missing_google_sdk_raises_runtime_error(monkeypatch):
 
     settings = GoogleAnalyticsReadSettings(
         refresh_token_encrypted="$ffsec$1$1$x",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
         property_id="1",
         start_date="2024-01-01",
         end_date="2024-01-02",

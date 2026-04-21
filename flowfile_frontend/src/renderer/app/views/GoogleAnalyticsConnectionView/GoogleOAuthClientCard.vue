@@ -1,24 +1,26 @@
 <template>
   <div class="card mb-3">
-    <div class="card-header">
+    <button type="button" class="card-header card-header-button" @click="expanded = !expanded">
       <h3 class="card-title">
         <i class="fa-brands fa-google"></i>&nbsp;Google OAuth
         <span v-if="isConfigured" class="badge badge-success">Configured</span>
         <span v-else class="badge badge-warning">Not configured</span>
       </h3>
-    </div>
-    <div class="card-content">
+      <i
+        class="fa-solid chevron"
+        :class="expanded ? 'fa-chevron-up' : 'fa-chevron-down'"
+        aria-hidden="true"
+      ></i>
+    </button>
+    <div v-if="expanded" class="card-content">
       <p class="section-description">
         OAuth client used by the Google Analytics connector. Create a
         <strong>Web application</strong> OAuth 2.0 client at
-        <a
-          href="https://console.cloud.google.com/apis/credentials"
-          target="_blank"
-          rel="noopener"
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener"
           >console.cloud.google.com/apis/credentials</a
         >
-        and paste the values here. The client secret is encrypted at rest with the
-        instance master key.
+        and paste the values here. The client secret is encrypted at rest with the instance master
+        key.
       </p>
 
       <form class="form" @submit.prevent="handleSave">
@@ -103,7 +105,7 @@ import {
   clearGoogleOAuthConfig,
   fetchGoogleOAuthConfig,
   saveGoogleOAuthConfig,
-} from "./googleOAuthApi";
+} from "./oauthClientApi";
 
 const form = reactive({
   clientId: "",
@@ -114,6 +116,9 @@ const form = reactive({
 const isConfigured = ref(false);
 const isSaving = ref(false);
 const showSecret = ref(false);
+// Default-collapsed once configured so it stops taking up space, expanded
+// on first load so new users see the form they need to fill.
+const expanded = ref(true);
 
 const loadConfig = async () => {
   try {
@@ -121,6 +126,7 @@ const loadConfig = async () => {
     form.clientId = cfg.clientId;
     if (cfg.redirectUri) form.redirectUri = cfg.redirectUri;
     isConfigured.value = cfg.isConfigured;
+    expanded.value = !cfg.isConfigured;
   } catch (error) {
     console.error("Failed to load Google OAuth config", error);
   }
@@ -150,7 +156,11 @@ const handleSave = async () => {
 };
 
 const handleClear = async () => {
-  if (!window.confirm("Clear the stored Google OAuth client? Existing flows will fail until it is reconfigured."))
+  if (
+    !window.confirm(
+      "Clear the stored Google OAuth client? Existing flows will fail until it is reconfigured.",
+    )
+  )
     return;
   isSaving.value = true;
   try {
@@ -171,6 +181,27 @@ onMounted(loadConfig);
 </script>
 
 <style scoped>
+.card-header-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: var(--spacing-3) var(--spacing-4);
+  text-align: left;
+}
+
+.card-header-button:hover {
+  background: var(--color-background-muted, #f7fafc);
+}
+
+.chevron {
+  color: var(--color-text-tertiary);
+  font-size: 0.875rem;
+}
+
 .section-description {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
