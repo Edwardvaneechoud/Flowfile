@@ -2714,6 +2714,9 @@ class FlowGraph:
                 fields=node_database_reader.fields,
             )
 
+            # TODO: centralize this local SQL read with flowfile_worker's
+            # /store_database_read_result path — both call pl.read_database_uri
+            # and have drifted in shape (see schema_callback below too).
             if self.execution_location == "local":
                 local_source = SqlSource(
                     connection_string=sql_utils.construct_sql_uri(
@@ -2724,7 +2727,7 @@ class FlowGraph:
                         username=database_connection.username,
                         password=decrypt_secret(encrypted_password) if encrypted_password else None,
                     ),
-                    query=sql_source.query,
+                    query=None if database_settings.query_mode == "table" else database_settings.query,
                     table_name=database_settings.table_name,
                     schema_name=database_settings.schema_name,
                     fields=node_database_reader.fields,
