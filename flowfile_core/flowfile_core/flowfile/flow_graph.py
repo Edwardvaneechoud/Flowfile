@@ -2713,6 +2713,26 @@ class FlowGraph:
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
             )
+
+            if self.execution_location == "local":
+                local_source = SqlSource(
+                    connection_string=sql_utils.construct_sql_uri(
+                        database_type=database_connection.database_type,
+                        host=database_connection.host,
+                        port=database_connection.port,
+                        database=database_connection.database,
+                        username=database_connection.username,
+                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                    ),
+                    query=sql_source.query,
+                    table_name=database_settings.table_name,
+                    schema_name=database_settings.schema_name,
+                    fields=node_database_reader.fields,
+                )
+                fl = FlowDataEngine(local_source.get_pl_df())
+                node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+                return fl
+
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
