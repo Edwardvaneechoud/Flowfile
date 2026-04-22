@@ -29,6 +29,7 @@ COPY pyproject.toml poetry.lock* ./
 RUN poetry install --only=main --no-root && \
     pip install --no-cache-dir psycopg2-binary==2.9.9 pymysql==1.1.0 && \
     rm -rf $POETRY_CACHE_DIR && \
+    pip install --no-cache-dir psycopg2-binary==2.9.9 pymysql==1.1.0 && \
     # Strip debug symbols from compiled libraries
     find /usr/local/lib/python3.12/site-packages -name "*.so" -exec strip --strip-debug {} \; 2>/dev/null || true && \
     # Remove unnecessary files

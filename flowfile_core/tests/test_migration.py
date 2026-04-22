@@ -485,3 +485,49 @@ class TestTopologicalSort:
         tables = {"catalog_namespaces"}
         order = _compute_table_order(inspector, tables)
         assert order == ["catalog_namespaces"]
+
+
+# Unknown-revision rollback
+
+
+class TestUnknownRevisionRollback:
+    def test_unknown_revision_rolled_back_to_head(self, tmp_path, monkeypatch, capsys):
+        """DB stamped at a revision unknown to local scripts should be re-stamped to head."""
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = '999fakeXYZ'"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        captured = capsys.readouterr()
+
+        from alembic.script import ScriptDirectory
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        head = ScriptDirectory.from_config(_get_alembic_config()).get_current_head()
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        engine.dispose()
+
+        assert ver == head
+        assert "999fakeXYZ" in captured.err
+
+    def test_no_alembic_version_table_is_noop(self, tmp_path, monkeypatch):
+        """DB file exists but lacks alembic_version → upgrade runs from base, no crash."""
+        db_path = tmp_path / "catalog.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("CREATE TABLE marker (id INTEGER)"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        assert "alembic_version" in _get_tables(db_path)
