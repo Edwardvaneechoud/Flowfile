@@ -298,6 +298,89 @@ def list_namespaces(*, parent: str | int | None = None) -> list[NamespaceInfo]:
         return [_ns_info(ns) for ns in svc.list_namespaces(parent_id)]
 
 
+class TableInfo(NamedTuple):
+    id: int
+    name: str
+    namespace_name: str | None
+    full_table_name: str | None
+    table_type: str
+    row_count: int | None
+    source_registration_name: str | None
+
+
+def _table_info(t) -> TableInfo:
+    return TableInfo(
+        id=t.id,
+        name=t.name,
+        namespace_name=t.namespace_name,
+        full_table_name=t.full_table_name,
+        table_type=t.table_type,
+        row_count=t.row_count,
+        source_registration_name=t.source_registration_name,
+    )
+
+
+def list_tables(*, schema: str | int | None = None) -> list[TableInfo]:
+    """List catalog tables, optionally filtered by schema.
+
+    Args:
+        schema: Schema name ('stg'), qualified path ('warehouse.stg'), or id.
+            When None, lists tables across all schemas.
+
+    Returns:
+        A list of TableInfo NamedTuples (id, name, namespace_name, full_table_name,
+        table_type, row_count, source_registration_name).
+    """
+    from flowfile_core.catalog import CatalogService
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+
+    schema_id = _resolve_namespace(schema).id if schema is not None else None
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        return [_table_info(t) for t in svc.list_tables(namespace_id=schema_id)]
+
+
+def list_catalogs() -> list[NamespaceInfo]:
+    """List all catalogs (level-0 namespaces)."""
+    return list_namespaces(parent=None)
+
+
+def list_schemas(*, catalog: str | int | None = None) -> list[NamespaceInfo]:
+    """List schemas (level-1 namespaces), optionally scoped to one catalog.
+
+    Args:
+        catalog: Catalog name or id. When None, lists schemas across all catalogs.
+    """
+    if catalog is not None:
+        return list_namespaces(parent=catalog)
+    all_schemas: list[NamespaceInfo] = []
+    for cat in list_catalogs():
+        all_schemas.extend(list_namespaces(parent=cat.id))
+    return all_schemas
+
+
+def create_catalog(name: str, *, description: str | None = None, user_id: int | None = None) -> int:
+    """Create a catalog (level-0 namespace). Returns the new catalog id."""
+    return create_namespace(name, description=description, user_id=user_id)
+
+
+def create_schema(
+    name: str,
+    *,
+    catalog: str | int,
+    description: str | None = None,
+    user_id: int | None = None,
+) -> int:
+    """Create a schema (level-1 namespace) under ``catalog``. Returns the new schema id."""
+    return create_namespace(name, parent=catalog, description=description, user_id=user_id)
+
+
+def get_schema(name_or_path: str | int) -> NamespaceInfo:
+    """Resolve a schema by id, bare name, or qualified 'catalog.schema' path."""
+    return get_namespace(name_or_path)
+
+
 def _resolve_namespace(name_or_id: str | int):
     """Resolve a namespace reference to the underlying ORM object.
 
@@ -351,8 +434,16 @@ def _resolve_namespace(name_or_id: str | int):
 def _resolve_namespace_arg(
     namespace: str | int | None,
     namespace_id: int | None,
+    schema: str | int | None = None,
 ) -> int | None:
-    """Collapse (namespace, namespace_id) into a single int id. namespace wins if both given."""
+    """Collapse (schema, namespace, namespace_id) into a single int id.
+
+    ``schema`` is the preferred kwarg (level-1 semantics). ``namespace`` is an
+    alias kept for the original API surface. ``namespace_id`` is the legacy int form.
+    Precedence: schema > namespace > namespace_id.
+    """
+    if schema is not None:
+        return _resolve_namespace(schema).id
     if namespace is not None:
         return _resolve_namespace(namespace).id
     return namespace_id
@@ -368,6 +459,7 @@ def add_write_to_catalog(
     depends_on_node_id: int,
     *,
     table_name: str,
+    schema: str | int | None = None,
     namespace: str | int | None = None,
     namespace_id: int | None = None,
     write_mode: WriteMode = "overwrite",
@@ -384,7 +476,7 @@ def add_write_to_catalog(
     from flowfile_core.schemas import input_schema
     from flowfile_frame.utils import generate_node_id
 
-    resolved_ns_id = _resolve_namespace_arg(namespace, namespace_id)
+    resolved_ns_id = _resolve_namespace_arg(namespace, namespace_id, schema)
     _ensure_flow_registered(flow_graph, inferred_name=inferred_flow_name)
 
     node_id = generate_node_id()
@@ -411,6 +503,7 @@ def add_write_to_catalog(
 def read_catalog_table(
     table_name: str,
     *,
+    schema: str | int | None = None,
     namespace: str | int | None = None,
     namespace_id: int | None = None,
     delta_version: int | None = None,
@@ -418,12 +511,13 @@ def read_catalog_table(
 ) -> FlowFrame:
     """Read a table from the Flowfile catalog.
 
-    Resolves the table by name (and optionally namespace) via the catalog
+    Resolves the table by name (and optionally schema) via the catalog
     service, then creates a catalog reader node in the flow graph.
 
     Args:
         table_name: Name of the catalog table to read.
-        namespace: Namespace name ('schema') or qualified path ('catalog.schema'), or id.
+        schema: Schema name ('stg') or qualified path ('warehouse.stg'), or id.
+        namespace: Alias for ``schema`` (kept for the original API surface).
         namespace_id: Deprecated int form (kept for backwards compat).
         delta_version: Optional Delta version to read (for time-travel queries).
         flow_graph: Optional existing FlowGraph to add the node to.
@@ -440,7 +534,7 @@ def read_catalog_table(
     if flow_graph is None:
         flow_graph = create_flow_graph()
 
-    resolved_ns_id = _resolve_namespace_arg(namespace, namespace_id)
+    resolved_ns_id = _resolve_namespace_arg(namespace, namespace_id, schema)
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCatalogReader(
         flow_id=flow_id,
@@ -496,6 +590,7 @@ def write_catalog_table(
     df: FlowFrame,
     table_name: str | None = None,
     *,
+    schema: str | int | None = None,
     namespace: str | int | None = None,
     namespace_id: int | None = None,
     write_mode: WriteMode = "overwrite",
@@ -512,7 +607,8 @@ def write_catalog_table(
         df: The FlowFrame to write.
         table_name: Name of the catalog table. When None, inferred from the argument
             variable name at the call site.
-        namespace: Namespace by name ('stg') or qualified path ('Test.stg'), or id.
+        schema: Schema name ('stg') or qualified path ('warehouse.stg'), or id.
+        namespace: Alias for ``schema`` (kept for the original API surface).
         namespace_id: Deprecated int form (kept for backwards compat).
         write_mode: How to handle existing data:
             - 'overwrite' / 'error' / 'append'
@@ -529,6 +625,7 @@ def write_catalog_table(
     resolved_table = _resolve_table_name(table_name, inferred)
     df.write_catalog_table(
         table_name=resolved_table,
+        schema=schema,
         namespace=namespace,
         namespace_id=namespace_id,
         write_mode=write_mode,

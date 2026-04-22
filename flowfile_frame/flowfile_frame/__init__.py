@@ -49,9 +49,15 @@ from polars.datatypes import (  # noqa: F401
 
 from flowfile_frame.catalog import (  # noqa: F401
     catalog_context,
+    create_catalog,
     create_namespace,
+    create_schema,
     get_namespace,
+    get_schema,
+    list_catalogs,
     list_namespaces,
+    list_schemas,
+    list_tables,
     read_catalog_sql,
     read_catalog_table,
     write_catalog_table,

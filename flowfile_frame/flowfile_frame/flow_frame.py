@@ -1581,6 +1581,7 @@ class FlowFrame:
         self,
         table_name: str | None = None,
         *,
+        schema: str | int | None = None,
         namespace: str | int | None = None,
         namespace_id: int | None = None,
         write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
@@ -1596,7 +1597,8 @@ class FlowFrame:
 
         Args:
             table_name: Catalog table name. When None, inferred from the receiver.
-            namespace: Namespace by name ('stg') or qualified path ('Test.stg'), or id.
+            schema: Schema name ('stg') or qualified path ('warehouse.stg'), or id.
+            namespace: Alias for ``schema`` (kept for the original API surface).
             namespace_id: Deprecated int form (kept for backwards compat).
             write_mode: How to handle existing data. 'virtual' registers a
                 non-materialized table whose LazyFrame plan is stored in the catalog.
@@ -1621,6 +1623,7 @@ class FlowFrame:
             self.flow_graph,
             depends_on_node_id=self.node_id,
             table_name=resolved_table,
+            schema=schema,
             namespace=namespace,
             namespace_id=namespace_id,
             write_mode=write_mode,

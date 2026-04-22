@@ -28,7 +28,6 @@ from flowfile_core.database.models import (
     FlowSchedule,
 )
 
-
 # --- helpers ----------------------------------------------------------------
 
 
@@ -67,9 +66,7 @@ def test_explicit_context_physical_and_virtual_write(tmp_path):
 
         customers = ff.read_catalog_table("customers", namespace="Test.stg")
         big = customers.filter(ff.col("a") > 1)
-        big.write_catalog_table(
-            "customers_big", namespace="Test.stg", write_mode="virtual"
-        )
+        big.write_catalog_table("customers_big", namespace="Test.stg", write_mode="virtual")
         big.execute()
 
     with get_db_context() as db:
@@ -82,15 +79,11 @@ def test_explicit_context_physical_and_virtual_write(tmp_path):
         assert runs[-1].run_type == "flowfile_frame_script"
         assert runs[-1].success is True
 
-        physical = db.query(CatalogTable).filter_by(
-            name="customers", namespace_id=schema_id
-        ).one()
+        physical = db.query(CatalogTable).filter_by(name="customers", namespace_id=schema_id).one()
         assert physical.table_type == "physical"
         assert physical.source_registration_id == reg_id
 
-        virtual = db.query(CatalogTable).filter_by(
-            name="customers_big", namespace_id=schema_id
-        ).one()
+        virtual = db.query(CatalogTable).filter_by(name="customers_big", namespace_id=schema_id).one()
         assert virtual.table_type == "virtual"
         # Virtual writes record the producing registration on producer_registration_id
         assert virtual.producer_registration_id == reg_id
@@ -157,3 +150,47 @@ def test_create_list_and_get_namespace():
 
     children = ff.list_namespaces(parent="Cat1")
     assert [ns.id for ns in children] == [schema_id]
+
+
+def test_catalog_and_schema_helpers():
+    """create_catalog / create_schema / list_catalogs / list_schemas / get_schema."""
+    cat_id = ff.create_catalog("Warehouse", description="prod warehouse")
+    stg_id = ff.create_schema("stg", catalog="Warehouse")
+    mart_id = ff.create_schema("mart", catalog="Warehouse")
+
+    cats = ff.list_catalogs()
+    assert any(c.id == cat_id and c.level == 0 for c in cats)
+
+    schemas_scoped = ff.list_schemas(catalog="Warehouse")
+    assert {s.id for s in schemas_scoped} == {stg_id, mart_id}
+    assert all(s.level == 1 for s in schemas_scoped)
+
+    schemas_all = ff.list_schemas()
+    assert {stg_id, mart_id}.issubset({s.id for s in schemas_all})
+
+    assert ff.get_schema("Warehouse.stg").id == stg_id
+    assert ff.get_schema(stg_id).name == "stg"
+
+
+def test_list_tables(tmp_path):
+    with ff.catalog_context(name="lister", flow_path=str(tmp_path / "l.py")):
+        ff.create_catalog("Lakeshore")
+        ff.create_schema("raw", catalog="Lakeshore")
+
+        customers = ff.from_dict({"a": [1, 2]})
+        customers.write_catalog_table(schema="Lakeshore.raw")
+
+        orders = ff.from_dict({"b": [3, 4]})
+        orders.write_catalog_table(schema="Lakeshore.raw")
+
+        customers.execute()
+
+    all_tables = ff.list_tables()
+    names = {t.name for t in all_tables}
+    assert {"customers", "orders"}.issubset(names)
+
+    scoped = ff.list_tables(schema="Lakeshore.raw")
+    assert {t.name for t in scoped} == {"customers", "orders"}
+    for t in scoped:
+        assert t.namespace_name == "raw"
+        assert t.source_registration_name == "lister"
