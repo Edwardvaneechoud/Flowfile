@@ -8,7 +8,7 @@ import type { DisplayOutput } from "./kernel.types";
 // Data Type Definitions
 // ============================================================================
 
-type DataTypeGroup = "String" | "Date" | "Numeric";
+type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
 // ============================================================================
 // Column and Table Types
@@ -522,6 +522,31 @@ export interface RecordIdInput {
 }
 
 // ============================================================================
+// Dynamic Rename Types
+// ============================================================================
+
+export type RenameMode = "prefix" | "suffix" | "formula";
+export type ColumnSelectionMode = "all" | "list" | "data_type";
+export type ReadableDataTypeGroup =
+  | "Numeric"
+  | "String"
+  | "Date"
+  | "Other"
+  | "Boolean"
+  | "Binary"
+  | "Complex";
+
+export interface DynamicRenameInput {
+  rename_mode: RenameMode;
+  prefix: string;
+  suffix: string;
+  formula: string;
+  selection_mode: ColumnSelectionMode;
+  selected_columns: string[];
+  selected_data_type: ReadableDataTypeGroup | null;
+}
+
+// ============================================================================
 // Graph Solver Types
 // ============================================================================
 
@@ -744,7 +769,14 @@ export interface NodeOutput extends NodeBase {
   output_settings: OutputSettings;
 }
 
-export type CatalogWriteMode = "overwrite" | "error" | "append" | "upsert" | "update" | "delete" | "virtual";
+export type CatalogWriteMode =
+  | "overwrite"
+  | "error"
+  | "append"
+  | "upsert"
+  | "update"
+  | "delete"
+  | "virtual";
 
 export interface CatalogWriteSettings {
   table_name: string;
@@ -818,6 +850,10 @@ export interface NodeTextToRows extends NodeSingleInput {
 
 export interface NodeRecordId extends NodeSingleInput {
   record_id_input: RecordIdInput;
+}
+
+export interface NodeDynamicRename extends NodeSingleInput {
+  dynamic_rename_input: DynamicRenameInput;
 }
 
 export interface NodeSample extends NodeBase {

@@ -2230,6 +2230,32 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_dynamic_rename(self, settings: input_schema.NodeDynamicRename) -> "FlowGraph":
+        """Adds a node that renames many columns at once via a single rule.
+
+        Supports prefix, suffix, and formula-based renaming across all columns,
+        a specific list of columns, or every column of a given data type.
+
+        Args:
+            settings: The dynamic rename configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
+            return table.apply_dynamic_rename(settings.dynamic_rename_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="dynamic_rename",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         """Adds a node to select, rename, reorder, or drop columns.
 
@@ -2714,6 +2740,30 @@ class FlowGraph:
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
             )
+
+            # TODO: centralize this local SQL read with flowfile_worker's
+            # /store_database_read_result path — both call pl.read_database_uri
+            # and have drifted in shape (see schema_callback below too).
+            if self.execution_location == "local":
+                local_source = SqlSource(
+                    connection_string=sql_utils.construct_sql_uri(
+                        database_type=database_connection.database_type,
+                        host=database_connection.host,
+                        port=database_connection.port,
+                        database=database_connection.database,
+                        username=database_connection.username,
+                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                    ),
+                    query=None if database_settings.query_mode == "table" else database_settings.query,
+                    table_name=database_settings.table_name,
+                    schema_name=database_settings.schema_name,
+                    fields=node_database_reader.fields,
+                )
+                fl = FlowDataEngine(local_source.get_pl_df())
+                fl.lazy = True
+                node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+                return fl
+
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,

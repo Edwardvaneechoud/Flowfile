@@ -15,6 +15,7 @@ const BUILTIN_ICONS = new Set([
   "google_analytics.svg",
   "database_reader.svg",
   "database_writer.svg",
+  "dynamic_rename.svg",
   "explore_data.png",
   "external_source.png",
   "filter.png",
