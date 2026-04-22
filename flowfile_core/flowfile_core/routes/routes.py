@@ -345,7 +345,7 @@ def _run_and_track(flow, user_id: int | None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     number_of_nodes=run_info.number_of_nodes,
-                    run_type=run_info.run_type,
+                    run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )

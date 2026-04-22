@@ -248,8 +248,12 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     _cli_logger.debug("Loading flow from: %s", flow_path)
     try:
         from flowfile_core.auth.utils import get_local_user_id
+        from shared.run_completion import get_run_user_id
 
-        flow = open_flow(path, user_id=get_local_user_id())
+        user_id = get_run_user_id(run_id) if run_id is not None else None
+        if user_id is None:
+            user_id = get_local_user_id()
+        flow = open_flow(path, user_id=user_id)
     except Exception as e:
         _cli_logger.exception("Error loading flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)

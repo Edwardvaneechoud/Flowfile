@@ -61,6 +61,7 @@ from flowfile_core.database.models import (
     FlowRun,
     FlowSchedule,
     GlobalArtifact,
+    RunType,
     TableFavorite,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
@@ -836,7 +837,7 @@ class CatalogService:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> PaginatedFlowRuns:
@@ -906,7 +907,7 @@ class CatalogService:
         flow_path: str | None,
         user_id: int,
         number_of_nodes: int,
-        run_type: str = "in_designer_run",
+        run_type: RunType,
         flow_snapshot: str | None = None,
     ) -> FlowRun:
         """Record a new flow run start."""
@@ -967,7 +968,7 @@ class CatalogService:
         success: bool,
         nodes_completed: int,
         number_of_nodes: int,
-        run_type: str = "in_designer_run",
+        run_type: RunType,
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
     ) -> FlowRun:
@@ -2619,7 +2620,7 @@ class CatalogService:
         self,
         flow: FlowRegistration,
         user_id: int,
-        run_type: str,
+        run_type: RunType,
         schedule_id: int | None = None,
     ) -> FlowRun:
         """Create a FlowRun record and spawn the subprocess.
