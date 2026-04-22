@@ -42,7 +42,7 @@ from flowfile_core.catalog import (
     TableNotFoundError,
 )
 from flowfile_core.database.connection import get_db
-from flowfile_core.database.models import SchedulerLock
+from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -313,7 +313,7 @@ def list_flow_artifacts(
 def list_runs(
     registration_id: int | None = None,
     schedule_id: int | None = None,
-    run_type: str | None = None,
+    run_type: RunType | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: CatalogService = Depends(get_catalog_service),
