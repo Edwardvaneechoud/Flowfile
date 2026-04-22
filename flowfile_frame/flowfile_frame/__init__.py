@@ -47,7 +47,15 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
-from flowfile_frame.catalog import read_catalog_sql, read_catalog_table, write_catalog_table  # noqa: F401
+from flowfile_frame.catalog import (  # noqa: F401
+    catalog_context,
+    create_namespace,
+    get_namespace,
+    list_namespaces,
+    read_catalog_sql,
+    read_catalog_table,
+    write_catalog_table,
+)
 from flowfile_frame.cloud_storage.frame_helpers import (  # noqa: F401
     read_from_cloud_storage,
     write_to_cloud_storage,

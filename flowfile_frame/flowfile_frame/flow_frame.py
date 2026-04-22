@@ -1579,35 +1579,54 @@ class FlowFrame:
 
     def write_catalog_table(
         self,
-        table_name: str,
+        table_name: str | None = None,
         *,
+        namespace: str | int | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
         description: str | None = None,
+        _inferred_flow_name: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
 
+        If ``table_name`` is omitted, the receiver variable name at the call site
+        is used (e.g. ``customers.write_catalog_table()`` → table ``"customers"``).
+        That same inferred name seeds the flow's auto-registration name.
+
         Args:
-            table_name: Name of the catalog table to write to.
-            namespace_id: Optional namespace ID for the table.
-            write_mode: How to handle existing data.
+            table_name: Catalog table name. When None, inferred from the receiver.
+            namespace: Namespace by name ('stg') or qualified path ('Test.stg'), or id.
+            namespace_id: Deprecated int form (kept for backwards compat).
+            write_mode: How to handle existing data. 'virtual' registers a
+                non-materialized table whose LazyFrame plan is stored in the catalog.
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
         Returns:
             FlowFrame: A new child data frame representing the written data.
         """
-        from flowfile_frame.catalog import add_write_to_catalog
+        from flowfile_frame.catalog import (
+            _infer_receiver_name,
+            _resolve_table_name,
+            add_write_to_catalog,
+        )
+
+        inferred = _inferred_flow_name
+        if inferred is None:
+            inferred = _infer_receiver_name(skip_frames=2)
+        resolved_table = _resolve_table_name(table_name, inferred)
 
         new_node_id = add_write_to_catalog(
             self.flow_graph,
             depends_on_node_id=self.node_id,
-            table_name=table_name,
+            table_name=resolved_table,
+            namespace=namespace,
             namespace_id=namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys,
             description=description,
+            inferred_flow_name=inferred,
         )
         return self._create_child_frame(new_node_id)
 
@@ -1696,14 +1715,103 @@ class FlowFrame:
         self.flow_graph.save_flow(file_path)
 
     def collect(self, *args, **kwargs) -> pl.DataFrame:
-        """Collect lazy data into memory."""
+        """Collect lazy data into memory.
+
+        Note: this does NOT run catalog writer nodes. Use :meth:`execute` to run
+        the entire FlowGraph (so catalog writes fire and a FlowRun is recorded).
+        """
         if hasattr(self.data, "collect"):
             return self.data.collect(*args, **kwargs)
         return self.data
 
+    def execute(self) -> pl.DataFrame | None:
+        """Run the entire FlowGraph and record a catalog FlowRun.
+
+        Auto-registers the flow if needed, wraps the run in
+        ``CatalogService.start_run`` / ``complete_run`` so FlowRun rows (with
+        lineage and node results) are persisted, then executes the graph so all
+        sink nodes — including catalog writers — actually fire.
+
+        Returns the final node's materialized data when available, else None.
+        """
+        import json as _json
+
+        from flowfile_frame.catalog import _derive_flow_binding, _ensure_flow_registered
+
+        _ensure_flow_registered(self.flow_graph)
+        binding = _derive_flow_binding()
+
+        fs = self.flow_graph.flow_settings
+        reg_id = fs.source_registration_id
+        flow_name = fs.name or binding.name
+        flow_path = fs.path or binding.flow_path
+        user_id = binding.user_id
+
+        snapshot_yaml: str | None = None
+        try:
+            snapshot_yaml = self.flow_graph.get_flowfile_data().model_dump_json()
+        except Exception:
+            logger.info("Flow snapshot serialization failed (non-critical)", exc_info=True)
+
+        run_id: int | None = None
+        try:
+            from flowfile_core.catalog import CatalogService
+            from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+            from flowfile_core.database.connection import get_db_context
+
+            with get_db_context() as db:
+                svc = CatalogService(SQLAlchemyCatalogRepository(db))
+                db_run = svc.start_run(
+                    registration_id=reg_id,
+                    flow_name=flow_name,
+                    flow_path=flow_path,
+                    user_id=user_id,
+                    number_of_nodes=len(self.flow_graph.nodes),
+                    run_type="flowfile_frame_script",
+                    flow_snapshot=snapshot_yaml,
+                )
+                run_id = db_run.id
+        except Exception:
+            logger.info("FlowRun start failed (non-critical)", exc_info=True)
+
+        run_info = self.flow_graph.run_graph()
+
+        if run_id is not None and run_info is not None:
+            try:
+                node_results = None
+                try:
+                    node_results = _json.dumps([nr.model_dump(mode="json") for nr in (run_info.node_step_result or [])])
+                except Exception:
+                    logger.info("Node results serialization failed (non-critical)", exc_info=True)
+
+                from flowfile_core.catalog import CatalogService
+                from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+                from flowfile_core.database.connection import get_db_context
+
+                with get_db_context() as db:
+                    svc = CatalogService(SQLAlchemyCatalogRepository(db))
+                    svc.complete_run(
+                        run_id=run_id,
+                        success=bool(run_info.success),
+                        nodes_completed=run_info.nodes_completed,
+                        node_results_json=node_results,
+                    )
+            except Exception:
+                logger.info("FlowRun complete failed (non-critical)", exc_info=True)
+
+        try:
+            if hasattr(self.data, "collect"):
+                return self.data.collect()
+            return self.data
+        except Exception:
+            return None
+
     def _with_flowfile_formula(
-        self, flowfile_formula: str, output_column_name: str, description: str = None,
-            output_column_datatype: str = "Auto"
+        self,
+        flowfile_formula: str,
+        output_column_name: str,
+        description: str = None,
+        output_column_datatype: str = "Auto",
     ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(
