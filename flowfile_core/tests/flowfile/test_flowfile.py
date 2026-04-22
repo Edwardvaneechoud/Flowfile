@@ -261,6 +261,46 @@ def test_connect_node(raw_data):
     assert graph.get_node(2).node_inputs.main_inputs[0] == graph.get_node(1), 'Node 2 should have node 1 as input'
 
 
+def test_running_dynamic_rename_prefix(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    graph = add_manual_input(graph, data=raw_data)
+    add_node_promise_on_type(graph, 'dynamic_rename', 2)
+    settings = input_schema.NodeDynamicRename(
+        flow_id=1,
+        node_id=2,
+        dynamic_rename_input=transform_schema.DynamicRenameInput(
+            rename_mode='prefix',
+            prefix='src_',
+        ),
+    )
+    graph.add_dynamic_rename(settings)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    df = graph.get_node(2).results.resulting_data.collect()
+    assert df.columns == ['src_name', 'src_city']
+
+
+def test_running_dynamic_rename_formula(raw_data, execution_location):
+    graph = create_graph(execution_location=execution_location)
+    graph = add_manual_input(graph, data=raw_data)
+    add_node_promise_on_type(graph, 'dynamic_rename', 2)
+    settings = input_schema.NodeDynamicRename(
+        flow_id=1,
+        node_id=2,
+        dynamic_rename_input=transform_schema.DynamicRenameInput(
+            rename_mode='formula',
+            formula='uppercase([column_name])',
+        ),
+    )
+    graph.add_dynamic_rename(settings)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    df = graph.get_node(2).results.resulting_data.collect()
+    assert df.columns == ['NAME', 'CITY']
+
+
 def test_running_unique(raw_data, execution_location):
     graph = create_graph(execution_location=execution_location)
     graph = add_manual_input(graph, data=raw_data)

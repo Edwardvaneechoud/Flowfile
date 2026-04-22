@@ -2229,6 +2229,32 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_dynamic_rename(self, settings: input_schema.NodeDynamicRename) -> "FlowGraph":
+        """Adds a node that renames many columns at once via a single rule.
+
+        Supports prefix, suffix, and formula-based renaming across all columns,
+        a specific list of columns, or every column of a given data type.
+
+        Args:
+            settings: The dynamic rename configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
+            return table.apply_dynamic_rename(settings.dynamic_rename_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="dynamic_rename",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         """Adds a node to select, rename, reorder, or drop columns.
 

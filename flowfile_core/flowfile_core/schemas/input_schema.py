@@ -1294,6 +1294,33 @@ class NodeRecordCount(NodeSingleInput):
     pass
 
 
+class NodeDynamicRename(NodeSingleInput):
+    """Settings for a node that renames many columns at once via a single rule."""
+
+    dynamic_rename_input: transform_schema.DynamicRenameInput = Field(
+        default_factory=transform_schema.DynamicRenameInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the dynamic rename rule."""
+        s = self.dynamic_rename_input
+        if s.rename_mode == "prefix" and s.prefix:
+            rule = f"prefix '{s.prefix}'"
+        elif s.rename_mode == "suffix" and s.suffix:
+            rule = f"suffix '{s.suffix}'"
+        elif s.rename_mode == "formula" and s.formula:
+            rule = f"formula {s.formula}"
+        else:
+            return ""
+        if s.selection_mode == "all":
+            scope = "all columns"
+        elif s.selection_mode == "list":
+            scope = f"{len(s.selected_columns)} column(s)"
+        else:
+            scope = f"{s.selected_data_type or '(none)'} columns"
+        return f"{rule} on {scope}"
+
+
 class NodePolarsCode(NodeMultiInput):
     """Settings for a node that executes arbitrary user-provided Polars code."""
 
