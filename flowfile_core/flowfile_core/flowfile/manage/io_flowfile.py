@@ -274,7 +274,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
             return flow_storage_obj
         except Exception as e:
             raise ValueError(
-                f"Failed to open legacy .flowfile: {e}\n\nTry migrating: migrate_flowfile('{flow_path}')"
+                f"Failed to open legacy .flowfile: {e}\n\n" f"Try migrating: migrate_flowfile('{flow_path}')"
             ) from e
 
     elif suffix in (".yaml", ".yml"):
@@ -305,17 +305,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_path = _validate_flow_path(flow_path)
     flow_storage_obj = _load_flow_storage(flow_path)
     flow_storage_obj.flow_settings.path = str(flow_path)
-
-    # Catalog-managed flows are written as {flow_id}_{name}.yaml so two
-    # namespaces can keep identically named flows without colliding on disk.
-    # Prefer the registration's display name when one exists so tab titles
-    # match the catalog sidebar.
-    from flowfile_core.flowfile.catalog_helpers import find_registration_by_path
-
-    registration = find_registration_by_path(str(flow_path))
-    display_name = registration.name if registration is not None else str(flow_path.stem)
-    flow_storage_obj.flow_settings.name = display_name
-    flow_storage_obj.flow_name = display_name
+    flow_storage_obj.flow_settings.name = str(flow_path.stem)
+    flow_storage_obj.flow_name = str(flow_path.stem)
 
     # Determine node insertion order
     ingestion_order = determine_insertion_order(flow_storage_obj)
