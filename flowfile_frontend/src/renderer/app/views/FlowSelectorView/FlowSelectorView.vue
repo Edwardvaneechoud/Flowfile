@@ -7,7 +7,7 @@
       <el-tooltip
         v-for="flow in flows"
         :key="flow.flow_id"
-        :content="flow.name"
+        :content="flow.display_name || flow.name"
         placement="bottom"
         :show-after="400"
         :hide-after="0"
@@ -19,7 +19,7 @@
         >
           <div class="tab-content">
             <span class="material-icons tab-icon">account_tree</span>
-            <span class="tab-name">{{ flow.name }}</span>
+            <span class="tab-name">{{ flow.display_name || flow.name }}</span>
             <span
               v-if="isDirty(flow.flow_id)"
               class="dirty-dot"
