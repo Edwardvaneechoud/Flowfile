@@ -1314,7 +1314,7 @@ def save_flow_to_catalog(
     if existing_reg is None and os.path.exists(flow_path):
         raise HTTPException(
             status_code=409,
-            detail=(f"Target file {flow_path} exists but is not catalog-registered; " "refusing to overwrite"),
+            detail=(f"Target file {flow_path} exists but is not catalog-registered; refusing to overwrite"),
         )
 
     user_id = current_user.id if current_user else None
@@ -1339,6 +1339,16 @@ def save_flow_to_catalog(
         except FlowNameNamespaceCollision as err:
             raise HTTPException(status_code=409, detail=str(err)) from err
 
+        # ``save_flow`` derives the display name from the filename stem via
+        # ``_handle_flow_renaming`` — for catalog files that's the
+        # collision-safe ``{flow_id}_{stem}`` which leaks the prefix into
+        # editor tab titles. Restore the user-typed stem so tabs match the
+        # catalog sidebar.
+        saved_flow = flow_file_handler.get_flow(new_flow_id)
+        if saved_flow is not None:
+            saved_flow.flow_settings.name = stem
+            saved_flow.__name__ = stem
+
         # If we renamed within the managed flows directory, unlink the old file.
         if normalized_current and normalized_current != flow_path:
             managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
@@ -1354,6 +1364,10 @@ def save_flow_to_catalog(
 
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)
+    # Same rationale as above: undo the filename-stem-based rename done by
+    # ``save_flow`` so the tab title shows the user-typed name.
+    flow.flow_settings.name = stem
+    flow.__name__ = stem
     try:
         register_flow_in_namespace(flow_path, stem, user_id, namespace_id)
     except FlowPathNamespaceCollision as err:
