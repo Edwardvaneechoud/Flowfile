@@ -1222,8 +1222,18 @@ class CatalogService:
         return fe
 
     @staticmethod
-    def _compute_laziness_blockers(producer_file_path: str | None) -> list[str] | None:
-        """Compute laziness blockers for a virtual table from its producer flow."""
+    def _compute_laziness_blockers(
+        producer_file_path: str | None,
+        table_name: str | None = None,
+        namespace_id: int | None = None,
+    ) -> list[str] | None:
+        """Compute laziness blockers for a virtual table from its producer flow.
+
+        When ``table_name`` is given, the check is scoped to the catalog
+        writer that produces that specific table so unrelated branches in
+        the flow don't leak into the blocker list.  Falls back to the
+        flow-wide aggregate check if no matching writer is found.
+        """
         if not producer_file_path:
             return None
         try:
@@ -1234,6 +1244,20 @@ class CatalogService:
             logger.warning(f"Could not open the flow or calculate the laziness: \n {e}")
             return None
         try:
+            writer = None
+            if table_name is not None:
+                for node in fg.nodes:
+                    if node.node_type != "catalog_writer":
+                        continue
+                    settings = getattr(node.setting_input, "catalog_write_settings", None)
+                    if settings is None:
+                        continue
+                    if settings.table_name == table_name and settings.namespace_id == namespace_id:
+                        writer = node
+                        break
+            if writer is not None:
+                _, reasons = writer.check_upstream_laziness()
+                return reasons
             _, reasons = fg.check_flow_laziness()
             return reasons
         except Exception as e:
@@ -1263,7 +1287,11 @@ class CatalogService:
         laziness_blockers: list[str] | None = None
         if compute_laziness and is_virtual and table.producer_registration_id:
             producer = self.repo.get_flow(table.producer_registration_id)
-            laziness_blockers = self._compute_laziness_blockers(producer.flow_path if producer else None)
+            laziness_blockers = self._compute_laziness_blockers(
+                producer.flow_path if producer else None,
+                table_name=table.name,
+                namespace_id=table.namespace_id,
+            )
 
         namespace_name = self._resolve_namespace_name(table.namespace_id)
         full_table_name = self._format_full_name(namespace_name, table.name)

@@ -710,12 +710,23 @@ def get_flow(flow_id: int):
 
 
 @router.get("/editor/laziness_check", tags=["editor"])
-def check_flow_laziness(flow_id: int):
-    """Check whether a flow supports fully lazy execution for virtual tables."""
+def check_flow_laziness(flow_id: int, node_id: int | None = None):
+    """Check whether a flow supports fully lazy execution for virtual tables.
+
+    When ``node_id`` is provided, the check is scoped to that specific
+    catalog-writer's upstream branch; otherwise the whole flow is checked
+    (aggregating across every catalog writer).
+    """
     flow = flow_file_handler.get_flow(int(flow_id))
     if flow is None:
         raise HTTPException(404, "Flow not found")
-    is_lazy, reasons = flow.check_flow_laziness()
+    if node_id is not None:
+        node = flow.get_node(int(node_id))
+        if node is None:
+            raise HTTPException(404, "Node not found")
+        is_lazy, reasons = node.check_upstream_laziness()
+    else:
+        is_lazy, reasons = flow.check_flow_laziness()
     return {"is_optimizable": is_lazy, "blockers": reasons}
 
 

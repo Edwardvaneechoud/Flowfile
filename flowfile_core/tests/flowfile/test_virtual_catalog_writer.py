@@ -717,6 +717,95 @@ class TestCheckUpstreamLaziness:
         assert reasons == []
         _run_graph(graph)
 
+    def test_per_writer_laziness_isolates_branches(self, eager_virtual_table_id):
+        """Two independent branches each ending in a catalog_writer should
+        not leak blocker reasons into each other's per-writer check.
+
+        Reproduces the reported bug where node 8's Virtual-Table tab
+        incorrectly cited a non-optimized catalog_reader that only fed a
+        different writer in a separate branch.
+        """
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="two_branch_flow")
+        graph = _create_graph(source_registration_id=reg_id)
+
+        # Branch A: catalog_reader(non-optimized) (1) → filter (2) → writer (3)
+        promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise_reader)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            catalog_table_id=eager_virtual_table_id,
+        )
+        graph.add_catalog_reader(reader)
+
+        promise_filter_a = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter")
+        graph.add_node_promise(promise_filter_a)
+        filter_a = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="name", operator="not_equals", value="Alice"),
+            ),
+        )
+        graph.add_filter(filter_a)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        _add_catalog_writer(
+            graph,
+            node_id=3,
+            depending_on_id=2,
+            table_name="branch_a_table",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # Branch B: manual_input (4) → filter (5) → writer (6)  — fully lazy
+        _add_manual_input(graph, SAMPLE_DATA, node_id=4)
+
+        promise_filter_b = input_schema.NodePromise(flow_id=graph.flow_id, node_id=5, node_type="filter")
+        graph.add_node_promise(promise_filter_b)
+        filter_b = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=5,
+            depending_on_id=4,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="age", operator="greater_than", value="30"),
+            ),
+        )
+        graph.add_filter(filter_b)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=4, to_id=5))
+
+        _add_catalog_writer(
+            graph,
+            node_id=6,
+            depending_on_id=5,
+            table_name="branch_b_table",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        writer_a = graph.get_node(3)
+        writer_b = graph.get_node(6)
+
+        a_is_lazy, a_reasons = writer_a.check_upstream_laziness()
+        b_is_lazy, b_reasons = writer_b.check_upstream_laziness()
+
+        # Branch A sees its own non-optimized reader
+        assert a_is_lazy is False
+        assert any("non-optimized virtual table" in r for r in a_reasons)
+        # Branch B is fully lazy — must not inherit Branch A's reasons
+        assert b_is_lazy is True
+        assert b_reasons == []
+
+        # The legacy flow-wide check still aggregates (unchanged)
+        flow_is_lazy, flow_reasons = graph.check_flow_laziness()
+        assert flow_is_lazy is False
+        assert any("non-optimized virtual table" in r for r in flow_reasons)
+
 
 class TestFlowRegistrationAttributes:
     """Test that virtual table code correctly uses flow_path, not file_path."""
@@ -793,6 +882,87 @@ class TestFlowRegistrationAttributes:
             with_blockers = svc._table_to_out(table, compute_laziness=True)
             assert with_blockers.laziness_blockers is not None
             assert isinstance(with_blockers.laziness_blockers, list)
+
+    def test_compute_laziness_blockers_scopes_to_table(self, eager_virtual_table_id):
+        """_compute_laziness_blockers should scope to the writer for the
+        specified table so unrelated branches don't leak blocker reasons."""
+        ns_id = _create_namespace()
+        graph = _create_graph(flow_id=101)
+
+        # Branch A: non-optimized reader → filter → writer("scoped_a")
+        promise_reader = input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
+        graph.add_node_promise(promise_reader)
+        reader = input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            catalog_table_id=eager_virtual_table_id,
+        )
+        graph.add_catalog_reader(reader)
+
+        promise_filter_a = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter")
+        graph.add_node_promise(promise_filter_a)
+        filter_a = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="name", operator="not_equals", value="Alice"),
+            ),
+        )
+        graph.add_filter(filter_a)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+
+        _add_catalog_writer(
+            graph,
+            node_id=3,
+            depending_on_id=2,
+            table_name="scoped_a",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        # Branch B: manual → filter → writer("scoped_b") — fully lazy
+        _add_manual_input(graph, SAMPLE_DATA, node_id=4)
+        promise_filter_b = input_schema.NodePromise(flow_id=graph.flow_id, node_id=5, node_type="filter")
+        graph.add_node_promise(promise_filter_b)
+        filter_b = input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=5,
+            depending_on_id=4,
+            filter_input=FilterInput(
+                mode="basic",
+                basic_filter=BasicFilter(field="age", operator="greater_than", value="30"),
+            ),
+        )
+        graph.add_filter(filter_b)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=4, to_id=5))
+
+        _add_catalog_writer(
+            graph,
+            node_id=6,
+            depending_on_id=5,
+            table_name="scoped_b",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            save_path = f.name
+        graph.save_flow(save_path)
+
+        # Scoped to Branch B → no blockers
+        b_blockers = CatalogService._compute_laziness_blockers(
+            save_path, table_name="scoped_b", namespace_id=ns_id
+        )
+        assert b_blockers == []
+
+        # Scoped to Branch A → blocker for the non-optimized reader
+        a_blockers = CatalogService._compute_laziness_blockers(
+            save_path, table_name="scoped_a", namespace_id=ns_id
+        )
+        assert a_blockers is not None
+        assert any("non-optimized virtual table" in r for r in a_blockers)
 
 
 class TestVirtualTableTriggerFiring:

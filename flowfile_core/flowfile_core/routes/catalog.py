@@ -645,7 +645,11 @@ def create_virtual_flow_table(
 
     # Compute laziness blockers from the producer flow
     flow_reg = service.repo.get_flow(body.producer_registration_id)
-    blockers = CatalogService._compute_laziness_blockers(flow_reg.flow_path if flow_reg else None)
+    blockers = CatalogService._compute_laziness_blockers(
+        flow_reg.flow_path if flow_reg else None,
+        table_name=table_out.name,
+        namespace_id=table_out.namespace_id,
+    )
     if blockers:
         table_out.laziness_blockers = blockers
 

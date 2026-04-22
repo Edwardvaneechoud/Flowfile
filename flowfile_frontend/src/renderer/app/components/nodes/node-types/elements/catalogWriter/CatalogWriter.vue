@@ -198,7 +198,12 @@ async function fetchLazinessCheck() {
   try {
     const response = await axios.get<{ is_optimizable: boolean; blockers: string[] }>(
       "/editor/laziness_check",
-      { params: { flow_id: nodeData.value.flow_id } },
+      {
+        params: {
+          flow_id: nodeData.value.flow_id,
+          node_id: nodeData.value.node_id,
+        },
+      },
     );
     lazinessCheck.value = response.data;
   } catch {
