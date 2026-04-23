@@ -2490,3 +2490,76 @@ def test_downstream_predicted_data_uses_correct_upstream_handle():
     # Sample is a passthrough on schema — the downstream sees output-1's columns.
     assert [c.name for c in predicted.schema] == ["name_col"]
 
+
+# ============================================================================
+# Filter node: split_mode (dual pass/fail outputs)
+# ============================================================================
+
+
+def _add_filter_to_graph(
+    graph: FlowGraph,
+    advanced_filter: str,
+    *,
+    split_mode: bool = False,
+    node_id: int = 2,
+    depends_on: int = 1,
+) -> None:
+    """Helper: attach a filter node to ``depends_on`` with an advanced predicate."""
+    add_node_promise_on_type(graph, "filter", node_id)
+    add_connection(
+        graph,
+        input_schema.NodeConnection.create_from_simple_input(depends_on, node_id),
+    )
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depends_on,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter=advanced_filter,
+                filter_type="advanced",
+            ),
+            split_mode=split_mode,
+        )
+    )
+
+
+def test_filter_split_mode_partitions_rows():
+    """With split_mode on, output-0 has matching rows and output-1 has the rest."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
+    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=True)
+    graph.run_graph()
+
+    node = graph.get_node(2)
+    pass_rows = node.get_output("output-0").collect()
+    fail_rows = node.get_output("output-1").collect()
+    assert pass_rows["id"].to_list() == [5, 6, 7, 8, 9]
+    assert fail_rows["id"].to_list() == [0, 1, 2, 3, 4]
+    # Default (handle-less) consumers see the first output (backwards-compat).
+    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
+
+
+def test_filter_split_mode_off_is_backwards_compatible():
+    """With split_mode off, the filter node behaves as before: single output."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
+    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=False)
+    graph.run_graph()
+
+    node = graph.get_node(2)
+    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
+    # No named outputs populated on the single-output path.
+    assert node._named_outputs == {}
+
+
+def test_filter_split_mode_default_is_false():
+    """NodeFilter constructed without split_mode defaults to single-output."""
+    settings = input_schema.NodeFilter(
+        flow_id=1,
+        node_id=2,
+        filter_input=transform_schema.FilterInput(
+            advanced_filter='pl.col("id") > 0', filter_type="advanced"
+        ),
+    )
+    assert settings.split_mode is False
