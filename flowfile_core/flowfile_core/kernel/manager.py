@@ -188,18 +188,32 @@ class KernelManager:
         if request.input_paths or not request.flow_id or not request.node_id:
             return
 
-        input_dir = os.path.join(
-            self._shared_volume,
-            str(request.flow_id),
-            str(request.node_id),
-            "inputs",
+        shared_root = os.path.abspath(os.path.normpath(self._shared_volume))
+        input_dir = os.path.abspath(
+            os.path.normpath(
+                os.path.join(
+                    shared_root,
+                    str(request.flow_id),
+                    str(request.node_id),
+                    "inputs",
+                )
+            )
         )
-        output_dir = os.path.join(
-            self._shared_volume,
-            str(request.flow_id),
-            str(request.node_id),
-            "outputs",
+        output_dir = os.path.abspath(
+            os.path.normpath(
+                os.path.join(
+                    shared_root,
+                    str(request.flow_id),
+                    str(request.node_id),
+                    "outputs",
+                )
+            )
         )
+
+        if os.path.commonpath([shared_root, input_dir]) != shared_root:
+            raise RuntimeError("Invalid flow/node path for inputs")
+        if os.path.commonpath([shared_root, output_dir]) != shared_root:
+            raise RuntimeError("Invalid flow/node path for outputs")
 
         # Discover parquet files in the input directory and group by input name.
         # Files are named {name}_{index}.parquet (e.g. orders_0.parquet, clients_1.parquet).
