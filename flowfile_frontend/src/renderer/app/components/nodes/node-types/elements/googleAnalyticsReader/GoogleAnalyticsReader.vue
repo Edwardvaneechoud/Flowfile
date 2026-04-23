@@ -106,38 +106,81 @@
         </div>
 
         <div class="form-group">
-          <label for="ga-metrics">Metrics (comma-separated)</label>
-          <input
+          <label for="ga-metrics">Metrics</label>
+          <el-select
             id="ga-metrics"
-            :value="nodeGaReader.google_analytics_settings.metrics.join(', ')"
-            type="text"
-            class="form-control"
-            placeholder="sessions, totalUsers, screenPageViews"
-            @change="onMetricsChange($event)"
-          />
+            v-model="nodeGaReader.google_analytics_settings.metrics"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="Pick metrics (e.g. sessions, totalUsers)"
+            class="ga-multiselect"
+          >
+            <el-option-group
+              v-for="group in metricGroups"
+              :key="group.label"
+              :label="group.label"
+            >
+              <el-option
+                v-for="opt in group.options"
+                :key="opt.name"
+                :value="opt.name"
+                :label="opt.label"
+              >
+                <span class="option-label">{{ opt.label }}</span>
+                <span class="option-api-name">{{ opt.name }}</span>
+              </el-option>
+            </el-option-group>
+          </el-select>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            See Google's
+            Type to filter, or enter a custom metric name (e.g.
+            <code>customEvent:my_param</code>). See the
             <a
               href="https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema"
               target="_blank"
               rel="noopener"
               >API schema reference</a
-            >
-            for valid metric names.
+            >.
           </div>
         </div>
 
         <div class="form-group">
-          <label for="ga-dimensions">Dimensions (comma-separated)</label>
-          <input
+          <label for="ga-dimensions">Dimensions</label>
+          <el-select
             id="ga-dimensions"
-            :value="nodeGaReader.google_analytics_settings.dimensions.join(', ')"
-            type="text"
-            class="form-control"
-            placeholder="date, country, deviceCategory"
-            @change="onDimensionsChange($event)"
-          />
+            v-model="nodeGaReader.google_analytics_settings.dimensions"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="Pick dimensions (e.g. date, pagePath, eventName)"
+            class="ga-multiselect"
+          >
+            <el-option-group
+              v-for="group in dimensionGroups"
+              :key="group.label"
+              :label="group.label"
+            >
+              <el-option
+                v-for="opt in group.options"
+                :key="opt.name"
+                :value="opt.name"
+                :label="opt.label"
+              >
+                <span class="option-label">{{ opt.label }}</span>
+                <span class="option-api-name">{{ opt.name }}</span>
+              </el-option>
+            </el-option-group>
+          </el-select>
+          <div class="helper-text">
+            <i class="fa-solid fa-info-circle"></i>
+            For event details, pick from the <strong>Page / screen</strong>,
+            <strong>Event</strong> or <strong>Links &amp; files</strong> groups — e.g.
+            <code>pagePath</code>, <code>pageTitle</code>, <code>eventName</code>,
+            <code>linkUrl</code>.
+          </div>
         </div>
 
         <div class="form-group">
@@ -260,17 +303,21 @@
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
 import { computed, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElOption, ElOptionGroup, ElSelect } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createNodeGoogleAnalyticsReader } from "./utils";
+import { GA4_DIMENSION_GROUPS, GA4_METRIC_GROUPS } from "./ga4Catalog";
 import type {
   GoogleAnalyticsFilter,
   NodeGoogleAnalyticsReader,
 } from "../../../../../types/node.types";
 import { fetchGoogleAnalyticsConnections } from "../../../../../views/GoogleAnalyticsConnectionView/api";
 import type { GoogleAnalyticsConnectionInterface } from "../../../../../views/GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionTypes";
+
+const dimensionGroups = GA4_DIMENSION_GROUPS;
+const metricGroups = GA4_METRIC_GROUPS;
 
 interface Props {
   nodeId: number;
@@ -395,24 +442,6 @@ const onFilterFieldChange = (index: number, newField: string) => {
   if (!validOps.includes(filter.operator)) {
     filter.operator = "equals";
   }
-};
-
-const parseCsv = (value: string): string[] =>
-  value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-const onMetricsChange = (event: Event) => {
-  if (!nodeGaReader.value) return;
-  const input = event.target as HTMLInputElement;
-  nodeGaReader.value.google_analytics_settings.metrics = parseCsv(input.value);
-};
-
-const onDimensionsChange = (event: Event) => {
-  if (!nodeGaReader.value) return;
-  const input = event.target as HTMLInputElement;
-  nodeGaReader.value.google_analytics_settings.dimensions = parseCsv(input.value);
 };
 
 const handleConnectionChange = () => {
@@ -579,6 +608,26 @@ select.form-control {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Metrics / dimensions multiselect */
+.ga-multiselect {
+  width: 100%;
+}
+
+.ga-multiselect :deep(.el-select__tags) {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.option-label {
+  margin-right: 0.5rem;
+}
+
+.option-api-name {
+  color: #a0aec0;
+  font-size: 0.75rem;
+  font-family: var(--font-family-mono, monospace);
 }
 
 /* Filter builder */
