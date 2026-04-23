@@ -23,6 +23,8 @@ Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedde
 
 <div align="center">
   <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
+  <br>
+  <sub>A three-source pipeline in the visual designer, with the generated Python code on the right.</sub>
 </div>
 
 ---
@@ -33,6 +35,8 @@ Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedde
 
 <div align="center">
   <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo — joins, fuzzy matching, transformations" width="800"/>
+  <br>
+  <sub>Building a flow with joins, fuzzy matching, and transformations — data preview updates as you go.</sub>
 </div>
 
 **A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything.
@@ -41,6 +45,8 @@ Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedde
 
 <div align="center">
   <img src=".github/images/generated_code.png" alt="Export visual flows as standalone Polars code" width="800"/>
+  <br>
+  <sub>Every visual flow exports as a standalone Python script — toggle between Polars and FlowFrame output.</sub>
 </div>
 
 **A data catalog.** Unity-style hierarchy (catalog > schema > table), Delta Lake-backed with version history and time travel. Flows register into namespaces and write output through a Catalog Writer node.
@@ -51,6 +57,8 @@ Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedde
 
 <div align="center">
   <img src=".github/images/sql_editor.png" alt="SQL editor with Graphic Walker visualization" width="800"/>
+  <br>
+  <sub>SQL queries run against catalog tables, with results feeding into Graphic Walker for visual exploration.</sub>
 </div>
 
 **A scheduler.** Run flows on an interval, trigger when a catalog table updates, or fire when a set of tables has all refreshed. Run history, logs, and cancellation live in the UI. Runs embedded, standalone, or in Docker.
