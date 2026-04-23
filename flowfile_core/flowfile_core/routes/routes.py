@@ -226,9 +226,19 @@ async def get_active_flow_file_sessions(
 ) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [
-        flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)
-    ]
+    sessions = [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
+    paths = {s.path or s.save_location for s in sessions if s.path or s.save_location}
+    if paths:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            name_by_path = {
+                p: reg.name for p in paths if (reg := repo.get_flow_by_path(p)) is not None
+            }
+        for s in sessions:
+            p = s.path or s.save_location
+            if p and p in name_by_path:
+                s.display_name = name_by_path[p]
+    return sessions
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])

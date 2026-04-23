@@ -201,6 +201,7 @@ class FlowSettingsResponse(FlowSettings):
     """FlowSettings plus runtime-only fields for API responses. Not persisted."""
 
     has_unsaved_changes: bool = False
+    display_name: str | None = None
 
 
 class RawLogInput(BaseModel):
