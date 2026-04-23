@@ -1006,6 +1006,31 @@ class NodeFormula(NodeSingleInput):
         return f"{name} = {expr}" if name else expr
 
 
+class NodeWindowFunctions(NodeSingleInput):
+    """Settings for a node that adds rolling, cumulative, rank or tile columns."""
+
+    window_input: transform_schema.WindowFunctionsInput = Field(
+        default_factory=transform_schema.WindowFunctionsInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the configured window functions."""
+        if self.window_input is None or not self.window_input.window_functions:
+            return ""
+        parts: list[str] = []
+        if self.window_input.partition_by:
+            cols = ", ".join(self.window_input.partition_by[:3])
+            if len(self.window_input.partition_by) > 3:
+                cols += f" (+{len(self.window_input.partition_by) - 3} more)"
+            parts.append(f"By {cols}")
+        ops = self.window_input.window_functions
+        op_strs = [f"{w.function}({w.column or ''})".replace("()", "()") for w in ops[:3]]
+        if len(ops) > 3:
+            op_strs.append(f"+{len(ops) - 3} more")
+        parts.append(", ".join(op_strs))
+        return ": ".join(parts)
+
+
 class NodeGroupBy(NodeSingleInput):
     """Settings for a node that performs a group-by and aggregation operation."""
 

@@ -2129,6 +2129,48 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_window_functions(self, settings: input_schema.NodeWindowFunctions) -> "FlowGraph":
+        """Adds a window-functions node (rolling, cumulative, rank, tile).
+
+        Args:
+            settings: The settings for the window-functions operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.do_window_functions(settings.window_input, False)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="window_functions",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+
+        node = self.get_node(settings.node_id)
+
+        def schema_callback():
+            depends_on = node.node_inputs.main_inputs[0]
+            input_schema_list = list(depends_on.schema)
+            input_types = {s.name: s.data_type for s in depends_on.schema}
+            output_schema = list(input_schema_list)
+            for w in settings.window_input.window_functions:
+                src_type = input_types.get(w.column) if w.column else None
+                out_type = w.output_type or transform_schema.get_window_output_type(w.function, src_type)
+                if out_type is None:
+                    out_type = src_type or "Float64"
+                output_schema.append(
+                    FlowfileColumn.from_input(data_type=out_type, column_name=w.new_column_name)
+                )
+            return output_schema
+
+        node.schema_callback = schema_callback
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
         """Adds a node to sort the data based on one or more columns.
 

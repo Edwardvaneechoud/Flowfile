@@ -969,6 +969,117 @@ class RecordIdInput(BaseModel):
     group_by_columns: list[str] | None = Field(default_factory=list)
 
 
+WindowFunctionName = Literal[
+    "rolling_sum",
+    "rolling_mean",
+    "rolling_min",
+    "rolling_max",
+    "rolling_std",
+    "cum_sum",
+    "cum_count",
+    "cum_min",
+    "cum_max",
+    "rank",
+    "tile",
+]
+
+RankMethod = Literal["ordinal", "dense", "min", "max", "average"]
+
+RollingEdgeBehavior = Literal["require_full", "partial", "fill_zero"]
+
+_ROLLING_FUNCTIONS = {"rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std"}
+_CUMULATIVE_FUNCTIONS = {"cum_sum", "cum_count", "cum_min", "cum_max"}
+
+
+def _is_rolling(func: str) -> bool:
+    return func in _ROLLING_FUNCTIONS
+
+
+def _is_cumulative(func: str) -> bool:
+    return func in _CUMULATIVE_FUNCTIONS
+
+
+def get_window_output_type(func: str, input_type: str | None = None) -> str | None:
+    """Infers the output data type of window functions."""
+    if func in {"rolling_mean", "rolling_std"}:
+        return "Float64"
+    if func in {"rolling_sum", "rolling_min", "rolling_max", "cum_sum", "cum_min", "cum_max"}:
+        return input_type
+    if func in {"cum_count", "tile"}:
+        return "Int64"
+    if func == "rank":
+        return "UInt32"
+    return input_type
+
+
+class WindowFunctionInput(BaseModel):
+    """A single window-function operation producing one new column.
+
+    `column` is the source column for rolling, cumulative and rank functions.
+    For `tile`, `column` is ignored (ordering comes from the outer
+    ``WindowFunctionsInput.order_by``).
+    """
+
+    column: str | None = None
+    function: WindowFunctionName
+    new_column_name: str
+    window_size: int | None = None
+    min_periods: int | None = None
+    edge_behavior: RollingEdgeBehavior | None = "require_full"
+    number_of_groups: int | None = None
+    rank_method: RankMethod | None = "ordinal"
+    output_type: str | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> "WindowFunctionInput":
+        if _is_rolling(self.function):
+            if self.window_size is None or self.window_size < 1:
+                raise ValueError(f"{self.function!r} requires a positive window_size")
+            if self.column is None:
+                raise ValueError(f"{self.function!r} requires a source column")
+        elif _is_cumulative(self.function) or self.function == "rank":
+            if self.column is None:
+                raise ValueError(f"{self.function!r} requires a source column")
+        elif self.function == "tile":
+            if self.number_of_groups is None or self.number_of_groups < 1:
+                raise ValueError("'tile' requires a positive number_of_groups")
+        if self.output_type is None:
+            self.output_type = get_window_output_type(self.function)
+        return self
+
+
+class WindowFunctionsInput(BaseModel):
+    """Defines the settings for a window-functions node.
+
+    Attributes
+    ----------
+    partition_by : list[str]
+        Optional list of columns to partition by (equivalent to ``.over(...)``).
+    order_by : list[SortByInput]
+        Ordering within each partition. Required for rolling and tile
+        functions; optional (but usually wanted) for cumulative functions.
+    window_functions : list[WindowFunctionInput]
+        Ordered list of per-column window operations to apply. Each produces
+        one new column; all are applied in a single ``with_columns`` call.
+    """
+
+    partition_by: list[str] = Field(default_factory=list)
+    order_by: list[SortByInput] = Field(default_factory=list)
+    window_functions: list[WindowFunctionInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "WindowFunctionsInput":
+        needs_order = any(_is_rolling(w.function) or w.function == "tile" for w in self.window_functions)
+        if needs_order and not self.order_by:
+            raise ValueError("Rolling and tile functions require at least one order_by column")
+        seen: set[str] = set()
+        for w in self.window_functions:
+            if w.new_column_name in seen:
+                raise ValueError(f"Duplicate new_column_name: {w.new_column_name!r}")
+            seen.add(w.new_column_name)
+        return self
+
+
 class TextToRowsInput(BaseModel):
     """Defines settings for splitting a text column into multiple rows based on a delimiter."""
 
