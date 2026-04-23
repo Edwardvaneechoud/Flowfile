@@ -830,7 +830,7 @@ def _signal_error(error_message: Array, progress: Value, exc: Exception, logger_
         progress.value = -1
 
 
-def data_science_fit(
+def linear_regression_fit(
     polars_serializable_object: bytes,
     progress: Value,
     error_message: Array,
@@ -838,36 +838,38 @@ def data_science_fit(
     file_path: str,
     flowfile_flow_id: int,
     flowfile_node_id: int | str,
-    kind: str,
     feature_cols: list[str],
     target_col: str | None,
     artefact_name: str,
     prediction_col: str,
-    hyperparams: dict,
+    fit_intercept: bool,
+    null_policy: str,
+    solver: str,
     source_registration_id: int,
     source_flow_id: int | None = None,
     source_node_id: int | None = None,
 ):
-    """Fit an estimator on the incoming LazyFrame and publish it to the Catalog.
+    """Fit a linear regression on the incoming frame and publish it to the Catalog.
 
-    Writes a small preview DataFrame (e.g. coefficients) to ``file_path`` so
-    the calling node can surface it to the downstream graph.
+    Writes the coefficients/intercept preview DataFrame to ``file_path`` so the
+    calling node can surface it to the downstream graph.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(f"Starting data_science_fit ({kind}) -> publish '{artefact_name}'")
+    flowfile_logger.info(f"Starting linear_regression_fit -> publish '{artefact_name}'")
     try:
         from shared.data_science import artefact_io
-        from shared.data_science.estimators import fit_estimator
+        from shared.data_science.estimators import fit_linear_regression
 
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
 
-        artefact, preview_df, output_schema = fit_estimator(
-            kind=kind,
+        artefact, preview_df, output_schema = fit_linear_regression(
             df=df,
             feature_cols=feature_cols,
             target_col=target_col,
-            hyperparams=hyperparams or {},
+            fit_intercept=fit_intercept,
+            null_policy=null_policy,
+            solver=solver,
             prediction_col=prediction_col,
         )
 
@@ -881,7 +883,7 @@ def data_science_fit(
         )
 
         preview_df.write_ipc(file_path)
-        flowfile_logger.info("data_science_fit completed successfully")
+        flowfile_logger.info("linear_regression_fit completed successfully")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
@@ -892,7 +894,7 @@ def data_science_fit(
     queue.put(out.serialize())
 
 
-def data_science_predict(
+def linear_regression_predict(
     polars_serializable_object: bytes,
     progress: Value,
     error_message: Array,
@@ -905,12 +907,13 @@ def data_science_predict(
     feature_cols: list[str],
     prediction_col: str,
 ):
-    """Apply a Catalog estimator to the incoming LazyFrame.
+    """Apply a published linear regression artefact to the incoming LazyFrame.
 
-    Writes the resulting DataFrame (input + prediction column) to ``file_path``.
+    ``apply_predict`` builds a pure Polars expression, so the plan stays lazy
+    until the write boundary.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(f"Starting data_science_predict using artefact '{artefact_name}'")
+    flowfile_logger.info(f"Starting linear_regression_predict using artefact '{artefact_name}'")
     try:
         from shared.data_science import artefact_io
         from shared.data_science.predict import apply_predict
@@ -920,10 +923,9 @@ def data_science_predict(
         blob = artefact_io.download_artifact(artefact_name, artefact_version)
         artefact = artefact_io.load_artefact(blob)
 
-        # apply_predict keeps the plan lazy; collect only at the write boundary.
         result_lf = apply_predict(lf, artefact, feature_cols, prediction_col)
         collect_lazy_frame(result_lf).write_ipc(file_path)
-        flowfile_logger.info("data_science_predict completed successfully")
+        flowfile_logger.info("linear_regression_predict completed successfully")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:

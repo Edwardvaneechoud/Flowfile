@@ -1874,25 +1874,26 @@ class FlowGraph:
                 node.node_template = node.node_template.model_copy(update={"output": len(output_names)})
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
-    def add_data_science_fit(self, node_settings: input_schema.NodeDataScienceFit):
-        """Adds a node that fits an estimator on the worker and publishes it to the Catalog.
+    def add_linear_regression_fit(self, node_settings: input_schema.NodeLinearRegressionFit):
+        """Adds a node that fits a linear regression on the worker and publishes it to the Catalog.
 
-        The node's downstream output is a small preview DataFrame
-        (e.g. coefficients/metrics) so the rest of the flow can keep building
-        without round-tripping through the artefact store.
+        The node's downstream output is a small preview DataFrame (coefficients
+        + intercept) so the rest of the flow can keep building without
+        round-tripping through the artefact store.
         """
-        from shared.data_science.estimators import PREVIEW_SCHEMAS, SUPERVISED_KINDS
+        from shared.data_science.estimators import PREVIEW_SCHEMA
 
-        fit_input = node_settings.data_science_fit_input
+        fit_input = node_settings.linear_regression_fit_input
 
         def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
             kwargs = {
-                "kind": fit_input.kind,
                 "feature_cols": fit_input.feature_cols,
                 "target_col": fit_input.target_col,
                 "artefact_name": fit_input.artefact_name,
                 "prediction_col": fit_input.prediction_col,
-                "hyperparams": fit_input.hyperparams or {},
+                "fit_intercept": fit_input.fit_intercept,
+                "null_policy": fit_input.null_policy,
+                "solver": fit_input.solver,
                 "source_registration_id": self._flow_settings.source_registration_id,
                 "source_flow_id": self.flow_id,
                 "source_node_id": node_settings.node_id,
@@ -1902,23 +1903,23 @@ class FlowGraph:
                 node_id=node_settings.node_id,
                 lf=flowfile_table.data_frame,
                 wait_on_completion=True,
-                operation_type="data_science_fit",
+                operation_type="linear_regression_fit",
                 kwargs=kwargs,
             )
             if fetcher.has_error:
-                raise RuntimeError(f"data_science_fit failed: {fetcher.error_info[1]}")
+                raise RuntimeError(f"linear_regression_fit failed: {fetcher.error_info[1]}")
             return FlowDataEngine(fetcher.get_result())
 
         def schema_callback() -> list[FlowfileColumn]:
-            preview = PREVIEW_SCHEMAS.get(fit_input.kind)
-            if not preview:
-                return []
-            return [FlowfileColumn.from_input(column_name=c["name"], data_type=c["data_type"]) for c in preview]
+            return [
+                FlowfileColumn.from_input(column_name=c["name"], data_type=c["data_type"])
+                for c in PREVIEW_SCHEMA
+            ]
 
         self.add_node_step(
             node_id=node_settings.node_id,
             function=_func,
-            node_type="data_science_fit",
+            node_type="linear_regression_fit",
             setting_input=node_settings,
             input_node_ids=[node_settings.depending_on_id],
             schema_callback=schema_callback,
@@ -1930,14 +1931,14 @@ class FlowGraph:
             errors.append("artefact_name is required")
         if not fit_input.feature_cols:
             errors.append("feature_cols is required")
-        if fit_input.kind in SUPERVISED_KINDS and not fit_input.target_col:
-            errors.append(f"target_col is required for supervised estimator '{fit_input.kind}'")
+        if not fit_input.target_col:
+            errors.append("target_col is required")
         if errors and node is not None:
             node.results.errors = "; ".join(errors)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
-    def add_data_science_predict(self, node_settings: input_schema.NodeDataSciencePredict):
-        """Adds a node that loads a Catalog estimator and applies it to incoming data.
+    def add_linear_regression_predict(self, node_settings: input_schema.NodeLinearRegressionPredict):
+        """Adds a node that loads a Catalog linear-regression artefact and applies it.
 
         ``schema_callback`` consults the artefact's ``output_schema`` so the
         downstream graph can know its predicted columns at add time, before
@@ -1945,7 +1946,7 @@ class FlowGraph:
         """
         from shared.data_science import artefact_io
 
-        predict_input = node_settings.data_science_predict_input
+        predict_input = node_settings.linear_regression_predict_input
 
         def _func(flowfile_table: FlowDataEngine) -> FlowDataEngine:
             kwargs = {
@@ -1959,11 +1960,11 @@ class FlowGraph:
                 node_id=node_settings.node_id,
                 lf=flowfile_table.data_frame,
                 wait_on_completion=True,
-                operation_type="data_science_predict",
+                operation_type="linear_regression_predict",
                 kwargs=kwargs,
             )
             if fetcher.has_error:
-                raise RuntimeError(f"data_science_predict failed: {fetcher.error_info[1]}")
+                raise RuntimeError(f"linear_regression_predict failed: {fetcher.error_info[1]}")
             return FlowDataEngine(fetcher.get_result())
 
         def schema_callback() -> list[FlowfileColumn]:
@@ -1993,7 +1994,7 @@ class FlowGraph:
         self.add_node_step(
             node_id=node_settings.node_id,
             function=_func,
-            node_type="data_science_predict",
+            node_type="linear_regression_predict",
             setting_input=node_settings,
             input_node_ids=[node_settings.depending_on_id],
             schema_callback=schema_callback,

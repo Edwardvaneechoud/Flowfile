@@ -8,7 +8,7 @@
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Artefact</div>
         <el-select
-          v-model="nodePredict.data_science_predict_input.artefact_name"
+          v-model="nodePredict.linear_regression_predict_input.artefact_name"
           filterable
           size="small"
           style="width: 100%"
@@ -30,7 +30,7 @@
           size="small"
           style="width: 100%"
           :loading="loadingVersions"
-          :disabled="!nodePredict.data_science_predict_input.artefact_name"
+          :disabled="!nodePredict.linear_regression_predict_input.artefact_name"
           @change="onVersionChange"
         >
           <el-option label="Latest" :value="LATEST" />
@@ -42,7 +42,15 @@
           />
         </el-select>
 
-        <div v-if="artefactOutputSchema" class="schema-hint">
+        <div v-if="trainedFeatures.length" class="schema-hint">
+          Trained with:
+          <span
+            v-for="f in trainedFeatures"
+            :key="f"
+            class="schema-pill"
+          >{{ f }}</span>
+        </div>
+        <div v-if="artefactOutputSchema && artefactOutputSchema.length" class="schema-hint">
           Will append:
           <span
             v-for="col in artefactOutputSchema"
@@ -56,14 +64,24 @@
 
         <div class="listbox-subtitle" style="margin-top: 12px">Feature columns</div>
         <ColumnListSelector
-          v-model="nodePredict.data_science_predict_input.feature_cols"
+          v-model="nodePredict.linear_regression_predict_input.feature_cols"
           :schema="tableSchema"
-          placeholder="Select the same features used at fit time"
+          placeholder="Must match the training features above, in the same order"
         />
+        <el-button
+          v-if="trainedFeatures.length"
+          size="small"
+          type="primary"
+          plain
+          style="margin-top: 4px"
+          @click="autoMatchFeatures"
+        >
+          Use trained features
+        </el-button>
 
         <div class="listbox-subtitle" style="margin-top: 12px">Prediction column</div>
         <el-input
-          v-model="nodePredict.data_science_predict_input.prediction_col"
+          v-model="nodePredict.linear_regression_predict_input.prediction_col"
           size="small"
           placeholder="prediction"
         />
@@ -77,7 +95,7 @@
 import { computed, onMounted, ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { ElMessage } from "element-plus";
-import type { NodeDataSciencePredict } from "@/types/node.types";
+import type { NodeLinearRegressionPredict } from "@/types/node.types";
 import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "@/stores/node-store";
 import { useNodeSettings } from "@/composables/useNodeSettings";
@@ -88,18 +106,19 @@ import {
   type ArtifactVersionInfo,
   type ArtifactWithVersions,
 } from "@/api/artifacts.api";
-import { createDataSciencePredictNode } from "./utils";
+import { createLinearRegressionPredictNode } from "./utils";
 
 const LATEST = "__latest__";
 
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
-const nodePredict = ref<NodeDataSciencePredict | null>(null);
+const nodePredict = ref<NodeLinearRegressionPredict | null>(null);
 const nodeData = ref<NodeData | null>(null);
 
 const artefactNames = ref<string[]>([]);
 const artefactVersions = ref<ArtifactVersionInfo[]>([]);
 const artefactOutputSchema = ref<ArtifactWithVersions["output_schema"]>(null);
+const trainedFeatures = ref<string[]>([]);
 const loadingArtefacts = ref(false);
 const loadingVersions = ref(false);
 const versionSelection = ref<number | typeof LATEST>(LATEST);
@@ -110,12 +129,11 @@ const loadArtefactList = async () => {
   loadingArtefacts.value = true;
   try {
     const items = await ArtifactsApi.list();
-    // The list endpoint returns one row per (name, version); the picker wants
-    // unique names.
     const seen = new Set<string>();
     const names: string[] = [];
     for (const item of items) {
       if (item.status !== "active") continue;
+      if (item.serialization_format !== "json") continue;
       if (seen.has(item.name)) continue;
       seen.add(item.name);
       names.push(item.name);
@@ -132,6 +150,7 @@ const loadArtefactVersions = async (name: string) => {
   if (!name) {
     artefactVersions.value = [];
     artefactOutputSchema.value = null;
+    trainedFeatures.value = [];
     return;
   }
   loadingVersions.value = true;
@@ -141,10 +160,15 @@ const loadArtefactVersions = async (name: string) => {
       (a, b) => b.version - a.version,
     );
     artefactOutputSchema.value = withVersions.output_schema ?? null;
+    // The artefact payload itself carries feature_names, but the catalog
+    // metadata response doesn't expose the blob; rely on output_schema
+    // for the column-name hint and let the backend validate at runtime.
+    trainedFeatures.value = [];
   } catch (e) {
     ElMessage.error(`Failed to load versions for '${name}': ${String(e)}`);
     artefactVersions.value = [];
     artefactOutputSchema.value = null;
+    trainedFeatures.value = [];
   } finally {
     loadingVersions.value = false;
   }
@@ -152,26 +176,39 @@ const loadArtefactVersions = async (name: string) => {
 
 const onArtefactNameChange = async (name: string) => {
   if (!nodePredict.value) return;
-  nodePredict.value.data_science_predict_input.artefact_version = null;
+  nodePredict.value.linear_regression_predict_input.artefact_version = null;
   versionSelection.value = LATEST;
   await loadArtefactVersions(name);
 };
 
 const onVersionChange = (value: number | typeof LATEST) => {
   if (!nodePredict.value) return;
-  nodePredict.value.data_science_predict_input.artefact_version =
+  nodePredict.value.linear_regression_predict_input.artefact_version =
     value === LATEST ? null : value;
+};
+
+const autoMatchFeatures = () => {
+  if (!nodePredict.value) return;
+  const available = new Set(tableSchema.value.map((c) => c.name));
+  const missing = trainedFeatures.value.filter((f) => !available.has(f));
+  if (missing.length) {
+    ElMessage.warning(`Upstream frame is missing: ${missing.join(", ")}`);
+  }
+  nodePredict.value.linear_regression_predict_input.feature_cols = trainedFeatures.value.filter((f) =>
+    available.has(f),
+  );
 };
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePredict,
   onBeforeSave: () => {
     if (!nodePredict.value) return false;
-    if (!nodePredict.value.data_science_predict_input.artefact_name) {
+    const input = nodePredict.value.linear_regression_predict_input;
+    if (!input.artefact_name) {
       ElMessage.error("Pick an artefact");
       return false;
     }
-    if (nodePredict.value.data_science_predict_input.feature_cols.length === 0) {
+    if (input.feature_cols.length === 0) {
       ElMessage.error("At least one feature column is required");
       return false;
     }
@@ -181,27 +218,25 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
-  const setting = nodeData.value?.setting_input as NodeDataSciencePredict | undefined;
-  const hasValidSetup = Boolean(setting?.is_setup && setting?.data_science_predict_input);
+  const setting = nodeData.value?.setting_input as NodeLinearRegressionPredict | undefined;
+  const hasValidSetup = Boolean(setting?.is_setup && setting?.linear_regression_predict_input);
   nodePredict.value = hasValidSetup
-    ? (setting as NodeDataSciencePredict)
-    : createDataSciencePredictNode(nodeStore.flow_id, nodeStore.node_id);
+    ? (setting as NodeLinearRegressionPredict)
+    : createLinearRegressionPredictNode(nodeStore.flow_id, nodeStore.node_id);
 
-  const currentVersion = nodePredict.value.data_science_predict_input.artefact_version;
+  const currentVersion = nodePredict.value.linear_regression_predict_input.artefact_version;
   versionSelection.value = currentVersion === null ? LATEST : currentVersion;
 
   dataLoaded.value = true;
 
   await loadArtefactList();
-  const existingName = nodePredict.value.data_science_predict_input.artefact_name;
+  const existingName = nodePredict.value.linear_regression_predict_input.artefact_name;
   if (existingName) {
     await loadArtefactVersions(existingName);
   }
 };
 
 onMounted(() => {
-  // Re-entrant: loadNodeData drives the initial fetch; this keeps the
-  // picker warm if the component is remounted without re-calling loadNodeData.
   if (artefactNames.value.length === 0 && !loadingArtefacts.value) {
     loadArtefactList();
   }
