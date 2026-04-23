@@ -5,118 +5,90 @@
 </h1>
 
 <p align="center">
-  <b>Documentation</b>:
-  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> -
-  <a href="flowfile_core/README.md">Core</a> -
-  <a href="flowfile_worker/README.md">Worker</a> -
-  <a href="flowfile_frontend/README.md">Frontend</a> -
-  <a href="https://demo.flowfile.org"> Try Online </a> -
-  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
+  <b>Open-source visual ETL on Polars. Runs locally. Generates Python code.</b>
 </p>
 
-<p>
-Flowfile is a visual ETL tool and Python library for building data pipelines. It has a drag-and-drop canvas with 30+ node types (joins, fuzzy matching, filters, pivots, aggregations, etc.), connects to databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), and Kafka. Pipelines run on Polars and can be exported as standalone Python scripts. It also includes a data catalog backed by Delta Lake, a scheduler, sandboxed Python execution via Docker kernels, and a programmatic API with Polars-like syntax. Available as a desktop app, web UI, Docker deployment, Python package, or browser-only WASM version.
+<p align="center">
+  <a href="https://edwardvaneechoud.github.io/Flowfile/">Docs</a> ·
+  <a href="https://demo.flowfile.org">Try it in your browser</a> ·
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/releases">Releases</a> ·
+  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Architecture</a>
 </p>
+
+---
+
+Flowfile is a visual ETL tool with data platform capabilities built in. Drag nodes on a canvas, or write Python with a Polars-like API — it's the same graph underneath. Pipelines run on Polars, can be exported as Python code, and everything runs on your machine.
+
+Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedded viz, virtual flow tables, flow parameters, and a built-in scheduler.
 
 <div align="center">
-  <img src=".github/images/group_by_screenshot.png" alt="Flowfile Interface" width="800"/>
+  <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
 </div>
 
 ---
 
-## Example Use Cases
+## What's in Flowfile
 
-### Data Cleaning & Transformation
+- **A visual canvas** with 30+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want.
 
-Perform complex joins (fuzzy matching), text-to-rows transformations, and advanced filtering/grouping using a visual interface.
+- **A Python API** with Polars-like syntax. Code and visual are two ways to build the same object graph — write a pipeline, call `open_graph_in_editor()`, and see it visually without re-building anything.
 
-<div align="center">
-  <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile Layout" width="800"/>
-</div>
+- **Code generation.** Export any visual flow as Python code. For pipelines built from standard transformations (joins, filters, aggregations, formulas, etc.), you get pure Polars code with no Flowfile dependency. For flows using Flowfile-specific nodes — the catalog, Kafka sources, virtual table reads — the export uses Flowfile's Python API instead, since there's no direct Polars equivalent. Flows also save as human-readable YAML, so version control works.
 
-### Code Generation
+- **A data catalog.** Unity-style hierarchy (catalog > schema > table), Delta Lake-backed with version history and time travel. Flows register into namespaces and write output through a Catalog Writer node.
 
-Export your visual flows as standalone Python/Polars scripts. Deploy workflows without Flowfile dependencies or share ETL logic as readable code.
+- **Virtual flow tables.** Flow outputs can live in the catalog without being materialized. If the producer graph is lazy-safe, Flowfile serializes the Polars LazyFrame and filter/projection pushdown crosses the flow boundary. Upstream Delta versions are tracked per read, so stale data doesn't ship.
 
-<div align="center">
-  <img src=".github/images/generated_code.png" alt="Automatically generate polars code" width="800"/>
-</div>
+- **A SQL editor** on top of the catalog (Polars SQLContext). Query any registered table, visualize the result in an embedded Graphic Walker, save any ad-hoc query as a reusable flow in one click.
 
-### Data Integration
+- **A scheduler.** Run flows on an interval, trigger when a catalog table updates, or fire when a set of tables has all refreshed. Run history, logs, and cancellation live in the UI. Runs embedded, standalone, or in Docker.
 
-Standardize data formats and handle messy Excel files efficiently.
+- **Flow parameters.** Parameterize any node setting using `${variable}` syntax — file paths, SQL queries, formulas. Manage defaults from a Designer panel, override at runtime via CLI with `--param`.
 
-<div align="center">
-  <img src=".github/images/read_excel_flowfile.gif" alt="Read Excel" width="800"/>
-</div>
+- **Python Kernels.** Run user code in isolated Docker containers with their own package environments, keeping the host process safe. Jupyter-style notebook editor with cell execution, autocompletions, and rich display output (matplotlib, plotly, PIL, HTML).
 
-### Performance at Scale
-
-Built to scale out-of-core using Polars for lightning-fast data processing.
-
-<div align="center">
-  <img src=".github/images/demo_flowfile_write.gif" alt="Flowfile Write Demo" width="800"/>
-</div>
-
-### YAML/JSON Export
-
-Save flows as human-readable YAML or JSON files, making them portable and version-control friendly.
+- **Templates and clipboard import.** Get started with built-in flow templates, or paste tabular data from Excel / Google Sheets directly onto the canvas to create a pre-filled input node.
 
 ---
 
-## Getting Started
+## Quick Start
 
-Flowfile is designed to be flexible. Choose the installation method that fits your workflow.
+**Try it in your browser** (no install, 14 essential nodes, runs entirely on Pyodide): [demo.flowfile.org](https://demo.flowfile.org)
 
-### Prerequisites
-
-- Python 3.10+
-- Node.js 16+ (for frontend development)
-- Poetry (Python package manager)
-- Docker & Docker Compose (optional, for Docker setup)
-- Make (optional, for build automation)
-
-### 1. Python Package (Recommended for Developers)
-
-Install Flowfile directly from PyPI. This gives you both the visual UI and the programmatic `flowfile_frame` API.
+**Python package** — the fastest way to run the full thing locally:
 
 ```bash
 pip install Flowfile
-```
-
-**Launch the Visual UI:** Start the web-based UI with a single command:
-
-```bash
 flowfile run ui
 ```
 
-**Use the FlowFrame API:** Create pipelines programmatically using a Polars-like syntax:
+**Use the Python API:**
 
 ```python
 import flowfile as ff
 from flowfile import col, open_graph_in_editor
 
-# Create a data pipeline
 df = ff.from_dict({
     "id": [1, 2, 3, 4, 5],
     "category": ["A", "B", "A", "C", "B"],
     "value": [100, 200, 150, 300, 250]
 })
 
-# Process the data
-result = df.filter(col("value") > 150).with_columns([
-    (col("value") * 2).alias("double_value")
-])
+result = (
+    df.filter(col("value") > 150)
+      .with_columns((col("value") * 2).alias("double_value"))
+      .group_by("category")
+      .agg(col("value").sum().alias("total"))
+)
 
-# Open the graph in the web UI
 open_graph_in_editor(result.flow_graph)
 ```
 
-For more details, see the [flowfile_frame documentation](flowfile_frame/README.md).
+---
 
-### 2. Docker (Self-Hosted)
+## Other Ways to Run It
 
-Run the full suite (Frontend, Core, Worker) using Docker Compose. Ideal for server deployments or local isolation.
+**Docker** — full stack (frontend, core, worker) via Docker Compose:
 
 ```bash
 git clone https://github.com/edwardvaneechoud/Flowfile.git
@@ -124,149 +96,111 @@ cd Flowfile
 docker compose up -d
 ```
 
-Access the app at http://localhost:8080.
+Access at http://localhost:8080.
 
-### 3. Desktop Application
+**Desktop app** — native install for Windows, macOS, or Linux. Download from [Releases](https://github.com/Edwardvaneechoud/Flowfile/releases).
 
-The desktop version offers the best experience for non-technical users with a native interface and integrated backend services.
+> **Note:** Installers aren't code-signed yet. On Windows click "More info" → "Run anyway". On macOS, if the app shows as damaged, clear the quarantine flag:
+> ```bash
+> find /Applications/Flowfile.app -exec xattr -c {} \;
+> ```
 
-**Option A: Download Pre-built Application**
-
-Download the latest release from [GitHub Releases](https://github.com/edwardvaneechoud/Flowfile/releases) and run the installer for your platform (Windows, macOS, or Linux).
-
-> **Note:** You may see security warnings since the app isn't signed with a developer certificate yet.
-> - **Windows:** Click "More info" → "Run anyway"
-> - **macOS:** If you see an "app is damaged" error, run this in Terminal:
->   ```bash
->   find /Applications/Flowfile.app -exec xattr -c {} \;
->   ```
->   Then open the app normally. This clears the quarantine flag that macOS sets on downloaded apps.
-
-**Option B: Build from Source**
-
-```bash
-git clone https://github.com/edwardvaneechoud/Flowfile.git
-cd Flowfile
-
-# Build packaged executable
-make    # Creates platform-specific executable
-
-# Or manually:
-poetry install
-poetry run build_backends
-cd flowfile_frontend
-npm install
-npm run build
-```
-
-### 4. Browser Version (Lite)
-
-For a zero-setup experience, try the WASM version. It runs entirely in your browser using Pyodide (no server required).
-
-**Live Demo:** [demo.flowfile.org](https://demo.flowfile.org)
-
-This lite version includes 14 essential nodes for data transformation:
-
-- **Input:** Read CSV, Manual Input
-- **Transformation:**
-  - *Basic:* Filter, Select, Sort, Unique, Take Sample
-  - *Reshape:* Group By, Pivot, Unpivot, Join
-- **Advanced:** Polars Code (write custom Python/Polars logic)
-- **Output:** Preview (view in browser), Download (CSV or Parquet)
-
-### 5. Manual Setup (Development)
-
-For contributors who need hot-reloading and direct access to services.
+**From source** — for contributors:
 
 ```bash
 git clone https://github.com/edwardvaneechoud/Flowfile.git
 cd Flowfile
 poetry install
 
-# Start backend services
-poetry run flowfile_worker  # Starts worker on :63579
-poetry run flowfile_core    # Starts core on :63578
+# Backend (two separate terminals)
+poetry run flowfile_worker  # :63579
+poetry run flowfile_core    # :63578
 
-# Start frontend (in a new terminal)
+# Frontend
 cd flowfile_frontend
-npm install && npm run dev:web  # Starts web interface on :8080
+npm install && npm run dev:web  # :8080
 ```
 
----
-
-## Visualizing and Sharing Pipelines
-
-One of the most powerful features is the ability to visualize your data transformation pipelines:
-
-- **Inspect Data Flow:** See exactly how your data is transformed step by step
-- **Debugging:** Identify issues in your data pipeline visually
-- **Documentation:** Share your data transformation logic with teammates
-- **Iteration:** Modify your pipeline in the Designer UI and export it back to code
+Requires Python 3.10+ and Node.js 20+.
 
 ---
 
-## Recent Additions
+## What It Looks Like
 
-- **Data Catalog** — Register tables backed by Delta Lake with version history, time travel, and merge/upsert support. Organize tables into catalogs and schemas, and track lineage across flows.
-- **Scheduler** — Run registered flows on an interval or trigger them when specific catalog tables are updated. Configured directly from the catalog UI.
-- **Kafka / Redpanda Source** — A canvas node for reading from Kafka topics with automatic schema inference.
-- **Python Kernels** — The Python Script node runs user code in isolated Docker containers (`kernel_runtime`) with their own package environments, keeping the host process safe.
-- **Cloud Storage** — Read/write to S3, Azure Data Lake Storage, and Google Cloud Storage.
-- **Flow Parameters** — `${variable}` substitution across node settings, configurable via UI or CLI.
+### Visual joins, fuzzy matching, and transformations
+
+<div align="center">
+  <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo" width="800"/>
+</div>
+
+### Export any visual flow as Polars code
+
+<div align="center">
+  <img src=".github/images/generated_code.png" alt="Generated Polars code" width="800"/>
+</div>
+
+### SQL analytics and visualization on catalog data
+
+<div align="center">
+  <img src=".github/images/sql_editor.png" alt="SQL editor with Graphic Walker" width="800"/>
+</div>
+
+### Read messy Excel files without writing parsing logic
+
+<div align="center">
+  <img src=".github/images/read_excel_flowfile.gif" alt="Excel reading" width="800"/>
+</div>
+
+### Stream writes to disk for larger-than-memory data
+
+<div align="center">
+  <img src=".github/images/demo_flowfile_write.gif" alt="Flowfile write demo" width="800"/>
+</div>
 
 ---
 
-## Technical Design
+## Architecture
 
-Flowfile operates as three interconnected services:
+Three interconnected services:
 
-- **Designer (Electron + Vue):** Visual interface for building data flows
-- **Core (FastAPI):** ETL engine using Polars for data transformations (`:63578`)
-- **Worker (FastAPI):** Handles computation and caching of data operations (`:63579`)
+- **Designer** (Electron + Vue) — visual interface
+- **Core** (FastAPI) — ETL engine running Polars (`:63578`)
+- **Worker** (FastAPI) — computation and caching (`:63579`)
 
-Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations. You can export any visual flow as standalone Python/Polars code for production use.
+Plus an embedded **scheduler** and a sandboxed **kernel runtime** for Python Script nodes.
 
-For a deeper dive, check out [this article on our architecture](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c).
+Each flow is a directed acyclic graph where nodes are data operations and edges are data flow. Every visual flow exports to standalone Python/Polars code for production use.
+
+Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c).
 
 ---
 
 ## TODO
 
-### Core Features
-
-- [x] Add cloud storage support (S3, ADLS, GCS)
-- [x] Multi-flow execution support
-- [x] Polars code reverse engineering
-  - Generate Polars code from visual flows (via the "Generate code" button)
-  - Import existing Polars scripts and convert to visual flows
+- [x] Cloud storage support (S3, ADLS, GCS)
+- [x] Code generation from visual flows and reverse engineering from Polars scripts
 - [x] Data catalog with Delta Lake storage
+- [x] Virtual flow tables with lazy optimization
+- [x] SQL editor and SQL query node
 - [x] Flow scheduling (interval and table-trigger based)
 - [x] Kafka / Redpanda ingestion
 - [x] Sandboxed Python execution (Docker-based kernels)
-
-### Documentation
-
-- [ ] Add comprehensive docstrings
-- [x] Create detailed node documentation
-- [x] Add architectural documentation
-- [ ] Improve inline code comments
-- [x] Create user guides and tutorials
-
-### Infrastructure
-
-- [ ] Implement proper testing
-- [x] Add CI/CD pipeline
-- [x] Improve error handling
-- [x] Add monitoring and logging
+- [x] Flow parameters with `${variable}` substitution
+- [x] Built-in templates
+- [x] Database migrations (Alembic)
+- [x] Comprehensive docs site
+- [ ] Comprehensive test coverage
+- [ ] Multi-user collaboration
+- [ ] Role-based access control
 
 ---
 
 ## License
 
-[MIT License](LICENSE)
+[MIT](LICENSE)
 
 ---
 
 ## Acknowledgments
 
-Built with [Polars](https://pola.rs/), [Vue.js](https://vuejs.org/), [FastAPI](https://fastapi.tiangolo.com/), [VueFlow](https://vueflow.dev/), [Delta Lake](https://delta.io/), and [Electron](https://www.electronjs.org/).
+Built on [Polars](https://pola.rs/), [Vue.js](https://vuejs.org/), [FastAPI](https://fastapi.tiangolo.com/), [VueFlow](https://vueflow.dev/), [Delta Lake](https://delta.io/), [Graphic Walker](https://github.com/Kanaries/graphic-walker), and [Electron](https://www.electronjs.org/).
