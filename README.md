@@ -127,31 +127,31 @@ Requires Python 3.10+ and Node.js 20+.
 
 ## What It Looks Like
 
-### Visual joins, fuzzy matching, and transformations
+#### Visual joins, fuzzy matching, and transformations
 
 <div align="center">
   <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo" width="800"/>
 </div>
 
-### Export any visual flow as Polars code
+#### Export any visual flow as Polars code
 
 <div align="center">
   <img src=".github/images/generated_code.png" alt="Generated Polars code" width="800"/>
 </div>
 
-### SQL analytics and visualization on catalog data
+#### SQL analytics and visualization on catalog data
 
 <div align="center">
   <img src=".github/images/sql_editor.png" alt="SQL editor with Graphic Walker" width="800"/>
 </div>
 
-### Read messy Excel files without writing parsing logic
+#### Read messy Excel files without writing parsing logic
 
 <div align="center">
   <img src=".github/images/read_excel_flowfile.gif" alt="Excel reading" width="800"/>
 </div>
 
-### Stream writes to disk for larger-than-memory data
+#### Stream writes to disk for larger-than-memory data
 
 <div align="center">
   <img src=".github/images/demo_flowfile_write.gif" alt="Flowfile write demo" width="800"/>
