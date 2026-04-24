@@ -44,6 +44,7 @@ import {
 } from "./backendInterface";
 import { FlowApi } from "../../api";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
+import { snapshotClipboard } from "../../utils/clipboardUtils";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
@@ -652,19 +653,6 @@ const copyValue = async (x: number, y: number) => {
   // Update history state from response
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
-  }
-};
-
-/**
- * Snapshots the current system clipboard text so we can detect
- * whether the user copied something externally after copying a node.
- */
-const snapshotClipboard = async () => {
-  try {
-    const text = await navigator.clipboard.readText();
-    localStorage.setItem("clipboardAtNodeCopy", text);
-  } catch {
-    localStorage.setItem("clipboardAtNodeCopy", "");
   }
 };
 
