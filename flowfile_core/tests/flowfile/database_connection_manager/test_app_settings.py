@@ -125,17 +125,11 @@ def test_google_oauth_config_env_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         "flowfile_core.configs.app_settings.GOOGLE_OAUTH_CLIENT_SECRET", "env-client-secret"
     )
-    monkeypatch.setattr(
-        "flowfile_core.configs.app_settings.GOOGLE_OAUTH_REDIRECT_URI", "env-redirect"
-    )
 
     with get_db_context() as db:
         cfg = get_google_oauth_config(db, 1)
-        assert cfg == {
-            "client_id": "env-client-id",
-            "client_secret": "env-client-secret",
-            "redirect_uri": "env-redirect",
-        }
+        assert cfg["client_id"] == "env-client-id"
+        assert cfg["client_secret"] == "env-client-secret"
 
     with get_db_context() as db:
         set_user_secret(db, GOOGLE_OAUTH_CLIENT_ID_KEY, "db-client-id", 1)
@@ -145,7 +139,6 @@ def test_google_oauth_config_env_fallback(monkeypatch) -> None:
         # DB row wins for client_id, env fills in the rest.
         assert cfg["client_id"] == "db-client-id"
         assert cfg["client_secret"] == "env-client-secret"
-        assert cfg["redirect_uri"] == "env-redirect"
 
     _cleanup(1)
 

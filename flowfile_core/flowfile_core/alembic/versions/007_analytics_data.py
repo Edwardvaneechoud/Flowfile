@@ -1,7 +1,7 @@
 """Analytics data: add google_analytics_connections + schema drift cleanup.
 
-Revision ID: 008
-Revises: 007
+Revision ID: 007
+Revises: 006
 Create Date: 2026-04-22 17:49:55.533772+00:00
 """
 from collections.abc import Sequence
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "008"
-down_revision: str | None = "007"
+revision: str = "007"
+down_revision: str | None = "006"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

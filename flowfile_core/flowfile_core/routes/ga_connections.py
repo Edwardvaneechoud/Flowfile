@@ -339,7 +339,7 @@ def test_ga_connection(
     except ImportError as e:
         raise HTTPException(
             500,
-            "google-auth is not installed. Install the 'google_analytics' extras to use this feature.",
+            "google-auth is not installed. Run 'poetry install' to pull in all Flowfile dependencies.",
         ) from e
 
     try:

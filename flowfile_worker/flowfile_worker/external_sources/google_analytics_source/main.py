@@ -154,7 +154,7 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
     except ImportError as e:
         raise RuntimeError(
             "google-analytics-data is not installed on the worker. "
-            "Install the 'google_analytics' extra to use this connector."
+            "Run 'poetry install' to pull in all Flowfile dependencies."
         ) from e
 
     logger.info(

@@ -420,21 +420,6 @@ class GoogleAnalyticsConnection(Base):
     credential_secret = relationship("Secret", foreign_keys=[credential_secret_id], lazy="joined")
 
 
-class AppSetting(Base):
-    """Instance-wide configuration values, encrypted with the master key.
-
-    Used for app-level secrets that aren't per-user (e.g. the Google OAuth
-    client ID/secret the server uses to talk to Google on behalf of any user).
-    """
-
-    __tablename__ = "app_settings"
-
-    name = Column(String, primary_key=True)
-    encrypted_value = Column(Text, nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
-    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-
-
 class KafkaConnection(Base):
     __tablename__ = "kafka_connections"
 

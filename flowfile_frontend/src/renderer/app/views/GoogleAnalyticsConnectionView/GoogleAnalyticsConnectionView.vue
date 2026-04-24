@@ -336,6 +336,12 @@ const handleConnectOAuth = async (metadata: GoogleAnalyticsConnectionMetadata) =
 };
 
 const handleOAuthMessage = async (event: MessageEvent) => {
+  // The OAuth callback and the frontend sit on different origins in most
+  // deployments (core on :63578, frontend on :5173/:8080), so we can't check
+  // event.origin against window.location.origin. Verifying event.source ===
+  // oauthPopup proves the message came from the popup we actually opened,
+  // not from some other page posting spoofed OAuth results.
+  if (!oauthPopup || event.source !== oauthPopup) return;
   const data = event.data;
   if (!data || data.source !== "flowfile-ga-oauth") return;
   isConnecting.value = false;
