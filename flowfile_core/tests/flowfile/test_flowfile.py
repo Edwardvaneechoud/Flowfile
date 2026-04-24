@@ -1092,6 +1092,95 @@ def get_join_data(how: str = 'inner'):
             'auto_keep_left': True}
 
 
+def test_join_schema_auto_pass_through_after_upstream_rename(execution_location):
+    """Upstream changes must flow through a join without the user re-opening the join node.
+
+    Scenario:
+      manual_input(left) -> select(identity) -> join <- manual_input(right)
+
+    The join's stored left_select only references the join key. With the auto
+    pass-through behaviour, upstream columns absent from left_select should
+    still appear in both the predicted schema and the actual output.
+
+    Then we modify the select to rename a column (name -> customer_name) and
+    verify that the rename propagates all the way through the join without
+    touching the join settings.
+    """
+    graph = create_graph(execution_location=execution_location)
+    add_manual_input(graph, data=[{'id': 1, 'name': 'alice'}, {'id': 2, 'name': 'bob'}], node_id=1)
+    add_manual_input(graph, data=[{'id': 1, 'city': 'NY'}, {'id': 2, 'city': 'LA'}], node_id=2)
+
+    identity_select = [
+        transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+        transform_schema.SelectInput(old_name='name', new_name='name', keep=True),
+    ]
+    add_node_promise_on_type(graph, 'select', 3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    graph.add_select(input_schema.NodeSelect(flow_id=1, node_id=3, select_input=identity_select, keep_missing=False))
+
+    add_node_promise_on_type(graph, 'join', 4)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(3, 4)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 4)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+
+    # Stored join config intentionally omits `name` — it must still pass through.
+    graph.add_join(input_schema.NodeJoin(
+        flow_id=1,
+        node_id=4,
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')],
+            left_select=[transform_schema.SelectInput(old_name='id', new_name='id', keep=True, join_key=True)],
+            right_select=[
+                transform_schema.SelectInput(old_name='id', new_name='id', keep=False, join_key=True),
+                transform_schema.SelectInput(old_name='city', new_name='city', keep=True),
+            ],
+            how='inner',
+        ),
+        auto_generate_selection=True,
+        depending_on_ids=[3, 2],
+    ))
+
+    join_node = graph.get_node(4)
+    predicted = join_node.get_predicted_schema(force=True)
+    predicted_cols = [c.name for c in predicted]
+    assert set(predicted_cols) == {'id', 'name', 'city'}, (
+        f"Expected `name` to pass through to the join predicted schema, got {predicted_cols}"
+    )
+
+    handle_run_info(graph.run_graph())
+    actual_cols = join_node.get_resulting_data().columns
+    assert set(actual_cols) == {'id', 'name', 'city'}, (
+        f"Expected `name` to pass through to the join output, got {actual_cols}"
+    )
+
+    # Now rename `name -> customer_name` on the select node. The join config is untouched.
+    graph.reset()
+    graph.add_select(input_schema.NodeSelect(
+        flow_id=1,
+        node_id=3,
+        select_input=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+            transform_schema.SelectInput(old_name='name', new_name='customer_name', keep=True),
+        ],
+        keep_missing=False,
+    ))
+
+    join_node = graph.get_node(4)
+    predicted_after = join_node.get_predicted_schema(force=True)
+    predicted_cols_after = [c.name for c in predicted_after]
+    assert set(predicted_cols_after) == {'id', 'customer_name', 'city'}, (
+        f"Rename on select did not propagate to join predicted schema: {predicted_cols_after}"
+    )
+
+    handle_run_info(graph.run_graph())
+    actual_cols_after = graph.get_node(4).get_resulting_data().columns
+    assert set(actual_cols_after) == {'id', 'customer_name', 'city'}, (
+        f"Rename on select did not propagate to join output: {actual_cols_after}"
+    )
+
+
 def test_add_join(execution_location):
     graph = create_graph(execution_location=execution_location)
     # graph.flow_settings.execution_mode = 'Performance'
