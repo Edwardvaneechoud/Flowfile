@@ -149,6 +149,16 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
     return data
 
 
+def trigger_google_analytics_read(ga_read_settings) -> Status:
+    """Send a Google Analytics 4 read request to the worker service."""
+    f = requests.post(
+        url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
+    )
+    if not f.ok:
+        raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
+    return Status(**f.json())
+
+
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(
         url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
@@ -799,6 +809,17 @@ class ExternalKafkaFetcher(BaseFetcher):
 
     def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
         r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalGoogleAnalyticsFetcher(BaseFetcher):
+    """Fetches GA4 data via the worker service. Same pattern as ExternalDatabaseFetcher."""
+
+    def __init__(self, ga_read_settings, wait_on_completion: bool = True):
+        r = trigger_google_analytics_read(ga_read_settings=ga_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == "Processing"
         if wait_on_completion:

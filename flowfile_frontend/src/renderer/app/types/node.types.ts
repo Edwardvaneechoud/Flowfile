@@ -948,3 +948,34 @@ export interface NodeKafkaSource extends NodeBase {
   kafka_settings: KafkaSourceSettings;
   fields?: MinimalFieldInput[] | null;
 }
+
+export interface GoogleAnalyticsFilter {
+  field: string;
+  // Dimensions: equals, not_equals, contains, begins_with, ends_with, regex, in_list, not_in_list
+  // Metrics: equals, not_equals, less_than, less_equal, greater_than, greater_equal, between
+  operator: string;
+  value: string;
+  case_sensitive: boolean;
+}
+
+export interface GoogleAnalyticsOrderBy {
+  field: string;
+  descending: boolean;
+}
+
+export interface GoogleAnalyticsSettings {
+  ga_connection_name: string;
+  property_id: string;
+  start_date: string;
+  end_date: string;
+  metrics: string[];
+  dimensions: string[];
+  limit: number | null;
+  filters: GoogleAnalyticsFilter[];
+  order_bys: GoogleAnalyticsOrderBy[];
+}
+
+export interface NodeGoogleAnalyticsReader extends NodeBase {
+  google_analytics_settings: GoogleAnalyticsSettings;
+  fields?: MinimalFieldInput[] | null;
+}

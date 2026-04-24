@@ -400,6 +400,26 @@ class SchedulerLock(Base):
     heartbeat_at = Column(DateTime, default=func.now(), nullable=False)
 
 
+class GoogleAnalyticsConnection(Base):
+    """A Google Analytics 4 connection. The OAuth refresh token is stored as
+    a single encrypted Secret, referenced by ``credential_secret_id``.
+    """
+
+    __tablename__ = "google_analytics_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    default_property_id = Column(String, nullable=True)
+    oauth_user_email = Column(String, nullable=True)
+    credential_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    credential_secret = relationship("Secret", foreign_keys=[credential_secret_id], lazy="joined")
+
+
 class KafkaConnection(Base):
     __tablename__ = "kafka_connections"
 

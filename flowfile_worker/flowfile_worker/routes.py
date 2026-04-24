@@ -10,6 +10,8 @@ from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, funcs, models, mp_c
 from flowfile_worker.configs import logger
 from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.google_analytics_source.main import read_google_analytics
+from flowfile_worker.external_sources.google_analytics_source.models import GoogleAnalyticsReadSettings
 from flowfile_worker.external_sources.kafka_source.main import read_kafka
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
@@ -325,6 +327,45 @@ def store_kafka_result(kafka_read_settings: KafkaReadSettings, background_tasks:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/store_google_analytics_read_result")
+def store_google_analytics_result(
+    ga_read_settings: GoogleAnalyticsReadSettings, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Fetch a GA4 report in the background and persist it as an Arrow IPC file.
+
+    Follows the same offload pattern as ``store_database_read_result`` /
+    ``store_kafka_read_result``: the network I/O, token refresh, and pagination
+    run in a worker subprocess so the core's event loop never blocks on the
+    Google API.
+    """
+    logger.info(
+        "Processing Google Analytics source operation for property: %s",
+        ga_read_settings.property_id,
+    )
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(
+            create_and_get_default_cache_dir(ga_read_settings.flowfile_flow_id), f"{task_id}.arrow"
+        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
+        status_dict[task_id] = status
+        logger.info("Starting Google Analytics read task: %s", task_id)
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=read_google_analytics,
+            file_ref=file_path,
+            flowfile_flow_id=ga_read_settings.flowfile_flow_id,
+            flowfile_node_id=ga_read_settings.flowfile_node_id,
+            task_id=task_id,
+            kwargs={"ga_read_settings": ga_read_settings},
+        )
+        return status
+
+    except Exception as e:
+        logger.error("Error processing Google Analytics source: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.get("/kafka_offsets/{task_id}")
 def get_kafka_offsets(task_id: str):
     """Return deferred Kafka offset data for a completed task.
@@ -397,7 +438,9 @@ def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryRespons
     """Execute a SQL query against catalog tables (physical + virtual)."""
     try:
         result = funcs.execute_sql_query(
-            payload.query, payload.tables, payload.max_rows,
+            payload.query,
+            payload.tables,
+            payload.max_rows,
             virtual_tables_ipc=payload.virtual_tables_ipc,
         )
         return models.SqlQueryResponse(**result)
