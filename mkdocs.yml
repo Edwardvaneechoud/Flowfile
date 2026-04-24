@@ -144,3 +144,5 @@ nav:
     - Kernel Architecture: for-developers/kernel-architecture.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md
     - Building more custom Nodes: for-developers/custom-node-tutorial.md
+
+  - Community: community.md

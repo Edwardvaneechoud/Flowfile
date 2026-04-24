@@ -4,7 +4,7 @@
 
 Flowfile is a visual ETL (Extract, Transform, Load) platform built with a Python backend and Vue.js/Electron frontend. It provides both a visual flow designer and a programmatic Python API for building data pipelines powered by Polars.
 
-**Version:** 0.6.3 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+
+**Version:** 0.9.1 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+
 
 ## Repository Structure
 
