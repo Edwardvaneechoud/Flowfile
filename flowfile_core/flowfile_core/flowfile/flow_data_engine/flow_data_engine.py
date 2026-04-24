@@ -51,6 +51,7 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.schema_callbacks import _ensure_all_columns_have_select
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
@@ -1797,6 +1798,9 @@ class FlowDataEngine:
         self.lazy = True
         other.lazy = True
         cross_join_input_manager = transform_schemas.CrossJoinInputManager(cross_join_input)
+        _ensure_all_columns_have_select(
+            left_cols=self.columns, right_cols=other.columns, manager=cross_join_input_manager
+        )
         verify_join_select_integrity(
             cross_join_input_manager.input, left_columns=self.columns, right_columns=other.columns
         )
@@ -1835,6 +1839,10 @@ class FlowDataEngine:
         """Performs a standard SQL-style join with another DataFrame."""
         # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
+        _ensure_all_columns_have_select(
+            left_cols=self.columns, right_cols=other.columns, manager=join_manager
+        )
+        join_manager.set_join_keys()
         ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
         for jk in join_manager.join_mapping:
             if jk.left_col not in {c.old_name for c in join_manager.left_select.renames}:
