@@ -1018,6 +1018,19 @@ class GoogleAnalyticsFilter(BaseModel):
     case_sensitive: bool = False
 
 
+class GoogleAnalyticsOrderBy(BaseModel):
+    """A single sort entry applied to the GA4 report.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    routes it into a ``DimensionOrderBy`` or ``MetricOrderBy`` accordingly.
+    ``descending=True`` produces a descending sort. Sort entries are applied in
+    list order.
+    """
+
+    field: str
+    descending: bool = False
+
+
 class GoogleAnalyticsSettings(BaseModel):
     """UI settings for a Google Analytics 4 reader node.
 
@@ -1037,6 +1050,10 @@ class GoogleAnalyticsSettings(BaseModel):
     # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
     # Multiple filters across the same category (dimension vs metric) are AND-combined.
     filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries applied in list order. Each ``field`` must be one of the
+    # selected metrics or dimensions; the worker raises a clear ``ValueError``
+    # otherwise.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
 
 
 class NodeGoogleAnalyticsReader(NodeBase):

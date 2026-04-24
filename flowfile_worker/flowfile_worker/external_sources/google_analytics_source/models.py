@@ -24,6 +24,16 @@ class GoogleAnalyticsFilter(BaseModel):
     case_sensitive: bool = False
 
 
+class GoogleAnalyticsOrderBy(BaseModel):
+    """Sort entry applied to the GA4 report.
+
+    Mirrors ``flowfile_core.schemas.input_schema.GoogleAnalyticsOrderBy``.
+    """
+
+    field: str
+    descending: bool = False
+
+
 class GoogleAnalyticsReadSettings(BaseModel):
     """Payload for ``POST /store_google_analytics_read_result``."""
 
@@ -43,6 +53,8 @@ class GoogleAnalyticsReadSettings(BaseModel):
     # Row-level filters, routed into ``dimension_filter`` / ``metric_filter``
     # by inspecting which of ``dimensions`` / ``metrics`` the ``field`` appears in.
     filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries; each ``field`` must be one of the selected metrics or dimensions.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
 
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1

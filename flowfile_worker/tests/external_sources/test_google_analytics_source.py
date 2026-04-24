@@ -87,6 +87,7 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
                 offset,
                 dimension_filter=None,
                 metric_filter=None,
+                order_bys=None,
             ):
                 self.property = property
                 self.dims = [d.name for d in dimensions]
@@ -96,6 +97,24 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
                 self.offset = offset
                 self.dimension_filter = dimension_filter
                 self.metric_filter = metric_filter
+                self.order_bys = order_bys
+
+        class _MetricOrderBy:
+            def __init__(self, metric_name: str) -> None:
+                self.metric_name = metric_name
+
+        class _DimensionOrderBy:
+            def __init__(self, dimension_name: str) -> None:
+                self.dimension_name = dimension_name
+
+        class _OrderBy:
+            MetricOrderBy = _MetricOrderBy
+            DimensionOrderBy = _DimensionOrderBy
+
+            def __init__(self, *, desc=False, metric=None, dimension=None) -> None:
+                self.desc = desc
+                self.metric = metric
+                self.dimension = dimension
 
         class _Credentials:
             """Stand-in for ``google.oauth2.credentials.Credentials``. Accepts
@@ -144,6 +163,7 @@ def fake_google_sdk(monkeypatch: pytest.MonkeyPatch):
         types_pkg.DateRange = _DateRange
         types_pkg.Dimension = _Dim
         types_pkg.Metric = _Metric
+        types_pkg.OrderBy = _OrderBy
         types_pkg.RunReportRequest = _RunReportRequest
         try:
             from google.analytics.data_v1beta.types import (  # noqa: I001 – lazy import
@@ -404,6 +424,91 @@ def test_filters_are_forwarded_to_run_report(monkeypatch, fake_google_sdk):
     request = captured["request"]
     assert hasattr(request, "dimension_filter")
     assert hasattr(request, "metric_filter")
+
+
+def test_order_bys_routed_to_metric_or_dimension(monkeypatch, fake_google_sdk):
+    """Sort entries are routed into ``MetricOrderBy`` or ``DimensionOrderBy``
+    based on which list the field belongs to, and surface as ``order_bys`` on
+    the request."""
+    captured: dict = {}
+    client_cls, _ = fake_google_sdk([[]])
+    original_run_report = client_cls.run_report
+
+    def record_run_report(self, request):
+        captured["request"] = request
+        return original_run_report(self, request)
+
+    client_cls.run_report = record_run_report
+
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: "plaintext"),
+    )
+    settings = ga_models.GoogleAnalyticsReadSettings(
+        refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
+        property_id="1",
+        start_date="7daysAgo",
+        end_date="yesterday",
+        metrics=["sessions"],
+        dimensions=["country"],
+        order_bys=[
+            ga_models.GoogleAnalyticsOrderBy(field="sessions", descending=True),
+            ga_models.GoogleAnalyticsOrderBy(field="country", descending=False),
+        ],
+    )
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    read_google_analytics(settings)
+
+    request = captured["request"]
+    assert request.order_bys is not None
+    assert len(request.order_bys) == 2
+    assert request.order_bys[0].metric.metric_name == "sessions"
+    assert request.order_bys[0].desc is True
+    assert request.order_bys[0].dimension is None
+    assert request.order_bys[1].dimension.dimension_name == "country"
+    assert request.order_bys[1].desc is False
+    assert request.order_bys[1].metric is None
+
+
+def test_unknown_sort_field_raises_before_api_call(monkeypatch, fake_google_sdk):
+    """A sort entry referencing a field not in metrics/dimensions raises."""
+    fake_google_sdk([[]])
+    from flowfile_worker.external_sources.google_analytics_source import models as ga_models
+
+    monkeypatch.setattr(
+        ga_models,
+        "decrypt_secret",
+        lambda _token: mock.MagicMock(get_secret_value=lambda: "plaintext"),
+    )
+    settings = ga_models.GoogleAnalyticsReadSettings(
+        refresh_token_encrypted="$ffsec$1$1$mock",
+        oauth_client_id=_TEST_CLIENT_ID,
+        oauth_client_secret_encrypted=_TEST_CLIENT_SECRET_ENCRYPTED,
+        property_id="1",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        metrics=["sessions"],
+        dimensions=["country"],
+        order_bys=[
+            ga_models.GoogleAnalyticsOrderBy(field="pageTitle", descending=False),
+        ],
+    )
+
+    from flowfile_worker.external_sources.google_analytics_source.main import (
+        read_google_analytics,
+    )
+
+    with pytest.raises(ValueError, match="not in the selected metrics or dimensions"):
+        read_google_analytics(settings)
 
 
 def test_invalid_filter_raises_before_api_call(monkeypatch, fake_google_sdk):

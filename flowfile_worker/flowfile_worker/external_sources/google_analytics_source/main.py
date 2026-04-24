@@ -146,6 +146,7 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
             DateRange,
             Dimension,
             Metric,
+            OrderBy,
             RunReportRequest,
         )
         from google.auth.transport.requests import Request
@@ -199,6 +200,28 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
         metrics=ga_read_settings.metrics,
     )
 
+    # Translate sort entries. Validate fields up front so a typo raises before
+    # we kick off pagination.
+    metric_set = set(ga_read_settings.metrics)
+    dim_set = set(ga_read_settings.dimensions)
+    order_bys: list = []
+    for ob in ga_read_settings.order_bys:
+        if ob.field in metric_set:
+            order_bys.append(
+                OrderBy(desc=ob.descending, metric=OrderBy.MetricOrderBy(metric_name=ob.field))
+            )
+        elif ob.field in dim_set:
+            order_bys.append(
+                OrderBy(
+                    desc=ob.descending,
+                    dimension=OrderBy.DimensionOrderBy(dimension_name=ob.field),
+                )
+            )
+        else:
+            raise ValueError(
+                f"Sort field '{ob.field}' is not in the selected metrics or dimensions"
+            )
+
     rows_wanted = ga_read_settings.limit  # ``None`` means unlimited.
     offset = 0
     collected_rows: list[dict[str, str]] = []
@@ -222,6 +245,8 @@ def read_google_analytics(ga_read_settings: GoogleAnalyticsReadSettings) -> pl.D
             request_kwargs["dimension_filter"] = dimension_filter
         if metric_filter is not None:
             request_kwargs["metric_filter"] = metric_filter
+        if order_bys:
+            request_kwargs["order_bys"] = order_bys
         request = RunReportRequest(**request_kwargs)
         response = client.run_report(request)
 

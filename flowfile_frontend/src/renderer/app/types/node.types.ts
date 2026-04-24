@@ -957,6 +957,11 @@ export interface GoogleAnalyticsFilter {
   case_sensitive: boolean;
 }
 
+export interface GoogleAnalyticsOrderBy {
+  field: string;
+  descending: boolean;
+}
+
 export interface GoogleAnalyticsSettings {
   ga_connection_name: string;
   property_id: string;
@@ -966,6 +971,7 @@ export interface GoogleAnalyticsSettings {
   dimensions: string[];
   limit: number | null;
   filters: GoogleAnalyticsFilter[];
+  order_bys: GoogleAnalyticsOrderBy[];
 }
 
 export interface NodeGoogleAnalyticsReader extends NodeBase {

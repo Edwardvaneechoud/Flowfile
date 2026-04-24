@@ -28,7 +28,11 @@ export const GA4_DIMENSION_GROUPS: GaFieldGroup[] = [
   {
     label: "Page / screen",
     options: [
-      { name: "pagePath", label: "Page path", description: "URL path without query string, e.g. /blog/hello" },
+      {
+        name: "pagePath",
+        label: "Page path",
+        description: "URL path without query string, e.g. /blog/hello",
+      },
       { name: "pagePathPlusQueryString", label: "Page path + query" },
       { name: "pageLocation", label: "Page location", description: "Full URL" },
       { name: "pageTitle", label: "Page title" },
@@ -109,7 +113,11 @@ export const GA4_DIMENSION_GROUPS: GaFieldGroup[] = [
   {
     label: "Device & platform",
     options: [
-      { name: "deviceCategory", label: "Device category", description: "desktop / mobile / tablet" },
+      {
+        name: "deviceCategory",
+        label: "Device category",
+        description: "desktop / mobile / tablet",
+      },
       { name: "deviceModel", label: "Device model" },
       { name: "operatingSystem", label: "Operating system" },
       { name: "operatingSystemVersion", label: "OS version" },
@@ -296,7 +304,6 @@ const _flattenGroups = (groups: GaFieldGroup[]): Record<string, GaFieldOption> =
 export const GA4_DIMENSION_INDEX = _flattenGroups(GA4_DIMENSION_GROUPS);
 export const GA4_METRIC_INDEX = _flattenGroups(GA4_METRIC_GROUPS);
 
-export const getDimensionLabel = (name: string): string =>
-  GA4_DIMENSION_INDEX[name]?.label ?? name;
+export const getDimensionLabel = (name: string): string => GA4_DIMENSION_INDEX[name]?.label ?? name;
 
 export const getMetricLabel = (name: string): string => GA4_METRIC_INDEX[name]?.label ?? name;

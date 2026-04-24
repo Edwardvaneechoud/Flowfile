@@ -19,8 +19,7 @@
         <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener"
           >console.cloud.google.com/apis/credentials</a
         >
-        and paste the values here. The client secret is encrypted at rest with the instance master
-        key.
+        and paste the values here.
       </p>
 
       <form class="form" @submit.prevent="handleSave">

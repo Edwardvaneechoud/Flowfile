@@ -36,7 +36,21 @@
               class="helper-text"
             >
               <i class="fa-solid fa-info-circle"></i>
-              Create a Google Analytics connection in the Connections manager first.
+              <span>Create a Google Analytics connection in the Connections manager first.</span>
+            </div>
+            <div
+              v-else-if="connectionDefaultPropertyId"
+              class="helper-text"
+            >
+              <i class="fa-solid fa-info-circle"></i>
+              <span>Reading from property <code>{{ connectionDefaultPropertyId }}</code>.</span>
+            </div>
+            <div v-else class="helper-text helper-text-warning">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>
+                This connection has no default property. Set one in the Connections manager, or
+                enter a property ID below.
+              </span>
             </div>
           </div>
         </div>
@@ -45,7 +59,7 @@
       <div v-if="nodeGaReader.google_analytics_settings.ga_connection_name" class="listbox-wrapper">
         <h4 class="section-subtitle">Report</h4>
 
-        <div class="form-group">
+        <div v-if="!connectionDefaultPropertyId" class="form-group">
           <label for="ga-property-id">GA4 Property ID</label>
           <input
             id="ga-property-id"
@@ -75,8 +89,10 @@
           </select>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow run
-            evaluates a rolling window against the current date.
+            <span>
+              Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow
+              run evaluates a rolling window against the current date.
+            </span>
           </div>
         </div>
 
@@ -105,8 +121,10 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="ga-metrics">Metrics</label>
+        <div class="form-group" :class="{ 'has-error': metricsError }">
+          <label for="ga-metrics">
+            Metrics <span class="required" aria-hidden="true">*</span>
+          </label>
           <el-select
             id="ga-metrics"
             v-model="nodeGaReader.google_analytics_settings.metrics"
@@ -135,14 +153,20 @@
           </el-select>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Type to filter, or enter a custom metric name (e.g.
-            <code>customEvent:my_param</code>). See the
-            <a
-              href="https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema"
-              target="_blank"
-              rel="noopener"
-              >API schema reference</a
-            >.
+            <span>
+              Type to filter, or enter a custom metric name (e.g.
+              <code>customEvent:my_param</code>). See the
+              <a
+                href="https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema"
+                target="_blank"
+                rel="noopener"
+                >API schema reference</a
+              >.
+            </span>
+          </div>
+          <div v-if="metricsError" class="error-text">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            <span>{{ metricsError }}</span>
           </div>
         </div>
 
@@ -176,10 +200,12 @@
           </el-select>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            For event details, pick from the <strong>Page / screen</strong>,
-            <strong>Event</strong> or <strong>Links &amp; files</strong> groups — e.g.
-            <code>pagePath</code>, <code>pageTitle</code>, <code>eventName</code>,
-            <code>linkUrl</code>.
+            <span>
+              For event details, pick from the <strong>Page / screen</strong>,
+              <strong>Event</strong> or <strong>Links &amp; files</strong> groups — e.g.
+              <code>pagePath</code>, <code>pageTitle</code>, <code>eventName</code>,
+              <code>linkUrl</code>.
+            </span>
           </div>
         </div>
 
@@ -195,7 +221,7 @@
           />
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Leave blank to fetch every row GA returns (paginated in 100k-row chunks).
+            <span>Leave blank to fetch every row GA returns (paginated in 100k-row chunks).</span>
           </div>
         </div>
       </div>
@@ -211,7 +237,7 @@
           class="helper-text"
         >
           <i class="fa-solid fa-info-circle"></i>
-          Select at least one metric or dimension before adding filters.
+          <span>Select at least one metric or dimension before adding filters.</span>
         </div>
         <div v-else>
           <div
@@ -257,12 +283,58 @@
               </option>
             </select>
 
-            <input
-              v-model="filter.value"
-              type="text"
-              class="form-control filter-value"
-              :placeholder="valuePlaceholderFor(filter.operator)"
-            />
+            <div class="filter-value">
+              <template v-if="filter.operator === 'between'">
+                <div class="between-inputs">
+                  <input
+                    type="number"
+                    step="any"
+                    class="form-control"
+                    placeholder="low"
+                    :value="getBetweenLow(filter)"
+                    @input="setBetweenLow(filter, ($event.target as HTMLInputElement).value)"
+                  />
+                  <span class="between-sep">–</span>
+                  <input
+                    type="number"
+                    step="any"
+                    class="form-control"
+                    placeholder="high"
+                    :value="getBetweenHigh(filter)"
+                    @input="setBetweenHigh(filter, ($event.target as HTMLInputElement).value)"
+                  />
+                </div>
+              </template>
+              <template v-else-if="isListOperator(filter.operator)">
+                <el-select
+                  :model-value="getListValue(filter)"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  placeholder="Add values…"
+                  class="ga-multiselect"
+                  @update:model-value="setListValue(filter, $event as string[])"
+                />
+              </template>
+              <template v-else-if="isMetricField(filter.field)">
+                <input
+                  v-model="filter.value"
+                  type="number"
+                  step="any"
+                  class="form-control"
+                  placeholder="value"
+                />
+              </template>
+              <template v-else>
+                <input
+                  v-model="filter.value"
+                  type="text"
+                  class="form-control"
+                  :placeholder="valuePlaceholderFor(filter.operator)"
+                />
+              </template>
+            </div>
 
             <button
               type="button"
@@ -290,8 +362,87 @@
           </button>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            Multiple filters on the same kind (dimension or metric) are AND-combined. Use
-            <code>in_list</code> / <code>between</code> with comma-separated values.
+            <span>
+              Multiple filters on the same kind (dimension or metric) are AND-combined.
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sort By -->
+      <div v-if="nodeGaReader.google_analytics_settings.ga_connection_name" class="listbox-wrapper">
+        <h4 class="section-subtitle">Sort By</h4>
+        <div
+          v-if="
+            nodeGaReader.google_analytics_settings.metrics.length === 0 &&
+            nodeGaReader.google_analytics_settings.dimensions.length === 0
+          "
+          class="helper-text"
+        >
+          <i class="fa-solid fa-info-circle"></i>
+          <span>Select at least one metric or dimension before adding a sort.</span>
+        </div>
+        <div v-else>
+          <div
+            v-for="(sort, index) in nodeGaReader.google_analytics_settings.order_bys"
+            :key="index"
+            class="sort-row"
+          >
+            <select
+              :value="sort.field"
+              class="form-control sort-field"
+              @change="onSortFieldChange(index, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">Field...</option>
+              <optgroup
+                v-if="nodeGaReader.google_analytics_settings.dimensions.length"
+                label="Dimensions"
+              >
+                <option
+                  v-for="dim in nodeGaReader.google_analytics_settings.dimensions"
+                  :key="'sort-dim-' + dim"
+                  :value="dim"
+                >
+                  {{ dim }}
+                </option>
+              </optgroup>
+              <optgroup
+                v-if="nodeGaReader.google_analytics_settings.metrics.length"
+                label="Metrics"
+              >
+                <option
+                  v-for="met in nodeGaReader.google_analytics_settings.metrics"
+                  :key="'sort-met-' + met"
+                  :value="met"
+                >
+                  {{ met }}
+                </option>
+              </optgroup>
+            </select>
+
+            <select v-model="sort.descending" class="form-control sort-direction">
+              <option :value="false">Ascending</option>
+              <option :value="true">Descending</option>
+            </select>
+
+            <button
+              type="button"
+              class="btn btn-icon btn-danger"
+              title="Remove sort"
+              @click="removeSort(index)"
+            >
+              <i class="fa-solid fa-trash-alt"></i>
+            </button>
+          </div>
+
+          <button type="button" class="btn btn-secondary btn-add-filter" @click="addSort">
+            <i class="fa-solid fa-plus"></i> Add Sort
+          </button>
+          <div class="helper-text">
+            <i class="fa-solid fa-info-circle"></i>
+            <span>
+              GA4 applies sort entries in order. Combine with Row Limit to fetch top-N reports.
+            </span>
           </div>
         </div>
       </div>
@@ -311,6 +462,7 @@ import { createNodeGoogleAnalyticsReader } from "./utils";
 import { GA4_DIMENSION_GROUPS, GA4_METRIC_GROUPS } from "./ga4Catalog";
 import type {
   GoogleAnalyticsFilter,
+  GoogleAnalyticsOrderBy,
   NodeGoogleAnalyticsReader,
 } from "../../../../../types/node.types";
 import { fetchGoogleAnalyticsConnections } from "../../../../../views/GoogleAnalyticsConnectionView/api";
@@ -329,12 +481,42 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeGaReader = ref<NodeGoogleAnalyticsReader | null>(null);
 
+const metricsError = computed(() => {
+  if (!nodeGaReader.value) return "";
+  const settings = nodeGaReader.value.google_analytics_settings;
+  if (!settings.ga_connection_name) return "";
+  if (settings.metrics.length === 0) return "At least one metric is required.";
+  return "";
+});
+
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeGaReader,
+  onBeforeSave: () => {
+    if (metricsError.value) {
+      ElMessage.error(metricsError.value);
+      return false;
+    }
+  },
 });
 
 const gaConnections = ref<GoogleAnalyticsConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
+const connectionDefaultPropertyId = ref<string>("");
+
+const refreshConnectionDefault = () => {
+  if (!nodeGaReader.value) return;
+  const name = nodeGaReader.value.google_analytics_settings.ga_connection_name;
+  const conn = gaConnections.value.find((c) => c.connectionName === name);
+  connectionDefaultPropertyId.value = conn?.defaultPropertyId ?? "";
+};
+
+const syncPropertyIdFromConnection = () => {
+  if (!nodeGaReader.value) return;
+  if (connectionDefaultPropertyId.value) {
+    nodeGaReader.value.google_analytics_settings.property_id =
+      connectionDefaultPropertyId.value;
+  }
+};
 
 const limitModel = computed({
   get: () => nodeGaReader.value?.google_analytics_settings.limit ?? null,
@@ -412,10 +594,39 @@ const operatorsFor = (field: string) => {
 };
 
 const valuePlaceholderFor = (operator: string): string => {
-  if (operator === "in_list" || operator === "not_in_list") return "NL, BE, DE";
-  if (operator === "between") return "10, 100";
   if (operator === "regex") return "^home.*";
   return "value";
+};
+
+const isListOperator = (operator: string): boolean =>
+  operator === "in_list" || operator === "not_in_list";
+
+const getListValue = (filter: GoogleAnalyticsFilter): string[] =>
+  filter.value
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+
+const setListValue = (filter: GoogleAnalyticsFilter, values: string[]) => {
+  filter.value = values.map((v) => v.trim()).filter((v) => v.length > 0).join(",");
+};
+
+const getBetweenPair = (filter: GoogleAnalyticsFilter): [string, string] => {
+  const parts = filter.value.split(",");
+  return [(parts[0] ?? "").trim(), (parts[1] ?? "").trim()];
+};
+
+const getBetweenLow = (filter: GoogleAnalyticsFilter): string => getBetweenPair(filter)[0];
+const getBetweenHigh = (filter: GoogleAnalyticsFilter): string => getBetweenPair(filter)[1];
+
+const setBetweenLow = (filter: GoogleAnalyticsFilter, low: string) => {
+  const [, high] = getBetweenPair(filter);
+  filter.value = `${low.trim()},${high}`;
+};
+
+const setBetweenHigh = (filter: GoogleAnalyticsFilter, high: string) => {
+  const [low] = getBetweenPair(filter);
+  filter.value = `${low},${high.trim()}`;
 };
 
 const addFilter = () => {
@@ -444,13 +655,30 @@ const onFilterFieldChange = (index: number, newField: string) => {
   }
 };
 
+// --- Sort (order_bys) ------------------------------------------------------
+
+const addSort = () => {
+  if (!nodeGaReader.value) return;
+  nodeGaReader.value.google_analytics_settings.order_bys.push({
+    field: "",
+    descending: true,
+  } as GoogleAnalyticsOrderBy);
+};
+
+const removeSort = (index: number) => {
+  if (!nodeGaReader.value) return;
+  nodeGaReader.value.google_analytics_settings.order_bys.splice(index, 1);
+};
+
+const onSortFieldChange = (index: number, newField: string) => {
+  if (!nodeGaReader.value) return;
+  nodeGaReader.value.google_analytics_settings.order_bys[index].field = newField;
+};
+
 const handleConnectionChange = () => {
   if (!nodeGaReader.value) return;
-  const name = nodeGaReader.value.google_analytics_settings.ga_connection_name;
-  const conn = gaConnections.value.find((c) => c.connectionName === name);
-  if (conn?.defaultPropertyId && !nodeGaReader.value.google_analytics_settings.property_id) {
-    nodeGaReader.value.google_analytics_settings.property_id = conn.defaultPropertyId;
-  }
+  refreshConnectionDefault();
+  syncPropertyIdFromConnection();
 };
 
 const fetchConnections = async () => {
@@ -481,12 +709,17 @@ const loadNodeData = async (nodeId: number) => {
       if (nodeGaReader.value && !nodeGaReader.value.google_analytics_settings.filters) {
         nodeGaReader.value.google_analytics_settings.filters = [];
       }
+      if (nodeGaReader.value && !nodeGaReader.value.google_analytics_settings.order_bys) {
+        nodeGaReader.value.google_analytics_settings.order_bys = [];
+      }
       // Pick the right preset for the restored start/end dates.
       if (nodeGaReader.value) {
         rangePreset.value = detectPreset(
           nodeGaReader.value.google_analytics_settings.start_date,
           nodeGaReader.value.google_analytics_settings.end_date,
         );
+        refreshConnectionDefault();
+        syncPropertyIdFromConnection();
       }
     }
     dataLoaded.value = true;
@@ -564,21 +797,61 @@ select.form-control {
 
 .helper-text {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   margin-top: 0.5rem;
   font-size: 0.8125rem;
   color: #718096;
 }
 
-.helper-text i {
+.helper-text > i {
   color: #4299e1;
   font-size: 0.875rem;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.helper-text > span {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
 }
 
 .helper-text a {
   color: #4299e1;
   text-decoration: underline;
+}
+
+.helper-text-warning {
+  color: #b7791f;
+}
+
+.helper-text-warning > i {
+  color: #d69e2e;
+}
+
+.required {
+  color: #c53030;
+  margin-left: 0.15rem;
+}
+
+.error-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.8125rem;
+  color: #c53030;
+}
+
+.error-text > i {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.has-error :deep(.el-select__wrapper),
+.has-error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #c53030 inset;
 }
 
 .loading-state {
@@ -645,6 +918,22 @@ select.form-control {
   min-width: 0;
 }
 
+.between-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.between-inputs .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+.between-sep {
+  color: #a0aec0;
+  font-size: 0.875rem;
+}
+
 .btn-icon {
   padding: 0.4rem 0.55rem;
   font-size: 0.75rem;
@@ -683,8 +972,22 @@ code {
   font-size: 0.8em;
 }
 
+.sort-row {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.sort-field,
+.sort-direction {
+  min-width: 0;
+}
+
 @media (max-width: 640px) {
-  .filter-row {
+  .filter-row,
+  .sort-row {
     grid-template-columns: 1fr;
   }
 }

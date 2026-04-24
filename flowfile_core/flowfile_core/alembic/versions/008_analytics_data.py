@@ -9,7 +9,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-
 revision: str = "008"
 down_revision: str | None = "007"
 branch_labels: str | Sequence[str] | None = None
@@ -90,9 +89,13 @@ def upgrade() -> None:
         )
 
     # --- Drift fix: drop obsolete global_artifacts.output_schema column --
-    # Removed from the model; dropping here so schema matches.
-    with op.batch_alter_table("global_artifacts") as batch_op:
-        batch_op.drop_column("output_schema")
+    # Removed from the model; dropping here so schema matches. Conditional
+    # because the column was never created by an earlier migration — only
+    # legacy DBs that pre-date the Alembic baseline carry it.
+    inspector = sa.inspect(op.get_bind())
+    if "output_schema" in {c["name"] for c in inspector.get_columns("global_artifacts")}:
+        with op.batch_alter_table("global_artifacts") as batch_op:
+            batch_op.drop_column("output_schema")
 
 
 def downgrade() -> None:

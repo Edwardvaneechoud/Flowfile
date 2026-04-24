@@ -16,6 +16,7 @@ export const createNodeGoogleAnalyticsReader = (
     dimensions: [],
     limit: null,
     filters: [],
+    order_bys: [],
   };
   return {
     flow_id: flowId,
