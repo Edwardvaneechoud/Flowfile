@@ -36,11 +36,7 @@
               <i class="fa-solid fa-minus"></i>
             </button>
           </div>
-          <button
-            class="add-output-button"
-            :disabled="splits.length >= 10"
-            @click="addSplit"
-          >
+          <button class="add-output-button" :disabled="splits.length >= 10" @click="addSplit">
             <i class="fa-solid fa-plus"></i> Add Split
           </button>
         </div>
@@ -61,8 +57,8 @@
           </el-col>
         </el-row>
         <div class="seed-hint">
-          Leave blank to generate a fresh seed on every run. Set a fixed seed
-          for reproducible partitions across runs.
+          Leave blank to generate a fresh seed on every run. Set a fixed seed for reproducible
+          partitions across runs.
         </div>
       </div>
     </generic-node-settings>

@@ -990,6 +990,94 @@ class NodeExternalSource(NodeBase):
         return self.identifier
 
 
+class GoogleAnalyticsFilter(BaseModel):
+    """A single filter applied to a GA4 dimension or metric.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    auto-routes the filter into either the request's ``dimension_filter`` (for
+    string-typed dimensions) or ``metric_filter`` (for numeric-typed metrics).
+
+    Supported operators — strings (dimensions):
+      - ``equals``, ``not_equals``
+      - ``contains``, ``begins_with``, ``ends_with``
+      - ``regex``  (full regex match)
+      - ``in_list``, ``not_in_list``  (comma-separated ``value``)
+
+    Supported operators — numeric (metrics):
+      - ``equals``, ``not_equals``
+      - ``less_than``, ``less_equal``, ``greater_than``, ``greater_equal``
+      - ``between``  (comma-separated ``"low,high"``)
+
+    Multiple filters on the same kind are AND-combined. String matching is
+    case-insensitive by default (``case_sensitive=False`` below).
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
+
+
+class GoogleAnalyticsOrderBy(BaseModel):
+    """A single sort entry applied to the GA4 report.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    routes it into a ``DimensionOrderBy`` or ``MetricOrderBy`` accordingly.
+    ``descending=True`` produces a descending sort. Sort entries are applied in
+    list order.
+    """
+
+    field: str
+    descending: bool = False
+
+
+class GoogleAnalyticsSettings(BaseModel):
+    """UI settings for a Google Analytics 4 reader node.
+
+    Credentials are NOT stored inline: ``ga_connection_name`` is a reference to
+    a Google Analytics connection managed under ``/ga_connections`` (whose
+    service-account JSON is encrypted at rest).
+    """
+
+    ga_connection_name: str
+    property_id: str
+    start_date: str = "7daysAgo"
+    end_date: str = "yesterday"
+    metrics: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    # ``None`` means "fetch everything the report returns".
+    limit: int | None = None
+    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
+    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries applied in list order. Each ``field`` must be one of the
+    # selected metrics or dimensions; the worker raises a clear ``ValueError``
+    # otherwise.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
+
+
+class NodeGoogleAnalyticsReader(NodeBase):
+    """Settings for a node that reads from a Google Analytics 4 property."""
+
+    google_analytics_settings: GoogleAnalyticsSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the GA4 query."""
+        s = self.google_analytics_settings
+        pieces = []
+        if s.property_id:
+            pieces.append(f"property {s.property_id}")
+        if s.metrics:
+            metrics_preview = ", ".join(s.metrics[:3])
+            if len(s.metrics) > 3:
+                metrics_preview += f" (+{len(s.metrics) - 3} more)"
+            pieces.append(f"metrics: {metrics_preview}")
+        if s.start_date and s.end_date:
+            pieces.append(f"{s.start_date} .. {s.end_date}")
+        return " | ".join(pieces)
+
+
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 

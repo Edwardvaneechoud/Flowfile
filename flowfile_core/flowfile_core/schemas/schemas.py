@@ -48,6 +48,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "catalog_reader": input_schema.NodeCatalogReader,
     "catalog_writer": input_schema.NodeCatalogWriter,
     "kafka_source": input_schema.NodeKafkaSource,
+    "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
