@@ -72,7 +72,12 @@ from flowfile_core.flowfile.parameter_resolver import (
     find_unresolved_in_model,
     restore_parameters,
 )
-from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
+from flowfile_core.flowfile.schema_callbacks import (
+    calculate_cross_join_schema,
+    calculate_fuzzy_match_schema,
+    calculate_join_schema,
+    pre_calculate_pivot_schema,
+)
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
@@ -103,7 +108,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.delta_utils import get_delta_size_bytes, merge_into_delta
@@ -2004,6 +2009,15 @@ class FlowGraph:
                 other=right,
             )
 
+        def schema_callback():
+            cj_copy = CrossJoinInputManager(cross_join_settings.cross_join_input)
+            node = self.get_node(node_id=cross_join_settings.node_id)
+            return calculate_cross_join_schema(
+                cj_copy,
+                left_schema=node.node_inputs.main_inputs[0].schema,
+                right_schema=node.node_inputs.right_input.schema,
+            )
+
         self.add_node_step(
             node_id=cross_join_settings.node_id,
             function=_func,
@@ -2011,6 +2025,7 @@ class FlowGraph:
             node_type="cross_join",
             setting_input=cross_join_settings,
             input_node_ids=cross_join_settings.depending_on_ids,
+            schema_callback=schema_callback,
         )
         return self
 
@@ -2038,6 +2053,16 @@ class FlowGraph:
                 other=right,
             )
 
+        def schema_callback():
+            j_copy = JoinInputManager(join_settings.join_input)
+            node = self.get_node(node_id=join_settings.node_id)
+            return calculate_join_schema(
+                j_copy,
+                left_schema=node.node_inputs.main_inputs[0].schema,
+                right_schema=node.node_inputs.right_input.schema,
+                auto_generate_selection=join_settings.auto_generate_selection,
+            )
+
         self.add_node_step(
             node_id=join_settings.node_id,
             function=_func,
@@ -2045,6 +2070,7 @@ class FlowGraph:
             node_type="join",
             setting_input=join_settings,
             input_node_ids=join_settings.depending_on_ids,
+            schema_callback=schema_callback,
         )
         return self
 
