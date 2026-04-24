@@ -61,6 +61,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_unique_values,
 )
 from flowfile_core.flowfile.flow_data_engine.threaded_processes import write_threaded
+from flowfile_core.utils.arrow_reader import read as arrow_read
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
@@ -2264,6 +2265,7 @@ class FlowDataEngine:
     def _compute_renamed_names(
         targets: list[str],
         settings: transform_schemas.DynamicRenameInput,
+        first_row_values: dict[str, Any] | None = None,
     ) -> list[str]:
         """Return new names aligned 1:1 with `targets` for the configured rename mode.
 
@@ -2276,17 +2278,24 @@ class FlowDataEngine:
         a no-op (returns `targets` unchanged). Non-string formula results are
         coerced to `str`.
 
+        For `"first_row"` mode the new names come from `first_row_values` (a dict
+        keyed by original column name). When called without `first_row_values`
+        (schema-only preview) the function returns `targets` unchanged.
+
         Args:
             targets: Column names the rename rule applies to.
             settings: The dynamic rename configuration.
+            first_row_values: First-row values keyed by original column name, used
+                only in `"first_row"` mode.
 
         Returns:
             New names aligned 1:1 with `targets`.
 
         Raises:
-            ValueError: If a formula yields a null, or changes cardinality in a way
+            ValueError: If a formula yields a null, changes cardinality in a way
                 that cannot be broadcast (e.g. an aggregation collapsing N rows to
-                a different N).
+                a different N), or — in `"first_row"` mode — a first-row value is
+                null or empty.
         """
         if not targets:
             return []
@@ -2295,6 +2304,16 @@ class FlowDataEngine:
             return [f"{settings.prefix}{n}" for n in targets]
         if mode == "suffix":
             return [f"{n}{settings.suffix}" for n in targets]
+        if mode == "first_row":
+            if first_row_values is None:
+                return list(targets)
+            new = [first_row_values.get(name) for name in targets]
+            for original, v in zip(targets, new, strict=True):
+                if v is None or (isinstance(v, str) and v.strip() == ""):
+                    raise ValueError(
+                        f"Dynamic rename (first_row) got a null/empty value for column '{original}'."
+                    )
+            return [str(v) for v in new]
         if mode == "formula":
             if not settings.formula.strip():
                 return list(targets)
@@ -2351,6 +2370,7 @@ class FlowDataEngine:
     def resolve_dynamic_rename_map(
         columns: list[tuple[str, str]],
         settings: transform_schemas.DynamicRenameInput,
+        first_row_values: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Compute the `{old_name: new_name}` map for a dynamic-rename operation.
 
@@ -2362,22 +2382,64 @@ class FlowDataEngine:
         Args:
             columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
             settings: The dynamic rename configuration.
+            first_row_values: First-row values keyed by original column name. Required
+                for `"first_row"` mode to produce a real rename map; when omitted in
+                `"first_row"` mode the result is an empty map (schema-only preview).
 
         Returns:
             A dict mapping original column name to new column name. No-op renames are
             omitted, so the result is safe to pass directly to `pl.DataFrame.rename`.
         """
         targets = FlowDataEngine._select_rename_targets(columns, settings)
-        new_names = FlowDataEngine._compute_renamed_names(targets, settings)
+        new_names = FlowDataEngine._compute_renamed_names(
+            targets, settings, first_row_values=first_row_values
+        )
         rename_map = {old: new for old, new in zip(targets, new_names, strict=True) if old != new}
         FlowDataEngine._assert_rename_has_no_duplicates(rename_map, columns)
         return rename_map
 
+    def _peek_first_row_as_dict(self) -> dict[str, Any]:
+        """Return the first row of the underlying frame keyed by column name.
+
+        Runs on the external worker via `ExternalDfFetcher` to keep the heavy
+        compute out of the core process (same pattern as `fetch_unique_values`
+        used by `do_pivot`). Falls back to an in-core collect only if the
+        external fetcher is unavailable. Raises `ValueError` if the frame is
+        empty.
+        """
+        df = self.data_frame
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        head_lf = lf.head(1)
+
+        table = None
+        try:
+            external = ExternalDfFetcher(lf=head_lf, flow_id=1, node_id=-1, wait_on_completion=True)
+            if external.status is not None and external.status.status == "Completed":
+                table = arrow_read(external.status.file_ref)
+        except Exception as e:  # noqa: BLE001 - worker availability is best-effort
+            logger.debug(f"ExternalDfFetcher unavailable for first_row peek ({e}); using in-core fallback")
+
+        if table is not None:
+            if table.num_rows == 0:
+                raise ValueError(
+                    "Dynamic rename (first_row) requires at least one row in the input; got 0."
+                )
+            return {name: table.column(name)[0].as_py() for name in table.column_names}
+
+        head = head_lf.collect()
+        if head.height == 0:
+            raise ValueError(
+                "Dynamic rename (first_row) requires at least one row in the input; got 0."
+            )
+        return dict(zip(head.columns, head.row(0), strict=True))
+
     def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
         """Renames a subset of columns according to a single rule.
 
-        Supports prefix, suffix, and flowfile-formula rename modes, with column selection
-        by name list, by data type, or across all columns.
+        Supports prefix, suffix, flowfile-formula, and first-row rename modes, with
+        column selection by name list, by data type, or across all columns. In
+        `"first_row"` mode the first row is always dropped from the output after
+        its values are promoted to column headers.
 
         Args:
             settings: The dynamic rename configuration.
@@ -2387,17 +2449,24 @@ class FlowDataEngine:
             unchanged if the rule resolves to no renames).
         """
         columns = [(c.column_name, c.data_type_group) for c in self.schema]
-        rename_map = self.resolve_dynamic_rename_map(columns, settings)
+        first_row_values = None
+        if settings.rename_mode == "first_row":
+            first_row_values = self._peek_first_row_as_dict()
+        rename_map = self.resolve_dynamic_rename_map(
+            columns, settings, first_row_values=first_row_values
+        )
+        new_df = self.data_frame.rename(rename_map) if rename_map else self.data_frame
+        if settings.rename_mode == "first_row":
+            new_df = new_df.slice(1)
+            new_records = max(0, self.number_of_records - 1)
+            return FlowDataEngine(new_df, number_of_records=new_records)
         if not rename_map:
             return FlowDataEngine(
                 self.data_frame,
                 number_of_records=self.number_of_records,
                 schema=self.schema,
             )
-        return FlowDataEngine(
-            self.data_frame.rename(rename_map),
-            number_of_records=self.number_of_records,
-        )
+        return FlowDataEngine(new_df, number_of_records=self.number_of_records)
 
     def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies an SQL-style formula using `pl.sql_expr`.

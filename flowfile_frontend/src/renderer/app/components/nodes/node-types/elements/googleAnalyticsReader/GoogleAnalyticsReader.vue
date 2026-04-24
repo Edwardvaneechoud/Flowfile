@@ -38,12 +38,12 @@
               <i class="fa-solid fa-info-circle"></i>
               <span>Create a Google Analytics connection in the Connections manager first.</span>
             </div>
-            <div
-              v-else-if="connectionDefaultPropertyId"
-              class="helper-text"
-            >
+            <div v-else-if="connectionDefaultPropertyId" class="helper-text">
               <i class="fa-solid fa-info-circle"></i>
-              <span>Reading from property <code>{{ connectionDefaultPropertyId }}</code>.</span>
+              <span
+                >Reading from property <code>{{ connectionDefaultPropertyId }}</code
+                >.</span
+              >
             </div>
             <div v-else class="helper-text helper-text-warning">
               <i class="fa-solid fa-triangle-exclamation"></i>
@@ -90,8 +90,8 @@
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
             <span>
-              Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow
-              run evaluates a rolling window against the current date.
+              Presets use GA4's relative date tokens (e.g. <code>30daysAgo</code>) so every flow run
+              evaluates a rolling window against the current date.
             </span>
           </div>
         </div>
@@ -135,11 +135,7 @@
             placeholder="Pick metrics (e.g. sessions, totalUsers)"
             class="ga-multiselect"
           >
-            <el-option-group
-              v-for="group in metricGroups"
-              :key="group.label"
-              :label="group.label"
-            >
+            <el-option-group v-for="group in metricGroups" :key="group.label" :label="group.label">
               <el-option
                 v-for="opt in group.options"
                 :key="opt.name"
@@ -362,9 +358,7 @@
           </button>
           <div class="helper-text">
             <i class="fa-solid fa-info-circle"></i>
-            <span>
-              Multiple filters on the same kind (dimension or metric) are AND-combined.
-            </span>
+            <span> Multiple filters on the same kind (dimension or metric) are AND-combined. </span>
           </div>
         </div>
       </div>
@@ -513,8 +507,7 @@ const refreshConnectionDefault = () => {
 const syncPropertyIdFromConnection = () => {
   if (!nodeGaReader.value) return;
   if (connectionDefaultPropertyId.value) {
-    nodeGaReader.value.google_analytics_settings.property_id =
-      connectionDefaultPropertyId.value;
+    nodeGaReader.value.google_analytics_settings.property_id = connectionDefaultPropertyId.value;
   }
 };
 
@@ -608,7 +601,10 @@ const getListValue = (filter: GoogleAnalyticsFilter): string[] =>
     .filter((v) => v.length > 0);
 
 const setListValue = (filter: GoogleAnalyticsFilter, values: string[]) => {
-  filter.value = values.map((v) => v.trim()).filter((v) => v.length > 0).join(",");
+  filter.value = values
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0)
+    .join(",");
 };
 
 const getBetweenPair = (filter: GoogleAnalyticsFilter): [string, string] => {
