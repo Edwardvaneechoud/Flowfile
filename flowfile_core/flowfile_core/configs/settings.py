@@ -116,3 +116,10 @@ IS_RUNNING_IN_DOCKER = is_docker_mode()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    f"http://localhost:{SERVER_PORT}/ga_connections/oauth/callback",
+)
