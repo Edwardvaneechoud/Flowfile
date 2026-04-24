@@ -21,8 +21,8 @@
             inactive-text="Single output"
           />
           <div class="split-mode-hint">
-            Emit matching rows on handle A (pass) and non-matching rows on
-            handle B (fail). Rows with a null predicate are dropped from both.
+            Emit matching rows on handle P (pass) and non-matching rows on
+            handle F (fail). Rows with a null predicate are dropped from both.
           </div>
         </div>
         <div v-if="isAdvancedFilter">
@@ -101,7 +101,7 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { outputHandle, outputLabel } from "../../../../../utils/outputHandle";
+import { outputHandle } from "../../../../../utils/outputHandle";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import {
   FilterOperator,
@@ -127,8 +127,8 @@ const updateNodeOutputHandles = () => {
   if (!vfNode) return;
   if (splitModeEnabled.value) {
     vfNode.data.outputs = [
-      { id: outputHandle(0), position: Position.Right, label: outputLabel(0), title: "pass" },
-      { id: outputHandle(1), position: Position.Right, label: outputLabel(1), title: "fail" },
+      { id: outputHandle(0), position: Position.Right, label: "P", title: "pass" },
+      { id: outputHandle(1), position: Position.Right, label: "F", title: "fail" },
     ];
   } else {
     vfNode.data.outputs = [{ id: outputHandle(0), position: Position.Right }];
