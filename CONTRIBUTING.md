@@ -23,8 +23,6 @@ This is a monorepo managed by Poetry (Python) and npm (frontend):
 - `kernel_runtime/` — Docker-based sandbox for user Python code
 - `docs/` — MkDocs site
 
-See [`CLAUDE.md`](./CLAUDE.md) for a more detailed tour.
-
 ## Dev setup
 
 ### Prerequisites
