@@ -4371,6 +4371,28 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     return copied_setting_input
 
 
+def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
+    """True if connecting from_node -> to_node would introduce a cycle.
+
+    A cycle exists if from_node is already reachable downstream of to_node via
+    existing `leads_to_nodes` edges, or if the caller is trying to create a
+    self-loop.
+    """
+    if from_node.node_id == to_node.node_id:
+        return True
+    visited: set = {to_node.node_id}
+    stack = [to_node]
+    while stack:
+        current = stack.pop()
+        for downstream in current.leads_to_nodes:
+            if downstream.node_id == from_node.node_id:
+                return True
+            if downstream.node_id not in visited:
+                visited.add(downstream.node_id)
+                stack.append(downstream)
+    return False
+
+
 def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
     """Adds a connection between two nodes in the flow graph.
 
@@ -4384,12 +4406,16 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     logger.info(f"from_node={from_node}, to_node={to_node}")
     if not (from_node and to_node):
         raise HTTPException(404, "Not not available")
-    else:
-        to_node.add_node_connection(
-            from_node,
-            node_connection.input_connection.get_node_input_connection_type(),
-            output_handle=node_connection.output_connection.connection_class,
+    if _would_create_cycle(from_node, to_node):
+        raise HTTPException(
+            422,
+            f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
+    to_node.add_node_connection(
+        from_node,
+        node_connection.input_connection.get_node_input_connection_type(),
+        output_handle=node_connection.output_connection.connection_class,
+    )
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):
@@ -4401,17 +4427,19 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     """
     from_node = graph.get_node(node_connection.output_connection.node_id)
     to_node = graph.get_node(node_connection.input_connection.node_id)
+    # Without these guards a stale delete (e.g. after the target node was
+    # already removed) surfaces as an AttributeError → 500, which also drops
+    # CORS headers and shows up as a CORS error in the browser.
+    if from_node is None or to_node is None:
+        raise HTTPException(422, "Connection does not exist on the input node")
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
         node_input_id=from_node.node_id,
         connection_name=node_connection.input_connection.get_node_input_connection_type(),
     )
     if not connection_valid:
         raise HTTPException(422, "Connection does not exist on the input node")
-    if from_node is not None:
-        from_node.delete_lead_to_node(node_connection.input_connection.node_id)
-
-    if to_node is not None:
-        to_node.delete_input_node(
-            node_connection.output_connection.node_id,
-            connection_type=node_connection.input_connection.connection_class,
-        )
+    from_node.delete_lead_to_node(node_connection.input_connection.node_id)
+    to_node.delete_input_node(
+        node_connection.output_connection.node_id,
+        connection_type=node_connection.input_connection.connection_class,
+    )
