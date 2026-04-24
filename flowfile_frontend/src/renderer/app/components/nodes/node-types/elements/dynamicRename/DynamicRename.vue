@@ -11,6 +11,7 @@
           <el-radio-button value="prefix">Prefix</el-radio-button>
           <el-radio-button value="suffix">Suffix</el-radio-button>
           <el-radio-button value="formula">Formula</el-radio-button>
+          <el-radio-button value="first_row">First row</el-radio-button>
         </el-radio-group>
       </div>
 
@@ -23,7 +24,7 @@
           <div class="listbox-subtitle">Suffix</div>
           <el-input v-model="settings.suffix" placeholder="e.g. _raw" size="small" clearable />
         </div>
-        <div v-else>
+        <div v-else-if="settings.rename_mode === 'formula'">
           <div class="listbox-subtitle">Formula</div>
           <div class="formula-editor">
             <FunctionEditor
@@ -34,6 +35,12 @@
           </div>
           <div class="hint">
             Use <code>[column_name]</code> to reference the current column name.
+          </div>
+        </div>
+        <div v-else>
+          <div class="hint">
+            The first row of the incoming table becomes the new column names. That row is then
+            removed from the data.
           </div>
         </div>
       </div>
@@ -77,19 +84,17 @@
             clearable
             style="width: 100%"
           >
-            <el-option
-              v-for="group in dataTypeGroups"
-              :key="group"
-              :label="group"
-              :value="group"
-            />
+            <el-option v-for="group in dataTypeGroups" :key="group" :label="group" :value="group" />
           </el-select>
         </div>
       </div>
 
       <div class="section">
         <div class="listbox-subtitle">Preview</div>
-        <div v-if="previewError" class="preview-error">{{ previewError }}</div>
+        <div v-if="settings.rename_mode === 'first_row'" class="preview-empty">
+          First row values are read at run time. Run the flow to see the resulting columns.
+        </div>
+        <div v-else-if="previewError" class="preview-error">{{ previewError }}</div>
         <div v-else-if="previewLoading" class="preview-loading">Computing preview...</div>
         <div v-else-if="previewRows.length === 0" class="preview-empty">
           No columns will be renamed.
@@ -215,6 +220,7 @@ const resolveClientPreview = (): PreviewRow[] => {
       if (newName !== name) mapped.push({ oldName: name, newName });
     }
   }
+  // formula and first_row are resolved server-side.
   return mapped;
 };
 
@@ -223,6 +229,12 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 const refreshPreview = () => {
   previewError.value = null;
   const s = settings.value;
+  if (s.rename_mode === "first_row") {
+    // first_row is resolved at run time — no preview call, template shows a placeholder.
+    previewRows.value = [];
+    previewLoading.value = false;
+    return;
+  }
   if (s.rename_mode !== "formula") {
     previewRows.value = resolveClientPreview();
     previewLoading.value = false;

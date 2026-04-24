@@ -174,7 +174,11 @@ watch(logs, (newLogs) => {
 });
 
 const isErrorLine = (line: string): boolean => {
-  return line.toUpperCase().includes("ERROR");
+  return / - ERROR - /.test(line);
+};
+
+const isWarningLine = (line: string): boolean => {
+  return / - WARNING - /.test(line);
 };
 </script>
 
@@ -220,7 +224,7 @@ const isErrorLine = (line: string): boolean => {
       <div
         v-for="(line, index) in logLines"
         :key="index"
-        :class="{ 'error-line': isErrorLine(line) }"
+        :class="{ 'error-line': isErrorLine(line), 'warning-line': isWarningLine(line) }"
       >
         {{ line }}
       </div>
@@ -330,5 +334,10 @@ const isErrorLine = (line: string): boolean => {
 .error-line {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+.warning-line {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning-dark);
 }
 </style>
