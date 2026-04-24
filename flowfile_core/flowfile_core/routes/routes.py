@@ -957,6 +957,10 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
     The frontend calls this to render the live old-to-new preview pane inside the
     node's settings panel. Returns either the fully-resolved rename map (possibly
     empty) or an `error` describing a parse failure or duplicate-name collision.
+
+    `first_row` mode is intentionally not previewed here: its new names depend on
+    actual row data, and we don't want to trigger upstream computation from a
+    settings panel. The frontend renders a runtime-only placeholder for that mode.
     """
     columns = [(c.name, c.data_type_group) for c in request.incoming_columns]
     try:

@@ -1024,7 +1024,7 @@ class GraphSolverInput(BaseModel):
     output_column_name: str | None = "graph_group"
 
 
-RenameMode = Literal["prefix", "suffix", "formula"]
+RenameMode = Literal["prefix", "suffix", "formula", "first_row"]
 ColumnSelectionMode = Literal["all", "list", "data_type"]
 ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"]
 
@@ -1032,12 +1032,17 @@ ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean",
 class DynamicRenameInput(BaseModel):
     """Defines settings for a dynamic rename operation.
 
-    Applies a single rule (prefix / suffix / formula) to a set of selected columns,
-    rather than requiring the user to rename columns one-by-one.
+    Applies a single rule (prefix / suffix / formula / first_row) to a set of selected
+    columns, rather than requiring the user to rename columns one-by-one.
 
     In formula mode, the flowfile formula syntax is evaluated with `[column_name]`
     bound to each target column's current name; for example `uppercase([column_name])`
     or `"v2_" + [column_name]`.
+
+    In first_row mode, the first row of the incoming table is promoted to column
+    headers and then dropped from the data. Non-string values are coerced to `str`;
+    null or empty values raise an error. Selection filters still apply — only selected
+    columns are renamed, but the first row is always dropped.
     """
 
     rename_mode: RenameMode = "prefix"

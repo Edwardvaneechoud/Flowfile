@@ -2261,8 +2261,10 @@ class FlowGraph:
     def add_dynamic_rename(self, settings: input_schema.NodeDynamicRename) -> "FlowGraph":
         """Adds a node that renames many columns at once via a single rule.
 
-        Supports prefix, suffix, and formula-based renaming across all columns,
-        a specific list of columns, or every column of a given data type.
+        Supports prefix, suffix, formula-based, and first-row renaming across all
+        columns, a specific list of columns, or every column of a given data type.
+        In `first_row` mode the first row is dropped from the output after its
+        values are promoted to column headers.
 
         Args:
             settings: The dynamic rename configuration.

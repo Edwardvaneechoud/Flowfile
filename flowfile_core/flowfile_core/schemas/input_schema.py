@@ -1408,6 +1408,8 @@ class NodeDynamicRename(NodeSingleInput):
             rule = f"suffix '{s.suffix}'"
         elif s.rename_mode == "formula" and s.formula:
             rule = f"formula {s.formula}"
+        elif s.rename_mode == "first_row":
+            rule = "promote first row to headers"
         else:
             return ""
         if s.selection_mode == "all":

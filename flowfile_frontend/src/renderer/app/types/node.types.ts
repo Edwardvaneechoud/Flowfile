@@ -525,7 +525,7 @@ export interface RecordIdInput {
 // Dynamic Rename Types
 // ============================================================================
 
-export type RenameMode = "prefix" | "suffix" | "formula";
+export type RenameMode = "prefix" | "suffix" | "formula" | "first_row";
 export type ColumnSelectionMode = "all" | "list" | "data_type";
 export type ReadableDataTypeGroup =
   | "Numeric"
