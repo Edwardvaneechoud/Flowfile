@@ -4,7 +4,7 @@
 
 Flowfile is a visual ETL (Extract, Transform, Load) platform built with a Python backend and Vue.js/Electron frontend. It provides both a visual flow designer and a programmatic Python API for building data pipelines powered by Polars.
 
-**Version:** 0.6.3 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+
+**Version:** 0.9.1 | **License:** MIT | **Python:** >=3.10, <3.14 | **Node.js:** 20+
 
 ## Repository Structure
 
@@ -15,6 +15,7 @@ flowfile_core/       # FastAPI backend - ETL engine, flow execution, auth, catal
 flowfile_worker/     # FastAPI compute worker - heavy data processing offload (port 63579)
 flowfile_frame/      # Python API library - Polars-like interface for programmatic flow building
 flowfile_frontend/   # Electron + Vue 3 desktop/web UI with VueFlow graph editor
+flowfile_scheduler/  # Embedded scheduler for recurring flow runs
 flowfile_wasm/       # Browser-only WASM version using Pyodide (lightweight, 14 nodes)
 flowfile/            # CLI entry point and web UI launcher
 kernel_runtime/      # Docker-based isolated Python code execution environment
@@ -246,6 +247,15 @@ Key variables (see `.env.example`):
 - `flowfile/flowfile/__main__.py` - CLI entry point (run flows, launch web UI)
 - `flowfile_frontend/src/main/main.ts` - Electron main process
 - `flowfile_frontend/src/renderer/app/App.vue` - Vue root component
+- `CONTRIBUTING.md` - Contributor guide (dev setup, style, tests, PR process)
+- `docs/community.md` - Community hub (Discussions, Issues, release feedback)
+
+## Community & Contributions
+
+- **Questions and discussion:** [GitHub Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions) (Q&A, announcements, show-and-tell)
+- **Bugs and feature requests:** [GitHub Issues](https://github.com/edwardvaneechoud/Flowfile/issues)
+- **Contributing code:** see `CONTRIBUTING.md` at the repo root
+- **Release feedback:** each release has a Discussion thread linked from [Releases](https://github.com/edwardvaneechoud/Flowfile/releases)
 
 ## Things to Avoid
 
