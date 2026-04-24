@@ -1723,8 +1723,7 @@ class FlowGraph:
             is_advanced = filter_settings.filter_input.is_advanced()
 
             if is_advanced:
-                predicate = filter_settings.filter_input.advanced_filter
-                return fl.do_filter(predicate)
+                expression = filter_settings.filter_input.advanced_filter
             else:
                 basic_filter = filter_settings.filter_input.basic_filter
                 if basic_filter is None:
@@ -1738,7 +1737,10 @@ class FlowGraph:
 
                 expression = build_filter_expression(basic_filter, field_data_type)
                 filter_settings.filter_input.advanced_filter = expression
-                return fl.do_filter(expression)
+
+            if filter_settings.split_mode:
+                return fl.filter_split(expression)
+            return fl.do_filter(expression)
 
         self.add_node_step(
             filter_settings.node_id,

@@ -238,6 +238,7 @@ class FlowFrame:
         flow_graph: FlowGraph | None = None,
         node_id: int | None = None,
         parent_node_id: int | None = None,
+        output_handle: str = "output-0",
         **kwargs,  # Accept and ignore any other kwargs for API compatibility
     ) -> FlowFrame:
         """
@@ -247,6 +248,11 @@ class FlowFrame:
           wrapper around an existing node in the graph.
         - Otherwise, it creates a new source node in a new or existing graph
           from the provided data.
+
+        ``output_handle`` identifies which source handle of the wrapped node
+        downstream operations should read from. Defaults to ``"output-0"``; set
+        to ``"output-1"`` for the second output of a multi-output node (e.g.
+        the ``fail`` branch of ``filter_split``).
         """
         # --- Path 1: Internal Wrapper Creation ---
         # This path is taken by methods like .join(), .sort(), etc., which provide an existing graph.
@@ -256,8 +262,11 @@ class FlowFrame:
             instance.flow_graph = flow_graph
             instance.node_id = node_id
             instance.parent_node_id = parent_node_id
+            instance.output_handle = output_handle
             return instance
         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
+            # create_from_any_type creates a new source node which always emits
+            # output-0; no need to forward output_handle.
             instance = cls.create_from_any_type(
                 data=data,
                 schema=schema,
@@ -327,16 +336,27 @@ class FlowFrame:
     def __repr__(self):
         return str(self.data)
 
-    def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
+    def _add_connection(
+        self,
+        from_id,
+        to_id,
+        input_type: input_schema.InputType = "main",
+        output_handle: str = "output-0",
+    ):
         """Helper method to add a connection between nodes"""
         connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=from_id, to_id=to_id, input_type=input_type
+            from_id=from_id,
+            to_id=to_id,
+            input_type=input_type,
+            output_handle=output_handle,
         )
         add_connection(self.flow_graph, connection)
 
     def _create_child_frame(self, new_node_id, *, precomputed_result=None):
         """Helper method to create a new FlowFrame that's a child of this one"""
-        self._add_connection(self.node_id, new_node_id)
+        self._add_connection(
+            self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0")
+        )
         # If a precomputed result was provided (e.g. serialization fallback),
         # inject it into the node AFTER the connection is added (which resets the node).
         if precomputed_result is not None:
@@ -1184,6 +1204,109 @@ class FlowFrame:
             )
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
+
+    def _build_filter_expression_string(
+        self, predicates: tuple, constraints: dict
+    ) -> str:
+        """Collapse predicates and constraints into a single Polars expression
+        string suitable for ``FilterInput.advanced_filter``. Mirrors the
+        assembly logic in ``filter()`` but returns the bare conditions string
+        (without the surrounding ``input_df.filter(...)`` wrapper)."""
+        available_columns = self.columns
+        pure_polars_expr_strings: list[str] = []
+
+        processed_predicates = []
+        for pred_item in predicates:
+            if isinstance(pred_item, tuple | list | Iterator):
+                processed_predicates.extend(list(pred_item))
+            else:
+                processed_predicates.append(pred_item)
+
+        for pred_input in processed_predicates:
+            if isinstance(pred_input, Expr):
+                current_expr_obj = pred_input
+            elif isinstance(pred_input, str) and pred_input in available_columns:
+                current_expr_obj = col(pred_input)
+            else:
+                current_expr_obj = lit(pred_input)
+            pure_expr_str, _ = _extract_expr_parts(current_expr_obj)
+            pure_polars_expr_strings.append(f"({pure_expr_str})")
+
+        for k, v_val in constraints.items():
+            constraint_expr_obj = col(k) == lit(v_val)
+            pure_expr_str, _ = _extract_expr_parts(constraint_expr_obj)
+            pure_polars_expr_strings.append(f"({pure_expr_str})")
+
+        return " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
+
+    def filter_split(
+        self,
+        *predicates: Expr | Any,
+        flowfile_formula: str | None = None,
+        description: str | None = None,
+        **constraints: Any,
+    ) -> tuple[FlowFrame, FlowFrame]:
+        """Split the frame by a predicate into (pass, fail) frames.
+
+        Rows matching the predicate are routed to the first (``pass``) frame
+        and the rest to the second (``fail``) frame. Rows where the predicate
+        evaluates to null are dropped from both (Polars ``filter`` semantics).
+
+        Args mirror :meth:`filter` — accept either positional polars
+        expressions, a ``flowfile_formula`` string, or keyword constraints.
+        Combinations of predicates and constraints are AND-ed together.
+        """
+        if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
+            raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
+
+        if flowfile_formula:
+            advanced_expr = flowfile_formula
+        elif len(predicates) > 0 or len(constraints) > 0:
+            advanced_expr = self._build_filter_expression_string(predicates, constraints)
+        else:
+            raise ValueError("filter_split requires at least one predicate, constraint, or flowfile_formula")
+
+        new_node_id = generate_node_id()
+        filter_settings = input_schema.NodeFilter(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter=advanced_expr,
+                filter_type="advanced",
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+            split_mode=True,
+        )
+        self.flow_graph.add_filter(filter_settings)
+        self._add_connection(
+            self.node_id,
+            new_node_id,
+            output_handle=getattr(self, "output_handle", "output-0"),
+        )
+
+        filter_node = self.flow_graph.get_node(new_node_id)
+        pass_engine = filter_node.get_output("output-0")
+        fail_engine = filter_node.get_output("output-1")
+
+        pass_frame = FlowFrame(
+            data=pass_engine.data_frame if pass_engine is not None else None,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+            output_handle="output-0",
+        )
+        fail_frame = FlowFrame(
+            data=fail_engine.data_frame if fail_engine is not None else None,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+            output_handle="output-1",
+        )
+        return pass_frame, fail_frame
 
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
         """
