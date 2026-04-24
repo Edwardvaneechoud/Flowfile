@@ -229,6 +229,11 @@ const highlightPlugin = ViewPlugin.fromClass(
 );
 
 const extensions: Extension[] = [
+  EditorView.theme({
+    "&": { fontSize: "12px" },
+    ".cm-content": { fontSize: "12px" },
+    ".cm-gutters": { fontSize: "12px" },
+  }),
   EditorState.tabSize.of(2),
   autocompletion({
     override: [polarsCompletions],
