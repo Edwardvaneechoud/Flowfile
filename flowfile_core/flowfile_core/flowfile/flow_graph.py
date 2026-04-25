@@ -50,6 +50,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalDatabaseFetcher,
     ExternalDatabaseWriter,
     ExternalDfFetcher,
+    ExternalGoogleAnalyticsFetcher,
     ExternalKafkaFetcher,
     fetch_kafka_offsets,
 )
@@ -71,7 +72,12 @@ from flowfile_core.flowfile.parameter_resolver import (
     find_unresolved_in_model,
     restore_parameters,
 )
-from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
+from flowfile_core.flowfile.schema_callbacks import (
+    calculate_cross_join_schema,
+    calculate_fuzzy_match_schema,
+    calculate_join_schema,
+    pre_calculate_pivot_schema,
+)
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
@@ -102,7 +108,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.delta_utils import get_delta_size_bytes, merge_into_delta
@@ -1723,8 +1729,7 @@ class FlowGraph:
             is_advanced = filter_settings.filter_input.is_advanced()
 
             if is_advanced:
-                predicate = filter_settings.filter_input.advanced_filter
-                return fl.do_filter(predicate)
+                expression = filter_settings.filter_input.advanced_filter
             else:
                 basic_filter = filter_settings.filter_input.basic_filter
                 if basic_filter is None:
@@ -1738,7 +1743,10 @@ class FlowGraph:
 
                 expression = build_filter_expression(basic_filter, field_data_type)
                 filter_settings.filter_input.advanced_filter = expression
-                return fl.do_filter(expression)
+
+            if filter_settings.split_mode:
+                return fl.filter_split(expression)
+            return fl.do_filter(expression)
 
         self.add_node_step(
             filter_settings.node_id,
@@ -2003,6 +2011,15 @@ class FlowGraph:
                 other=right,
             )
 
+        def schema_callback():
+            cj_copy = CrossJoinInputManager(cross_join_settings.cross_join_input)
+            node = self.get_node(node_id=cross_join_settings.node_id)
+            return calculate_cross_join_schema(
+                cj_copy,
+                left_schema=node.node_inputs.main_inputs[0].schema,
+                right_schema=node.node_inputs.right_input.schema,
+            )
+
         self.add_node_step(
             node_id=cross_join_settings.node_id,
             function=_func,
@@ -2010,6 +2027,7 @@ class FlowGraph:
             node_type="cross_join",
             setting_input=cross_join_settings,
             input_node_ids=cross_join_settings.depending_on_ids,
+            schema_callback=schema_callback,
         )
         return self
 
@@ -2037,6 +2055,16 @@ class FlowGraph:
                 other=right,
             )
 
+        def schema_callback():
+            j_copy = JoinInputManager(join_settings.join_input)
+            node = self.get_node(node_id=join_settings.node_id)
+            return calculate_join_schema(
+                j_copy,
+                left_schema=node.node_inputs.main_inputs[0].schema,
+                right_schema=node.node_inputs.right_input.schema,
+                auto_generate_selection=join_settings.auto_generate_selection,
+            )
+
         self.add_node_step(
             node_id=join_settings.node_id,
             function=_func,
@@ -2044,6 +2072,7 @@ class FlowGraph:
             node_type="join",
             setting_input=join_settings,
             input_node_ids=join_settings.depending_on_ids,
+            schema_callback=schema_callback,
         )
         return self
 
@@ -2175,6 +2204,36 @@ class FlowGraph:
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_random_split(self, settings: input_schema.NodeRandomSplit) -> "FlowGraph":
+        """Adds a node that randomly partitions rows into N labeled outputs.
+
+        Returns a ``NamedOutputs``; the framework unpacks it into
+        ``_named_outputs`` so each split is reachable via its own output handle.
+
+        Args:
+            settings: The settings object specifying the splits and optional seed.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        def _func(table: FlowDataEngine) -> NamedOutputs:
+            return table.random_split(
+                [(s.name, s.percentage) for s in settings.splits],
+                settings.seed,
+            )
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="random_split",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
         """Adds a node to create a new column with a unique ID for each record.
 
@@ -2195,6 +2254,34 @@ class FlowGraph:
             node_type="record_id",
             setting_input=record_id_settings,
             input_node_ids=[record_id_settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_dynamic_rename(self, settings: input_schema.NodeDynamicRename) -> "FlowGraph":
+        """Adds a node that renames many columns at once via a single rule.
+
+        Supports prefix, suffix, formula-based, and first-row renaming across all
+        columns, a specific list of columns, or every column of a given data type.
+        In `first_row` mode the first row is dropped from the output after its
+        values are promoted to column headers.
+
+        Args:
+            settings: The dynamic rename configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
+            return table.apply_dynamic_rename(settings.dynamic_rename_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="dynamic_rename",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
         )
         return self
 
@@ -2683,6 +2770,30 @@ class FlowGraph:
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
             )
+
+            # TODO: centralize this local SQL read with flowfile_worker's
+            # /store_database_read_result path — both call pl.read_database_uri
+            # and have drifted in shape (see schema_callback below too).
+            if self.execution_location == "local":
+                local_source = SqlSource(
+                    connection_string=sql_utils.construct_sql_uri(
+                        database_type=database_connection.database_type,
+                        host=database_connection.host,
+                        port=database_connection.port,
+                        database=database_connection.database,
+                        username=database_connection.username,
+                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
+                    ),
+                    query=None if database_settings.query_mode == "table" else database_settings.query,
+                    table_name=database_settings.table_name,
+                    schema_name=database_settings.schema_name,
+                    fields=node_database_reader.fields,
+                )
+                fl = FlowDataEngine(local_source.get_pl_df())
+                fl.lazy = True
+                node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+                return fl
+
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
@@ -2881,6 +2992,143 @@ class FlowGraph:
         """
         logger.info("Adding sql source")
         self.add_external_source(external_source_input)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_google_analytics_reader(self, node_ga_reader: input_schema.NodeGoogleAnalyticsReader) -> None:
+        """Adds a node that reads from a Google Analytics 4 property.
+
+        The actual API fetch (OAuth token refresh, ``run_report`` calls,
+        pagination) is offloaded to the worker via ``ExternalGoogleAnalyticsFetcher``,
+        so the core's event loop stays responsive. The ``schema_callback`` is
+        derived locally from the selected metrics/dimensions — no network call
+        is made during schema prediction, keeping downstream nodes lazy.
+        """
+        from flowfile_core.configs.app_settings import get_google_oauth_config
+        from flowfile_core.flowfile.database_connection_manager.ga_connections import (
+            get_encrypted_refresh_token,
+        )
+        from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
+        from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key
+        from flowfile_worker.external_sources.google_analytics_source.models import (
+            GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
+        )
+        from flowfile_worker.external_sources.google_analytics_source.models import (
+            GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
+        )
+        from flowfile_worker.external_sources.google_analytics_source.models import (
+            GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
+        )
+
+        logger.info("Adding google analytics reader")
+        node_type = "google_analytics_reader"
+        ga_settings = node_ga_reader.google_analytics_settings
+
+        with get_db_context() as db:
+            encrypted_refresh_token = get_encrypted_refresh_token(
+                db, ga_settings.ga_connection_name, node_ga_reader.user_id
+            )
+            if encrypted_refresh_token is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Google Analytics connection '{ga_settings.ga_connection_name}' not found "
+                        "or has not completed OAuth sign-in"
+                    ),
+                )
+            oauth_cfg = get_google_oauth_config(db, node_ga_reader.user_id)
+
+        if not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Google OAuth is not configured on this instance. Open Admin → Google OAuth "
+                    "and paste your OAuth client credentials before running this flow."
+                ),
+            )
+
+        client_secret_encrypted = _encrypt_with_master_key(oauth_cfg["client_secret"])
+
+        worker_settings = WorkerGoogleAnalyticsReadSettings(
+            refresh_token_encrypted=encrypted_refresh_token,
+            oauth_client_id=oauth_cfg["client_id"],
+            oauth_client_secret_encrypted=client_secret_encrypted,
+            property_id=ga_settings.property_id,
+            start_date=ga_settings.start_date,
+            end_date=ga_settings.end_date,
+            metrics=ga_settings.metrics,
+            dimensions=ga_settings.dimensions,
+            limit=ga_settings.limit,
+            filters=[
+                WorkerGoogleAnalyticsFilter(
+                    field=f.field,
+                    operator=f.operator,
+                    value=f.value,
+                    case_sensitive=f.case_sensitive,
+                )
+                for f in ga_settings.filters
+            ],
+            order_bys=[
+                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending)
+                for ob in ga_settings.order_bys
+            ],
+            flowfile_flow_id=node_ga_reader.flow_id,
+            flowfile_node_id=node_ga_reader.node_id,
+        )
+
+        # Stamp the predicted schema onto the setting object now, so downstream
+        # nodes can introspect columns without ever invoking ``_func`` (which
+        # would trigger a worker → Google round-trip). ``derive_schema`` is
+        # pure-Python and runs against the chosen metrics/dimensions only.
+        predicted_columns = derive_schema(
+            metrics=ga_settings.metrics, dimensions=ga_settings.dimensions
+        )
+        node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
+
+        def _func() -> FlowDataEngine:
+            fetcher = ExternalGoogleAnalyticsFetcher(worker_settings, wait_on_completion=False)
+            node._fetch_cached_df = fetcher
+            # ``get_result()`` returns a ``pl.LazyFrame`` deserialised from the
+            # worker's Arrow IPC file — never collect on the core service.
+            fl = FlowDataEngine(fetcher.get_result())
+            # Align to the predicted schema so downstream nodes see stable columns
+            # even when the report is empty. ``align_to_schema`` lowers to lazy
+            # ``with_columns``/``select`` calls, so this stays lazy.
+            return fl.align_to_schema(schema_callback())
+
+        def schema_callback() -> list[FlowfileColumn]:
+            # Prefer the cached placeholder so repeated schema lookups don't
+            # re-walk the heuristic table. ``derive_schema`` is the fallback
+            # for the (rare) case where ``fields`` got cleared.
+            if node_ga_reader.fields:
+                return [
+                    FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields
+                ]
+            return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
+
+        node = self.get_node(node_ga_reader.node_id)
+        if node:
+            node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_ga_reader
+            node.node_settings.cache_results = node_ga_reader.cache_results
+            self.add_node_to_starting_list(node)
+        else:
+            node = FlowNode(
+                node_ga_reader.node_id,
+                function=_func,
+                setting_input=node_ga_reader,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            node.user_provided_schema_callback = schema_callback
+            self._node_db[node_ga_reader.node_id] = node
+            self.add_node_to_starting_list(node)
+            self._node_ids.append(node_ga_reader.node_id)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
@@ -3814,6 +4062,7 @@ class FlowGraph:
                 right_input_id=node_info.right_input_id,
                 input_ids=node_info.input_ids,
                 outputs=node_info.outputs,
+                output_handles=node_info.output_handles,
                 setting_input=node_info.setting_input,
             )
             nodes.append(flowfile_node)
@@ -4124,6 +4373,28 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     return copied_setting_input
 
 
+def _would_create_cycle(from_node: "FlowNode", to_node: "FlowNode") -> bool:
+    """True if connecting from_node -> to_node would introduce a cycle.
+
+    A cycle exists if from_node is already reachable downstream of to_node via
+    existing `leads_to_nodes` edges, or if the caller is trying to create a
+    self-loop.
+    """
+    if from_node.node_id == to_node.node_id:
+        return True
+    visited: set = {to_node.node_id}
+    stack = [to_node]
+    while stack:
+        current = stack.pop()
+        for downstream in current.leads_to_nodes:
+            if downstream.node_id == from_node.node_id:
+                return True
+            if downstream.node_id not in visited:
+                visited.add(downstream.node_id)
+                stack.append(downstream)
+    return False
+
+
 def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
     """Adds a connection between two nodes in the flow graph.
 
@@ -4137,12 +4408,16 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     logger.info(f"from_node={from_node}, to_node={to_node}")
     if not (from_node and to_node):
         raise HTTPException(404, "Not not available")
-    else:
-        to_node.add_node_connection(
-            from_node,
-            node_connection.input_connection.get_node_input_connection_type(),
-            output_handle=node_connection.output_connection.connection_class,
+    if _would_create_cycle(from_node, to_node):
+        raise HTTPException(
+            422,
+            f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
+    to_node.add_node_connection(
+        from_node,
+        node_connection.input_connection.get_node_input_connection_type(),
+        output_handle=node_connection.output_connection.connection_class,
+    )
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):
@@ -4154,17 +4429,19 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     """
     from_node = graph.get_node(node_connection.output_connection.node_id)
     to_node = graph.get_node(node_connection.input_connection.node_id)
+    # Without these guards a stale delete (e.g. after the target node was
+    # already removed) surfaces as an AttributeError → 500, which also drops
+    # CORS headers and shows up as a CORS error in the browser.
+    if from_node is None or to_node is None:
+        raise HTTPException(422, "Connection does not exist on the input node")
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
         node_input_id=from_node.node_id,
         connection_name=node_connection.input_connection.get_node_input_connection_type(),
     )
     if not connection_valid:
         raise HTTPException(422, "Connection does not exist on the input node")
-    if from_node is not None:
-        from_node.delete_lead_to_node(node_connection.input_connection.node_id)
-
-    if to_node is not None:
-        to_node.delete_input_node(
-            node_connection.output_connection.node_id,
-            connection_type=node_connection.input_connection.connection_class,
-        )
+    from_node.delete_lead_to_node(node_connection.input_connection.node_id)
+    to_node.delete_input_node(
+        node_connection.output_connection.node_id,
+        connection_type=node_connection.input_connection.connection_class,
+    )

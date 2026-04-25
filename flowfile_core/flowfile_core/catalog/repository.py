@@ -21,6 +21,7 @@ from flowfile_core.database.models import (
     FlowRun,
     FlowSchedule,
     GlobalArtifact,
+    RunType,
     ScheduleTriggerTable,
     TableFavorite,
 )
@@ -100,7 +101,7 @@ class CatalogRepository(Protocol):
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]: ...
@@ -113,14 +114,14 @@ class CatalogRepository(Protocol):
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> int: ...
 
     def count_runs_by_status(
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
@@ -433,7 +434,7 @@ class SQLAlchemyCatalogRepository:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[FlowRun]:
@@ -461,7 +462,7 @@ class SQLAlchemyCatalogRepository:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> int:
         q = self._db.query(FlowRun)
         if registration_id is not None:
@@ -476,7 +477,7 @@ class SQLAlchemyCatalogRepository:
         self,
         registration_id: int | None = None,
         schedule_id: int | None = None,
-        run_type: str | None = None,
+        run_type: RunType | None = None,
     ) -> dict[str, int]:
         from sqlalchemy import case, func
 

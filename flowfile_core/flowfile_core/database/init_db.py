@@ -20,8 +20,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 logger = logging.getLogger(__name__)
 
-# Run Alembic-based migrations (replaces the old manual run_migrations + create_all)
-run_startup_migration()
+# Run Alembic-based migrations (replaces the old manual run_migrations + create_all).
+# Skipped when FLOWFILE_SKIP_STARTUP_MIGRATION is set so the alembic CLI can import
+# our metadata without recursively re-entering migration machinery.
+if not os.environ.get("FLOWFILE_SKIP_STARTUP_MIGRATION"):
+    run_startup_migration()
 
 
 def create_default_local_user(db: Session):

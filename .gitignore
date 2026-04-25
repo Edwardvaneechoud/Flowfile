@@ -83,3 +83,6 @@ test-embed
 /expr_transformer/
 /.opencode/
 
+# Local remote-image compose setup
+/docker-remote/
+

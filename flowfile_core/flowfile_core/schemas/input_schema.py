@@ -467,6 +467,10 @@ class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
 
     filter_input: transform_schema.FilterInput
+    # When True the node emits two outputs: "pass" (output-0, matching rows)
+    # and "fail" (output-1, non-matching rows). Default preserves
+    # single-output behaviour for existing flows.
+    split_mode: bool = False
 
     def get_default_description(self) -> str:
         """Describes the filter condition."""
@@ -526,6 +530,52 @@ class NodeSample(NodeSingleInput):
     def get_default_description(self) -> str:
         """Describes the sample size."""
         return f"Sample {self.sample_size} rows"
+
+
+class RandomSplitGroup(BaseModel):
+    """A single output partition in a random split."""
+
+    name: str
+    percentage: float
+
+
+class NodeRandomSplit(NodeSingleInput):
+    """Settings for a node that randomly partitions rows into N labeled outputs."""
+
+    splits: list[RandomSplitGroup] = Field(
+        default_factory=lambda: [
+            RandomSplitGroup(name="train", percentage=80.0),
+            RandomSplitGroup(name="test", percentage=20.0),
+        ]
+    )
+    seed: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_splits(self) -> "NodeRandomSplit":
+        if not self.splits:
+            raise ValueError("At least one split is required")
+        if len(self.splits) > 10:
+            raise ValueError("At most 10 splits are supported")
+        names = [s.name for s in self.splits]
+        if len(set(names)) != len(names):
+            raise ValueError("Split names must be unique")
+        for s in self.splits:
+            if not s.name or not s.name[0].isalpha() or not all(c.isalnum() or c == "_" for c in s.name):
+                raise ValueError(
+                    f"Invalid split name: {s.name!r} (must start with a letter; alphanumeric/underscore only)"
+                )
+            if s.percentage <= 0:
+                raise ValueError(f"Split {s.name!r} percentage must be > 0")
+        if abs(sum(s.percentage for s in self.splits) - 100.0) > 0.01:
+            raise ValueError("Split percentages must sum to 100")
+        return self
+
+    @property
+    def output_names(self) -> list[str]:
+        return [s.name for s in self.splits]
+
+    def get_default_description(self) -> str:
+        return " / ".join(f"{s.name} {s.percentage:g}%" for s in self.splits)
 
 
 class NodeRecordId(NodeSingleInput):
@@ -944,6 +994,94 @@ class NodeExternalSource(NodeBase):
         return self.identifier
 
 
+class GoogleAnalyticsFilter(BaseModel):
+    """A single filter applied to a GA4 dimension or metric.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    auto-routes the filter into either the request's ``dimension_filter`` (for
+    string-typed dimensions) or ``metric_filter`` (for numeric-typed metrics).
+
+    Supported operators — strings (dimensions):
+      - ``equals``, ``not_equals``
+      - ``contains``, ``begins_with``, ``ends_with``
+      - ``regex``  (full regex match)
+      - ``in_list``, ``not_in_list``  (comma-separated ``value``)
+
+    Supported operators — numeric (metrics):
+      - ``equals``, ``not_equals``
+      - ``less_than``, ``less_equal``, ``greater_than``, ``greater_equal``
+      - ``between``  (comma-separated ``"low,high"``)
+
+    Multiple filters on the same kind are AND-combined. String matching is
+    case-insensitive by default (``case_sensitive=False`` below).
+    """
+
+    field: str
+    operator: str
+    value: str = ""
+    case_sensitive: bool = False
+
+
+class GoogleAnalyticsOrderBy(BaseModel):
+    """A single sort entry applied to the GA4 report.
+
+    ``field`` must match one of the selected dimensions or metrics; the worker
+    routes it into a ``DimensionOrderBy`` or ``MetricOrderBy`` accordingly.
+    ``descending=True`` produces a descending sort. Sort entries are applied in
+    list order.
+    """
+
+    field: str
+    descending: bool = False
+
+
+class GoogleAnalyticsSettings(BaseModel):
+    """UI settings for a Google Analytics 4 reader node.
+
+    Credentials are NOT stored inline: ``ga_connection_name`` is a reference to
+    a Google Analytics connection managed under ``/ga_connections`` (whose
+    service-account JSON is encrypted at rest).
+    """
+
+    ga_connection_name: str
+    property_id: str
+    start_date: str = "7daysAgo"
+    end_date: str = "yesterday"
+    metrics: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    # ``None`` means "fetch everything the report returns".
+    limit: int | None = None
+    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
+    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
+    # Sort entries applied in list order. Each ``field`` must be one of the
+    # selected metrics or dimensions; the worker raises a clear ``ValueError``
+    # otherwise.
+    order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
+
+
+class NodeGoogleAnalyticsReader(NodeBase):
+    """Settings for a node that reads from a Google Analytics 4 property."""
+
+    google_analytics_settings: GoogleAnalyticsSettings
+    fields: list[MinimalFieldInfo] | None = None
+
+    def get_default_description(self) -> str:
+        """Describes the GA4 query."""
+        s = self.google_analytics_settings
+        pieces = []
+        if s.property_id:
+            pieces.append(f"property {s.property_id}")
+        if s.metrics:
+            metrics_preview = ", ".join(s.metrics[:3])
+            if len(s.metrics) > 3:
+                metrics_preview += f" (+{len(s.metrics) - 3} more)"
+            pieces.append(f"metrics: {metrics_preview}")
+        if s.start_date and s.end_date:
+            pieces.append(f"{s.start_date} .. {s.end_date}")
+        return " | ".join(pieces)
+
+
 class NodeFormula(NodeSingleInput):
     """Settings for a node that applies a formula to create/modify a column."""
 
@@ -1187,7 +1325,13 @@ class NodeConnection(BaseModel):
     output_connection: NodeOutputConnection
 
     @classmethod
-    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
+    def create_from_simple_input(
+        cls,
+        from_id: int,
+        to_id: int,
+        input_type: InputType = "input-0",
+        output_handle: OutputConnectionClass = "output-0",
+    ):
         """Creates a standard connection between two nodes."""
         match input_type:
             case "main":
@@ -1199,7 +1343,7 @@ class NodeConnection(BaseModel):
             case _:
                 connection_class: InputConnectionClass = "input-0"
         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
-        node_output = NodeOutputConnection(node_id=from_id, connection_class="output-0")
+        node_output = NodeOutputConnection(node_id=from_id, connection_class=output_handle)
         return cls(input_connection=node_input, output_connection=node_output)
 
 
@@ -1246,6 +1390,35 @@ class NodeRecordCount(NodeSingleInput):
     """Settings for a node that counts the number of records."""
 
     pass
+
+
+class NodeDynamicRename(NodeSingleInput):
+    """Settings for a node that renames many columns at once via a single rule."""
+
+    dynamic_rename_input: transform_schema.DynamicRenameInput = Field(
+        default_factory=transform_schema.DynamicRenameInput
+    )
+
+    def get_default_description(self) -> str:
+        """Describes the dynamic rename rule."""
+        s = self.dynamic_rename_input
+        if s.rename_mode == "prefix" and s.prefix:
+            rule = f"prefix '{s.prefix}'"
+        elif s.rename_mode == "suffix" and s.suffix:
+            rule = f"suffix '{s.suffix}'"
+        elif s.rename_mode == "formula" and s.formula:
+            rule = f"formula {s.formula}"
+        elif s.rename_mode == "first_row":
+            rule = "promote first row to headers"
+        else:
+            return ""
+        if s.selection_mode == "all":
+            scope = "all columns"
+        elif s.selection_mode == "list":
+            scope = f"{len(s.selected_columns)} column(s)"
+        else:
+            scope = f"{s.selected_data_type or '(none)'} columns"
+        return f"{rule} on {scope}"
 
 
 class NodePolarsCode(NodeMultiInput):

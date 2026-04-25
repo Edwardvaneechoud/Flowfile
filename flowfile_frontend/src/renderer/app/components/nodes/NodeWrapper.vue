@@ -82,6 +82,7 @@
         <span
           v-if="output.label && data.outputs.length > 1"
           class="handle-label handle-label--output"
+          :title="output.title"
         >
           {{ output.label }}
         </span>
@@ -171,6 +172,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
+import { snapshotClipboard } from "../../utils/clipboardUtils";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
@@ -307,6 +309,7 @@ const copyNode = () => {
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
   localStorage.removeItem("copiedMultiNodes");
+  snapshotClipboard();
   closeContextMenu();
 };
 

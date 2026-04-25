@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
 import polars as pl
 
@@ -50,6 +54,7 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.schema_callbacks import _ensure_all_columns_have_select
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
@@ -59,6 +64,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_unique_values,
 )
 from flowfile_core.flowfile.flow_data_engine.threaded_processes import write_threaded
+from flowfile_core.utils.arrow_reader import read as arrow_read
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
@@ -453,12 +459,18 @@ class FlowDataEngine:
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings,
                 use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
-                read_settings.resource_path, storage_options, credential_provider, read_settings,
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings,
                 use_pyarrow=use_pyarrow,
             )
         elif read_settings.file_format == "json":
@@ -518,21 +530,24 @@ class FlowDataEngine:
 
     @staticmethod
     def _get_schema_from_first_file_in_dir(
-            source: str, storage_options: dict[str, Any], file_format: Literal["csv", "parquet", "json", "delta"],
-            use_pyarrow: bool = False,
+        source: str,
+        storage_options: dict[str, Any],
+        file_format: Literal["csv", "parquet", "json", "delta"],
+        use_pyarrow: bool = False,
     ) -> list[FlowfileColumn] | None:
         """Infers the schema by scanning the first file in a cloud directory."""
         from pyarrow import parquet as pq
+
         try:
             first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
 
             if use_pyarrow:
                 import gcsfs
+
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 return convert_stats_to_column_info(
                     FlowDataEngine._create_schema_stats_from_pl_schema(
-                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table())
-                        .collect_schema()
+                        pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table()).collect_schema()
                     )
                 )
             else:
@@ -578,14 +593,15 @@ class FlowDataEngine:
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
             if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet",
-                                                                use_pyarrow=use_pyarrow)
+                schema = cls._get_schema_from_first_file_in_dir(
+                    resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
+                )
             else:
                 schema = None
             if use_pyarrow:
-                lf = get_lazy_frame_from_gcs_pyarrow_dataset(resource_path=resource_path,
-                                                             storage_options=storage_options,
-                                                             is_directory=is_directory)
+                lf = get_lazy_frame_from_gcs_pyarrow_dataset(
+                    resource_path=resource_path, storage_options=storage_options, is_directory=is_directory
+                )
             else:
                 lf = pl.scan_parquet(**scan_kwargs)
             return cls(
@@ -614,9 +630,7 @@ class FlowDataEngine:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
             if use_pyarrow:
-                lf = scan_delta_from_gcs(
-                    resource_path, storage_options, delta_version=read_settings.delta_version
-                )
+                lf = scan_delta_from_gcs(resource_path, storage_options, delta_version=read_settings.delta_version)
             else:
                 scan_kwargs = {"source": normalize_delta_path(resource_path)}
                 if read_settings.delta_version:
@@ -714,6 +728,7 @@ class FlowDataEngine:
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
                 import gcsfs
+
                 fs = gcsfs.GCSFileSystem(**storage_options)
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:
@@ -1404,6 +1419,30 @@ class FlowDataEngine:
 
         return FlowDataEngine(df, streamable=self._streamable)
 
+    def filter_split(self, predicate: str) -> NamedOutputs:
+        """Partition rows by ``predicate`` into ``pass`` and ``fail`` streams.
+
+        Rows where the predicate evaluates to null are dropped from both
+        streams — matching the behaviour of two manually-wired filter nodes
+        with opposing predicates.
+        """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        try:
+            f = to_expr(predicate)
+        except Exception as e:
+            logger.warning(f"Error in filter expression: {e}")
+            f = to_expr("False")
+        pass_df = self.data_frame.filter(f)
+        fail_df = self.data_frame.filter(~f)
+        _ = pass_df.collect_schema()
+        return NamedOutputs(
+            {
+                "pass": FlowDataEngine(pass_df, streamable=self._streamable),
+                "fail": FlowDataEngine(fail_df, streamable=self._streamable),
+            }
+        )
+
     def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a record ID (row number) column to the DataFrame.
 
@@ -1606,6 +1645,44 @@ class FlowDataEngine:
 
         return FlowDataEngine(sample_df, schema=self.schema)
 
+    def random_split(
+        self,
+        splits: list[tuple[str, float]],
+        seed: int | None = None,
+    ) -> "NamedOutputs":
+        """Randomly partition rows into N labeled groups.
+
+        The shuffled frame is materialized once so that each output shares the
+        same shuffle — otherwise every handle's ``.collect()`` would re-run the
+        full shuffle+sort independently (O(N·n log n) instead of O(n log n)).
+
+        Args:
+            splits: Ordered (name, percentage) pairs; percentages must sum to
+                100 (validated upstream in ``NodeRandomSplit``).
+            seed: Random seed; if None, one is generated per call.
+
+        Returns:
+            ``NamedOutputs`` mapping each split name to a fresh ``FlowDataEngine``.
+        """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+        shuffled = (
+            self.data_frame.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__"))
+            .sort("__split_rank__")
+            .drop("__split_rank__")
+            .collect()
+        )
+        total = shuffled.height
+        out: dict[str, FlowDataEngine] = {}
+        offset = 0
+        for i, (name, percentage) in enumerate(splits):
+            length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
+            out[name] = FlowDataEngine(shuffled.slice(offset, max(0, length)).lazy())
+            offset += length
+        return NamedOutputs(out)
+
     def get_subset(self, n_rows: int = 100) -> FlowDataEngine:
         """Gets the first `n_rows` from the DataFrame.
 
@@ -1749,6 +1826,9 @@ class FlowDataEngine:
         self.lazy = True
         other.lazy = True
         cross_join_input_manager = transform_schemas.CrossJoinInputManager(cross_join_input)
+        _ensure_all_columns_have_select(
+            left_cols=self.columns, right_cols=other.columns, manager=cross_join_input_manager
+        )
         verify_join_select_integrity(
             cross_join_input_manager.input, left_columns=self.columns, right_columns=other.columns
         )
@@ -1787,6 +1867,10 @@ class FlowDataEngine:
         """Performs a standard SQL-style join with another DataFrame."""
         # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
+        _ensure_all_columns_have_select(
+            left_cols=self.columns, right_cols=other.columns, manager=join_manager
+        )
+        join_manager.set_join_keys()
         ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
         for jk in join_manager.join_mapping:
             if jk.left_col not in {c.old_name for c in join_manager.left_select.renames}:
@@ -2171,6 +2255,245 @@ class FlowDataEngine:
             df2 = self.data_frame.with_columns(parsed_func.alias(col_name))
 
         return FlowDataEngine(df2, number_of_records=self.number_of_records)
+
+    @staticmethod
+    def _select_rename_targets(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DynamicRenameInput,
+    ) -> list[str]:
+        """Return the ordered list of column names the rename rule applies to.
+
+        Applies the `selection_mode` filter (`"all"`, `"list"`, or `"data_type"`) to
+        the incoming schema, preserving the original column order. Unknown column
+        names in `settings.selected_columns` are silently dropped so stale UI state
+        does not break execution. An unknown or unset `selection_mode` returns `[]`.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            settings: The dynamic rename configuration.
+
+        Returns:
+            The column names the rename rule should be applied to, in schema order.
+        """
+        mode = settings.selection_mode
+        if mode == "all":
+            return [name for name, _ in columns]
+        if mode == "list":
+            available = {name for name, _ in columns}
+            return [c for c in settings.selected_columns if c in available]
+        if mode == "data_type":
+            wanted = settings.selected_data_type
+            if wanted is None:
+                return []
+            return [name for name, group in columns if group == wanted]
+        return []
+
+    @staticmethod
+    def _compute_renamed_names(
+        targets: list[str],
+        settings: transform_schemas.DynamicRenameInput,
+        first_row_values: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Return new names aligned 1:1 with `targets` for the configured rename mode.
+
+        For `"prefix"` / `"suffix"` modes the transformation is applied string-wise.
+        For `"formula"` mode the user's flowfile-formula expression is evaluated once
+        against a one-column DataFrame (`column_name`) whose rows are `targets`, so
+        the formula can reference the original name via the `column_name` field. A
+        scalar/literal result (length 1) is broadcast to match `targets`; any other
+        cardinality mismatch is an error. An empty/whitespace formula is treated as
+        a no-op (returns `targets` unchanged). Non-string formula results are
+        coerced to `str`.
+
+        For `"first_row"` mode the new names come from `first_row_values` (a dict
+        keyed by original column name). When called without `first_row_values`
+        (schema-only preview) the function returns `targets` unchanged.
+
+        Args:
+            targets: Column names the rename rule applies to.
+            settings: The dynamic rename configuration.
+            first_row_values: First-row values keyed by original column name, used
+                only in `"first_row"` mode.
+
+        Returns:
+            New names aligned 1:1 with `targets`.
+
+        Raises:
+            ValueError: If a formula yields a null, changes cardinality in a way
+                that cannot be broadcast (e.g. an aggregation collapsing N rows to
+                a different N), or — in `"first_row"` mode — a first-row value is
+                null or empty.
+        """
+        if not targets:
+            return []
+        mode = settings.rename_mode
+        if mode == "prefix":
+            return [f"{settings.prefix}{n}" for n in targets]
+        if mode == "suffix":
+            return [f"{n}{settings.suffix}" for n in targets]
+        if mode == "first_row":
+            if first_row_values is None:
+                return list(targets)
+            new = [first_row_values.get(name) for name in targets]
+            for original, v in zip(targets, new, strict=True):
+                if v is None or (isinstance(v, str) and v.strip() == ""):
+                    raise ValueError(
+                        f"Dynamic rename (first_row) got a null/empty value for column '{original}'."
+                    )
+            return [str(v) for v in new]
+        if mode == "formula":
+            if not settings.formula.strip():
+                return list(targets)
+            expr = to_expr(settings.formula)
+            tmp = pl.DataFrame({"column_name": targets})
+            results = tmp.select(expr.alias("__ff_rename__"))["__ff_rename__"].to_list()
+            # A scalar/literal formula (e.g. `"x"`) returns a single row; broadcast
+            # it to match `targets`. Any other length mismatch means the formula
+            # changed cardinality (e.g. an aggregation), which is not a valid rename.
+            if len(results) == 1 and len(targets) > 1:
+                results = results * len(targets)
+            elif len(results) != len(targets):
+                raise ValueError(
+                    "Dynamic rename formula must produce one value per column "
+                    f"(got {len(results)} for {len(targets)} target column(s))."
+                )
+            for original, new in zip(targets, results, strict=True):
+                if new is None:
+                    raise ValueError(f"Dynamic rename formula returned null for column '{original}'.")
+            return [str(n) for n in results]
+        return list(targets)
+
+    @staticmethod
+    def _assert_rename_has_no_duplicates(
+        rename_map: dict[str, str],
+        all_columns: list[tuple[str, str]],
+    ) -> None:
+        """Raise if the rename map would yield duplicate final column names.
+
+        Checks two kinds of collision: (1) two renames producing the same new name,
+        and (2) a rename producing a name that already exists on an untouched
+        (non-renamed) column. The set of "untouched" names is derived from
+        `all_columns` minus `rename_map.keys()`.
+
+        Args:
+            rename_map: The proposed `{old_name: new_name}` map (no-ops already removed).
+            all_columns: The full incoming schema as `(column_name, data_type_group)` tuples.
+
+        Raises:
+            ValueError: If applying `rename_map` would produce duplicate column names.
+                The error message lists all offending new names in sorted order.
+        """
+        untouched = {name for name, _ in all_columns} - rename_map.keys()
+        duplicates: set[str] = set()
+        seen: set[str] = set()
+        for new in rename_map.values():
+            if new in seen or new in untouched:
+                duplicates.add(new)
+            seen.add(new)
+        if duplicates:
+            raise ValueError("Dynamic rename produces duplicate column name(s): " + ", ".join(sorted(duplicates)))
+
+    @staticmethod
+    def resolve_dynamic_rename_map(
+        columns: list[tuple[str, str]],
+        settings: transform_schemas.DynamicRenameInput,
+        first_row_values: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Compute the `{old_name: new_name}` map for a dynamic-rename operation.
+
+        Pure function — takes the incoming schema as `(name, data_type_group)` tuples
+        (where `data_type_group` is `FlowfileColumn.data_type_group`, e.g. `"Numeric"`,
+        `"String"`, `"Date"`, …) and the user's settings, and returns the rename map.
+        Raises `ValueError` if the rule would produce duplicate column names.
+
+        Args:
+            columns: Incoming schema as `(column_name, data_type_group)` tuples, in order.
+            settings: The dynamic rename configuration.
+            first_row_values: First-row values keyed by original column name. Required
+                for `"first_row"` mode to produce a real rename map; when omitted in
+                `"first_row"` mode the result is an empty map (schema-only preview).
+
+        Returns:
+            A dict mapping original column name to new column name. No-op renames are
+            omitted, so the result is safe to pass directly to `pl.DataFrame.rename`.
+        """
+        targets = FlowDataEngine._select_rename_targets(columns, settings)
+        new_names = FlowDataEngine._compute_renamed_names(
+            targets, settings, first_row_values=first_row_values
+        )
+        rename_map = {old: new for old, new in zip(targets, new_names, strict=True) if old != new}
+        FlowDataEngine._assert_rename_has_no_duplicates(rename_map, columns)
+        return rename_map
+
+    def _peek_first_row_as_dict(self) -> dict[str, Any]:
+        """Return the first row of the underlying frame keyed by column name.
+
+        Runs on the external worker via `ExternalDfFetcher` to keep the heavy
+        compute out of the core process (same pattern as `fetch_unique_values`
+        used by `do_pivot`). Falls back to an in-core collect only if the
+        external fetcher is unavailable. Raises `ValueError` if the frame is
+        empty.
+        """
+        df = self.data_frame
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        head_lf = lf.head(1)
+
+        table = None
+        try:
+            external = ExternalDfFetcher(lf=head_lf, flow_id=1, node_id=-1, wait_on_completion=True)
+            if external.status is not None and external.status.status == "Completed":
+                table = arrow_read(external.status.file_ref)
+        except Exception as e:  # noqa: BLE001 - worker availability is best-effort
+            logger.debug(f"ExternalDfFetcher unavailable for first_row peek ({e}); using in-core fallback")
+
+        if table is not None:
+            if table.num_rows == 0:
+                raise ValueError(
+                    "Dynamic rename (first_row) requires at least one row in the input; got 0."
+                )
+            return {name: table.column(name)[0].as_py() for name in table.column_names}
+
+        head = head_lf.collect()
+        if head.height == 0:
+            raise ValueError(
+                "Dynamic rename (first_row) requires at least one row in the input; got 0."
+            )
+        return dict(zip(head.columns, head.row(0), strict=True))
+
+    def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
+        """Renames a subset of columns according to a single rule.
+
+        Supports prefix, suffix, flowfile-formula, and first-row rename modes, with
+        column selection by name list, by data type, or across all columns. In
+        `"first_row"` mode the first row is always dropped from the output after
+        its values are promoted to column headers.
+
+        Args:
+            settings: The dynamic rename configuration.
+
+        Returns:
+            A new `FlowDataEngine` with the renamed columns (or this instance's DataFrame
+            unchanged if the rule resolves to no renames).
+        """
+        columns = [(c.column_name, c.data_type_group) for c in self.schema]
+        first_row_values = None
+        if settings.rename_mode == "first_row":
+            first_row_values = self._peek_first_row_as_dict()
+        rename_map = self.resolve_dynamic_rename_map(
+            columns, settings, first_row_values=first_row_values
+        )
+        new_df = self.data_frame.rename(rename_map) if rename_map else self.data_frame
+        if settings.rename_mode == "first_row":
+            new_df = new_df.slice(1)
+            new_records = max(0, self.number_of_records - 1)
+            return FlowDataEngine(new_df, number_of_records=new_records)
+        if not rename_map:
+            return FlowDataEngine(
+                self.data_frame,
+                number_of_records=self.number_of_records,
+                schema=self.schema,
+            )
+        return FlowDataEngine(new_df, number_of_records=self.number_of_records)
 
     def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies an SQL-style formula using `pl.sql_expr`.

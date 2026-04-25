@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response
 
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -64,13 +65,15 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     create_engine_from_db_settings,
     create_sql_source_from_db_settings,
 )
 from flowfile_core.run_lock import get_flow_run_lock
-from flowfile_core.schemas import input_schema, output_model, schemas
+from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
@@ -223,7 +226,19 @@ async def get_active_flow_file_sessions(
 ) -> list[schemas.FlowSettingsResponse]:
     """Retrieves a list of all currently active flow sessions for the current user."""
     user_id = current_user.id if current_user else None
-    return [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
+    sessions = [flow_file_handler.get_flow_info_with_runtime(flf.flow_id) for flf in flow_file_handler.get_user_flows(user_id)]
+    paths = {s.path or s.save_location for s in sessions if s.path or s.save_location}
+    if paths:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            name_by_path = {
+                p: reg.name for p in paths if (reg := repo.get_flow_by_path(p)) is not None
+            }
+        for s in sessions:
+            p = s.path or s.save_location
+            if p and p in name_by_path:
+                s.display_name = name_by_path[p]
+    return sessions
 
 
 @router.post("/node/trigger_fetch_data", tags=["editor"])
@@ -340,7 +355,7 @@ def _run_and_track(flow, user_id: int | None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     number_of_nodes=run_info.number_of_nodes,
-                    run_type=run_info.run_type,
+                    run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )
@@ -916,6 +931,50 @@ def get_node_list() -> list[schemas.NodeTemplate]:
     return nodes_list
 
 
+class _DynamicRenameColumn(BaseModel):
+    name: str
+    data_type_group: str = ""
+
+
+class DynamicRenamePreviewRequest(BaseModel):
+    """Request body for `/dynamic_rename/preview`."""
+
+    settings: transform_schema.DynamicRenameInput
+    incoming_columns: list[_DynamicRenameColumn] = Field(default_factory=list)
+
+
+class DynamicRenamePreviewResponse(BaseModel):
+    """Response body for `/dynamic_rename/preview`."""
+
+    rename_map: dict[str, str]
+    error: str | None = None
+
+
+@router.post("/dynamic_rename/preview", response_model=DynamicRenamePreviewResponse, tags=["editor"])
+def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenamePreviewResponse:
+    """Resolves a dynamic-rename rule against a given schema without mutating any flow.
+
+    The frontend calls this to render the live old-to-new preview pane inside the
+    node's settings panel. Returns either the fully-resolved rename map (possibly
+    empty) or an `error` describing a parse failure or duplicate-name collision.
+
+    `first_row` mode is intentionally not previewed here: its new names depend on
+    actual row data, and we don't want to trigger upstream computation from a
+    settings panel. The frontend renders a runtime-only placeholder for that mode.
+    """
+    columns = [(c.name, c.data_type_group) for c in request.incoming_columns]
+    try:
+        rename_map = FlowDataEngine.resolve_dynamic_rename_map(columns, request.settings)
+    except ValueError as exc:
+        return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
+        # Log the full traceback so real bugs don't get silently reported as
+        # "Formula error" to the user.
+        logger.exception("Unexpected error while resolving dynamic rename preview")
+        return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
+    return DynamicRenamePreviewResponse(rename_map=rename_map)
+
+
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])
 def get_node(flow_id: int, node_id: int, get_data: bool = False):
     """Retrieves the complete state and data preview for a single node."""
@@ -1078,11 +1137,15 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
 
 
 @router.get("/node/data", response_model=output_model.TableExample, tags=["editor"])
-def get_table_example(flow_id: int, node_id: int):
-    """Retrieves a data preview (schema and sample rows) for a node's output."""
+def get_table_example(flow_id: int, node_id: int, output_handle: str = DEFAULT_OUTPUT_HANDLE):
+    """Retrieves a data preview (schema and sample rows) for a node's output.
+
+    For multi-output nodes, ``output_handle`` selects which named output to
+    preview (e.g. ``"output-0"``, ``"output-1"``); the default is the first.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
-    return node.get_table_example(True)
+    return node.get_table_example(True, output_handle=output_handle)
 
 
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])
@@ -1265,10 +1328,7 @@ def save_flow_to_catalog(
     if existing_reg is None and os.path.exists(flow_path):
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Target file {flow_path} exists but is not catalog-registered; "
-                "refusing to overwrite"
-            ),
+            detail=(f"Target file {flow_path} exists but is not catalog-registered; " "refusing to overwrite"),
         )
 
     user_id = current_user.id if current_user else None
@@ -1376,11 +1436,7 @@ def overwrite_flow_in_catalog(
     # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
     # up files under the managed root; user-owned paths elsewhere are left
     # alone since we don't want to silently delete files the user manages.
-    if (
-        normalized_current
-        and normalized_current != target_path
-        and normalized_current.startswith(managed_root)
-    ):
+    if normalized_current and normalized_current != target_path and normalized_current.startswith(managed_root):
         try:
             os.unlink(normalized_current)
         except OSError:

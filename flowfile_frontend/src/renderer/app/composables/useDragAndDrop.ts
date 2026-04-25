@@ -1,7 +1,8 @@
 // composables/useDragAndDrop.ts
 // Drag and drop composable for flow canvas
-import { useVueFlow, Node, Position } from "@vue-flow/core";
+import { useVueFlow, Node, Position, Edge } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
+import { ElMessage } from "element-plus";
 import type {
   NodeTemplate,
   NodeInput,
@@ -16,6 +17,60 @@ import type {
 import { FlowApi, NodeApi } from "../api";
 import { useEditorStore } from "../stores/editor-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
+import { DEFAULT_OUTPUT_HANDLE, outputHandle, outputLabel } from "../utils/outputHandle";
+
+const EDGE_DROP_CLASS = "edge-drop-target";
+let hoveredEdgeId: string | null = null;
+
+// Edge ids whose UI removal should NOT trigger a backend deleteConnection call.
+// Used during drag-to-insert: we delete the backend connection ourselves first,
+// then call `removeEdges` for the UI update — without this set, Canvas.vue's
+// `@edges-change` handler would issue a second, failing deleteConnection.
+export const suppressedEdgeRemovals = new Set<string>();
+
+function markHoveredEdge(nextId: string | null) {
+  if (hoveredEdgeId === nextId) return;
+  if (hoveredEdgeId) {
+    document
+      .querySelector(`.vue-flow__edge[data-id="${CSS.escape(hoveredEdgeId)}"]`)
+      ?.classList.remove(EDGE_DROP_CLASS);
+  }
+  if (nextId) {
+    document
+      .querySelector(`.vue-flow__edge[data-id="${CSS.escape(nextId)}"]`)
+      ?.classList.add(EDGE_DROP_CLASS);
+  }
+  hoveredEdgeId = nextId;
+}
+
+function detectEdgeUnderPointer(clientX: number, clientY: number): string | null {
+  // elementsFromPoint (plural) returns the full z-stack, so we can find an
+  // edge even when a dragged node is painted on top and obscures it.
+  const stack = document.elementsFromPoint(clientX, clientY);
+  for (const el of stack) {
+    const edgeEl = (el as Element).closest(".vue-flow__edge");
+    if (edgeEl) return edgeEl.getAttribute("data-id");
+  }
+  return null;
+}
+
+function buildConnection(
+  sourceId: number,
+  sourceHandle: string,
+  targetId: number,
+  targetHandle: string,
+): NodeConnection {
+  return {
+    input_connection: {
+      node_id: targetId,
+      connection_class: targetHandle as NodeConnection["input_connection"]["connection_class"],
+    },
+    output_connection: {
+      node_id: sourceId,
+      connection_class: sourceHandle as NodeConnection["output_connection"]["connection_class"],
+    },
+  };
+}
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -39,6 +94,23 @@ let id = 0;
 
 function getId(): number {
   return ++id;
+}
+
+// Build the outputs array for a custom-node. When a node declares more than one
+// output, each handle gets a compact letter id (A, B, …) for the canvas and the
+// user-defined name (when available) as a hover tooltip via the `title` attr.
+// For nodes whose output count is user-configurable (e.g. random_split), the
+// effective count is whichever is larger: the template's static count or the
+// number of saved output names.
+export function buildOutputHandles(outputCount: number, names?: string[]): NodeHandle[] {
+  const count = Math.max(outputCount, names?.length ?? 0);
+  const multi = count > 1;
+  return Array.from({ length: count }, (_, i) => ({
+    id: outputHandle(i),
+    position: Position.Right,
+    label: multi ? outputLabel(i) : undefined,
+    title: multi ? names?.[i] : undefined,
+  }));
 }
 
 const state = {
@@ -113,8 +185,6 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
   const modulePath = nodeTemplate.custom_node
     ? "../components/nodes/node-types/elements/customNode/CustomNode.vue"
     : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`;
-
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
 
   // Validate module names to prevent path traversal (only needed for non-custom nodes)
   if (
@@ -210,8 +280,16 @@ async function getComponentRaw(item: string): Promise<any> {
 export default function useDragAndDrop() {
   const { draggedType, isDragOver, isDragging } = state;
 
-  const { addNodes, screenToFlowCoordinate, onNodesInitialized, updateNode, addEdges, fromObject } =
-    useVueFlow();
+  const {
+    addNodes,
+    screenToFlowCoordinate,
+    onNodesInitialized,
+    updateNode,
+    addEdges,
+    removeEdges,
+    findEdge,
+    fromObject,
+  } = useVueFlow();
 
   watch(isDragging, (dragging) => {
     document.body.style.userSelect = dragging ? "none" : "";
@@ -238,17 +316,20 @@ export default function useDragAndDrop() {
       if (event.dataTransfer) {
         event.dataTransfer.dropEffect = "move";
       }
+      markHoveredEdge(detectEdgeUnderPointer(event.clientX, event.clientY));
     }
   }
 
   function onDragLeave() {
     isDragOver.value = false;
+    markHoveredEdge(null);
   }
 
   function onDragEnd() {
     isDragging.value = false;
     isDragOver.value = false;
     draggedType.value = null;
+    markHoveredEdge(null);
     document.removeEventListener("drop", onDragEnd);
   }
 
@@ -271,10 +352,10 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(
+            node.numberOfOutputs,
+            node.nodeTemplate?.output_names ?? undefined,
+          ),
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -328,11 +409,7 @@ export default function useDragAndDrop() {
           id: `input-${i}`,
           position: Position.Left,
         })),
-        outputs: Array.from({ length: node.output }, (_, i) => ({
-          id: `output-${i}`,
-          position: Position.Right,
-          label: node.output > 1 && node.output_names?.[i] ? node.output_names[i] : undefined,
-        })),
+        outputs: buildOutputHandles(node.output, node.output_names ?? undefined),
         nodeTemplate: nodeTemplate,
       },
     };
@@ -407,6 +484,11 @@ export default function useDragAndDrop() {
     const nodeData: NodeTemplate = parsedData;
     const nodeId = getId();
 
+    // Snapshot which edge (if any) the user was hovering at drop time, then clear
+    // the hover cue — we'll consume the snapshot below.
+    const droppedOnEdgeId = hoveredEdgeId;
+    markHoveredEdge(null);
+
     try {
       const component = await getComponent(nodeData);
       const numberOfInputs: number = nodeData.multi ? 1 : nodeData.input;
@@ -423,10 +505,7 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: nodeData.output }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(nodeData.output, nodeData.output_names ?? undefined),
           nodeTemplate: nodeData,
         },
       };
@@ -450,9 +529,103 @@ export default function useDragAndDrop() {
         position.y,
       );
       addNodes(newNode);
+
+      // `multi` nodes render a single input handle that accepts many sources,
+      // so for splice purposes they behave like a 1-input node regardless of
+      // the backend's `input` count (e.g. polars_code/python_script have input=10).
+      const effectiveInputCount = nodeData.multi ? 1 : nodeData.input;
+      if (droppedOnEdgeId && effectiveInputCount === 1 && nodeData.output >= 1) {
+        const insertResponse = await insertNodeOnEdge(flowId, nodeId, nodeData, droppedOnEdgeId);
+        if (insertResponse) return insertResponse;
+      }
       return response;
     } catch (error) {
       console.error("Error importing component for:", nodeData.item, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Splice a freshly-created node into an existing edge: A -> B becomes
+   * A -> new -> B. The new node has already been created on both UI and
+   * backend by onDrop; this only reshuffles the edges.
+   *
+   * Returns the last OperationResponse on success, or undefined on failure
+   * (after a best-effort rollback — the original edge is re-added if
+   * possible so the user isn't stranded with a disconnected graph).
+   */
+  async function insertNodeOnEdge(
+    flowId: number,
+    newNodeId: number,
+    nodeData: NodeTemplate,
+    edgeId: string,
+  ): Promise<OperationResponse | undefined> {
+    const edge = findEdge(edgeId);
+    if (!edge) return undefined;
+
+    const sourceId = parseInt(edge.source, 10);
+    const targetId = parseInt(edge.target, 10);
+    const sourceHandle = edge.sourceHandle ?? DEFAULT_OUTPUT_HANDLE;
+    const targetHandle = edge.targetHandle ?? "input-0";
+    const newOutputHandle = outputHandle(0);
+    const newInputHandle = "input-0";
+
+    const oldConnection = buildConnection(sourceId, sourceHandle, targetId, targetHandle);
+    const upstream = buildConnection(sourceId, sourceHandle, newNodeId, newInputHandle);
+    const downstream = buildConnection(newNodeId, newOutputHandle, targetId, targetHandle);
+
+    // Keep a snapshot of the original edge so we can rehydrate the UI on rollback.
+    const originalEdge: Edge = {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle,
+      ...(edge.label ? { label: edge.label } : {}),
+    };
+
+    let stage: "none" | "deleted-old" | "added-upstream" = "none";
+    try {
+      await FlowApi.deleteConnection(flowId, oldConnection);
+      stage = "deleted-old";
+      // Backend already knows the edge is gone; tell handleEdgeChange to skip it.
+      suppressedEdgeRemovals.add(edge.id);
+      removeEdges([edge.id]);
+
+      await FlowApi.connectNode(flowId, upstream);
+      stage = "added-upstream";
+
+      const lastResponse = await FlowApi.connectNode(flowId, downstream);
+
+      addEdges([
+        {
+          id: `e${sourceId}-${newNodeId}-${sourceHandle}-${newInputHandle}`,
+          source: String(sourceId),
+          target: String(newNodeId),
+          sourceHandle,
+          targetHandle: newInputHandle,
+          ...(edge.label ? { label: edge.label } : {}),
+        },
+        {
+          id: `e${newNodeId}-${targetId}-${newOutputHandle}-${targetHandle}`,
+          source: String(newNodeId),
+          target: String(targetId),
+          sourceHandle: newOutputHandle,
+          targetHandle,
+        },
+      ]);
+
+      return lastResponse;
+    } catch (error) {
+      console.error("Insert-on-edge failed, attempting rollback:", error);
+      if (stage === "added-upstream") {
+        await FlowApi.deleteConnection(flowId, upstream).catch(() => undefined);
+      }
+      if (stage !== "none") {
+        await FlowApi.connectNode(flowId, oldConnection).catch(() => undefined);
+        addEdges([originalEdge]);
+      }
+      ElMessage.error(`Could not insert ${nodeData.name} onto the edge`);
       return undefined;
     }
   }
@@ -508,10 +681,10 @@ export default function useDragAndDrop() {
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
-            id: `output-${i}`,
-            position: Position.Right,
-          })),
+          outputs: buildOutputHandles(
+            node.numberOfOutputs,
+            node.nodeTemplate?.output_names ?? undefined,
+          ),
           nodeTemplate: node.nodeTemplate,
         },
       };
@@ -651,7 +824,7 @@ export default function useDragAndDrop() {
           label: "Manual Input",
           component: markRaw(component),
           inputs: [],
-          outputs: [{ id: "output-0", position: Position.Right }],
+          outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
           nodeTemplate,
         },
       };
@@ -687,5 +860,8 @@ export default function useDragAndDrop() {
     createMultiCopyNodes,
     createManualInputFromClipboard,
     importFlow,
+    insertNodeOnEdge,
   };
 }
+
+export { markHoveredEdge, detectEdgeUnderPointer };

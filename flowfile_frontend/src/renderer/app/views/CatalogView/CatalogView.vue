@@ -853,7 +853,7 @@ async function handleRunNowFromDetail(scheduleId: number) {
 async function handleRunFlow(flowId: number) {
   try {
     await CatalogApi.runFlow(flowId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns()]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(flowId)]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
@@ -867,7 +867,7 @@ async function handleCancelFlowRun(flowId: number) {
     }
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(),
+      catalogStore.loadRuns(flowId),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");

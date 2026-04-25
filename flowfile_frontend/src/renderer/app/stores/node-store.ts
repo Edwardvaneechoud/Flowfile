@@ -136,9 +136,13 @@ export const useNodeStore = defineStore("node", {
       return this.nodeData;
     },
 
-    async getTableExample(flowId: number, nodeId: number): Promise<TableExample | null> {
+    async getTableExample(
+      flowId: number,
+      nodeId: number,
+      outputHandle?: string,
+    ): Promise<TableExample | null> {
       try {
-        return await NodeApi.getTableExample(flowId, nodeId);
+        return await NodeApi.getTableExample(flowId, nodeId, outputHandle);
       } catch (error) {
         console.error("Error fetching table example:", error);
         return null;

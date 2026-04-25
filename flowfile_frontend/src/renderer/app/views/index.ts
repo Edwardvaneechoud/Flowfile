@@ -17,6 +17,9 @@ export { default as SecretsView } from "./SecretsView/SecretsView.vue";
 // Cloud Connection
 export { default as CloudConnectionView } from "./CloudConnectionView/CloudConnectionView.vue";
 
+// Google Analytics Connection
+export { default as GoogleAnalyticsConnectionView } from "./GoogleAnalyticsConnectionView/GoogleAnalyticsConnectionView.vue";
+
 // Database
 export { default as DatabaseView } from "./DatabaseView/DatabaseView.vue";
 

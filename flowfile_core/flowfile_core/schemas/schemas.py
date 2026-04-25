@@ -23,6 +23,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "sort": input_schema.NodeSort,
     "record_id": input_schema.NodeRecordId,
     "sample": input_schema.NodeSample,
+    "random_split": input_schema.NodeRandomSplit,
     "unique": input_schema.NodeUnique,
     "group_by": input_schema.NodeGroupBy,
     "pivot": input_schema.NodePivot,
@@ -47,6 +48,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "catalog_reader": input_schema.NodeCatalogReader,
     "catalog_writer": input_schema.NodeCatalogWriter,
     "kafka_source": input_schema.NodeKafkaSource,
+    "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,
     "user_defined": input_schema.UserDefinedNode,
@@ -200,6 +202,7 @@ class FlowSettingsResponse(FlowSettings):
     """FlowSettings plus runtime-only fields for API responses. Not persisted."""
 
     has_unsaved_changes: bool = False
+    display_name: str | None = None
 
 
 class RawLogInput(BaseModel):
@@ -258,6 +261,10 @@ class FlowfileNode(BaseModel):
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
+    # Parallel to ``outputs``: the source-side output handle for each connection
+    # (e.g. ["output-0", "output-1"]). Older flowfiles omit this — loaders treat
+    # missing entries as "output-0".
+    output_handles: list[str] | None = None
     setting_input: Any | None = None
 
     _setting_input_exclude: ClassVar[set] = {
@@ -329,6 +336,7 @@ class NodeTemplate(BaseModel):
     drawer_intro: str = "Drawer into"
     custom_node: bool | None = False
     laziness: LazinessLiteral = "eager"
+    output_names: list[str] | None = None
 
 
 class NodeInformation(BaseModel):
@@ -348,6 +356,7 @@ class NodeInformation(BaseModel):
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
+    output_handles: list[str] | None = None
     setting_input: Any | None = None
 
     @property

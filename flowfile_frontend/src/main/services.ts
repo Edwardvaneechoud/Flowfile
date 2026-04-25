@@ -237,6 +237,15 @@ export function startProcess(
 
 const startProcessWithError = withProductionError(startProcess, "Failed to start process");
 
+async function isServiceRunning(port: number): Promise<boolean> {
+  try {
+    await axios.get(`http://127.0.0.1:${port}/docs`, { timeout: HEALTH_CHECK_TIMEOUT });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function startServices(retry = true): Promise<void> {
   try {
     const corePath = getResourceServicePath("flowfile_core");
@@ -246,17 +255,33 @@ export async function startServices(retry = true): Promise<void> {
       `Starting services with paths - Core: ${corePath || "Not found"}, Worker: ${workerPath || "Not found"}`,
     );
 
+    const [coreAlreadyRunning, workerAlreadyRunning] = await Promise.all([
+      isServiceRunning(CORE_PORT),
+      isServiceRunning(WORKER_PORT),
+    ]);
+
+    if (coreAlreadyRunning) {
+      console.log(`flowfile_core is already running on port ${CORE_PORT}, skipping start`);
+    }
+    if (workerAlreadyRunning) {
+      console.log(`flowfile_worker is already running on port ${WORKER_PORT}, skipping start`);
+    }
+
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
-      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
-        if (data.includes("Core server started")) {
-          console.log("Core process is ready");
-        }
-      }),
-      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
-        if (data.includes("Server started")) {
-          console.log("Worker process is ready");
-        }
-      }),
+      coreAlreadyRunning
+        ? Promise.resolve(null)
+        : startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
+            if (data.includes("Core server started")) {
+              console.log("Core process is ready");
+            }
+          }),
+      workerAlreadyRunning
+        ? Promise.resolve(null)
+        : startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
+            if (data.includes("Server started")) {
+              console.log("Worker process is ready");
+            }
+          }),
     ]);
 
     coreProcess = newCoreProcess;

@@ -7,12 +7,14 @@ import {
   defineExpose,
   nextTick,
   defineEmits,
+  provide,
   watch,
 } from "vue";
 import {
   VueFlow,
   NodeTypesObject,
   NodeComponent,
+  EdgeComponent,
   Node,
   useVueFlow,
   ConnectionMode,
@@ -20,7 +22,13 @@ import {
 import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "../../components/nodes/NodeWrapper.vue";
+import DeletableEdge from "./DeletableEdge.vue";
 import useDragAndDrop from "./useDnD";
+import {
+  suppressedEdgeRemovals,
+  markHoveredEdge,
+  detectEdgeUnderPointer,
+} from "../../composables/useDragAndDrop";
 import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../stores/column-store";
@@ -35,6 +43,8 @@ import {
   NodeConnection,
 } from "./backendInterface";
 import { FlowApi } from "../../api";
+import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
+import { snapshotClipboard } from "../../utils/clipboardUtils";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
@@ -52,9 +62,10 @@ import {
   ContextMenuAction,
   CursorPosition,
 } from "./types";
-import type { NodeHandle } from "../../types/flow.types";
+import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
+import { ElMessage } from "element-plus";
 
 /** Typed subset of VueFlow node data used for edge label computation. */
 interface FlowNodeData {
@@ -69,11 +80,72 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
 const rawCustomNode = markRaw(CustomNode);
+const rawDeletableEdge = markRaw(DeletableEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
 };
+const edgeTypes = {
+  default: rawDeletableEdge as EdgeComponent,
+};
+const hoveredEdgeId = ref<string | null>(null);
+provide("hoveredEdgeId", hoveredEdgeId);
+
+function onEdgeMouseEnter({ edge }: { edge: { id: string } }) {
+  hoveredEdgeId.value = edge.id;
+}
+
+function onEdgeMouseLeave() {
+  hoveredEdgeId.value = null;
+}
+
+/**
+ * Dragging an existing canvas node onto an edge should splice it in the
+ * same way a palette-dropped node does. We reuse the edge hit-test helper
+ * from the composable and, on drop, call insertNodeOnEdge — the node is
+ * already on both the UI and backend, so only the edges need reshuffling.
+ */
+let nodeDragInsertCandidate: string | null = null;
+
+function onNodeDrag({ event, node }: { event: MouseEvent | TouchEvent; node: Node }) {
+  const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
+  // `multi` nodes render one input handle that accepts many sources, so they
+  // qualify as 1-input for splice purposes even though template.input is high.
+  const effectiveInputCount = template?.multi ? 1 : (template?.input ?? 0);
+  if (!template || effectiveInputCount !== 1 || template.output < 1) {
+    markHoveredEdge(null);
+    nodeDragInsertCandidate = null;
+    return;
+  }
+  // Splicing via node-drag only applies to unconnected nodes — otherwise the
+  // new edges could clash with existing ones or close a cycle.
+  const nodeAlreadyConnected = instance.getEdges.value.some(
+    (e) => e.source === node.id || e.target === node.id,
+  );
+  if (nodeAlreadyConnected) {
+    markHoveredEdge(null);
+    nodeDragInsertCandidate = null;
+    return;
+  }
+  const evt = event as MouseEvent;
+  const edgeId = detectEdgeUnderPointer(evt.clientX, evt.clientY);
+  markHoveredEdge(edgeId);
+  nodeDragInsertCandidate = edgeId;
+}
+
+async function onNodeDragStop({ node }: { node: Node }) {
+  const edgeId = nodeDragInsertCandidate;
+  nodeDragInsertCandidate = null;
+  markHoveredEdge(null);
+  if (!edgeId) return;
+  const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
+  if (!template) return;
+  const response = await insertNodeOnEdge(flowStore.flowId, Number(node.id), template, edgeId);
+  if (response?.history) {
+    flowStore.updateHistoryState(response.history);
+  }
+}
 const nodes = ref<Node[]>([]);
 const edges = ref([]);
 const instance = useVueFlow();
@@ -87,6 +159,7 @@ const {
   createCopyNode,
   createMultiCopyNodes,
   createManualInputFromClipboard,
+  insertNodeOnEdge,
 } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
@@ -241,32 +314,121 @@ function updateEdgeLabelsForNode(nodeId: string) {
   }
 }
 
+/**
+ * Reject a would-be connection that violates a frontend invariant.
+ *
+ * Two rules:
+ *   1. A target handle on a non-multi node accepts at most one connection.
+ *   2. The edge must not close a cycle (source reachable from target today).
+ *
+ * Returning false blocks the drop. If any rejection happened during the drag,
+ * onConnectEnd surfaces it as a toast. State is reset per drag via
+ * onConnectStart so retries after the first rejection still fire.
+ */
+let rejectionDuringDrag: string | null = null;
+
+function rejectConnection(reason: string): false {
+  rejectionDuringDrag = reason;
+  return false;
+}
+
+function isValidConnection(connection: Connection): boolean {
+  const source = connection.source;
+  const target = connection.target;
+  if (!source || !target) return false;
+  if (source === target) return rejectConnection("A node can't connect to itself");
+
+  const currentEdges = instance.getEdges.value;
+
+  const targetNode = instance.findNode(target);
+  const targetTemplate = (targetNode?.data as { nodeTemplate?: NodeTemplate } | undefined)
+    ?.nodeTemplate;
+  if (targetTemplate && !targetTemplate.multi && connection.targetHandle) {
+    const handleOccupied = currentEdges.some(
+      (e) => e.target === target && e.targetHandle === connection.targetHandle,
+    );
+    if (handleOccupied) {
+      return rejectConnection(
+        `Input on "${targetTemplate.name}" already has a connection — remove it first`,
+      );
+    }
+  }
+
+  const adjacency = new Map<string, string[]>();
+  for (const e of currentEdges) {
+    const list = adjacency.get(e.source);
+    if (list) list.push(e.target);
+    else adjacency.set(e.source, [e.target]);
+  }
+  const visited = new Set<string>([target]);
+  const stack = [target];
+  while (stack.length) {
+    const node = stack.pop() as string;
+    const outgoing = adjacency.get(node);
+    if (!outgoing) continue;
+    for (const next of outgoing) {
+      if (next === source) {
+        return rejectConnection("This connection would create a loop in the flow");
+      }
+      if (!visited.has(next)) {
+        visited.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  // Moving onto a valid target supersedes any earlier rejection in this drag.
+  rejectionDuringDrag = null;
+  return true;
+}
+
+function onConnectStart() {
+  rejectionDuringDrag = null;
+}
+
+function onConnectEnd() {
+  if (rejectionDuringDrag) {
+    ElMessage.warning(rejectionDuringDrag);
+    rejectionDuringDrag = null;
+  }
+}
+
 async function onConnect(params: Connection & { label?: string }) {
-  if (params.target && params.source) {
-    const nodeConnection: NodeConnection = {
-      input_connection: {
-        node_id: parseInt(params.target, 10),
-        connection_class:
-          params.targetHandle as NodeConnection["input_connection"]["connection_class"],
-      },
-      output_connection: {
-        node_id: parseInt(params.source, 10),
-        connection_class:
-          params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
-      },
-    };
-    const response = await connectNode(flowStore.flowId, nodeConnection);
+  if (!params.target || !params.source) return;
+  if (!isValidConnection(params)) {
+    // Belt-and-suspenders: if VueFlow ever lets an invalid drop through, bail quietly.
+    return;
+  }
+  const nodeConnection: NodeConnection = {
+    input_connection: {
+      node_id: parseInt(params.target, 10),
+      connection_class:
+        params.targetHandle as NodeConnection["input_connection"]["connection_class"],
+    },
+    output_connection: {
+      node_id: parseInt(params.source, 10),
+      connection_class:
+        params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
+    },
+  };
+  let response: Awaited<ReturnType<typeof connectNode>> | undefined;
+  try {
+    response = await connectNode(flowStore.flowId, nodeConnection);
+  } catch (err) {
+    const detail =
+      (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+      "Failed to create connection";
+    ElMessage.error(detail);
+    return;
+  }
 
-    if (editorStore.showEdgeLabels) {
-      const sourceNode = instance.findNode(params.source);
-      params.label = computeEdgeLabel(sourceNode, params.sourceHandle ?? undefined);
-    }
+  if (editorStore.showEdgeLabels) {
+    const sourceNode = instance.findNode(params.source);
+    params.label = computeEdgeLabel(sourceNode, params.sourceHandle ?? undefined);
+  }
 
-    addEdges([params]);
-    // Update history state from response
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
-    }
+  addEdges([params]);
+  if (response?.history) {
+    flowStore.updateHistoryState(response.history);
   }
 }
 
@@ -331,12 +493,16 @@ const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnecti
 const handleEdgeChange = async (edgeChangesEvent: any) => {
   const edgeChanges = edgeChangesEvent as EdgeChange[];
   if (edgeChanges.length >= 2) {
-    console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
   let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
+      if (suppressedEdgeRemovals.delete(edgeChange.id)) {
+        // Edge was already deleted on the backend by an in-flight operation
+        // (e.g. drag-to-insert) — skip the redundant API call.
+        continue;
+      }
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
     }
@@ -433,7 +599,7 @@ const copySelectedNodes = () => {
       .map((edge) => ({
         sourceNodeId: parseInt(edge.source),
         targetNodeId: parseInt(edge.target),
-        sourceHandle: edge.sourceHandle || "output-0",
+        sourceHandle: edge.sourceHandle || DEFAULT_OUTPUT_HANDLE,
         targetHandle: edge.targetHandle || "input-0",
       }));
 
@@ -487,19 +653,6 @@ const copyValue = async (x: number, y: number) => {
   // Update history state from response
   if (response?.history) {
     flowStore.updateHistoryState(response.history);
-  }
-};
-
-/**
- * Snapshots the current system clipboard text so we can detect
- * whether the user copied something externally after copying a node.
- */
-const snapshotClipboard = async () => {
-  try {
-    const text = await navigator.clipboard.readText();
-    localStorage.setItem("clipboardAtNodeCopy", text);
-  } catch {
-    localStorage.setItem("clipboardAtNodeCopy", "");
   }
 };
 
@@ -721,13 +874,21 @@ defineExpose({
         :nodes="nodes"
         :edges="edges"
         :node-types="nodeTypes"
+        :edge-types="edgeTypes"
         class="custom-node-flow"
         :connection-mode="ConnectionMode.Strict"
         :connection-radius="60"
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
+        :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
+        @edge-mouse-enter="onEdgeMouseEnter"
+        @edge-mouse-leave="onEdgeMouseLeave"
         @connect="onConnect"
+        @connect-start="onConnectStart"
+        @connect-end="onConnectEnd"
+        @node-drag="onNodeDrag"
+        @node-drag-stop="onNodeDragStop"
         @pane-click="handleCanvasClick"
         @node-click="nodeClick"
         @nodes-change="handleNodeChange"
@@ -926,6 +1087,14 @@ body,
   rx: 4;
   ry: 4;
   opacity: 0.9;
+}
+
+/* Visual cue while a dragged node hovers an edge — the drop will splice
+   the node into this edge (A -> new -> B). Thick + dashed reads through
+   VueFlow's color-inverted edge layer. */
+.custom-node-flow .vue-flow__edge.edge-drop-target .vue-flow__edge-path {
+  stroke-width: 4;
+  stroke-dasharray: 6 4;
 }
 
 .animated-bg-gradient {
