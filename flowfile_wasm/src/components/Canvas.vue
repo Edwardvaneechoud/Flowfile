@@ -262,7 +262,9 @@ import SortSettings from './nodes/SortSettings.vue'
 const PolarsCodeSettings = defineAsyncComponent(() => import('./nodes/PolarsCodeSettings.vue'))
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
-import PreviewSettings from './nodes/PreviewSettings.vue'
+// Lazy-load the explore_data panel so React + Graphic Walker only enter the
+// bundle when a user actually opens an explore_data node.
+const ExploreData = defineAsyncComponent(() => import('./nodes/exploreData/ExploreData.vue'))
 const CodeGenerator = defineAsyncComponent(() => import('./CodeGenerator.vue'))
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
@@ -381,7 +383,7 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Output Operations',
     isOpen: true,
     nodes: [
-      { type: 'explore_data', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
+      { type: 'explore_data', name: 'Explore Data', icon: 'explore_data.png', inputs: 1, outputs: 0 },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 },
       { type: 'external_output', name: 'External Output', icon: 'external_output.svg', inputs: 1, outputs: 0 }
     ]
@@ -589,7 +591,7 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
-    explore_data: PreviewSettings,
+    explore_data: ExploreData,
     pivot: PivotSettings,
     unpivot: UnpivotSettings,
     output: OutputSettings,
@@ -708,10 +710,10 @@ async function handleRunFlow() {
   emit('execution-complete', nodeResults.value)
 }
 
-function handleSaveFlow() {
+async function handleSaveFlow() {
   const name = prompt('Enter flow name:', 'my_flow')
   if (name) {
-    flowStore.downloadFlowfile(name)
+    await flowStore.downloadFlowfile(name)
   }
 }
 
