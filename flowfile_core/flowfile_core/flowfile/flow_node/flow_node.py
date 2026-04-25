@@ -1362,8 +1362,13 @@ class FlowNode:
             # Note: source_file_info NOT reset - needed for change detection
 
             if self.is_correct:
-                self._schema_callback = None  # Ensure the schema callback is reset
-                if self.schema_callback:
+                self._schema_callback = None
+                # Eagerly prefetch only for source/start nodes — they have no
+                # upstream dependencies, so a background fetch is safe and
+                # masks I/O latency. Downstream nodes' callbacks read upstream
+                # node state, so eagerly starting them races with the cascade
+                # of resets that graph.reset() is currently performing.
+                if self.is_start and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()

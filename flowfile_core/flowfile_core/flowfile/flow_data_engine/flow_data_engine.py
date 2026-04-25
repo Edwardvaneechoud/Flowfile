@@ -8,7 +8,10 @@ from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
 import polars as pl
 
@@ -1415,6 +1418,30 @@ class FlowDataEngine:
         _ = df.collect_schema()  # Collecting schema to ensure the filter is valid
 
         return FlowDataEngine(df, streamable=self._streamable)
+
+    def filter_split(self, predicate: str) -> NamedOutputs:
+        """Partition rows by ``predicate`` into ``pass`` and ``fail`` streams.
+
+        Rows where the predicate evaluates to null are dropped from both
+        streams — matching the behaviour of two manually-wired filter nodes
+        with opposing predicates.
+        """
+        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+
+        try:
+            f = to_expr(predicate)
+        except Exception as e:
+            logger.warning(f"Error in filter expression: {e}")
+            f = to_expr("False")
+        pass_df = self.data_frame.filter(f)
+        fail_df = self.data_frame.filter(~f)
+        _ = pass_df.collect_schema()
+        return NamedOutputs(
+            {
+                "pass": FlowDataEngine(pass_df, streamable=self._streamable),
+                "fail": FlowDataEngine(fail_df, streamable=self._streamable),
+            }
+        )
 
     def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
         """Adds a record ID (row number) column to the DataFrame.
