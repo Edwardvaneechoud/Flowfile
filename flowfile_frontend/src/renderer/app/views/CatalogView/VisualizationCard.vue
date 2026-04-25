@@ -31,9 +31,9 @@
       </div>
       <VueGraphicWalker
         v-else-if="rows.length"
-        :data="rows"
-        :fields="fields"
-        :spec-list="[viz.spec]"
+        :data="plainRows"
+        :fields="plainFields"
+        :spec-list="plainSpecList"
         :appearance="appearance"
       />
       <div v-else class="viz-card-state">
@@ -44,12 +44,21 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { Delete, Edit, MoreFilled } from "@element-plus/icons-vue";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
+
+/**
+ * Deep-clone via JSON round-trip so GraphicWalker's web worker can
+ * structuredClone the payload. Vue refs/proxies and any getters can
+ * otherwise trigger ``Failed to execute 'postMessage' on 'Worker'``.
+ */
+function toPlainJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
 
 const props = defineProps<{
   viz: CatalogVisualization;
@@ -66,12 +75,26 @@ const fields = ref<Record<string, any>[]>([]);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
 
+const plainRows = computed(() => toPlainJson(rows.value));
+const plainFields = computed(() => toPlainJson(fields.value));
+const plainSpecList = computed(() => [toPlainJson(props.viz.spec)]);
+
+const SAMPLE_ROWS = 100_000;
+
 const load = async () => {
   loading.value = true;
   errorMessage.value = null;
   try {
+    // GraphicWalker resolves the saved spec's encodings into a query
+    // client-side, so we ship the source rows + field schema and let GW
+    // render. The worker session cache keeps the source LazyFrame loaded
+    // so subsequent card opens reuse it.
     const [data, schemaFields] = await Promise.all([
-      CatalogApi.computeSavedVisualization(props.viz.catalog_table_id, props.viz.id),
+      CatalogApi.computeAdHocVisualization(
+        props.source,
+        { workflow: [{ type: "view", query: [{ op: "raw", fields: ["*"] }] }] },
+        SAMPLE_ROWS,
+      ),
       store.loadVisualizationFields(props.source),
     ]);
     if (data.error) {

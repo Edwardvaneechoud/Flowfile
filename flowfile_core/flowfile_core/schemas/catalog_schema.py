@@ -395,6 +395,13 @@ class VisualizationComputeRequest(BaseModel):
     max_rows: int = 100_000
 
 
+class VisualizationSavedComputeRequest(BaseModel):
+    """Body for the saved-viz compute route. The query payload is read from
+    the stored spec, so callers only optionally override max_rows."""
+
+    max_rows: int | None = None
+
+
 class VisualizationAdHocComputeRequest(BaseModel):
     source: VizSourceDescriptor
     payload: dict

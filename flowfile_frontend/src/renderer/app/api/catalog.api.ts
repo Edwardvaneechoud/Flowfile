@@ -416,10 +416,11 @@ export class CatalogApi {
     vizId: number,
     maxRows?: number,
   ): Promise<VisualizationComputeResponse> {
-    const body = maxRows !== undefined ? { max_rows: maxRows } : undefined;
+    const body: Record<string, unknown> = {};
+    if (maxRows !== undefined) body.max_rows = maxRows;
     const response = await axios.post<VisualizationComputeResponse>(
       `/catalog/tables/${tableId}/visualizations/${vizId}/compute`,
-      body ?? {},
+      body,
     );
     return response.data;
   }

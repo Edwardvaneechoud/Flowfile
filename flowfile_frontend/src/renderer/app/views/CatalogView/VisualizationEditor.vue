@@ -46,9 +46,9 @@
     <VueGraphicWalker
       v-else
       ref="gwRef"
-      :data="sampleRows"
-      :fields="fields"
-      :spec-list="initialSpec ? [initialSpec] : undefined"
+      :data="plainSampleRows"
+      :fields="plainFields"
+      :spec-list="plainInitialSpecList"
       :appearance="appearance"
     />
   </div>
@@ -90,6 +90,15 @@ const sampleRows = ref<Record<string, any>[]>([]);
 const fields = ref<Record<string, any>[]>([]);
 
 const initialSpec = computed(() => props.viz?.spec ?? null);
+
+// Deep-clone JSON so GraphicWalker's web worker can structuredClone the
+// payload (Vue refs / proxies trip up postMessage).
+const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const plainSampleRows = computed(() => toPlainJson(sampleRows.value));
+const plainFields = computed(() => toPlainJson(fields.value));
+const plainInitialSpecList = computed(() =>
+  initialSpec.value ? [toPlainJson(initialSpec.value)] : undefined,
+);
 
 const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
 

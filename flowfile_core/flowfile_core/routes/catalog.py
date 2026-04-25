@@ -16,7 +16,7 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -84,13 +84,13 @@ from flowfile_core.schemas.catalog_schema import (
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
     VisualizationAdHocComputeRequest,
-    VisualizationComputeRequest,
     VisualizationComputeResponse,
     VisualizationCreate,
     VisualizationFieldsRequest,
     VisualizationFieldsResponse,
     VisualizationLibraryItem,
     VisualizationOut,
+    VisualizationSavedComputeRequest,
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
@@ -705,13 +705,14 @@ def delete_visualization(
 def compute_saved_visualization(
     table_id: int,
     viz_id: int,
-    body: VisualizationComputeRequest | None = None,
+    body: VisualizationSavedComputeRequest = Body(default_factory=VisualizationSavedComputeRequest),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Run a saved chart's query payload through the worker viz cache."""
-    max_rows = body.max_rows if body is not None else None
-    return service.compute_saved_visualization(table_id, viz_id, max_rows, user_id=current_user.id)
+    return service.compute_saved_visualization(
+        table_id, viz_id, body.max_rows, user_id=current_user.id
+    )
 
 
 @router.post("/visualizations/compute", response_model=VisualizationComputeResponse)
