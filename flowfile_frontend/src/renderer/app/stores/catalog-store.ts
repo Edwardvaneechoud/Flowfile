@@ -17,6 +17,7 @@ import type {
   NamespaceTree,
   SchedulerStatus,
   VisualizationCreatePayload,
+  VisualizationLibraryItem,
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
@@ -69,6 +70,8 @@ interface CatalogState {
   visualizationsByTable: Record<number, CatalogVisualization[]>;
   visualizationFieldsBySource: Record<string, Record<string, any>[]>;
   loadingVisualizations: boolean;
+  visualizationLibrary: VisualizationLibraryItem[];
+  loadingVisualizationLibrary: boolean;
 }
 
 export const useCatalogStore = defineStore("catalog", {
@@ -120,6 +123,8 @@ export const useCatalogStore = defineStore("catalog", {
     visualizationsByTable: {},
     visualizationFieldsBySource: {},
     loadingVisualizations: false,
+    visualizationLibrary: [],
+    loadingVisualizationLibrary: false,
   }),
 
   getters: {
@@ -667,6 +672,15 @@ export const useCatalogStore = defineStore("catalog", {
         };
       }
       return result.fields;
+    },
+
+    async loadVisualizationLibrary() {
+      this.loadingVisualizationLibrary = true;
+      try {
+        this.visualizationLibrary = await CatalogApi.listVisualizationLibrary();
+      } finally {
+        this.loadingVisualizationLibrary = false;
+      }
     },
   },
 });

@@ -255,6 +255,8 @@ class CatalogRepository(Protocol):
 
     def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]: ...
 
+    def list_all_visualizations(self) -> list[CatalogVisualization]: ...
+
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None: ...
 
     def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None: ...
@@ -954,6 +956,13 @@ class SQLAlchemyCatalogRepository:
         return (
             self._db.query(CatalogVisualization)
             .filter_by(catalog_table_id=catalog_table_id)
+            .order_by(CatalogVisualization.created_at.desc())
+            .all()
+        )
+
+    def list_all_visualizations(self) -> list[CatalogVisualization]:
+        return (
+            self._db.query(CatalogVisualization)
             .order_by(CatalogVisualization.created_at.desc())
             .all()
         )

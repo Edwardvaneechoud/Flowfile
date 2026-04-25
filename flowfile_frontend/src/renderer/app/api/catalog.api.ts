@@ -31,6 +31,7 @@ import type {
   VisualizationComputeResponse,
   VisualizationCreatePayload,
   VisualizationFieldsResponse,
+  VisualizationLibraryItem,
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
@@ -368,6 +369,12 @@ export class CatalogApi {
   }
 
   // ====== Visualizations ======
+
+  /** List every saved visualization in the catalog, with parent table metadata. */
+  static async listVisualizationLibrary(): Promise<VisualizationLibraryItem[]> {
+    const response = await axios.get<VisualizationLibraryItem[]>("/catalog/visualizations");
+    return response.data;
+  }
 
   static async listVisualizations(tableId: number): Promise<CatalogVisualization[]> {
     const response = await axios.get<CatalogVisualization[]>(

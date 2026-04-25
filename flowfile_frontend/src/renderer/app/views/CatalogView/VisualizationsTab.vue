@@ -2,7 +2,7 @@
   <div class="visualizations-tab">
     <div class="viz-header">
       <h3>Saved visualizations</h3>
-      <el-button type="primary" size="small" @click="openEditor">
+      <el-button type="primary" size="small" @click="openEditor()">
         <el-icon><Plus /></el-icon>
         New visualization
       </el-button>

@@ -101,6 +101,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationComputeResponse,
     VisualizationCreate,
     VisualizationFieldsResponse,
+    VisualizationLibraryItem,
     VisualizationOut,
     VisualizationUpdate,
     VizSourceDescriptor,
@@ -3041,6 +3042,49 @@ class CatalogService:
         if self.repo.get_table(table_id) is None:
             raise TableNotFoundError(table_id=table_id)
         return [self._viz_to_out(v) for v in self.repo.list_visualizations(table_id)]
+
+    def list_visualization_library(
+        self, user_id: int | None = None
+    ) -> list[VisualizationLibraryItem]:
+        """Return all saved visualizations enriched with their parent table metadata.
+
+        Powers the catalog-wide "Visualizations" tab. We resolve namespace +
+        table info in bulk to avoid N+1 lookups, and silently drop any orphaned
+        rows whose parent table has been deleted (defensive; the cascade in
+        ``delete_table`` should already prevent this).
+        """
+        rows = self.repo.list_all_visualizations()
+        if not rows:
+            return []
+        table_ids = {r.catalog_table_id for r in rows}
+        tables_by_id: dict[int, CatalogTable] = {}
+        for tid in table_ids:
+            t = self.repo.get_table(tid)
+            if t is not None:
+                tables_by_id[tid] = t
+        items: list[VisualizationLibraryItem] = []
+        for viz in rows:
+            table = tables_by_id.get(viz.catalog_table_id)
+            if table is None:
+                continue
+            ns_name = self._resolve_namespace_name(table.namespace_id)
+            items.append(
+                VisualizationLibraryItem(
+                    id=viz.id,
+                    catalog_table_id=viz.catalog_table_id,
+                    name=viz.name,
+                    chart_type=viz.chart_type,
+                    spec_gw_version=viz.spec_gw_version,
+                    created_by=viz.created_by,
+                    created_at=viz.created_at,
+                    updated_at=viz.updated_at,
+                    table_name=table.name,
+                    table_namespace_name=ns_name,
+                    table_full_name=self._format_full_name(ns_name, table.name),
+                    table_type=table.table_type or "physical",
+                )
+            )
+        return items
 
     def create_visualization(
         self, table_id: int, payload: VisualizationCreate, user_id: int

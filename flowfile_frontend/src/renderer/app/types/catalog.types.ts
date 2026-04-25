@@ -336,7 +336,14 @@ export interface SchedulerStatus {
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules" | "sql";
+export type CatalogTab =
+  | "catalog"
+  | "favorites"
+  | "following"
+  | "runs"
+  | "schedules"
+  | "sql"
+  | "visualizations";
 
 // ============================================================================
 // SQL Query types
@@ -403,4 +410,19 @@ export interface VisualizationFieldsResponse {
   fields: Record<string, any>[];
   cache_hit: boolean;
   error: string | null;
+}
+
+export interface VisualizationLibraryItem {
+  id: number;
+  catalog_table_id: number;
+  name: string;
+  chart_type: string | null;
+  spec_gw_version: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  table_name: string;
+  table_namespace_name: string | null;
+  table_full_name: string;
+  table_type: string;
 }

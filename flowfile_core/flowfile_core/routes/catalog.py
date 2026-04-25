@@ -89,6 +89,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationCreate,
     VisualizationFieldsRequest,
     VisualizationFieldsResponse,
+    VisualizationLibraryItem,
     VisualizationOut,
     VisualizationUpdate,
 )
@@ -639,6 +640,16 @@ def remove_table_favorite(
 # ---------------------------------------------------------------------------
 # Catalog Visualizations
 # ---------------------------------------------------------------------------
+
+
+@router.get("/visualizations", response_model=list[VisualizationLibraryItem])
+@handle_catalog_exceptions()
+def list_visualization_library(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved visualization across the catalog with parent table metadata."""
+    return service.list_visualization_library(user_id=current_user.id)
 
 
 @router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])

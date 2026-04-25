@@ -420,6 +420,25 @@ class VisualizationFieldsResponse(BaseModel):
     error: str | None = None
 
 
+class VisualizationLibraryItem(BaseModel):
+    """Catalog-wide listing entry: a saved viz with its parent table info."""
+
+    id: int
+    catalog_table_id: int
+    name: str
+    chart_type: str | None = None
+    spec_gw_version: str | None = None
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    table_name: str
+    table_namespace_name: str | None = None
+    table_full_name: str
+    table_type: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ==================== Catalog Overview ====================
 
 

@@ -131,6 +131,14 @@ const gwData = computed<IRow[]>(() =>
   }),
 );
 
+function defaultSavedChartName(): string {
+  const now = new Date();
+  const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return `Saved chart ${ts}`;
+}
+
 async function onSaveChart() {
   if (!props.sourceQuery || !vueGraphicWalkerRef.value) return;
   const charts = await vueGraphicWalkerRef.value.exportCode();
@@ -148,6 +156,7 @@ async function onSaveChart() {
         confirmButtonText: "Save",
         cancelButtonText: "Cancel",
         inputPlaceholder: "Name for the saved chart and table",
+        inputValue: defaultSavedChartName(),
         inputValidator: (val) => (val && val.trim().length > 0 ? true : "Name is required"),
       },
     )) as { value: string };

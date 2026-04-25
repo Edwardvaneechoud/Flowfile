@@ -225,6 +225,11 @@
           v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
+        <!-- Visualizations library -->
+        <VisualizationsLibraryPanel
+          v-else-if="catalogStore.activeTab === 'visualizations'"
+          @view-table="selectTable($event)"
+        />
         <!-- Stats overview -->
         <StatsPanel
           v-else
@@ -385,6 +390,7 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
+import VisualizationsLibraryPanel from "./VisualizationsLibraryPanel.vue";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -428,6 +434,12 @@ const tabs = computed(() => [
     key: "sql" as CatalogTab,
     label: "SQL",
     icon: "fa-solid fa-code",
+    badge: null,
+  },
+  {
+    key: "visualizations" as CatalogTab,
+    label: "Visualizations",
+    icon: "fa-solid fa-chart-column",
     badge: null,
   },
 ]);
