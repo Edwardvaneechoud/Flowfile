@@ -819,3 +819,124 @@ def generic_task(
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
     # Put raw bytes in queue - encoding happens at the transport boundary
     queue.put(lf.serialize())
+
+
+# ==================== Visualization compute (polars-gw) ====================
+
+
+def _build_sql_lazyframe(
+    sql_query: str,
+    tables: dict[str, str] | None,
+    virtual_tables_ipc: dict[str, str] | None,
+) -> pl.LazyFrame:
+    """Build a LazyFrame from a SQL query against catalog tables (no collect).
+
+    Mirrors the registration logic in :func:`execute_sql_query`, but stops at
+    the LazyFrame so the caller can run polars-gw on top with full lazy
+    optimisation.
+    """
+    import base64
+
+    ctx = pl.SQLContext()
+    for name, dir_name in (tables or {}).items():
+        p = _validate_catalog_path(dir_name)
+        if not p.is_dir() or not (p / "_delta_log").is_dir():
+            raise ValueError(f"Table '{name}' is not a valid Delta table")
+        ctx.register(name, pl.scan_delta(str(p)))
+
+    if virtual_tables_ipc:
+        for name, b64_data in virtual_tables_ipc.items():
+            ipc_bytes = base64.b64decode(b64_data)
+            ctx.register(name, pl.read_ipc(io.BytesIO(ipc_bytes)).lazy())
+
+    return ctx.execute(sql_query)
+
+
+def _build_viz_loader(source: models.VizWorkerSource):
+    """Return a zero-arg callable that builds the LazyFrame for *source*.
+
+    Lazy on purpose: the manager only invokes the loader on cache miss.
+    """
+    import base64
+
+    if source.kind == "physical":
+        if source.table_path is None:
+            raise ValueError("table_path is required for physical source")
+        p = _validate_catalog_path(source.table_path)
+        storage_format = source.storage_format or "delta"
+
+        def _load_physical() -> pl.LazyFrame:
+            if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
+                return pl.scan_delta(str(p))
+            return pl.scan_parquet(p)
+
+        return _load_physical
+
+    if source.kind == "sql":
+        if not source.sql_query:
+            raise ValueError("sql_query is required for sql source")
+        sql_query = source.sql_query
+        tables = source.tables
+        virtual_ipc = source.virtual_tables_ipc
+
+        def _load_sql() -> pl.LazyFrame:
+            return _build_sql_lazyframe(sql_query, tables, virtual_ipc)
+
+        return _load_sql
+
+    if source.kind == "ipc":
+        if not source.ipc_b64:
+            raise ValueError("ipc_b64 is required for ipc source")
+        ipc_bytes = base64.b64decode(source.ipc_b64)
+
+        def _load_ipc() -> pl.LazyFrame:
+            return pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
+
+        return _load_ipc
+
+    raise ValueError(f"Unknown viz source kind: {source.kind}")
+
+
+def execute_visualize_query(req: models.VisualizeQueryRequest) -> dict:
+    """Run a Graphic Walker workflow against a cached LazyFrame via polars-gw."""
+    import time
+
+    import polars_gw
+
+    from flowfile_worker.viz_sessions import viz_session_manager
+
+    loader = _build_viz_loader(req.source)
+    start = time.perf_counter()
+    rows, cache_hit = viz_session_manager.execute(
+        req.source.session_key,
+        loader,
+        lambda lf: polars_gw.execute_workflow(lf, req.payload, max_rows=req.max_rows),
+    )
+    elapsed = (time.perf_counter() - start) * 1000
+
+    # polars-gw already casts temporal/Decimal scalars; make_json_safe is a
+    # cheap belt-and-braces pass for any edge dtypes that slip through.
+    safe_rows = [{k: make_json_safe(v) for k, v in row.items()} for row in rows]
+
+    return {
+        "rows": safe_rows,
+        "total_rows": len(safe_rows),
+        "truncated": len(safe_rows) >= req.max_rows,
+        "elapsed_ms": round(elapsed, 1),
+        "cache_hit": cache_hit,
+    }
+
+
+def read_visualize_fields(req: models.VisualizeFieldsRequest) -> dict:
+    """Return the Graphic Walker IMutField list for a viz source (cached)."""
+    import polars_gw
+
+    from flowfile_worker.viz_sessions import viz_session_manager
+
+    loader = _build_viz_loader(req.source)
+    fields, cache_hit = viz_session_manager.fields(
+        req.source.session_key,
+        loader,
+        lambda lf: polars_gw.get_fields(lf),
+    )
+    return {"fields": fields, "cache_hit": cache_hit}

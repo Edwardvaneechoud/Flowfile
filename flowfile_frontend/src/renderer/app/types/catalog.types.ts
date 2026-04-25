@@ -352,3 +352,55 @@ export interface SqlQueryResult {
   used_tables: string[];
   error: string | null;
 }
+
+// ============================================================================
+// Visualizations
+// ============================================================================
+
+export interface CatalogVisualization {
+  id: number;
+  catalog_table_id: number;
+  name: string;
+  chart_type: string | null;
+  spec: Record<string, any>;
+  spec_gw_version: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VisualizationCreatePayload {
+  name: string;
+  chart_type?: string | null;
+  spec: Record<string, any>;
+  spec_gw_version?: string | null;
+}
+
+export interface VisualizationUpdatePayload {
+  name?: string;
+  chart_type?: string | null;
+  spec?: Record<string, any>;
+  spec_gw_version?: string | null;
+}
+
+/** Source descriptor sent to the ad-hoc compute and fields endpoints. */
+export interface VizSourceDescriptor {
+  source_type: "table" | "sql";
+  table_id?: number | null;
+  sql_query?: string | null;
+}
+
+export interface VisualizationComputeResponse {
+  rows: Record<string, any>[];
+  total_rows: number;
+  truncated: boolean;
+  elapsed_ms: number;
+  cache_hit: boolean;
+  error: string | null;
+}
+
+export interface VisualizationFieldsResponse {
+  fields: Record<string, any>[];
+  cache_hit: boolean;
+  error: string | null;
+}

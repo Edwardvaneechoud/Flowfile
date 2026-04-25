@@ -383,6 +383,28 @@ class CatalogTableReadLink(Base):
     __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)
 
 
+class CatalogVisualization(Base):
+    """A saved GraphicWalker chart spec attached to a catalog table.
+
+    The spec is stored as JSON (the GW IChart shape) and is rendered client-side
+    by feeding rows from the worker visualize endpoint into ``@kanaries/graphic-walker``.
+    """
+
+    __tablename__ = "catalog_visualizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    chart_type = Column(String, nullable=True)
+    spec_json = Column(Text, nullable=False)
+    spec_gw_version = Column(String, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("catalog_table_id", "name", name="uq_viz_table_name"),)
+
+
 class SchedulerLock(Base):
     """Advisory lock row to ensure only one scheduler instance is active.
 

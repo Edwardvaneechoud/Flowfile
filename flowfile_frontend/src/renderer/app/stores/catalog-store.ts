@@ -7,6 +7,7 @@ import type {
   CatalogTab,
   CatalogTable,
   CatalogTablePreview,
+  CatalogVisualization,
   DeltaTableHistory,
   FlowRegistration,
   FlowRun,
@@ -15,6 +16,9 @@ import type {
   GlobalArtifact,
   NamespaceTree,
   SchedulerStatus,
+  VisualizationCreatePayload,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
 } from "../types";
 
 interface CatalogState {
@@ -62,6 +66,9 @@ interface CatalogState {
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
+  visualizationsByTable: Record<number, CatalogVisualization[]>;
+  visualizationFieldsBySource: Record<string, Record<string, any>[]>;
+  loadingVisualizations: boolean;
 }
 
 export const useCatalogStore = defineStore("catalog", {
@@ -110,6 +117,9 @@ export const useCatalogStore = defineStore("catalog", {
     activeTab: "runs",
     loading: false,
     error: null,
+    visualizationsByTable: {},
+    visualizationFieldsBySource: {},
+    loadingVisualizations: false,
   }),
 
   getters: {
@@ -603,6 +613,60 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadActiveRuns(),
         this.loadSchedulerStatus(),
       ]);
+    },
+
+    // ============== Visualizations ==============
+
+    async loadVisualizations(tableId: number) {
+      this.loadingVisualizations = true;
+      try {
+        const items = await CatalogApi.listVisualizations(tableId);
+        this.visualizationsByTable = { ...this.visualizationsByTable, [tableId]: items };
+      } finally {
+        this.loadingVisualizations = false;
+      }
+    },
+
+    async createVisualization(tableId: number, payload: VisualizationCreatePayload) {
+      const created = await CatalogApi.createVisualization(tableId, payload);
+      const current = this.visualizationsByTable[tableId] ?? [];
+      this.visualizationsByTable = {
+        ...this.visualizationsByTable,
+        [tableId]: [created, ...current],
+      };
+      return created;
+    },
+
+    async updateVisualization(tableId: number, vizId: number, payload: VisualizationUpdatePayload) {
+      const updated = await CatalogApi.updateVisualization(tableId, vizId, payload);
+      const current = this.visualizationsByTable[tableId] ?? [];
+      this.visualizationsByTable = {
+        ...this.visualizationsByTable,
+        [tableId]: current.map((v) => (v.id === vizId ? updated : v)),
+      };
+      return updated;
+    },
+
+    async deleteVisualization(tableId: number, vizId: number) {
+      await CatalogApi.deleteVisualization(tableId, vizId);
+      const current = this.visualizationsByTable[tableId] ?? [];
+      this.visualizationsByTable = {
+        ...this.visualizationsByTable,
+        [tableId]: current.filter((v) => v.id !== vizId),
+      };
+    },
+
+    async loadVisualizationFields(source: VizSourceDescriptor) {
+      const key = JSON.stringify(source);
+      if (this.visualizationFieldsBySource[key]) return this.visualizationFieldsBySource[key];
+      const result = await CatalogApi.getVisualizationFields(source);
+      if (!result.error) {
+        this.visualizationFieldsBySource = {
+          ...this.visualizationFieldsBySource,
+          [key]: result.fields,
+        };
+      }
+      return result.fields;
     },
   },
 });

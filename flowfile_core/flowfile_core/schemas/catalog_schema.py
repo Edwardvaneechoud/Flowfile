@@ -347,6 +347,79 @@ class SaveQueryAsFlowRequest(BaseModel):
     used_tables: list[str] = Field(default_factory=list)
 
 
+# ==================== Visualization Schemas ====================
+
+
+class VisualizationCreate(BaseModel):
+    name: str
+    chart_type: str | None = None
+    spec: dict
+    spec_gw_version: str | None = None
+
+
+class VisualizationUpdate(BaseModel):
+    name: str | None = None
+    chart_type: str | None = None
+    spec: dict | None = None
+    spec_gw_version: str | None = None
+
+
+class VisualizationOut(BaseModel):
+    id: int
+    catalog_table_id: int
+    name: str
+    chart_type: str | None = None
+    spec: dict
+    spec_gw_version: str | None = None
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VizSourceDescriptor(BaseModel):
+    """Frontend-supplied identifier for the viz source.
+
+    For saved viz this is implied by the URL (table_id); ad-hoc compute
+    explicitly carries the descriptor so the editor can preview before saving.
+    """
+
+    source_type: Literal["table", "sql"]
+    table_id: int | None = None
+    sql_query: str | None = None
+
+
+class VisualizationComputeRequest(BaseModel):
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationAdHocComputeRequest(BaseModel):
+    source: VizSourceDescriptor
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationFieldsRequest(BaseModel):
+    source: VizSourceDescriptor
+
+
+class VisualizationComputeResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizationFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
+    error: str | None = None
+
+
 # ==================== Catalog Overview ====================
 
 

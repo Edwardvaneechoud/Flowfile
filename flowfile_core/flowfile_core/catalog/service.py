@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Literal
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -24,6 +25,7 @@ from uuid import uuid4
 import polars as pl
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
+from sqlalchemy.exc import IntegrityError
 from flowfile_core.configs.flow_logger import NodeLogger, FlowLogger
 from flowfile_core.catalog.delta_utils import (
     check_source_versions_current,
@@ -50,11 +52,15 @@ from flowfile_core.catalog.exceptions import (
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
+    VisualizationComputeError,
+    VisualizationExistsError,
+    VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
+    CatalogVisualization,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -70,6 +76,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_delta_version_preview,
     trigger_read_table_metadata,
     trigger_sql_query,
+    trigger_visualize_evict,
+    trigger_visualize_fields,
+    trigger_visualize_query,
 )
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -89,6 +98,12 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceTree,
     PaginatedFlowRuns,
     SqlQueryResult,
+    VisualizationComputeResponse,
+    VisualizationCreate,
+    VisualizationFieldsResponse,
+    VisualizationOut,
+    VisualizationUpdate,
+    VizSourceDescriptor,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
 from shared.delta_utils import format_delta_timestamp, make_json_safe
@@ -140,6 +155,23 @@ def _is_table_reference(name: str, query: str) -> bool:
         re.IGNORECASE,
     )
     return bool(pattern.search(query))
+
+
+def _extract_gw_query_payload(spec: dict) -> dict | None:
+    """Extract a Graphic Walker IDataQueryPayload from a saved chart spec.
+
+    GW persists the active query under ``encodings.workflow`` (or, for older
+    chart formats, the spec itself is the payload). Return ``None`` if neither
+    shape is present so the caller can surface a clear error.
+    """
+    if not isinstance(spec, dict):
+        return None
+    if "workflow" in spec:
+        return {"workflow": spec["workflow"], "limit": spec.get("limit")}
+    encodings = spec.get("encodings")
+    if isinstance(encodings, dict) and "workflow" in encodings:
+        return {"workflow": encodings["workflow"], "limit": encodings.get("limit")}
+    return None
 
 
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
@@ -2984,3 +3016,255 @@ class CatalogService:
             description=description,
         )
         return flow.id
+
+    # ================== Visualizations =====================================
+
+    @staticmethod
+    def _viz_to_out(viz: CatalogVisualization) -> VisualizationOut:
+        try:
+            spec = json.loads(viz.spec_json) if viz.spec_json else {}
+        except (TypeError, ValueError):
+            spec = {}
+        return VisualizationOut(
+            id=viz.id,
+            catalog_table_id=viz.catalog_table_id,
+            name=viz.name,
+            chart_type=viz.chart_type,
+            spec=spec,
+            spec_gw_version=viz.spec_gw_version,
+            created_by=viz.created_by,
+            created_at=viz.created_at,
+            updated_at=viz.updated_at,
+        )
+
+    def list_visualizations(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
+        if self.repo.get_table(table_id) is None:
+            raise TableNotFoundError(table_id=table_id)
+        return [self._viz_to_out(v) for v in self.repo.list_visualizations(table_id)]
+
+    def create_visualization(
+        self, table_id: int, payload: VisualizationCreate, user_id: int
+    ) -> VisualizationOut:
+        if self.repo.get_table(table_id) is None:
+            raise TableNotFoundError(table_id=table_id)
+        if self.repo.get_visualization_by_name(table_id, payload.name) is not None:
+            raise VisualizationExistsError(payload.name, table_id)
+        viz = CatalogVisualization(
+            catalog_table_id=table_id,
+            name=payload.name,
+            chart_type=payload.chart_type,
+            spec_json=json.dumps(payload.spec),
+            spec_gw_version=payload.spec_gw_version,
+            created_by=user_id,
+        )
+        try:
+            created = self.repo.create_visualization(viz)
+        except IntegrityError as exc:
+            raise VisualizationExistsError(payload.name, table_id) from exc
+        return self._viz_to_out(created)
+
+    def update_visualization(
+        self, table_id: int, viz_id: int, payload: VisualizationUpdate, user_id: int
+    ) -> VisualizationOut:
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None or viz.catalog_table_id != table_id:
+            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
+        if payload.name is not None and payload.name != viz.name:
+            existing = self.repo.get_visualization_by_name(table_id, payload.name)
+            if existing is not None and existing.id != viz_id:
+                raise VisualizationExistsError(payload.name, table_id)
+            viz.name = payload.name
+        if payload.chart_type is not None:
+            viz.chart_type = payload.chart_type
+        if payload.spec is not None:
+            viz.spec_json = json.dumps(payload.spec)
+        if payload.spec_gw_version is not None:
+            viz.spec_gw_version = payload.spec_gw_version
+        try:
+            updated = self.repo.update_visualization(viz)
+        except IntegrityError as exc:
+            raise VisualizationExistsError(payload.name or viz.name, table_id) from exc
+        return self._viz_to_out(updated)
+
+    def delete_visualization(self, table_id: int, viz_id: int, user_id: int) -> None:
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None or viz.catalog_table_id != table_id:
+            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
+        # Best-effort eviction in worker; non-fatal if it fails.
+        try:
+            trigger_visualize_evict(self._session_key_for_table(viz.catalog_table_id))
+        except Exception:
+            logger.debug("visualize_evict failed (worker offline?)", exc_info=True)
+        self.repo.delete_visualization(viz_id)
+
+    # ---- Compute ----------------------------------------------------------
+
+    _MAX_VIZ_ROWS = 500_000
+
+    def _clamp_max_rows(self, requested: int | None) -> int:
+        if requested is None or requested <= 0:
+            return min(100_000, self._MAX_VIZ_ROWS)
+        return min(requested, self._MAX_VIZ_ROWS)
+
+    def _session_key_for_table(self, table_id: int) -> str:
+        table = self.repo.get_table(table_id)
+        if table is None:
+            return f"phys:{table_id}:0"
+        ts = int(table.updated_at.timestamp()) if table.updated_at else 0
+        return f"tbl:{table_id}:{ts}"
+
+    def _resolve_source_for_worker(
+        self, source: VizSourceDescriptor, user_id: int | None
+    ) -> dict:
+        """Translate a frontend source descriptor into a worker source spec.
+
+        Returns a dict whose shape matches ``VizWorkerSource`` on the worker side:
+
+        - ``kind=physical`` for Delta/Parquet catalog tables (ships only the
+          directory name, not the absolute path).
+        - ``kind=sql`` for query-virtual tables and ad-hoc SQL queries; reuses
+          the same delta_map / virtual_tables_ipc plumbing as ``execute_sql_query``.
+        - ``kind=ipc`` for flow-produced virtual tables, which are pre-resolved
+          by core into Arrow IPC bytes.
+        """
+        if source.source_type == "table":
+            if source.table_id is None:
+                raise ValueError("table_id is required when source_type='table'")
+            table = self.repo.get_table(source.table_id)
+            if table is None:
+                raise TableNotFoundError(table_id=source.table_id)
+
+            if table.table_type != "virtual":
+                if not table.file_path:
+                    raise ValueError(f"Table {table.id} has no file_path")
+                return {
+                    "kind": "physical",
+                    "session_key": self._session_key_for_table(table.id),
+                    "table_path": Path(table.file_path).name,
+                    "storage_format": table.storage_format or "delta",
+                }
+
+            if table.sql_query:
+                spec = self._build_sql_worker_source(table.sql_query, user_id=user_id)
+                spec["session_key"] = self._session_key_for_table(table.id)
+                return spec
+
+            # Flow-virtual: resolve to a LazyFrame and ship as IPC bytes.
+            lf = self.resolve_virtual_flow_table(
+                table.id,
+                user_id=user_id,
+                run_location="remote" if _should_offload() else "local",
+            )
+            buf = io.BytesIO()
+            lf.collect().write_ipc(buf)
+            ipc_bytes = buf.getvalue()
+            ipc_b64 = base64.b64encode(ipc_bytes).decode()
+            digest = hashlib.md5(ipc_bytes).hexdigest()
+            return {
+                "kind": "ipc",
+                "session_key": f"fvt:{table.id}:{digest}",
+                "ipc_b64": ipc_b64,
+            }
+
+        # Ad-hoc SQL — used by the editor / SqlExplorePanel preview path.
+        if not source.sql_query:
+            raise ValueError("sql_query is required when source_type='sql'")
+        return self._build_sql_worker_source(source.sql_query, user_id=user_id)
+
+    def _build_sql_worker_source(self, sql_query: str, user_id: int | None) -> dict:
+        """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup.
+
+        Resolves catalog references, pre-materialises any referenced flow-virtual
+        tables to IPC, and emits a deterministic session key.
+        """
+        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+            UnsafeSQLError,
+            validate_sql_query,
+        )
+
+        try:
+            validate_sql_query(sql_query)
+        except UnsafeSQLError as exc:
+            raise ValueError(str(exc)) from exc
+
+        delta_map, virtual_map = self.resolve_all_queryable_tables()
+        rewritten = _rewrite_qualified_references(sql_query, {*delta_map, *virtual_map})
+        referenced_virtuals = {n for n in virtual_map if _is_table_reference(n, rewritten)}
+
+        virtual_ipc: dict[str, str] = {}
+        for vname in referenced_virtuals:
+            try:
+                lf = self.resolve_virtual_flow_table(
+                    virtual_map[vname],
+                    user_id=user_id,
+                    run_location="remote" if _should_offload() else "local",
+                )
+                buf = io.BytesIO()
+                lf.collect().write_ipc(buf)
+                virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                logger.warning("Could not resolve virtual table %r for viz", vname)
+
+        # Only ship the delta_map subset that's actually referenced — keeps the
+        # session key compact and the worker's SQLContext small.
+        referenced_delta = {n: d for n, d in delta_map.items() if _is_table_reference(n, rewritten)}
+
+        key_material = json.dumps(
+            {"q": rewritten, "d": sorted(referenced_delta.items()), "v": sorted(virtual_ipc.keys())},
+            sort_keys=True,
+        )
+        digest = hashlib.md5(key_material.encode()).hexdigest()
+        return {
+            "kind": "sql",
+            "session_key": f"sql:{digest}",
+            "sql_query": rewritten,
+            "tables": referenced_delta,
+            "virtual_tables_ipc": virtual_ipc or None,
+        }
+
+    def _dispatch_visualize_query(
+        self, worker_source: dict, payload: dict, max_rows: int
+    ) -> VisualizationComputeResponse:
+        try:
+            data = trigger_visualize_query(worker_source, payload, max_rows)
+        except RuntimeError as exc:
+            raise VisualizationComputeError(str(exc)) from exc
+        return VisualizationComputeResponse(**data)
+
+    def compute_saved_visualization(
+        self, table_id: int, viz_id: int, max_rows: int | None, user_id: int
+    ) -> VisualizationComputeResponse:
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None or viz.catalog_table_id != table_id:
+            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
+        try:
+            spec = json.loads(viz.spec_json) if viz.spec_json else {}
+        except (TypeError, ValueError) as exc:
+            raise VisualizationComputeError(f"Saved spec is not valid JSON: {exc}") from exc
+        gw_payload = _extract_gw_query_payload(spec)
+        if gw_payload is None:
+            raise VisualizationComputeError("Saved spec does not embed a query payload")
+        worker_source = self._resolve_source_for_worker(
+            VizSourceDescriptor(source_type="table", table_id=table_id), user_id=user_id
+        )
+        return self._dispatch_visualize_query(worker_source, gw_payload, self._clamp_max_rows(max_rows))
+
+    def compute_ad_hoc_visualization(
+        self,
+        source: VizSourceDescriptor,
+        payload: dict,
+        max_rows: int | None,
+        user_id: int,
+    ) -> VisualizationComputeResponse:
+        worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        return self._dispatch_visualize_query(worker_source, payload, self._clamp_max_rows(max_rows))
+
+    def get_visualization_fields(
+        self, source: VizSourceDescriptor, user_id: int
+    ) -> VisualizationFieldsResponse:
+        worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        try:
+            data = trigger_visualize_fields(worker_source)
+        except RuntimeError as exc:
+            raise VisualizationComputeError(str(exc)) from exc
+        return VisualizationFieldsResponse(**data)

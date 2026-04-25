@@ -309,6 +309,11 @@
       </div>
       <div v-else class="empty-state">No data to preview.</div>
     </div>
+
+    <!-- Visualizations -->
+    <div class="section viz-section">
+      <VisualizationsTab :table-id="table.id" />
+    </div>
   </div>
 </template>
 
@@ -316,6 +321,7 @@
 import { ref, computed } from "vue";
 import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
+import VisualizationsTab from "./VisualizationsTab.vue";
 
 const showReadByModal = ref(false);
 
