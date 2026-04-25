@@ -8,6 +8,7 @@ import type {
   CatalogTableCreate,
   CatalogTablePreview,
   CatalogTableUpdate,
+  CatalogVisualization,
   DeltaTableHistory,
   FlowRegistration,
   FlowRegistrationCreate,
@@ -27,6 +28,12 @@ import type {
   SqlQueryResult,
   VirtualFlowTableCreate,
   VirtualFlowTableUpdate,
+  VisualizationComputeResponse,
+  VisualizationCreatePayload,
+  VisualizationFieldsResponse,
+  VisualizationLibraryItem,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
 } from "../types";
 
 export class CatalogApi {
@@ -358,6 +365,87 @@ export class CatalogApi {
       description,
       used_tables: usedTables ?? [],
     });
+    return response.data;
+  }
+
+  // ====== Visualizations ======
+
+  /** List every saved visualization in the catalog, with parent table metadata. */
+  static async listVisualizationLibrary(): Promise<VisualizationLibraryItem[]> {
+    const response = await axios.get<VisualizationLibraryItem[]>("/catalog/visualizations");
+    return response.data;
+  }
+
+  static async listVisualizations(tableId: number): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>(
+      `/catalog/tables/${tableId}/visualizations`,
+    );
+    return response.data;
+  }
+
+  static async createVisualization(
+    tableId: number,
+    payload: VisualizationCreatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>(
+      `/catalog/tables/${tableId}/visualizations`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async updateVisualization(
+    tableId: number,
+    vizId: number,
+    payload: VisualizationUpdatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.put<CatalogVisualization>(
+      `/catalog/tables/${tableId}/visualizations/${vizId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async deleteVisualization(tableId: number, vizId: number): Promise<void> {
+    await axios.delete(`/catalog/tables/${tableId}/visualizations/${vizId}`);
+  }
+
+  /** Run a saved chart's stored payload through the worker viz cache. */
+  static async computeSavedVisualization(
+    tableId: number,
+    vizId: number,
+    maxRows?: number,
+  ): Promise<VisualizationComputeResponse> {
+    const body: Record<string, unknown> = {};
+    if (maxRows !== undefined) body.max_rows = maxRows;
+    const response = await axios.post<VisualizationComputeResponse>(
+      `/catalog/tables/${tableId}/visualizations/${vizId}/compute`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Compute a chart from a transient source (used by the live GW editor). */
+  static async computeAdHocVisualization(
+    source: VizSourceDescriptor,
+    payload: Record<string, any>,
+    maxRows?: number,
+  ): Promise<VisualizationComputeResponse> {
+    const response = await axios.post<VisualizationComputeResponse>(
+      "/catalog/visualizations/compute",
+      { source, payload, max_rows: maxRows ?? 100_000 },
+    );
+    return response.data;
+  }
+
+  /** Return the GraphicWalker IMutField list for a viz source (cached on worker). */
+  static async getVisualizationFields(
+    source: VizSourceDescriptor,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      "/catalog/visualizations/fields",
+      { source },
+    );
     return response.data;
   }
 }

@@ -20,6 +20,12 @@ async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown"""
     logger.info("Starting application...")
     try:
+        import polars_gw
+
+        logger.info("polars_gw version: %s", polars_gw.__version__)
+    except Exception as exc:
+        logger.warning("Could not import polars_gw at startup: %s", exc)
+    try:
         yield
     finally:
         logger.info("Shutting down application...")

@@ -15,6 +15,7 @@ from flowfile_core.database.models import (
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
+    CatalogVisualization,
     FlowFavorite,
     FlowFollow,
     FlowRegistration,
@@ -249,6 +250,22 @@ class CatalogRepository(Protocol):
     def has_active_run(self, registration_id: int) -> bool: ...
 
     def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
+
+    # -- Visualizations ------------------------------------------------------
+
+    def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]: ...
+
+    def list_all_visualizations(self) -> list[CatalogVisualization]: ...
+
+    def get_visualization(self, viz_id: int) -> CatalogVisualization | None: ...
+
+    def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None: ...
+
+    def create_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
+
+    def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
+
+    def delete_visualization(self, viz_id: int) -> None: ...
 
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
@@ -597,6 +614,7 @@ class SQLAlchemyCatalogRepository:
     def delete_table(self, table_id: int) -> None:
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
+        self._db.query(CatalogVisualization).filter_by(catalog_table_id=table_id).delete()
         table = self._db.get(CatalogTable, table_id)
         if table is not None:
             self._db.delete(table)
@@ -931,3 +949,47 @@ class SQLAlchemyCatalogRepository:
         """Remove all trigger table links for a schedule."""
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         self._db.commit()
+
+    # -- Visualizations ------------------------------------------------------
+
+    def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]:
+        return (
+            self._db.query(CatalogVisualization)
+            .filter_by(catalog_table_id=catalog_table_id)
+            .order_by(CatalogVisualization.created_at.desc())
+            .all()
+        )
+
+    def list_all_visualizations(self) -> list[CatalogVisualization]:
+        return (
+            self._db.query(CatalogVisualization)
+            .order_by(CatalogVisualization.created_at.desc())
+            .all()
+        )
+
+    def get_visualization(self, viz_id: int) -> CatalogVisualization | None:
+        return self._db.get(CatalogVisualization, viz_id)
+
+    def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None:
+        return (
+            self._db.query(CatalogVisualization)
+            .filter_by(catalog_table_id=catalog_table_id, name=name)
+            .first()
+        )
+
+    def create_visualization(self, viz: CatalogVisualization) -> CatalogVisualization:
+        self._db.add(viz)
+        self._db.commit()
+        self._db.refresh(viz)
+        return viz
+
+    def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization:
+        self._db.commit()
+        self._db.refresh(viz)
+        return viz
+
+    def delete_visualization(self, viz_id: int) -> None:
+        viz = self._db.get(CatalogVisualization, viz_id)
+        if viz is not None:
+            self._db.delete(viz)
+            self._db.commit()

@@ -569,6 +569,47 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/catalog/visualize_query", response_model=models.VisualizeQueryResponse)
+def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.VisualizeQueryResponse:
+    """Run a Graphic Walker workflow against a cached source LazyFrame."""
+    try:
+        return models.VisualizeQueryResponse(**funcs.execute_visualize_query(payload))
+    except ValueError as e:
+        return models.VisualizeQueryResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error in visualize_query: {str(e)}", exc_info=True)
+        return models.VisualizeQueryResponse(error=str(e))
+
+
+@router.post("/catalog/visualize_fields", response_model=models.VisualizeFieldsResponse)
+def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> models.VisualizeFieldsResponse:
+    """Return the Graphic Walker field schema for a cached source LazyFrame."""
+    try:
+        return models.VisualizeFieldsResponse(**funcs.read_visualize_fields(payload))
+    except ValueError as e:
+        return models.VisualizeFieldsResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error in visualize_fields: {str(e)}", exc_info=True)
+        return models.VisualizeFieldsResponse(error=str(e))
+
+
+@router.post("/catalog/visualize_evict")
+def catalog_visualize_evict(session_key: str):
+    """Drop a cached viz session (called by core after a table update/delete)."""
+    from flowfile_worker.viz_sessions import viz_session_manager
+
+    viz_session_manager.evict(session_key)
+    return {"ok": True, "session_key": session_key}
+
+
+@router.get("/catalog/visualize_stats")
+def catalog_visualize_stats():
+    """Return current viz-session cache statistics (debug/observability)."""
+    from flowfile_worker.viz_sessions import viz_session_manager
+
+    return viz_session_manager.stats()
+
+
 def validate_result(task_id: str) -> bool | None:
     """
     Validate the result of a completed task by checking the IPC file.

@@ -221,3 +221,46 @@ class SqlQueryResponse(BaseModel):
     execution_time_ms: float = 0.0
     used_tables: list[str] = Field(default_factory=list)
     error: str | None = None
+
+
+class VizWorkerSource(BaseModel):
+    """Source descriptor for a viz session.
+
+    The ``session_key`` is the cache key in ``VizSessionManager``; core builds
+    it deterministically (table_id+updated_at, sql hash, etc.) so successive
+    requests against the same source skip the load step.
+    """
+
+    kind: Literal["physical", "sql", "ipc"]
+    session_key: str
+    table_path: str | None = None  # bare directory name for kind="physical"
+    storage_format: Literal["delta", "parquet"] | None = None
+    sql_query: str | None = None
+    tables: dict[str, str] | None = None  # logical name -> directory name (kind="sql")
+    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64 IPC (kind="sql")
+    ipc_b64: str | None = None  # base64 IPC bytes (kind="ipc")
+
+
+class VisualizeQueryRequest(BaseModel):
+    source: VizWorkerSource
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizeQueryResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizeFieldsRequest(BaseModel):
+    source: VizWorkerSource
+
+
+class VisualizeFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
+    error: str | None = None

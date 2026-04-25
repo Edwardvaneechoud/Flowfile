@@ -16,7 +16,7 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -40,6 +40,9 @@ from flowfile_core.catalog import (
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
+    VisualizationComputeError,
+    VisualizationExistsError,
+    VisualizationNotFoundError,
 )
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
@@ -80,6 +83,15 @@ from flowfile_core.schemas.catalog_schema import (
     TableFavoriteOut,
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
+    VisualizationAdHocComputeRequest,
+    VisualizationComputeResponse,
+    VisualizationCreate,
+    VisualizationFieldsRequest,
+    VisualizationFieldsResponse,
+    VisualizationLibraryItem,
+    VisualizationOut,
+    VisualizationSavedComputeRequest,
+    VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import storage
@@ -118,6 +130,9 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     FollowNotFoundError: (404, "Follow not found"),
     TableFavoriteNotFoundError: (404, "Table favorite not found"),
     NoSnapshotError: (422, "No flow snapshot available for this run"),
+    VisualizationNotFoundError: (404, None),
+    VisualizationExistsError: (409, None),
+    VisualizationComputeError: (502, None),
     ValueError: (422, None),
 }
 
@@ -620,6 +635,115 @@ def remove_table_favorite(
     service: CatalogService = Depends(get_catalog_service),
 ):
     service.remove_table_favorite(user_id=current_user.id, table_id=table_id)
+
+
+# ---------------------------------------------------------------------------
+# Catalog Visualizations
+# ---------------------------------------------------------------------------
+
+
+@router.get("/visualizations", response_model=list[VisualizationLibraryItem])
+@handle_catalog_exceptions()
+def list_visualization_library(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved visualization across the catalog with parent table metadata."""
+    return service.list_visualization_library(user_id=current_user.id)
+
+
+@router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualizations(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """List saved Graphic Walker chart specs attached to a catalog table."""
+    return service.list_visualizations(table_id, user_id=current_user.id)
+
+
+@router.post("/tables/{table_id}/visualizations", response_model=VisualizationOut, status_code=201)
+@handle_catalog_exceptions()
+def create_visualization(
+    table_id: int,
+    body: VisualizationCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.create_visualization(table_id, body, user_id=current_user.id)
+
+
+@router.put("/tables/{table_id}/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def update_visualization(
+    table_id: int,
+    viz_id: int,
+    body: VisualizationUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_visualization(table_id, viz_id, body, user_id=current_user.id)
+
+
+@router.delete("/tables/{table_id}/visualizations/{viz_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_visualization(
+    table_id: int,
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_visualization(table_id, viz_id, user_id=current_user.id)
+
+
+@router.post(
+    "/tables/{table_id}/visualizations/{viz_id}/compute",
+    response_model=VisualizationComputeResponse,
+)
+@handle_catalog_exceptions()
+def compute_saved_visualization(
+    table_id: int,
+    viz_id: int,
+    body: VisualizationSavedComputeRequest = Body(default_factory=VisualizationSavedComputeRequest),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Run a saved chart's query payload through the worker viz cache."""
+    return service.compute_saved_visualization(
+        table_id, viz_id, body.max_rows, user_id=current_user.id
+    )
+
+
+@router.post("/visualizations/compute", response_model=VisualizationComputeResponse)
+@handle_catalog_exceptions()
+def compute_ad_hoc_visualization(
+    body: VisualizationAdHocComputeRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compute a chart from a transient source (ad-hoc SQL or a catalog table).
+
+    Used by the live Graphic Walker editor — including the SQL Explore panel —
+    to share the worker's per-source LazyFrame cache while iterating on a chart.
+    """
+    return service.compute_ad_hoc_visualization(
+        source=body.source,
+        payload=body.payload,
+        max_rows=body.max_rows,
+        user_id=current_user.id,
+    )
+
+
+@router.post("/visualizations/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_visualization_fields(
+    body: VisualizationFieldsRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the Graphic Walker field schema for a viz source."""
+    return service.get_visualization_fields(body.source, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
