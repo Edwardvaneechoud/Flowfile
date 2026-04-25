@@ -40,6 +40,11 @@ class SingleExecutionFuture(Generic[T]):
         self._exception = None
         self._has_completed = False
         self._has_started = False
+        # Bumped on every reset(); _func_wrapper only commits its result if its
+        # captured generation still matches. Without this, an in-flight task
+        # whose executor was shut down with wait=False can land its writes
+        # after reset() clears state, poisoning the cached result.
+        self._generation = 0
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
         """Ensure executor exists, creating if necessary."""
@@ -56,21 +61,24 @@ class SingleExecutionFuture(Generic[T]):
 
             logger.info("Starting single executor function")
             executor: ThreadPoolExecutor = self._ensure_executor()
-            self._future = executor.submit(self._func_wrapper)
+            generation = self._generation
+            self._future = executor.submit(self._func_wrapper, generation)
             self._has_started = True
 
-    def _func_wrapper(self) -> T:
+    def _func_wrapper(self, generation: int) -> T:
         """Wrapper to capture the result or exception."""
         try:
             result: T = self.func()
             with self._lock:
-                self._result_value = result
-                self._has_completed = True
+                if generation == self._generation:
+                    self._result_value = result
+                    self._has_completed = True
             return result
         except Exception as e:
             with self._lock:
-                self._exception = e
-                self._has_completed = True
+                if generation == self._generation:
+                    self._exception = e
+                    self._has_completed = True
             raise
 
     def cleanup(self) -> None:
@@ -114,6 +122,10 @@ class SingleExecutionFuture(Generic[T]):
         """Reset the execution state, allowing the function to be run again."""
         with self._lock:
             logger.info("Resetting single execution future")
+
+            # Bump generation first so any in-flight _func_wrapper that finishes
+            # after this point sees a stale generation and skips its writes.
+            self._generation += 1
 
             # Cancel any pending execution
             if self._future and not self._future.done():
