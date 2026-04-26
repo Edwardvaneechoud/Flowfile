@@ -81,9 +81,6 @@ const fields = ref<IMutField[]>([]);
 
 const initialSpec = computed(() => props.viz?.spec ?? null);
 
-// Deep-clone JSON so GraphicWalker's web worker can structuredClone the
-// payload (Vue refs / proxies trip up postMessage).
-const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainInitialSpecList = computed<IChart[] | undefined>(() =>
   initialSpec.value && initialSpec.value.length > 0
@@ -91,25 +88,15 @@ const plainInitialSpecList = computed<IChart[] | undefined>(() =>
     : undefined,
 );
 
-/**
- * GraphicWalker computation callback — every aggregation the user builds
- * fires this with an IDataQueryPayload. We POST it to the ad-hoc compute
- * endpoint with the editor's source descriptor; the worker resolves the
- * source once into its session cache and runs polars-gw on top.
- */
-async function computeOnWorker(payload: any): Promise<any[]> {
-  try {
-    const resp = await CatalogApi.computeAdHocVisualization(props.source, payload, SAMPLE_ROWS);
-    if (resp.error) {
-      console.error("[viz] ad-hoc compute failed:", resp.error);
-      return [];
-    }
-    return resp.rows;
-  } catch (err: any) {
-    console.error("[viz] ad-hoc compute threw:", err);
-    return [];
-  }
-}
+const SAMPLE_ROWS = 5_000;
+
+// Every chart aggregation in GraphicWalker is forwarded as an
+// IDataQueryPayload to the ad-hoc compute endpoint; the worker resolves the
+// source once into its session cache and runs polars-gw on top.
+const { computation: computeOnWorker } = useGraphicWalkerCompute(
+  (payload) => CatalogApi.computeAdHocVisualization(props.source, payload, SAMPLE_ROWS),
+  "ad-hoc",
+);
 
 const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
 
@@ -118,8 +105,6 @@ const disabledReason = computed(() => {
   if (!name.value.trim()) return "Enter a name to save";
   return null;
 });
-
-const SAMPLE_ROWS = 5_000;
 
 onMounted(async () => {
   loadingSample.value = true;

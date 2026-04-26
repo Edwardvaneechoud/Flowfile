@@ -93,6 +93,7 @@ import type {
 import type { SqlQueryResult } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 
 const catalogStore = useCatalogStore();
 
@@ -185,24 +186,14 @@ const gwFields = computed<IMutField[]>(() =>
  */
 const useWorkerCompute = computed(() => !!props.sourceQuery);
 
-async function computeOnWorker(payload: any): Promise<IRow[]> {
-  if (!props.sourceQuery) return [];
-  try {
-    const resp = await CatalogApi.computeAdHocVisualization(
-      { source_type: "sql", sql_query: props.sourceQuery },
-      payload,
-      100_000,
-    );
-    if (resp.error) {
-      console.error("[viz] sql-explore compute failed:", resp.error);
-      return [];
-    }
-    return resp.rows as IRow[];
-  } catch (err: any) {
-    console.error("[viz] sql-explore compute threw:", err);
-    return [];
-  }
-}
+const { computation: computeOnWorker } = useGraphicWalkerCompute(async (payload) => {
+  if (!props.sourceQuery) return { rows: [], error: null };
+  return CatalogApi.computeAdHocVisualization(
+    { source_type: "sql", sql_query: props.sourceQuery },
+    payload,
+    100_000,
+  );
+}, "sql-explore");
 
 const gwData = computed<IRow[]>(() =>
   props.result.rows.map((row) => {

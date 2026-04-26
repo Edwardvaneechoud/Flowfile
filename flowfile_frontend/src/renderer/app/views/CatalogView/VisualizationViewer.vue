@@ -85,6 +85,8 @@ import VueGraphicWalker from "../../components/nodes/node-types/elements/explore
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
+import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
+import { toPlainJson } from "../../utils/structuredClone";
 import type { CatalogVisualization } from "../../types";
 
 const props = defineProps<{
@@ -112,29 +114,17 @@ const namespaceDraft = ref<number | null>(null);
 
 const SAMPLE_ROWS = 100_000;
 
-/**
- * GraphicWalker computation callback — every aggregation the user builds in
- * the chart hits this function with an IDataQueryPayload, and we POST it
- * straight to the worker via /catalog/visualizations/{id}/compute. The
- * worker session cache keeps the source LazyFrame warm so successive
- * aggregations skip the load step.
- */
-async function computeOnWorker(payload: any): Promise<any[]> {
-  try {
-    const resp = await CatalogApi.computeSavedVisualization(props.vizId, {
+// Every aggregation the user builds in the chart is POSTed straight to the
+// worker via /catalog/visualizations/{id}/compute. The worker session cache
+// keeps the source LazyFrame warm so successive aggregations skip the load.
+const { computation: computeOnWorker } = useGraphicWalkerCompute(
+  (payload) =>
+    CatalogApi.computeSavedVisualization(props.vizId, {
       payload,
       maxRows: SAMPLE_ROWS,
-    });
-    if (resp.error) {
-      console.error("[viz] saved compute failed:", resp.error);
-      return [];
-    }
-    return resp.rows;
-  } catch (err: any) {
-    console.error("[viz] saved compute threw:", err);
-    return [];
-  }
-}
+    }),
+  "saved",
+);
 
 // Flat schema-level list for the namespace picker. Mirrors the SQL save dialog.
 const schemaNamespaces = computed(() => {
@@ -146,10 +136,6 @@ const schemaNamespaces = computed(() => {
   }
   return items;
 });
-
-// Deep-clone JSON so GraphicWalker's web worker can structuredClone the
-// payload without tripping on Vue reactive proxies / getters.
-const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainSpecList = computed<IChart[] | undefined>(() =>
