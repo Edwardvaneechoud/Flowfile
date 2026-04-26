@@ -334,7 +334,12 @@ def test_knn_classifier_round_trip(tmp_path, classification_data):
 
     df = pl.read_ipc(out_ipc)
     assert df["pred"].dtype == pl.Int64
-    assert df["pred"].to_list() == [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+    assert df.height == 10
+    # Linearly separable: x1<3 should predict class 0, x1>=3 class 1. KNN
+    # apply runs through a group_by + join inside polars so we don't pin
+    # the output to the input row order — instead assert the property
+    # that matters (every point classified to its true cluster).
+    assert (df["pred"] == (df["x1"] >= 3.0).cast(pl.Int64)).all()
 
 
 def test_apply_model_task_missing_feature_marks_error(tmp_path, linear_data):
