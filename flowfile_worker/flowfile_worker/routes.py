@@ -15,7 +15,14 @@ from flowfile_worker.external_sources.google_analytics_source.models import Goog
 from flowfile_worker.external_sources.kafka_source.main import read_kafka
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.spawner import process_manager, start_fuzzy_process, start_generic_process, start_process
+from flowfile_worker.spawner import (
+    process_manager,
+    start_apply_model_process,
+    start_fuzzy_process,
+    start_generic_process,
+    start_process,
+    start_train_model_process,
+)
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
@@ -668,6 +675,88 @@ async def memory_usage(task_id: str):
         logger.warning(f"Memory usage not found: {task_id}")
         raise HTTPException(status_code=404, detail="Memory usage data not found for this task ID")
     return {"task_id": task_id, "memory_usage": memory_usage}
+
+
+@router.post("/train_ml_model")
+async def train_ml_model(
+    polars_script: models.TrainModelInput, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Fit a regression model and write its serialised bytes to ``staging_path``.
+
+    Core has already called ``ArtifactService.prepare_upload`` and reserved the
+    staging path, so the worker only needs to write the file there. The
+    ``Status.results`` field carries ``{sha256, size_bytes, model_type}`` once
+    training completes; core then finalises the artifact upload.
+    """
+    logger.info("Starting train_ml_model task: model_type=%s", polars_script.model_type)
+    try:
+        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
+        polars_script.task_id = polars_script.task_id or str(uuid.uuid4())
+        polars_script.cache_dir = polars_script.cache_dir or default_cache_dir
+        polars_serializable_object = polars_script.df_operation.polars_serializable_object()
+
+        status = models.Status(
+            background_task_id=polars_script.task_id,
+            status="Starting",
+            file_ref=polars_script.staging_path,
+            result_type="other",
+        )
+        status_dict[polars_script.task_id] = status
+        background_tasks.add_task(
+            start_train_model_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=polars_script.task_id,
+            file_ref=polars_script.staging_path,
+            model_type=polars_script.model_type,
+            target_column=polars_script.target_column,
+            feature_columns=polars_script.feature_columns,
+            params=polars_script.params,
+            staging_path=polars_script.staging_path,
+            flowfile_flow_id=polars_script.flowfile_flow_id,
+            flowfile_node_id=polars_script.flowfile_node_id,
+        )
+        logger.info(f"Started train_ml_model task: {polars_script.task_id}")
+        return status
+    except Exception as e:
+        logger.error(f"Error starting train_ml_model: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/apply_ml_model")
+async def apply_ml_model(
+    polars_script: models.ApplyModelInput, background_tasks: BackgroundTasks
+) -> models.Status:
+    """Score input data using a previously trained model artifact."""
+    logger.info("Starting apply_ml_model task: model_path=%s", polars_script.model_path)
+    try:
+        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
+        polars_script.task_id = polars_script.task_id or str(uuid.uuid4())
+        polars_script.cache_dir = polars_script.cache_dir or default_cache_dir
+        polars_serializable_object = polars_script.df_operation.polars_serializable_object()
+
+        file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
+        status = models.Status(
+            background_task_id=polars_script.task_id,
+            status="Starting",
+            file_ref=file_path,
+            result_type="polars",
+        )
+        status_dict[polars_script.task_id] = status
+        background_tasks.add_task(
+            start_apply_model_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=polars_script.task_id,
+            file_ref=file_path,
+            model_path=polars_script.model_path,
+            output_column=polars_script.output_column,
+            flowfile_flow_id=polars_script.flowfile_flow_id,
+            flowfile_node_id=polars_script.flowfile_node_id,
+        )
+        logger.info(f"Started apply_ml_model task: {polars_script.task_id}")
+        return status
+    except Exception as e:
+        logger.error(f"Error starting apply_ml_model: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/add_fuzzy_join")

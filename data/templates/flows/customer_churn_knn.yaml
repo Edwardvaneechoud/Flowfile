@@ -1,0 +1,155 @@
+flowfile_version: 0.9.1
+flowfile_id: 11
+flowfile_name: Customer Churn (KNN)
+flowfile_settings:
+  description: Train and apply a KNN classifier on synthetic customer-churn data.
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: 'Load synthetic customer-churn data'
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/customer_churn.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: random_split
+  is_start_node: false
+  description: '80/20 train/test split (seed=42)'
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3, 4]
+  output_handles: [output-0, output-1]
+  setting_input:
+    cache_results: false
+    splits:
+    - name: train
+      percentage: 80.0
+    - name: test
+      percentage: 20.0
+    seed: 42
+- id: 3
+  type: train_model
+  is_start_node: false
+  description: 'Fit a KNN classifier (k=5) on the training rows'
+  node_reference: null
+  x_position: 500
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    train_input:
+      target_column: churned
+      feature_columns: [tenure_months, monthly_charges, support_calls, has_contract]
+      model_type: knn_classifier
+      params:
+        k: 5
+        distance: sql2
+      publish_to_catalog: false
+      model_name: ''
+      catalog_tags: [demo, classification, knn]
+- id: 4
+  type: wait_for
+  is_start_node: false
+  description: 'Wait for the trainer to publish the artifact'
+  node_reference: null
+  x_position: 500
+  y_position: 300
+  left_input_id: null
+  right_input_id: 3
+  input_ids: [2]
+  outputs: [5]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+- id: 5
+  type: apply_model
+  is_start_node: false
+  description: 'Score the held-out test rows using the upstream Train Model'
+  node_reference: null
+  x_position: 750
+  y_position: 300
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: [6]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    apply_input:
+      source: upstream
+      upstream_node_id: 3
+      output_column: predicted_churn
+- id: 6
+  type: evaluate_model
+  is_start_node: false
+  description: 'Compute classification metrics (auto-resolves task type from upstream Train)'
+  node_reference: null
+  x_position: 1000
+  y_position: 300
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: [7]
+  output_handles: [output-0]
+  setting_input:
+    cache_results: false
+    evaluate_input:
+      actual_column: churned
+      predicted_column: predicted_churn
+      task_type: auto
+      upstream_train_node_id: 3
+- id: 7
+  type: explore_data
+  is_start_node: false
+  description: 'Inspect the metrics table'
+  node_reference: null
+  x_position: 1250
+  y_position: 300
+  left_input_id: null
+  right_input_id: null
+  input_ids: [6]
+  outputs: []
+  output_handles: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: customer_churn_knn
+  name: Customer Churn (KNN)
+  description: >-
+    Same shape as the logistic-regression churn template, but the Train Model
+    node fits a non-parametric K-Nearest Neighbours classifier (k=5). Useful
+    sibling for comparing how a parametric vs. neighbour-based algorithm score
+    the same hold-out split.
+  category: Beginner
+  tags: [ml, classification, knn, train_model, apply_model, evaluate_model]
+  node_count: 7
+  icon: hub
+_required_csv_files: [customer_churn.csv]

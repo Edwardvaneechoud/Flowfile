@@ -21,8 +21,8 @@
             inactive-text="Single output"
           />
           <div class="split-mode-hint">
-            Emit matching rows on handle P (pass) and non-matching rows on
-            handle F (fail). Rows with a null predicate are dropped from both.
+            Emit matching rows on handle P (pass) and non-matching rows on handle F (fail). Rows
+            with a null predicate are dropped from both.
           </div>
         </div>
         <div v-if="isAdvancedFilter">
