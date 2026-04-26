@@ -1,9 +1,11 @@
 """Tests for the catalog visualization compute path on the worker."""
 from __future__ import annotations
 
+import concurrent.futures
 import sys
 import threading
 import time
+from typing import Any
 
 import polars as pl
 import pytest
@@ -174,6 +176,120 @@ def test_two_session_keys_run_in_parallel(tmp_path):
 
         p1 = _physical_source("unit:par:p1", "viz_par")
         p2 = _physical_source("unit:par:p2", "viz_par")
+
+        def _run(src):
+            reg.execute(src, "execute", payload, max_rows)
+
+        threads = [threading.Thread(target=_run, args=(s,)) for s in (p1, p2)]
+        t_start = time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        t_par = time.perf_counter() - t_start
+        assert t_par < 0.7 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
+    finally:
+        reg.shutdown()
+
+
+@pytest.mark.slow
+def test_concurrent_same_session_key_no_response_steals(tmp_path):
+    _setup_storage(tmp_path)
+    big_df = pl.DataFrame(
+        {
+            "category": ["a", "b", "c", "d"] * 12_500,
+            "value": list(range(50_000)),
+        }
+    )
+    target = storage.catalog_tables_directory / "viz_race"
+    target.mkdir(parents=True, exist_ok=True)
+    big_df.write_delta(str(target))
+
+    reg = VizSessionRegistry()
+    src = _physical_source("unit:race:1", "viz_race")
+    try:
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+
+        n = 8
+
+        def _payload(i: int) -> dict:
+            return {
+                "workflow": [
+                    {
+                        "type": "view",
+                        "query": [
+                            {
+                                "op": "aggregate",
+                                "groupBy": ["category"],
+                                "measures": [
+                                    {
+                                        "field": "value",
+                                        "agg": "sum",
+                                        "asFieldKey": f"v_{i}",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+
+        results: list[tuple[int, Any]] = []
+        errors: list[tuple[int, BaseException]] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
+            futures = {
+                pool.submit(reg.execute, src, "execute", _payload(i), 1_000): i
+                for i in range(n)
+            }
+            for fut in concurrent.futures.as_completed(futures, timeout=60):
+                i = futures[fut]
+                try:
+                    res, _ = fut.result(timeout=0)
+                    results.append((i, res))
+                except BaseException as e:
+                    errors.append((i, e))
+
+        assert not errors, f"some calls failed: {errors}"
+        for i, res in results:
+            keys = {k for row in res["rows"] for k in row.keys()}
+            assert f"v_{i}" in keys, (
+                f"call {i} got back rows with keys {keys}, "
+                f"expected v_{i} — response was stolen by another caller"
+            )
+    finally:
+        reg.shutdown()
+
+
+@pytest.mark.slow
+def test_concurrent_different_session_keys_not_serialised_by_lock(tmp_path):
+    _setup_storage(tmp_path)
+    big_df = pl.DataFrame(
+        {
+            "category": ["a", "b", "c", "d"] * 250_000,
+            "value": list(range(1_000_000)),
+        }
+    )
+    big_dir = storage.catalog_tables_directory / "viz_par_lock"
+    big_dir.mkdir(parents=True, exist_ok=True)
+    big_df.write_delta(str(big_dir))
+    reg = VizSessionRegistry()
+    payload = _RAW_PAYLOAD
+    max_rows = 1_000_000
+    try:
+        s1 = _physical_source("unit:lockpar:s1", "viz_par_lock")
+        t0 = time.perf_counter()
+        reg.execute(s1, "execute", payload, max_rows)
+        t1 = time.perf_counter() - t0
+        s2 = _physical_source("unit:lockpar:s2", "viz_par_lock")
+        t0 = time.perf_counter()
+        reg.execute(s2, "execute", payload, max_rows)
+        t2 = time.perf_counter() - t0
+
+        if t1 + t2 < 0.1:
+            pytest.skip(f"workload too fast to measure overlap: t1+t2={t1 + t2:.4f}s")
+
+        p1 = _physical_source("unit:lockpar:p1", "viz_par_lock")
+        p2 = _physical_source("unit:lockpar:p2", "viz_par_lock")
 
         def _run(src):
             reg.execute(src, "execute", payload, max_rows)

@@ -44,6 +44,7 @@ class SessionHandle:
     last_used_at: float = field(default_factory=time.time)
     requests_served: int = 0
     pid: int = -1
+    parent_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class VizSessionRegistry:
@@ -75,23 +76,24 @@ class VizSessionRegistry:
         if op == "execute":
             msg["payload"] = payload
             msg["max_rows"] = max_rows if max_rows is not None else 100_000
-        try:
-            handle.request_q.put(msg, timeout=0.5)
-        except _queue_mod.Full as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"viz session busy: queue full for session_key={source.session_key}",
-            ) from exc
-        handle.last_used_at = time.time()
-        handle.requests_served += 1
-        logger.debug(
-            "serve key=%s pid=%d op=%s requests=%d",
-            handle.key,
-            handle.pid,
-            op,
-            handle.requests_served,
-        )
-        response = self._await_response(handle, request_id)
+        with handle.parent_lock:
+            try:
+                handle.request_q.put(msg, timeout=0.5)
+            except _queue_mod.Full as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"viz session busy: queue full for session_key={source.session_key}",
+                ) from exc
+            handle.last_used_at = time.time()
+            handle.requests_served += 1
+            logger.debug(
+                "serve key=%s pid=%d op=%s requests=%d",
+                handle.key,
+                handle.pid,
+                op,
+                handle.requests_served,
+            )
+            response = self._await_response(handle, request_id)
         if response.get("fatal"):
             self._evict_handle(handle)
             raise HTTPException(
@@ -254,28 +256,29 @@ class VizSessionRegistry:
         return handle
 
     def _await_response(self, handle: SessionHandle, request_id: str) -> dict[str, Any]:
-        deadline = time.time() + REQUEST_TIMEOUT_SECONDS
-        while True:
-            remaining = max(0.0, deadline - time.time())
-            try:
-                response = handle.response_q.get(timeout=remaining if remaining > 0 else 0.1)
-            except _queue_mod.Empty as exc:
-                if not handle.process.is_alive():
-                    self._evict_handle(handle)
-                    raise HTTPException(status_code=502, detail="viz worker died unexpectedly") from exc
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"viz compute timed out after {REQUEST_TIMEOUT_SECONDS}s",
-                ) from exc
-            rid = response.get("request_id")
-            if response.get("fatal") or rid is None or rid == request_id:
-                return response
-            logger.warning(
-                "stale response key=%s expected=%s got=%s; draining",
-                handle.key,
-                request_id,
-                rid,
-            )
+        try:
+            response = handle.response_q.get(timeout=REQUEST_TIMEOUT_SECONDS)
+        except _queue_mod.Empty as exc:
+            if not handle.process.is_alive():
+                self._evict_handle(handle)
+                raise HTTPException(status_code=502, detail="viz worker died unexpectedly") from exc
+            raise HTTPException(
+                status_code=504,
+                detail=f"viz compute timed out after {REQUEST_TIMEOUT_SECONDS}s",
+            ) from exc
+        rid = response.get("request_id")
+        if response.get("fatal") or rid is None or rid == request_id:
+            return response
+        logger.error(
+            "viz session response id mismatch key=%s expected=%s got=%s",
+            handle.key,
+            request_id,
+            rid,
+        )
+        raise RuntimeError(
+            f"viz session response id mismatch: key={handle.key} "
+            f"expected={request_id} got={rid}"
+        )
 
     def _evict_handle(self, handle: SessionHandle) -> None:
         with self._lock:
