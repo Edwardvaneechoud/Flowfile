@@ -978,3 +978,99 @@ export interface NodeGoogleAnalyticsReader extends NodeBase {
   google_analytics_settings: GoogleAnalyticsSettings;
   fields?: MinimalFieldInput[] | null;
 }
+
+// ============================================================================
+// ML Nodes
+// ============================================================================
+
+export type MLParamType = "boolean" | "number" | "integer" | "select";
+
+export interface MLParamSpec {
+  name: string;
+  type: MLParamType;
+  label: string;
+  default: boolean | number | string;
+  description?: string | null;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
+  options?: string[] | null;
+}
+
+export interface MLAlgorithmSpec {
+  model_type: string;
+  label: string;
+  task_type: "regression" | "classification";
+  output_dtype: string;
+  params: MLParamSpec[];
+  description?: string | null;
+}
+
+export interface TrainModelSettings {
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  params: Record<string, unknown>;
+  publish_to_catalog: boolean;
+  model_name: string;
+  namespace_id?: number | null;
+  catalog_description?: string | null;
+  catalog_tags: string[];
+}
+
+export interface NodeTrainModel extends NodeSingleInput {
+  train_input: TrainModelSettings;
+}
+
+export type ApplyModelSource = "upstream" | "catalog";
+
+export interface ApplyModelSettings {
+  source: ApplyModelSource;
+  upstream_node_id: number | null;
+  model_name: string;
+  model_version: number | null;
+  namespace_id?: number | null;
+  output_column: string;
+}
+
+export interface UpstreamTrainModelOption {
+  node_id: number;
+  description: string;
+  target_column: string;
+  feature_columns: string[];
+  model_type: string;
+  publish_to_catalog: boolean;
+  model_name: string;
+}
+
+export interface CatalogNamespaceOut {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  level: number;
+  description?: string | null;
+}
+
+export interface CatalogNamespaceTree extends CatalogNamespaceOut {
+  children?: CatalogNamespaceTree[];
+}
+
+export interface NamespaceOption {
+  id: number;
+  label: string;
+}
+
+export interface NodeApplyModel extends NodeSingleInput {
+  apply_input: ApplyModelSettings;
+}
+
+export interface MLArtifactListItem {
+  id: number;
+  name: string;
+  namespace_id?: number | null;
+  version: number;
+  python_type?: string | null;
+  size_bytes?: number | null;
+  created_at: string;
+  tags: string[];
+}

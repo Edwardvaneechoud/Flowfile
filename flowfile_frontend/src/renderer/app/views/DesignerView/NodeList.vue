@@ -48,7 +48,14 @@ import { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 
-type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "output" | "custom";
+type CategoryKey =
+  | "input"
+  | "transform"
+  | "combine"
+  | "aggregate"
+  | "ml"
+  | "output"
+  | "custom";
 
 interface CategoryInfo {
   name: string;
@@ -64,6 +71,7 @@ const categories: Categories = {
   transform: { name: "Transformations", isOpen: true },
   combine: { name: "Combine Operations", isOpen: true },
   aggregate: { name: "Aggregations", isOpen: true },
+  ml: { name: "Machine Learning", isOpen: true },
   output: { name: "Output Operations", isOpen: true },
   custom: { name: "User Defined Operations", isOpen: true },
 };

@@ -1494,3 +1494,103 @@ class UserDefinedNode(NodeMultiInput):
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+
+class TrainModelSettings(BaseModel):
+    """Settings payload for the Train Model node.
+
+    ``params`` is a flat dict so the form-driven hyperparameter UI doesn't need
+    a discriminated union — the worker validates against the algorithm-specific
+    Pydantic class via ``shared.ml.trainers.get_trainer(model_type).params_class``.
+
+    The trained model is always written to a flow-scoped path keyed off this
+    node's id so downstream Apply Model nodes in the same flow can read it
+    without first publishing to the catalog. Set ``publish_to_catalog=True``
+    to additionally store the artifact in the catalog (with a stable
+    cross-run name + version).
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    target_column: str = ""
+    feature_columns: list[str] = Field(default_factory=list)
+    model_type: str = "linear_regression"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    # Catalog publishing — opt-in.
+    publish_to_catalog: bool = False
+    model_name: str = ""  # required when publish_to_catalog=True
+    namespace_id: int | None = None
+    catalog_description: str | None = None
+    catalog_tags: list[str] = Field(default_factory=list)
+
+
+class NodeTrainModel(NodeSingleInput):
+    """Train a regression model and store the artifact in the catalog."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    train_input: TrainModelSettings = Field(default_factory=TrainModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.train_input
+        if s.model_name and s.target_column:
+            return f"Train {s.model_type} '{s.model_name}' on {s.target_column}"
+        return "Train Model"
+
+
+class ApplyModelSettings(BaseModel):
+    """Settings payload for the Apply Model node.
+
+    Two model sources are supported:
+
+    - ``"upstream"`` (default): pick a Train Model node from somewhere in this
+      flow's upstream chain. The model file is read from the flow's cache
+      directory using the train node's id — works at design time, no catalog
+      round-trip needed.
+    - ``"catalog"``: fall back to the existing catalog lookup by name/version.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    source: Literal["upstream", "catalog"] = "upstream"
+
+    # source="upstream" — id of an upstream Train Model node in the same flow.
+    upstream_node_id: int | None = None
+
+    # source="catalog"
+    model_name: str = ""
+    model_version: int | None = None
+    namespace_id: int | None = None
+
+    output_column: str = "prediction"
+
+
+class NodeApplyModel(NodeSingleInput):
+    """Score data using a previously trained model artifact."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    apply_input: ApplyModelSettings = Field(default_factory=ApplyModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.apply_input
+        if s.model_name:
+            ver = f" v{s.model_version}" if s.model_version is not None else ""
+            return f"Apply '{s.model_name}'{ver} -> {s.output_column}"
+        return "Apply Model"
+
+
+class NodeWaitFor(NodeMultiInput):
+    """Pass-through node that enforces ordering on extra dependency inputs.
+
+    The first input flows through unchanged; the others have to complete before
+    this node runs but their data is discarded. Useful for enforcing "Apply
+    Model must wait for Train Model" without otherwise coupling their data.
+    """
+
+    def get_default_description(self) -> str:
+        n = len(self.depending_on_ids or [])
+        if n <= 1:
+            return "Wait For"
+        return f"Wait For ({n - 1} dep{'s' if n > 2 else ''})"

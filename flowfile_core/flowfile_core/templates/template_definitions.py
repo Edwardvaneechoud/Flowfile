@@ -31,6 +31,7 @@ _FLOW_YAML_FILENAMES = [
     "web_analytics_funnel.yaml",
     "customer_360.yaml",
     "product_fuzzy_match.yaml",
+    "house_price_regression.yaml",
 ]
 
 

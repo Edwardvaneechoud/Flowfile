@@ -1185,6 +1185,209 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
+    def train_model(
+        self,
+        target: str,
+        features: list[str] | None = None,
+        model_type: str = "linear_regression",
+        params: dict | None = None,
+        publish_to_catalog: bool = False,
+        model_name: str = "",
+        namespace_id: int | None = None,
+        catalog_description: str | None = None,
+        catalog_tags: list[str] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Fit an ML regression model and store the artifact in the catalog.
+
+        Compute runs on the worker. The flow must be registered in the catalog
+        (so the artifact has a ``source_registration_id``); see
+        :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
+
+        Parameters
+        ----------
+        model_name:
+            Catalog name for the trained model. Re-running with the same name
+            auto-bumps the version (v2, v3, ...).
+        target:
+            Column to predict.
+        features:
+            Feature columns to fit on. If ``None``, uses every column except *target*.
+        model_type:
+            One of ``"linear_regression"``, ``"ridge_regression"``, ``"lasso_regression"``.
+            See ``GET /ml/algorithms`` for the live list.
+        params:
+            Algorithm-specific hyperparameters (e.g. ``{"l2_reg": 0.1}`` for ridge).
+        catalog_description / catalog_tags:
+            Optional metadata stored alongside the artifact.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame whose data is the input pass-through. The model
+            is recorded in the catalog as a side effect.
+        """
+        if features is None:
+            features = [c for c in self.columns if c != target]
+        if not features:
+            raise ValueError("train_model: no feature columns inferred. Pass `features=[...]` explicitly.")
+        if publish_to_catalog and not model_name:
+            raise ValueError("train_model: 'model_name' is required when 'publish_to_catalog=True'.")
+
+        new_node_id = generate_node_id()
+        train_settings = input_schema.NodeTrainModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            train_input=input_schema.TrainModelSettings(
+                target_column=target,
+                feature_columns=list(features),
+                model_type=model_type,
+                params=params or {},
+                publish_to_catalog=publish_to_catalog,
+                model_name=model_name,
+                namespace_id=namespace_id,
+                catalog_description=catalog_description,
+                catalog_tags=list(catalog_tags or []),
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or (f"Train {model_type} '{model_name}'" if model_name else f"Train {model_type}"),
+        )
+        self.flow_graph.add_train_model(train_settings)
+        return self._create_child_frame(new_node_id)
+
+    def wait_for(
+        self,
+        dependency: FlowFrame,
+        *,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Pass this frame through unchanged, but force execution to wait until
+        *dependency* has finished running.
+
+        Useful when a downstream node depends on a side-effect of another node —
+        e.g. Apply Model needs Train Model to have stored its artifact first.
+        The dependency frame's data is discarded; only its completion gates
+        this node.
+
+        Parameters
+        ----------
+        dependency:
+            A :class:`FlowFrame` whose backing node must finish before this
+            node runs. Wired to the *right* input handle of the Wait For node.
+        description:
+            Optional node description for the visual designer.
+        """
+        from flowfile_core.flowfile.flow_graph import add_connection
+        from flowfile_core.schemas import input_schema as _is
+
+        new_node_id = generate_node_id()
+        wait_settings = input_schema.NodeWaitFor(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_ids=[self.node_id, dependency.node_id],
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            description=description or "Wait for dependency",
+        )
+        self.flow_graph.add_wait_for(wait_settings)
+        # Wire the dependency to the right-input handle; the data (left) input
+        # is added implicitly by _create_child_frame from self.
+        right_conn = _is.NodeConnection.create_from_simple_input(
+            dependency.node_id, new_node_id
+        )
+        right_conn.input_connection.connection_class = "input-1"
+        add_connection(self.flow_graph, right_conn)
+        return self._create_child_frame(new_node_id)
+
+    def apply_model(
+        self,
+        upstream: FlowFrame | None = None,
+        *,
+        model_name: str = "",
+        output_column: str = "prediction",
+        version: int | None = None,
+        namespace_id: int | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Score the data using a trained model.
+
+        Two model sources are supported:
+
+        - Pass an *upstream* :class:`FlowFrame` whose backing node is a
+          ``train_model`` — the trained model is read from the flow's local
+          cache, no catalog round-trip required. This is the natural way to
+          chain Train Model → Apply Model in the same flow.
+        - Or pass *model_name* (and optionally *version* / *namespace_id*) to
+          look the model up from the catalog.
+
+        Parameters
+        ----------
+        upstream:
+            FlowFrame returned by :meth:`train_model`. When provided, the apply
+            node reads from that train node's flow-scoped output.
+        model_name:
+            Catalog name of the trained model. Used only when *upstream* is None.
+        output_column:
+            Name of the new prediction column added to the output.
+        version:
+            Specific catalog version to apply. Defaults to the latest active version.
+        namespace_id:
+            Optional catalog namespace.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with all input columns plus *output_column* (Float64).
+        """
+        if upstream is None and not model_name:
+            raise ValueError(
+                "apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*."
+            )
+        if upstream is not None and model_name:
+            raise ValueError("apply_model: pass either *upstream* or *model_name*, not both.")
+
+        new_node_id = generate_node_id()
+        if upstream is not None:
+            apply_input = input_schema.ApplyModelSettings(
+                source="upstream",
+                upstream_node_id=upstream.node_id,
+                output_column=output_column,
+            )
+            default_desc = f"Apply (upstream node {upstream.node_id}) -> {output_column}"
+        else:
+            apply_input = input_schema.ApplyModelSettings(
+                source="catalog",
+                model_name=model_name,
+                model_version=version,
+                namespace_id=namespace_id,
+                output_column=output_column,
+            )
+            default_desc = f"Apply '{model_name}' -> {output_column}"
+
+        apply_settings = input_schema.NodeApplyModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            apply_input=apply_input,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or default_desc,
+        )
+        self.flow_graph.add_apply_model(apply_settings)
+        return self._create_child_frame(new_node_id)
+
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
         """
         Write the data to a CSV file.

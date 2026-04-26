@@ -1,0 +1,591 @@
+diff --git a/flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py b/flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py
+index 103e0586..c8f7486e 100644
+--- a/flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py
++++ b/flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py
+@@ -8,7 +8,10 @@ from collections.abc import Callable, Generator, Iterable
+ from copy import deepcopy
+ from dataclasses import dataclass
+ from math import ceil
+-from typing import Any, Literal, TypeVar
++from typing import TYPE_CHECKING, Any, Literal, TypeVar
++
++if TYPE_CHECKING:
++    from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
+ 
+ import polars as pl
+ 
+@@ -1416,6 +1419,30 @@ class FlowDataEngine:
+ 
+         return FlowDataEngine(df, streamable=self._streamable)
+ 
++    def filter_split(self, predicate: str) -> NamedOutputs:
++        """Partition rows by ``predicate`` into ``pass`` and ``fail`` streams.
++
++        Rows where the predicate evaluates to null are dropped from both
++        streams — matching the behaviour of two manually-wired filter nodes
++        with opposing predicates.
++        """
++        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
++
++        try:
++            f = to_expr(predicate)
++        except Exception as e:
++            logger.warning(f"Error in filter expression: {e}")
++            f = to_expr("False")
++        pass_df = self.data_frame.filter(f)
++        fail_df = self.data_frame.filter(~f)
++        _ = pass_df.collect_schema()
++        return NamedOutputs(
++            {
++                "pass": FlowDataEngine(pass_df, streamable=self._streamable),
++                "fail": FlowDataEngine(fail_df, streamable=self._streamable),
++            }
++        )
++
+     def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> FlowDataEngine:
+         """Adds a record ID (row number) column to the DataFrame.
+ 
+diff --git a/flowfile_core/flowfile_core/flowfile/flow_graph.py b/flowfile_core/flowfile_core/flowfile/flow_graph.py
+index 405f6631..f0a37d5e 100644
+--- a/flowfile_core/flowfile_core/flowfile/flow_graph.py
++++ b/flowfile_core/flowfile_core/flowfile/flow_graph.py
+@@ -1729,8 +1729,7 @@ class FlowGraph:
+             is_advanced = filter_settings.filter_input.is_advanced()
+ 
+             if is_advanced:
+-                predicate = filter_settings.filter_input.advanced_filter
+-                return fl.do_filter(predicate)
++                expression = filter_settings.filter_input.advanced_filter
+             else:
+                 basic_filter = filter_settings.filter_input.basic_filter
+                 if basic_filter is None:
+@@ -1744,7 +1743,10 @@ class FlowGraph:
+ 
+                 expression = build_filter_expression(basic_filter, field_data_type)
+                 filter_settings.filter_input.advanced_filter = expression
+-                return fl.do_filter(expression)
++
++            if filter_settings.split_mode:
++                return fl.filter_split(expression)
++            return fl.do_filter(expression)
+ 
+         self.add_node_step(
+             filter_settings.node_id,
+diff --git a/flowfile_core/flowfile_core/schemas/input_schema.py b/flowfile_core/flowfile_core/schemas/input_schema.py
+index fe797c22..fc875ba1 100644
+--- a/flowfile_core/flowfile_core/schemas/input_schema.py
++++ b/flowfile_core/flowfile_core/schemas/input_schema.py
+@@ -467,6 +467,10 @@ class NodeFilter(NodeSingleInput):
+     """Settings for a node that filters rows based on a condition."""
+ 
+     filter_input: transform_schema.FilterInput
++    # When True the node emits two outputs: "pass" (output-0, matching rows)
++    # and "fail" (output-1, non-matching rows). Default preserves
++    # single-output behaviour for existing flows.
++    split_mode: bool = False
+ 
+     def get_default_description(self) -> str:
+         """Describes the filter condition."""
+@@ -1321,7 +1325,13 @@ class NodeConnection(BaseModel):
+     output_connection: NodeOutputConnection
+ 
+     @classmethod
+-    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
++    def create_from_simple_input(
++        cls,
++        from_id: int,
++        to_id: int,
++        input_type: InputType = "input-0",
++        output_handle: OutputConnectionClass = "output-0",
++    ):
+         """Creates a standard connection between two nodes."""
+         match input_type:
+             case "main":
+@@ -1333,7 +1343,7 @@ class NodeConnection(BaseModel):
+             case _:
+                 connection_class: InputConnectionClass = "input-0"
+         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
+-        node_output = NodeOutputConnection(node_id=from_id, connection_class="output-0")
++        node_output = NodeOutputConnection(node_id=from_id, connection_class=output_handle)
+         return cls(input_connection=node_input, output_connection=node_output)
+ 
+ 
+diff --git a/flowfile_core/tests/flowfile/test_flowfile.py b/flowfile_core/tests/flowfile/test_flowfile.py
+index 71a4bb24..7266dc50 100644
+--- a/flowfile_core/tests/flowfile/test_flowfile.py
++++ b/flowfile_core/tests/flowfile/test_flowfile.py
+@@ -2579,3 +2579,76 @@ def test_downstream_predicted_data_uses_correct_upstream_handle():
+     # Sample is a passthrough on schema — the downstream sees output-1's columns.
+     assert [c.name for c in predicted.schema] == ["name_col"]
+ 
++
++# ============================================================================
++# Filter node: split_mode (dual pass/fail outputs)
++# ============================================================================
++
++
++def _add_filter_to_graph(
++    graph: FlowGraph,
++    advanced_filter: str,
++    *,
++    split_mode: bool = False,
++    node_id: int = 2,
++    depends_on: int = 1,
++) -> None:
++    """Helper: attach a filter node to ``depends_on`` with an advanced predicate."""
++    add_node_promise_on_type(graph, "filter", node_id)
++    add_connection(
++        graph,
++        input_schema.NodeConnection.create_from_simple_input(depends_on, node_id),
++    )
++    graph.add_filter(
++        input_schema.NodeFilter(
++            flow_id=graph.flow_id,
++            node_id=node_id,
++            depending_on_id=depends_on,
++            filter_input=transform_schema.FilterInput(
++                advanced_filter=advanced_filter,
++                filter_type="advanced",
++            ),
++            split_mode=split_mode,
++        )
++    )
++
++
++def test_filter_split_mode_partitions_rows():
++    """With split_mode on, output-0 has matching rows and output-1 has the rest."""
++    graph = create_graph(execution_location="local")
++    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
++    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=True)
++    graph.run_graph()
++
++    node = graph.get_node(2)
++    pass_rows = node.get_output("output-0").collect()
++    fail_rows = node.get_output("output-1").collect()
++    assert pass_rows["id"].to_list() == [5, 6, 7, 8, 9]
++    assert fail_rows["id"].to_list() == [0, 1, 2, 3, 4]
++    # Default (handle-less) consumers see the first output (backwards-compat).
++    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
++
++
++def test_filter_split_mode_off_is_backwards_compatible():
++    """With split_mode off, the filter node behaves as before: single output."""
++    graph = create_graph(execution_location="local")
++    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
++    _add_filter_to_graph(graph, 'pl.col("id") >= 5', split_mode=False)
++    graph.run_graph()
++
++    node = graph.get_node(2)
++    assert node.get_resulting_data().collect()["id"].to_list() == [5, 6, 7, 8, 9]
++    # No named outputs populated on the single-output path.
++    assert node._named_outputs == {}
++
++
++def test_filter_split_mode_default_is_false():
++    """NodeFilter constructed without split_mode defaults to single-output."""
++    settings = input_schema.NodeFilter(
++        flow_id=1,
++        node_id=2,
++        filter_input=transform_schema.FilterInput(
++            advanced_filter='pl.col("id") > 0', filter_type="advanced"
++        ),
++    )
++    assert settings.split_mode is False
+diff --git a/flowfile_frame/flowfile_frame/flow_frame.py b/flowfile_frame/flowfile_frame/flow_frame.py
+index cfab5d0d..7e3c47f9 100644
+--- a/flowfile_frame/flowfile_frame/flow_frame.py
++++ b/flowfile_frame/flowfile_frame/flow_frame.py
+@@ -238,6 +238,7 @@ class FlowFrame:
+         flow_graph: FlowGraph | None = None,
+         node_id: int | None = None,
+         parent_node_id: int | None = None,
++        output_handle: str = "output-0",
+         **kwargs,  # Accept and ignore any other kwargs for API compatibility
+     ) -> FlowFrame:
+         """
+@@ -247,6 +248,11 @@ class FlowFrame:
+           wrapper around an existing node in the graph.
+         - Otherwise, it creates a new source node in a new or existing graph
+           from the provided data.
++
++        ``output_handle`` identifies which source handle of the wrapped node
++        downstream operations should read from. Defaults to ``"output-0"``; set
++        to ``"output-1"`` for the second output of a multi-output node (e.g.
++        the ``fail`` branch of ``filter_split``).
+         """
+         # --- Path 1: Internal Wrapper Creation ---
+         # This path is taken by methods like .join(), .sort(), etc., which provide an existing graph.
+@@ -256,8 +262,11 @@ class FlowFrame:
+             instance.flow_graph = flow_graph
+             instance.node_id = node_id
+             instance.parent_node_id = parent_node_id
++            instance.output_handle = output_handle
+             return instance
+         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
++            # create_from_any_type creates a new source node which always emits
++            # output-0; no need to forward output_handle.
+             instance = cls.create_from_any_type(
+                 data=data,
+                 schema=schema,
+@@ -327,16 +336,27 @@ class FlowFrame:
+     def __repr__(self):
+         return str(self.data)
+ 
+-    def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
++    def _add_connection(
++        self,
++        from_id,
++        to_id,
++        input_type: input_schema.InputType = "main",
++        output_handle: str = "output-0",
++    ):
+         """Helper method to add a connection between nodes"""
+         connection = input_schema.NodeConnection.create_from_simple_input(
+-            from_id=from_id, to_id=to_id, input_type=input_type
++            from_id=from_id,
++            to_id=to_id,
++            input_type=input_type,
++            output_handle=output_handle,
+         )
+         add_connection(self.flow_graph, connection)
+ 
+     def _create_child_frame(self, new_node_id, *, precomputed_result=None):
+         """Helper method to create a new FlowFrame that's a child of this one"""
+-        self._add_connection(self.node_id, new_node_id)
++        self._add_connection(
++            self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0")
++        )
+         # If a precomputed result was provided (e.g. serialization fallback),
+         # inject it into the node AFTER the connection is added (which resets the node).
+         if precomputed_result is not None:
+@@ -1185,6 +1205,109 @@ class FlowFrame:
+ 
+         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
+ 
++    def _build_filter_expression_string(
++        self, predicates: tuple, constraints: dict
++    ) -> str:
++        """Collapse predicates and constraints into a single Polars expression
++        string suitable for ``FilterInput.advanced_filter``. Mirrors the
++        assembly logic in ``filter()`` but returns the bare conditions string
++        (without the surrounding ``input_df.filter(...)`` wrapper)."""
++        available_columns = self.columns
++        pure_polars_expr_strings: list[str] = []
++
++        processed_predicates = []
++        for pred_item in predicates:
++            if isinstance(pred_item, tuple | list | Iterator):
++                processed_predicates.extend(list(pred_item))
++            else:
++                processed_predicates.append(pred_item)
++
++        for pred_input in processed_predicates:
++            if isinstance(pred_input, Expr):
++                current_expr_obj = pred_input
++            elif isinstance(pred_input, str) and pred_input in available_columns:
++                current_expr_obj = col(pred_input)
++            else:
++                current_expr_obj = lit(pred_input)
++            pure_expr_str, _ = _extract_expr_parts(current_expr_obj)
++            pure_polars_expr_strings.append(f"({pure_expr_str})")
++
++        for k, v_val in constraints.items():
++            constraint_expr_obj = col(k) == lit(v_val)
++            pure_expr_str, _ = _extract_expr_parts(constraint_expr_obj)
++            pure_polars_expr_strings.append(f"({pure_expr_str})")
++
++        return " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
++
++    def filter_split(
++        self,
++        *predicates: Expr | Any,
++        flowfile_formula: str | None = None,
++        description: str | None = None,
++        **constraints: Any,
++    ) -> tuple[FlowFrame, FlowFrame]:
++        """Split the frame by a predicate into (pass, fail) frames.
++
++        Rows matching the predicate are routed to the first (``pass``) frame
++        and the rest to the second (``fail``) frame. Rows where the predicate
++        evaluates to null are dropped from both (Polars ``filter`` semantics).
++
++        Args mirror :meth:`filter` — accept either positional polars
++        expressions, a ``flowfile_formula`` string, or keyword constraints.
++        Combinations of predicates and constraints are AND-ed together.
++        """
++        if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
++            raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
++
++        if flowfile_formula:
++            advanced_expr = flowfile_formula
++        elif len(predicates) > 0 or len(constraints) > 0:
++            advanced_expr = self._build_filter_expression_string(predicates, constraints)
++        else:
++            raise ValueError("filter_split requires at least one predicate, constraint, or flowfile_formula")
++
++        new_node_id = generate_node_id()
++        filter_settings = input_schema.NodeFilter(
++            flow_id=self.flow_graph.flow_id,
++            node_id=new_node_id,
++            filter_input=transform_schema.FilterInput(
++                advanced_filter=advanced_expr,
++                filter_type="advanced",
++            ),
++            pos_x=200,
++            pos_y=150,
++            is_setup=True,
++            depending_on_id=self.node_id,
++            description=description,
++            split_mode=True,
++        )
++        self.flow_graph.add_filter(filter_settings)
++        self._add_connection(
++            self.node_id,
++            new_node_id,
++            output_handle=getattr(self, "output_handle", "output-0"),
++        )
++
++        filter_node = self.flow_graph.get_node(new_node_id)
++        pass_engine = filter_node.get_output("output-0")
++        fail_engine = filter_node.get_output("output-1")
++
++        pass_frame = FlowFrame(
++            data=pass_engine.data_frame if pass_engine is not None else None,
++            flow_graph=self.flow_graph,
++            node_id=new_node_id,
++            parent_node_id=self.node_id,
++            output_handle="output-0",
++        )
++        fail_frame = FlowFrame(
++            data=fail_engine.data_frame if fail_engine is not None else None,
++            flow_graph=self.flow_graph,
++            node_id=new_node_id,
++            parent_node_id=self.node_id,
++            output_handle="output-1",
++        )
++        return pass_frame, fail_frame
++
+     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
+         """
+         Write the data to a CSV file.
+diff --git a/flowfile_frame/tests/test_flow_frame.py b/flowfile_frame/tests/test_flow_frame.py
+index e5c1fa1a..24507034 100644
+--- a/flowfile_frame/tests/test_flow_frame.py
++++ b/flowfile_frame/tests/test_flow_frame.py
+@@ -124,6 +124,59 @@ def test_filter():
+     assert result["name"][0] == "Eve"
+ 
+ 
++def test_filter_split_predicate():
++    """filter_split returns (pass, fail) frames partitioned by the predicate."""
++    data = {
++        "id": [1, 2, 3, 4, 5],
++        "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
++        "age": [25, 30, 35, 40, 45],
++    }
++    df = FlowFrame(data)
++    pass_df, fail_df = df.filter_split(col("age") > 30)
++
++    pass_result = pass_df.collect()
++    fail_result = fail_df.collect()
++    assert pass_result["name"].to_list() == ["Charlie", "David", "Eve"]
++    assert fail_result["name"].to_list() == ["Alice", "Bob"]
++    # Both frames wrap the same filter node but at different output handles.
++    assert pass_df.node_id == fail_df.node_id
++    assert pass_df.output_handle == "output-0"
++    assert fail_df.output_handle == "output-1"
++
++
++def test_filter_split_flowfile_formula():
++    """filter_split accepts flowfile_formula just like filter()."""
++    df = FlowFrame({"age": [25, 30, 35, 40, 45]})
++    pass_df, fail_df = df.filter_split(flowfile_formula="[age] > 40")
++    assert pass_df.collect()["age"].to_list() == [45]
++    assert fail_df.collect()["age"].to_list() == [25, 30, 35, 40]
++
++
++def test_filter_split_downstream_chain():
++    """Ops chained off pass/fail frames connect to the correct source handle."""
++    df = FlowFrame({"id": list(range(6)), "name": list("abcdef")})
++    pass_df, fail_df = df.filter_split(col("id") >= 3)
++
++    pass_chained = pass_df.select(col("name"))
++    fail_chained = fail_df.select(col("name"))
++
++    filter_node_id = pass_df.node_id
++    pass_node = pass_chained.flow_graph.get_node(pass_chained.node_id)
++    fail_node = fail_chained.flow_graph.get_node(fail_chained.node_id)
++    assert pass_node._input_output_handles[filter_node_id] == "output-0"
++    assert fail_node._input_output_handles[filter_node_id] == "output-1"
++
++    assert pass_chained.collect()["name"].to_list() == ["d", "e", "f"]
++    assert fail_chained.collect()["name"].to_list() == ["a", "b", "c"]
++
++
++def test_filter_split_requires_predicate():
++    """filter_split with no predicate/formula/constraint raises ValueError."""
++    df = FlowFrame({"id": [1, 2, 3]})
++    with pytest.raises(ValueError):
++        df.filter_split()
++
++
+ def test_sort():
+     """Test sorting a FlowFrame."""
+     from flowfile_core.schemas.input_schema import NodeSort
+diff --git a/flowfile_frontend/package.json b/flowfile_frontend/package.json
+index f87cd4b8..a9332148 100644
+--- a/flowfile_frontend/package.json
++++ b/flowfile_frontend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "Flowfile",
+-  "version": "0.9.1",
++  "version": "0.9.2",
+   "description": "A tool for designing and executing data flows",
+   "main": "main/main.js",
+   "scripts": {
+diff --git a/flowfile_frontend/src/renderer/app/components/nodes/node-types/elements/filter/Filter.vue b/flowfile_frontend/src/renderer/app/components/nodes/node-types/elements/filter/Filter.vue
+index c0295cfd..829aedb8 100644
+--- a/flowfile_frontend/src/renderer/app/components/nodes/node-types/elements/filter/Filter.vue
++++ b/flowfile_frontend/src/renderer/app/components/nodes/node-types/elements/filter/Filter.vue
+@@ -14,6 +14,17 @@
+             inactive-text="Basic filter"
+           />
+         </div>
++        <div class="split-mode-row">
++          <el-switch
++            v-model="splitModeEnabled"
++            active-text="Split into pass/fail outputs"
++            inactive-text="Single output"
++          />
++          <div class="split-mode-hint">
++            Emit matching rows on handle P (pass) and non-matching rows on
++            handle F (fail). Rows with a null predicate are dropped from both.
++          </div>
++        </div>
+         <div v-if="isAdvancedFilter">
+           Advanced filter
+           <mainEditorRef ref="editorChild" :editor-string="editorString" />
+@@ -79,15 +90,18 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-import { ref, computed } from "vue";
++import { ref, computed, nextTick, watch } from "vue";
++import { Position } from "@vue-flow/core";
+ import { CodeLoader } from "vue-content-loader";
+ 
+ import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
+ import { useNodeStore } from "../../../../../stores/node-store";
++import { useFlowStore } from "../../../../../stores/flow-store";
+ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+ import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
+ import { NodeFilter } from "../../../baseNode/nodeInput";
+ import { NodeData } from "../../../baseNode/nodeInterfaces";
++import { outputHandle } from "../../../../../utils/outputHandle";
+ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+ import {
+   FilterOperator,
+@@ -100,10 +114,27 @@ import {
+ const editorString = ref<string>("");
+ const isLoaded = ref<boolean>(false);
+ const isAdvancedFilter = ref<boolean>(false);
++const splitModeEnabled = ref<boolean>(false);
+ const nodeStore = useNodeStore();
++const flowStore = useFlowStore();
+ const nodeFilter = ref<NodeFilter | null>(null);
+ const nodeData = ref<NodeData | null>(null);
+ 
++const updateNodeOutputHandles = () => {
++  const vfInstance = flowStore.vueFlowInstance;
++  if (!vfInstance || !nodeFilter.value) return;
++  const vfNode = vfInstance.findNode(String(nodeFilter.value.node_id));
++  if (!vfNode) return;
++  if (splitModeEnabled.value) {
++    vfNode.data.outputs = [
++      { id: outputHandle(0), position: Position.Right, label: "P", title: "pass" },
++      { id: outputHandle(1), position: Position.Right, label: "F", title: "fail" },
++    ];
++  } else {
++    vfNode.data.outputs = [{ id: outputHandle(0), position: Position.Right }];
++  }
++};
++
+ // Use the standardized node settings composable
+ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
+   nodeRef: nodeFilter,
+@@ -118,11 +149,16 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
+         nodeFilter.value.filter_input.mode = "basic";
+         nodeFilter.value.filter_input.filter_type = "basic";
+       }
++      nodeFilter.value.split_mode = splitModeEnabled.value;
+     }
+     return true;
+   },
+ });
+ 
++watch(splitModeEnabled, () => {
++  updateNodeOutputHandles();
++});
++
+ interface EditorChildType {
+   showHideOptions: () => void;
+   showTools: boolean;
+@@ -250,6 +286,7 @@ const loadNodeData = async (nodeId: number) => {
+ 
+     const mode = nodeFilter.value?.filter_input.mode || nodeFilter.value?.filter_input.filter_type;
+     isAdvancedFilter.value = mode === "advanced";
++    splitModeEnabled.value = Boolean(nodeFilter.value?.split_mode);
+ 
+     // Migrate legacy basic_filter fields
+     if (nodeFilter.value?.filter_input.basic_filter) {
+@@ -266,6 +303,8 @@ const loadNodeData = async (nodeId: number) => {
+     }
+   }
+   isLoaded.value = true;
++  await nextTick();
++  updateNodeOutputHandles();
+ };
+ 
+ const updateAdvancedFilter = () => {
+@@ -336,4 +375,16 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
+ .x-flip {
+   transform: scaleX(-100%);
+ }
++
++.split-mode-row {
++  margin-top: 8px;
++  padding-top: 8px;
++  border-top: 1px dashed #e4e7ed;
++}
++
++.split-mode-hint {
++  margin-top: 4px;
++  font-size: 11px;
++  color: #64748b;
++}
+ </style>
+diff --git a/flowfile_frontend/src/renderer/app/types/node.types.ts b/flowfile_frontend/src/renderer/app/types/node.types.ts
+index fdaff8f8..829845ea 100644
+--- a/flowfile_frontend/src/renderer/app/types/node.types.ts
++++ b/flowfile_frontend/src/renderer/app/types/node.types.ts
+@@ -815,6 +815,7 @@ export interface NodeSelect extends NodeSingleInput {
+ 
+ export interface NodeFilter extends NodeSingleInput {
+   filter_input: FilterInput;
++  split_mode?: boolean;
+ }
+ 
+ export interface NodeGroupBy extends NodeSingleInput {
+diff --git a/pyproject.toml b/pyproject.toml
+index 3f114631..f118b7c4 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [tool.poetry]
+ name = "Flowfile"
+-version = "0.9.1"
++version = "0.9.2"
+ description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
+ readme = "readme-pypi.md"
+ authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
