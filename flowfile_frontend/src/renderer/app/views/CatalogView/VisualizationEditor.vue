@@ -52,6 +52,8 @@ import VueGraphicWalker from "../../components/nodes/node-types/elements/explore
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
+import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
+import { toPlainJson } from "../../utils/structuredClone";
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 
 const props = defineProps<{

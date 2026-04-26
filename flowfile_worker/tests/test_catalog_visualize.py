@@ -145,7 +145,6 @@ def test_eviction_kills_os_process(tmp_path):
 @pytest.mark.slow
 def test_two_session_keys_run_in_parallel(tmp_path):
     _setup_storage(tmp_path)
-    # Larger table so the polars-gw aggregation takes measurable time per request.
     big_df = pl.DataFrame(
         {
             "category": ["a", "b", "c", "d"] * 250_000,
@@ -156,30 +155,31 @@ def test_two_session_keys_run_in_parallel(tmp_path):
     big_dir.mkdir(parents=True, exist_ok=True)
     big_df.write_delta(str(big_dir))
     reg = VizSessionRegistry()
+    # Each call uses a fresh session_key so spawn + first-collect cost lands
+    # in the timing — polars caches subsequent agg calls down to microseconds,
+    # which would make a warmed comparison degenerate.
+    payload = _RAW_PAYLOAD
+    max_rows = 1_000_000
     try:
-        src1 = _physical_source("unit:par:1", "viz_par")
-        src2 = _physical_source("unit:par:2", "viz_par")
-        # Warm both children so spawn cost isn't in the timing.
-        reg.execute(src1, "execute", _AGG_PAYLOAD, 100)
-        reg.execute(src2, "execute", _AGG_PAYLOAD, 100)
-
-        # Measure each call's serial wallclock.
+        s1 = _physical_source("unit:par:s1", "viz_par")
         t0 = time.perf_counter()
-        reg.execute(src1, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(s1, "execute", payload, max_rows)
         t1 = time.perf_counter() - t0
+        s2 = _physical_source("unit:par:s2", "viz_par")
         t0 = time.perf_counter()
-        reg.execute(src2, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(s2, "execute", payload, max_rows)
         t2 = time.perf_counter() - t0
 
-        # Now run them in parallel.
-        results: list[float] = []
+        if t1 + t2 < 0.1:
+            pytest.skip(f"workload too fast to measure overlap: t1+t2={t1 + t2:.4f}s")
+
+        p1 = _physical_source("unit:par:p1", "viz_par")
+        p2 = _physical_source("unit:par:p2", "viz_par")
 
         def _run(src):
-            s = time.perf_counter()
-            reg.execute(src, "execute", _AGG_PAYLOAD, 100)
-            results.append(time.perf_counter() - s)
+            reg.execute(src, "execute", payload, max_rows)
 
-        threads = [threading.Thread(target=_run, args=(s,)) for s in (src1, src2)]
+        threads = [threading.Thread(target=_run, args=(s,)) for s in (p1, p2)]
         t_start = time.perf_counter()
         for t in threads:
             t.start()

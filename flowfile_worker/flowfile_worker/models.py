@@ -240,7 +240,7 @@ class ResolveVirtualTableResponse(BaseModel):
 class VizWorkerSource(BaseModel):
     """Source descriptor for a viz session.
 
-    The ``session_key`` is the cache key in ``VizSessionManager``; core builds
+    The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
     it deterministically (table_id+updated_at, sql hash, etc.) so successive
     requests against the same source skip the load step.
     """
