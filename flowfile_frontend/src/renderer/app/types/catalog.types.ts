@@ -21,7 +21,7 @@ export interface NamespaceTree extends CatalogNamespace {
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
   tables: CatalogTable[];
-  visualizations: VisualizationLibraryItem[];
+  visualizations: CatalogVisualization[];
 }
 
 export interface NamespaceCreate {
@@ -389,6 +389,8 @@ export interface CatalogVisualization {
   table_name?: string | null;
   table_namespace_name?: string | null;
   table_full_name?: string | null;
+  table_type?: string | null;
+  namespace_name?: string | null;
 }
 
 export interface VisualizationCreatePayload {
@@ -418,7 +420,7 @@ export interface VisualizationUpdatePayload {
 
 /** Source descriptor sent to the ad-hoc compute and fields endpoints. */
 export interface VizSourceDescriptor {
-  source_type: "table" | "sql";
+  source_type: VizSourceKind;
   table_id?: number | null;
   sql_query?: string | null;
 }
@@ -436,25 +438,4 @@ export interface VisualizationFieldsResponse {
   fields: Record<string, any>[];
   cache_hit: boolean;
   error: string | null;
-}
-
-export interface VisualizationLibraryItem {
-  id: number;
-  name: string;
-  description: string | null;
-  chart_type: string | null;
-  spec_gw_version: string | null;
-  source_type: VizSourceKind;
-  catalog_table_id: number | null;
-  sql_query: string | null;
-  namespace_id: number | null;
-  thumbnail_data_url: string | null;
-  created_by: number | null;
-  created_at: string;
-  updated_at: string;
-  table_name: string | null;
-  table_namespace_name: string | null;
-  table_full_name: string | null;
-  table_type: string | null;
-  namespace_name: string | null;
 }

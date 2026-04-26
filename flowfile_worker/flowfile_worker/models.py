@@ -160,9 +160,7 @@ class CatalogMaterializeRequest(BaseModel):
 
 
 class CatalogMaterializeResponse(BaseModel):
-    parquet_path: str | None = None  # Legacy field for backward compat
     table_path: str
-    storage_format: str = "delta"  # "delta" or "parquet"
     schema: list[ColumnSchema]
     row_count: int
     column_count: int
@@ -170,8 +168,7 @@ class CatalogMaterializeResponse(BaseModel):
 
 
 class TableMetadataRequest(BaseModel):
-    table_path: str  # Bare table directory/file name (no path separators)
-    storage_format: str = "delta"  # "delta" or "parquet"
+    table_path: str  # Bare table directory name (no path separators)
 
 
 class TableMetadataResponse(BaseModel):
@@ -209,7 +206,7 @@ class SqlQueryRequest(BaseModel):
     query: str
     tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
-    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64-encoded IPC bytes
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename under catalog_virtual_results
 
 
 class SqlQueryResponse(BaseModel):
@@ -248,7 +245,6 @@ class VizWorkerSource(BaseModel):
     kind: Literal["physical", "sql", "ipc_path"]
     session_key: str
     table_path: str | None = None  # bare directory name for kind="physical"
-    storage_format: Literal["delta", "parquet"] | None = None
     sql_query: str | None = None
     tables: dict[str, str] | None = None  # logical name -> directory name (kind="sql")
     virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")

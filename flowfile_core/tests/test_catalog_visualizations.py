@@ -27,20 +27,13 @@ from flowfile_core.database.models import (
 )
 
 
-def _get_auth_token() -> str:
-    with TestClient(main.app) as c:
-        response = c.post("/auth/token")
-        return response.json()["access_token"]
-
-
-def _get_test_client() -> TestClient:
-    token = _get_auth_token()
+@pytest.fixture(scope="session")
+def client() -> TestClient:
+    with TestClient(main.app) as auth_c:
+        token = auth_c.post("/auth/token").json()["access_token"]
     c = TestClient(main.app)
     c.headers = {"Authorization": f"Bearer {token}"}
     return c
-
-
-client = _get_test_client()
 
 
 def _cleanup_catalog():
@@ -101,7 +94,7 @@ SAMPLE_SPEC = [SAMPLE_CHART]
 
 
 class TestVisualizationCRUD:
-    def test_create_table_source_and_list(self):
+    def test_create_table_source_and_list(self, client):
         table_id = _make_table()
         resp = client.post(
             "/catalog/visualizations",
@@ -125,6 +118,9 @@ class TestVisualizationCRUD:
         # render "ns.tablename" without a second round-trip.
         assert body["table_name"] == "t1"
         assert body["table_full_name"].endswith("t1")
+        # Single-row endpoints also populate table_type / namespace_name now.
+        assert body["table_type"] == "physical"
+        assert body["namespace_name"] == body["table_namespace_name"]
 
         # Library listing returns it.
         lib = client.get("/catalog/visualizations")
@@ -133,8 +129,10 @@ class TestVisualizationCRUD:
         assert len(items) == 1
         assert items[0]["id"] == body["id"]
         assert items[0]["table_name"] == "t1"
+        assert items[0]["table_type"] == "physical"
+        assert items[0]["namespace_name"] == items[0]["table_namespace_name"]
 
-    def test_create_sql_source_no_table(self):
+    def test_create_sql_source_no_table(self, client):
         resp = client.post(
             "/catalog/visualizations",
             json={
@@ -150,7 +148,7 @@ class TestVisualizationCRUD:
         assert body["catalog_table_id"] is None
         assert body["sql_query"] == "SELECT 1 AS x"
 
-    def test_multi_chart_spec_round_trip(self):
+    def test_multi_chart_spec_round_trip(self, client):
         """exportCode() returns one IChart per GW tab; we round-trip the array."""
         table_id = _make_table()
         chart_a = {**SAMPLE_CHART, "name": "chart A"}
@@ -169,7 +167,7 @@ class TestVisualizationCRUD:
         got = client.get(f"/catalog/visualizations/{viz_id}").json()
         assert got["spec"] == [chart_a, chart_b]
 
-    def test_legacy_single_dict_spec_is_coerced(self):
+    def test_legacy_single_dict_spec_is_coerced(self, client):
         """008-era rows store a single IChart dict; reads coerce to a list."""
         with get_db_context() as db:
             ns = CatalogNamespace(name="LegacyNs", parent_id=None, level=0, owner_id=1)
@@ -192,14 +190,14 @@ class TestVisualizationCRUD:
         assert isinstance(got["spec"], list)
         assert got["spec"] == [SAMPLE_CHART]
 
-    def test_create_sql_source_missing_query_returns_422(self):
+    def test_create_sql_source_missing_query_returns_422(self, client):
         resp = client.post(
             "/catalog/visualizations",
             json={"name": "x", "spec": SAMPLE_SPEC, "source_type": "sql"},
         )
         assert resp.status_code == 422
 
-    def test_update_name_and_spec(self):
+    def test_update_name_and_spec(self, client):
         table_id = _make_table()
         created = client.post(
             "/catalog/visualizations",
@@ -220,14 +218,78 @@ class TestVisualizationCRUD:
         assert body["name"] == "v1-renamed"
         assert body["spec"] == new_spec
 
-    def test_update_unknown_returns_404(self):
+    def test_update_unknown_returns_404(self, client):
         resp = client.put(
             "/catalog/visualizations/99999",
             json={"name": "renamed"},
         )
         assert resp.status_code == 404
 
-    def test_delete(self):
+    def _create_with_description(self, client, table_id: int, description: str = "orig") -> int:
+        return client.post(
+            "/catalog/visualizations",
+            json={
+                "name": "patch-test",
+                "description": description,
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
+        ).json()["id"]
+
+    def test_update_description_omit_leaves_unchanged(self, client):
+        table_id = _make_table()
+        viz_id = self._create_with_description(client, table_id, "orig")
+        resp = client.put(f"/catalog/visualizations/{viz_id}", json={"name": "renamed"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["description"] == "orig"
+
+    def test_update_description_null_clears(self, client):
+        table_id = _make_table()
+        viz_id = self._create_with_description(client, table_id, "orig")
+        resp = client.put(
+            f"/catalog/visualizations/{viz_id}", json={"description": None}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["description"] is None
+
+    def test_update_description_value_overwrites(self, client):
+        table_id = _make_table()
+        viz_id = self._create_with_description(client, table_id, "orig")
+        resp = client.put(
+            f"/catalog/visualizations/{viz_id}", json={"description": "new"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["description"] == "new"
+
+    def test_update_thumbnail_null_clears(self, client):
+        table_id = _make_table()
+        thumb = "data:image/png;base64,iVBORw0KGgo="
+        viz_id = client.post(
+            "/catalog/visualizations",
+            json={
+                "name": "thumb-clear",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+                "thumbnail_data_url": thumb,
+            },
+        ).json()["id"]
+        # Sanity: thumb is set.
+        assert client.get(f"/catalog/visualizations/{viz_id}").json()["thumbnail_data_url"] == thumb
+        resp = client.put(
+            f"/catalog/visualizations/{viz_id}", json={"thumbnail_data_url": None}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["thumbnail_data_url"] is None
+
+    def test_update_name_null_returns_422(self, client):
+        table_id = _make_table()
+        viz_id = self._create_with_description(client, table_id)
+        resp = client.put(f"/catalog/visualizations/{viz_id}", json={"name": None})
+        assert resp.status_code == 422
+
+    def test_delete(self, client):
         table_id = _make_table()
         viz = client.post(
             "/catalog/visualizations",
@@ -238,16 +300,12 @@ class TestVisualizationCRUD:
                 "catalog_table_id": table_id,
             },
         ).json()
-        with patch(
-            "flowfile_core.catalog.service.trigger_visualize_evict",
-            return_value=None,
-        ):
-            resp = client.delete(f"/catalog/visualizations/{viz['id']}")
+        resp = client.delete(f"/catalog/visualizations/{viz['id']}")
         assert resp.status_code == 204
         list_resp = client.get("/catalog/visualizations")
         assert list_resp.json() == []
 
-    def test_table_filtered_listing(self):
+    def test_table_filtered_listing(self, client):
         table_id = _make_table()
         client.post(
             "/catalog/visualizations",
@@ -264,7 +322,7 @@ class TestVisualizationCRUD:
 
 
 class TestVisualizationCompute:
-    def test_compute_saved_dispatches_with_table_session_key(self):
+    def test_compute_saved_dispatches_with_table_session_key(self, client):
         table_id = _make_table()
         viz = client.post(
             "/catalog/visualizations",
@@ -309,7 +367,7 @@ class TestVisualizationCompute:
         assert captured["source"]["session_key"].startswith(f"tbl:{table_id}:")
         assert captured["max_rows"] == 1000
 
-    def test_compute_saved_for_sql_source(self):
+    def test_compute_saved_for_sql_source(self, client):
         viz = client.post(
             "/catalog/visualizations",
             json={
@@ -341,7 +399,7 @@ class TestVisualizationCompute:
         assert resp.status_code == 200, resp.text
         assert captured["source"]["kind"] == "sql"
 
-    def test_compute_ad_hoc_with_table_source(self):
+    def test_compute_ad_hoc_with_table_source(self, client):
         table_id = _make_table()
         captured: dict = {}
 
@@ -373,7 +431,7 @@ class TestVisualizationCompute:
         assert captured["source"]["kind"] == "physical"
         assert captured["source"]["session_key"].startswith(f"tbl:{table_id}:")
 
-    def test_compute_flow_virtual_table_ships_ipc_path(self):
+    def test_compute_flow_virtual_table_ships_ipc_path(self, client):
         """Flow-virtual tables ship an ipc_path reference, not inline bytes."""
         import polars as pl
         from flowfile_core.catalog import service as svc_module

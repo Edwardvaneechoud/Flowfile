@@ -216,17 +216,18 @@ def trigger_sql_query(
     query: str,
     tables: dict[str, str],
     max_rows: int = 10_000,
-    virtual_ipc: dict[str, str] | None = None,
+    virtual_refs: dict[str, str] | None = None,
 ) -> dict:
     """Ask the worker to execute a SQL query against catalog tables.
 
     *tables* is a mapping of logical table name -> directory name.
-    *virtual_ipc* is an optional mapping of virtual table name -> base64-encoded IPC bytes.
+    *virtual_refs* is an optional mapping of virtual table name -> bare IPC
+    filename under the worker's catalog_virtual_results directory.
     Returns the parsed JSON response dict.
     """
     payload: dict = {"query": query, "tables": tables, "max_rows": max_rows}
-    if virtual_ipc:
-        payload["virtual_tables_ipc"] = virtual_ipc
+    if virtual_refs:
+        payload["virtual_refs"] = virtual_refs
     response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
@@ -314,18 +315,15 @@ def trigger_visualize_evict(session_key: str) -> None:
         raise RuntimeError(f"Worker visualize_evict failed: {response.text}")
 
 
-def trigger_read_table_metadata(
-    table_name: str,
-    storage_format: str = "delta",
-) -> dict:
+def trigger_read_table_metadata(table_name: str) -> dict:
     """Ask the worker to read table metadata (schema, row_count, size_bytes).
 
-    *table_name* is the bare directory/file name inside the catalog tables
+    *table_name* is the bare directory name inside the catalog tables
     directory (no path separators).
 
     Returns the parsed JSON dict on success, raises on failure.
     """
-    payload = {"table_path": table_name, "storage_format": storage_format}
+    payload = {"table_path": table_name}
     response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")

@@ -875,7 +875,6 @@ class TestMaterializeWorkerDeltaResponse:
 
         response_payload = {
             "table_path": "/tmp/delta_out",
-            "storage_format": "delta",
             "schema": [{"name": "col_x", "dtype": "Float64"}],
             "row_count": 42,
             "column_count": 1,
@@ -908,43 +907,6 @@ class TestMaterializeWorkerDeltaResponse:
         assert table_out.row_count == 42
         assert table_out.size_bytes == 9999
         assert table_out.schema_columns[0].name == "col_x"
-
-    def test_register_table_backward_compat_parquet_path(self, monkeypatch):
-        """Worker returning only parquet_path (no table_path) should still work."""
-        _, schema_id = _make_namespace()
-
-        response_payload = {
-            "parquet_path": "/tmp/legacy.parquet",
-            "schema": [{"name": "id", "dtype": "Int64"}],
-            "row_count": 10,
-            "column_count": 1,
-            "size_bytes": 500,
-        }
-
-        class FakeResponse:
-            ok = True
-            status_code = 200
-            text = ""
-
-            def json(self):
-                return response_payload
-
-        monkeypatch.setattr(
-            "flowfile_core.catalog.service.trigger_catalog_materialize",
-            lambda *args, **kwargs: FakeResponse(),
-        )
-
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            svc = CatalogService(repo)
-            table_out = svc.register_table(
-                name="legacy_worker_table",
-                file_path="/tmp/source.csv",
-                owner_id=1,
-                namespace_id=schema_id,
-            )
-
-        assert table_out.row_count == 10
 
 
 # ---------------------------------------------------------------------------

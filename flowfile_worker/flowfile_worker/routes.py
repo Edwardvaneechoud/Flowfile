@@ -456,7 +456,7 @@ def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryRespons
             payload.query,
             payload.tables,
             payload.max_rows,
-            virtual_tables_ipc=payload.virtual_tables_ipc,
+            virtual_refs=payload.virtual_refs,
         )
         return models.SqlQueryResponse(**result)
     except ValueError as e:
@@ -520,11 +520,8 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
 
         result = queue.get(timeout=5)
         schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
-        table_path = result.get("table_path", result.get("parquet_path"))
         return models.CatalogMaterializeResponse(
-            table_path=table_path,
-            parquet_path=table_path,  # backward compat
-            storage_format=result.get("storage_format", "delta"),
+            table_path=result["table_path"],
             schema=schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
@@ -543,7 +540,7 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
     """
     try:
         _validate_catalog_path(payload.table_path)
-        result = funcs.read_table_metadata(payload.table_path, payload.storage_format)
+        result = funcs.read_table_metadata(payload.table_path)
         schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.TableMetadataResponse(
             schema=schema,

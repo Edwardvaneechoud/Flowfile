@@ -66,14 +66,22 @@
       <el-alert :title="errorMessage" type="error" :closable="false" show-icon />
     </div>
 
-    <VueGraphicWalker
-      v-else
-      ref="gwRef"
-      :computation="computeOnWorker"
-      :fields="plainFields"
-      :spec-list="plainSpecList"
-      :appearance="appearance"
-    />
+    <template v-else>
+      <el-alert
+        v-if="computeError"
+        :title="computeError"
+        type="error"
+        :closable="false"
+        show-icon
+      />
+      <VueGraphicWalker
+        ref="gwRef"
+        :computation="computeOnWorker"
+        :fields="plainFields"
+        :spec-list="plainSpecList"
+        :appearance="appearance"
+      />
+    </template>
   </div>
 </template>
 
@@ -87,7 +95,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
-import type { CatalogVisualization } from "../../types";
+import type { CatalogVisualization, VisualizationUpdatePayload } from "../../types";
 
 const props = defineProps<{
   vizId: number;
@@ -117,7 +125,7 @@ const SAMPLE_ROWS = 100_000;
 // Every aggregation the user builds in the chart is POSTed straight to the
 // worker via /catalog/visualizations/{id}/compute. The worker session cache
 // keeps the source LazyFrame warm so successive aggregations skip the load.
-const { computation: computeOnWorker } = useGraphicWalkerCompute(
+const { computation: computeOnWorker, lastError: computeError } = useGraphicWalkerCompute(
   (payload) =>
     CatalogApi.computeSavedVisualization(props.vizId, {
       payload,
@@ -206,11 +214,12 @@ async function onSave() {
   const thumbnail_data_url = await captureThumbnail(gwRef);
   saving.value = true;
   try {
-    const updated = await store.updateVisualization(props.vizId, {
+    const updatePayload: VisualizationUpdatePayload = {
       spec: charts as Record<string, any>[],
       namespace_id: namespaceDraft.value,
-      thumbnail_data_url,
-    });
+    };
+    if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
+    const updated = await store.updateVisualization(props.vizId, updatePayload);
     viz.value = updated;
     namespaceDraft.value = updated.namespace_id ?? null;
     ElMessage.success("Saved chart updates");

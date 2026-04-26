@@ -86,3 +86,6 @@ test-embed
 # Local remote-image compose setup
 /docker-remote/
 
+# Local review artefacts
+/diff.txt
+

@@ -19,6 +19,7 @@
         <i :class="isFullscreen ? 'fa-solid fa-compress' : 'fa-solid fa-expand'"></i>
       </button>
     </div>
+    <el-alert v-if="computeError" :title="computeError" type="error" :closable="false" show-icon />
     <VueGraphicWalker
       ref="vueGraphicWalkerRef"
       :computation="useWorkerCompute ? computeOnWorker : undefined"
@@ -186,14 +187,17 @@ const gwFields = computed<IMutField[]>(() =>
  */
 const useWorkerCompute = computed(() => !!props.sourceQuery);
 
-const { computation: computeOnWorker } = useGraphicWalkerCompute(async (payload) => {
-  if (!props.sourceQuery) return { rows: [], error: null };
-  return CatalogApi.computeAdHocVisualization(
-    { source_type: "sql", sql_query: props.sourceQuery },
-    payload,
-    100_000,
-  );
-}, "sql-explore");
+const { computation: computeOnWorker, lastError: computeError } = useGraphicWalkerCompute(
+  async (payload) => {
+    if (!props.sourceQuery) return { rows: [], error: null };
+    return CatalogApi.computeAdHocVisualization(
+      { source_type: "sql", sql_query: props.sourceQuery },
+      payload,
+      100_000,
+    );
+  },
+  "sql-explore",
+);
 
 const gwData = computed<IRow[]>(() =>
   props.result.rows.map((row) => {

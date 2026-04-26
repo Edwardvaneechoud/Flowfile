@@ -33,14 +33,22 @@
       <el-alert :title="loadError" type="error" :closable="false" show-icon />
     </div>
 
-    <VueGraphicWalker
-      v-else
-      ref="gwRef"
-      :computation="computeOnWorker"
-      :fields="plainFields"
-      :spec-list="plainInitialSpecList"
-      :appearance="appearance"
-    />
+    <template v-else>
+      <el-alert
+        v-if="computeError"
+        :title="computeError"
+        type="error"
+        :closable="false"
+        show-icon
+      />
+      <VueGraphicWalker
+        ref="gwRef"
+        :computation="computeOnWorker"
+        :fields="plainFields"
+        :spec-list="plainInitialSpecList"
+        :appearance="appearance"
+      />
+    </template>
   </div>
 </template>
 
@@ -54,7 +62,12 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
-import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
+import type {
+  CatalogVisualization,
+  VisualizationCreatePayload,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
+} from "../../types";
 
 const props = defineProps<{
   source: VizSourceDescriptor;
@@ -93,7 +106,7 @@ const SAMPLE_ROWS = 5_000;
 // Every chart aggregation in GraphicWalker is forwarded as an
 // IDataQueryPayload to the ad-hoc compute endpoint; the worker resolves the
 // source once into its session cache and runs polars-gw on top.
-const { computation: computeOnWorker } = useGraphicWalkerCompute(
+const { computation: computeOnWorker, lastError: computeError } = useGraphicWalkerCompute(
   (payload) => CatalogApi.computeAdHocVisualization(props.source, payload, SAMPLE_ROWS),
   "ad-hoc",
 );
@@ -142,21 +155,23 @@ const save = async () => {
   try {
     let saved: CatalogVisualization;
     if (isExistingViz(props.viz)) {
-      saved = await store.updateVisualization(props.viz.id, {
+      const updatePayload: VisualizationUpdatePayload = {
         name: name.value.trim(),
         spec,
-        thumbnail_data_url,
-      });
+      };
+      if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
+      saved = await store.updateVisualization(props.viz.id, updatePayload);
     } else {
-      saved = await store.createVisualization({
+      const createPayload: VisualizationCreatePayload = {
         name: name.value.trim(),
         spec,
         source_type: props.source.source_type,
         catalog_table_id:
           props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
         sql_query: props.source.source_type === "sql" ? (props.source.sql_query ?? null) : null,
-        thumbnail_data_url,
-      });
+      };
+      if (thumbnail_data_url) createPayload.thumbnail_data_url = thumbnail_data_url;
+      saved = await store.createVisualization(createPayload);
     }
     ElMessage.success(`Saved "${saved.name}"`);
     emit("saved", saved);

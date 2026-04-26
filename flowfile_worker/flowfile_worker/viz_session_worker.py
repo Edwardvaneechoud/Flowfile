@@ -14,10 +14,10 @@ import polars as pl
 import polars_gw
 
 from flowfile_worker import models
-from flowfile_worker.funcs import _validate_catalog_path, _validate_virtual_results_path
+from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
 from shared.delta_utils import make_json_safe
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__).getChild("viz")
 
 
 def _build_sql_lazyframe_in_child(
@@ -27,14 +27,10 @@ def _build_sql_lazyframe_in_child(
 ) -> pl.LazyFrame:
     ctx = pl.SQLContext()
     for name, dir_name in (tables or {}).items():
-        p = _validate_catalog_path(dir_name)
-        if not p.is_dir() or not (p / "_delta_log").is_dir():
-            raise ValueError(f"Table '{name}' is not a valid Delta table")
-        ctx.register(name, pl.scan_delta(str(p)))
+        ctx.register(name, open_catalog_table(dir_name))
     if virtual_refs:
         for name, ipc_name in virtual_refs.items():
-            p = _validate_virtual_results_path(ipc_name)
-            ctx.register(name, pl.scan_ipc(str(p)))
+            ctx.register(name, open_virtual_result(ipc_name))
     return ctx.execute(sql_query)
 
 
@@ -42,11 +38,7 @@ def _build_viz_loader_in_child(source: models.VizWorkerSource) -> pl.LazyFrame:
     if source.kind == "physical":
         if source.table_path is None:
             raise ValueError("table_path is required for physical source")
-        p = _validate_catalog_path(source.table_path)
-        storage_format = source.storage_format or "delta"
-        if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
-            return pl.scan_delta(str(p))
-        return pl.scan_parquet(p)
+        return open_catalog_table(source.table_path)
     if source.kind == "sql":
         if not source.sql_query:
             raise ValueError("sql_query is required for sql source")
@@ -54,8 +46,7 @@ def _build_viz_loader_in_child(source: models.VizWorkerSource) -> pl.LazyFrame:
     if source.kind == "ipc_path":
         if not source.ipc_path:
             raise ValueError("ipc_path is required for ipc_path source")
-        p = _validate_virtual_results_path(source.ipc_path)
-        return pl.scan_ipc(str(p))
+        return open_virtual_result(source.ipc_path)
     raise ValueError(f"Unknown viz source kind: {source.kind}")
 
 
@@ -93,7 +84,7 @@ def viz_session_main(source: dict[str, Any], request_q, response_q) -> None:
         return
     load_ms = (time.perf_counter() - load_start) * 1000
     logger.info(
-        "[viz-child] session ready key=%s polars_gw=%s load_ms=%.1f",
+        "session ready key=%s polars_gw=%s load_ms=%.1f",
         viz_source.session_key,
         getattr(polars_gw, "__version__", "?"),
         load_ms,

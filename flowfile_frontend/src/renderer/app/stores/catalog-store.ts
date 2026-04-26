@@ -17,7 +17,6 @@ import type {
   NamespaceTree,
   SchedulerStatus,
   VisualizationCreatePayload,
-  VisualizationLibraryItem,
   VisualizationUpdatePayload,
   VizSourceDescriptor,
 } from "../types";
@@ -70,7 +69,7 @@ interface CatalogState {
   visualizationsByTable: Record<number, CatalogVisualization[]>;
   visualizationFieldsBySource: Record<string, Record<string, any>[]>;
   loadingVisualizations: boolean;
-  visualizationLibrary: VisualizationLibraryItem[];
+  visualizationLibrary: CatalogVisualization[];
   loadingVisualizationLibrary: boolean;
 }
 

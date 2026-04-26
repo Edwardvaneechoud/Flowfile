@@ -45,7 +45,7 @@ class NamespaceTree(NamespaceOut):
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
-    visualizations: list["VisualizationLibraryItem"] = Field(default_factory=list)
+    visualizations: list["VisualizationOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -391,7 +391,7 @@ class VisualizationOut(BaseModel):
     chart_type: str | None = None
     spec: list[dict] = Field(default_factory=list)
     spec_gw_version: str | None = None
-    source_type: str
+    source_type: Literal["table", "sql"]
     catalog_table_id: int | None = None
     sql_query: str | None = None
     namespace_id: int | None = None
@@ -404,6 +404,8 @@ class VisualizationOut(BaseModel):
     table_name: str | None = None
     table_namespace_name: str | None = None
     table_full_name: str | None = None
+    table_type: str | None = None
+    namespace_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -463,33 +465,6 @@ class VisualizationFieldsResponse(BaseModel):
     fields: list[dict] = Field(default_factory=list)
     cache_hit: bool = False
     error: str | None = None
-
-
-class VisualizationLibraryItem(BaseModel):
-    """Catalog-wide listing entry. Includes parent table / namespace info
-    when the viz references one; ``source_type="sql"`` viz carry only the
-    namespace and the inline SQL."""
-
-    id: int
-    name: str
-    description: str | None = None
-    chart_type: str | None = None
-    spec_gw_version: str | None = None
-    source_type: str
-    catalog_table_id: int | None = None
-    sql_query: str | None = None
-    namespace_id: int | None = None
-    thumbnail_data_url: str | None = None
-    created_by: int | None = None
-    created_at: datetime
-    updated_at: datetime
-    table_name: str | None = None
-    table_namespace_name: str | None = None
-    table_full_name: str | None = None
-    table_type: str | None = None
-    namespace_name: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Catalog Overview ====================

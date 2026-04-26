@@ -53,7 +53,6 @@ def _physical_source(session_key: str, table_path: str) -> models.VizWorkerSourc
         kind="physical",
         session_key=session_key,
         table_path=table_path,
-        storage_format="delta",
     )
 
 
@@ -239,7 +238,6 @@ def test_child_crash_propagates_as_5xx(tmp_path):
             "kind": "physical",
             "session_key": "test:crash:1",
             "table_path": "does_not_exist_xyz",
-            "storage_format": "delta",
         },
         "payload": _AGG_PAYLOAD,
     }
@@ -264,7 +262,6 @@ def test_value_error_propagates_as_response_error(tmp_path):
             "kind": "physical",
             "session_key": "test:bad-payload:1",
             "table_path": table_dir,
-            "storage_format": "delta",
         },
         "payload": {"workflow": "this is not a valid workflow"},
     }
@@ -303,7 +300,6 @@ def test_visualize_stats_shape(tmp_path):
             "kind": "physical",
             "session_key": "test:stats:1",
             "table_path": table_dir,
-            "storage_format": "delta",
         },
         "payload": _AGG_PAYLOAD,
     }
@@ -400,8 +396,7 @@ def test_polars_gw_not_in_parent_sys_modules(tmp_path):
                 "kind": "physical",
                 "session_key": "test:gw_leak:1",
                 "table_path": table_dir,
-                "storage_format": "delta",
-            },
+                },
             "payload": _AGG_PAYLOAD,
         },
     )
@@ -428,7 +423,6 @@ def test_visualize_query_endpoint_physical_delta(tmp_path):
             "kind": "physical",
             "session_key": "test:phys:1",
             "table_path": table_dir,
-            "storage_format": "delta",
         },
         "payload": _AGG_PAYLOAD,
     }
@@ -459,7 +453,6 @@ def test_visualize_fields_endpoint_returns_imutfields(tmp_path):
             "kind": "physical",
             "session_key": "test:fields:1",
             "table_path": table_dir,
-            "storage_format": "delta",
         }
     }
     r = client.post("/catalog/visualize_fields", json=body)
@@ -546,8 +539,7 @@ def test_visualize_evict_endpoint(tmp_path):
                 "kind": "physical",
                 "session_key": "evict:1",
                 "table_path": "viz_test",
-                "storage_format": "delta",
-            },
+                },
             "payload": _RAW_PAYLOAD,
         },
     )

@@ -88,7 +88,6 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationCreate,
     VisualizationFieldsRequest,
     VisualizationFieldsResponse,
-    VisualizationLibraryItem,
     VisualizationOut,
     VisualizationSavedComputeRequest,
     VisualizationUpdate,
@@ -642,7 +641,7 @@ def remove_table_favorite(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/visualizations", response_model=list[VisualizationLibraryItem])
+@router.get("/visualizations", response_model=list[VisualizationOut])
 @handle_catalog_exceptions()
 def list_visualization_library(
     current_user=Depends(get_current_active_user),
@@ -816,23 +815,16 @@ def update_virtual_flow_table(
     )
 
 
-@router.post("/virtual-tables/{table_id}/resolve")
+@router.post("/virtual-tables/{table_id}/resolve", response_model=CatalogTablePreview)
 @handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
 def resolve_virtual_flow_table(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
-):
+) -> CatalogTablePreview:
     """Resolve a virtual flow table and return a preview of the result."""
-    lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
-    df = lf.head(limit).collect()
-    return {
-        "columns": df.columns,
-        "dtypes": [str(dt) for dt in df.dtypes],
-        "rows": df.rows(),
-        "total_rows": df.height,
-    }
+    return service.resolve_virtual_flow_table_preview(table_id, limit, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------

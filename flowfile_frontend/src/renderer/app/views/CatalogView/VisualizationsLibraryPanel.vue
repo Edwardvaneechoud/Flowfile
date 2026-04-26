@@ -115,7 +115,7 @@ import { Delete, Edit, FolderOpened, MoreFilled, Search } from "@element-plus/ic
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { formatDate } from "./catalog-formatters";
-import type { VisualizationLibraryItem } from "../../types";
+import type { CatalogVisualization } from "../../types";
 import VisualizationViewer from "./VisualizationViewer.vue";
 
 const emit = defineEmits<{
@@ -127,20 +127,20 @@ const appearance = useGraphicWalkerAppearance();
 
 const search = ref("");
 const viewerOpen = ref(false);
-const active = ref<VisualizationLibraryItem | null>(null);
+const active = ref<CatalogVisualization | null>(null);
 
 const loading = computed(
   () => store.loadingVisualizationLibrary && !store.visualizationLibrary.length,
 );
 
-function sourceLabel(item: VisualizationLibraryItem): string {
+function sourceLabel(item: CatalogVisualization): string {
   if (item.source_type === "sql") {
     return item.namespace_name ? `SQL · ${item.namespace_name}` : "SQL query";
   }
   return item.table_full_name ?? "Catalog table";
 }
 
-const filtered = computed<VisualizationLibraryItem[]>(() => {
+const filtered = computed<CatalogVisualization[]>(() => {
   const q = search.value.trim().toLowerCase();
   if (!q) return store.visualizationLibrary;
   return store.visualizationLibrary.filter((it) => {
@@ -157,7 +157,7 @@ const filtered = computed<VisualizationLibraryItem[]>(() => {
   });
 });
 
-function openViz(item: VisualizationLibraryItem) {
+function openViz(item: CatalogVisualization) {
   active.value = item;
   viewerOpen.value = true;
 }
@@ -170,7 +170,7 @@ function closeViewer() {
     .catch((err) => console.warn("[catalog] viz library refresh failed", err));
 }
 
-async function onDelete(item: VisualizationLibraryItem) {
+async function onDelete(item: CatalogVisualization) {
   try {
     await ElMessageBox.confirm(`Delete visualization "${item.name}"?`, "Confirm delete", {
       type: "warning",
