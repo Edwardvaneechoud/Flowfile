@@ -124,6 +124,59 @@ def test_filter():
     assert result["name"][0] == "Eve"
 
 
+def test_filter_split_predicate():
+    """filter_split returns (pass, fail) frames partitioned by the predicate."""
+    data = {
+        "id": [1, 2, 3, 4, 5],
+        "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+        "age": [25, 30, 35, 40, 45],
+    }
+    df = FlowFrame(data)
+    pass_df, fail_df = df.filter_split(col("age") > 30)
+
+    pass_result = pass_df.collect()
+    fail_result = fail_df.collect()
+    assert pass_result["name"].to_list() == ["Charlie", "David", "Eve"]
+    assert fail_result["name"].to_list() == ["Alice", "Bob"]
+    # Both frames wrap the same filter node but at different output handles.
+    assert pass_df.node_id == fail_df.node_id
+    assert pass_df.output_handle == "output-0"
+    assert fail_df.output_handle == "output-1"
+
+
+def test_filter_split_flowfile_formula():
+    """filter_split accepts flowfile_formula just like filter()."""
+    df = FlowFrame({"age": [25, 30, 35, 40, 45]})
+    pass_df, fail_df = df.filter_split(flowfile_formula="[age] > 40")
+    assert pass_df.collect()["age"].to_list() == [45]
+    assert fail_df.collect()["age"].to_list() == [25, 30, 35, 40]
+
+
+def test_filter_split_downstream_chain():
+    """Ops chained off pass/fail frames connect to the correct source handle."""
+    df = FlowFrame({"id": list(range(6)), "name": list("abcdef")})
+    pass_df, fail_df = df.filter_split(col("id") >= 3)
+
+    pass_chained = pass_df.select(col("name"))
+    fail_chained = fail_df.select(col("name"))
+
+    filter_node_id = pass_df.node_id
+    pass_node = pass_chained.flow_graph.get_node(pass_chained.node_id)
+    fail_node = fail_chained.flow_graph.get_node(fail_chained.node_id)
+    assert pass_node._input_output_handles[filter_node_id] == "output-0"
+    assert fail_node._input_output_handles[filter_node_id] == "output-1"
+
+    assert pass_chained.collect()["name"].to_list() == ["d", "e", "f"]
+    assert fail_chained.collect()["name"].to_list() == ["a", "b", "c"]
+
+
+def test_filter_split_requires_predicate():
+    """filter_split with no predicate/formula/constraint raises ValueError."""
+    df = FlowFrame({"id": [1, 2, 3]})
+    with pytest.raises(ValueError):
+        df.filter_split()
+
+
 def test_sort():
     """Test sorting a FlowFrame."""
     from flowfile_core.schemas.input_schema import NodeSort

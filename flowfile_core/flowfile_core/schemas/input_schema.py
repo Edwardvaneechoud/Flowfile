@@ -467,6 +467,10 @@ class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
 
     filter_input: transform_schema.FilterInput
+    # When True the node emits two outputs: "pass" (output-0, matching rows)
+    # and "fail" (output-1, non-matching rows). Default preserves
+    # single-output behaviour for existing flows.
+    split_mode: bool = False
 
     def get_default_description(self) -> str:
         """Describes the filter condition."""
@@ -1321,7 +1325,13 @@ class NodeConnection(BaseModel):
     output_connection: NodeOutputConnection
 
     @classmethod
-    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
+    def create_from_simple_input(
+        cls,
+        from_id: int,
+        to_id: int,
+        input_type: InputType = "input-0",
+        output_handle: OutputConnectionClass = "output-0",
+    ):
         """Creates a standard connection between two nodes."""
         match input_type:
             case "main":
@@ -1333,7 +1343,7 @@ class NodeConnection(BaseModel):
             case _:
                 connection_class: InputConnectionClass = "input-0"
         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
-        node_output = NodeOutputConnection(node_id=from_id, connection_class="output-0")
+        node_output = NodeOutputConnection(node_id=from_id, connection_class=output_handle)
         return cls(input_connection=node_input, output_connection=node_output)
 
 

@@ -815,6 +815,7 @@ export interface NodeSelect extends NodeSingleInput {
 
 export interface NodeFilter extends NodeSingleInput {
   filter_input: FilterInput;
+  split_mode?: boolean;
 }
 
 export interface NodeGroupBy extends NodeSingleInput {
