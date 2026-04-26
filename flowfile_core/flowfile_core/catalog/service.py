@@ -75,6 +75,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_delta_history,
     trigger_delta_version_preview,
     trigger_read_table_metadata,
+    trigger_resolve_virtual_table,
     trigger_sql_query,
     trigger_visualize_evict,
     trigger_visualize_fields,
@@ -169,6 +170,13 @@ def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
         )
         for h in raw_history
     ]
+
+
+def _hash_source_versions(versions_json: str | None) -> str:
+    """Stable cache key for a virtual table's source-version state."""
+    if not versions_json:
+        return "noversions"
+    return hashlib.sha256(versions_json.encode()).hexdigest()
 
 
 def _format_polars_preview(lf: pl.LazyFrame, limit: int) -> CatalogTablePreview:
@@ -3267,9 +3275,9 @@ class CatalogService:
         - ``kind=physical`` for Delta/Parquet catalog tables (ships only the
           directory name, not the absolute path).
         - ``kind=sql`` for query-virtual tables and ad-hoc SQL queries; reuses
-          the same delta_map / virtual_tables_ipc plumbing as ``execute_sql_query``.
-        - ``kind=ipc`` for flow-produced virtual tables, which are pre-resolved
-          by core into Arrow IPC bytes.
+          the same delta_map / virtual_refs plumbing as ``execute_sql_query``.
+        - ``kind=ipc_path`` for flow-produced virtual tables, materialised by
+          the worker on first access and cached on disk.
         """
         if source.source_type == "table":
             if source.table_id is None:
@@ -3293,21 +3301,14 @@ class CatalogService:
                 spec["session_key"] = self._session_key_for_table(table.id)
                 return spec
 
-            # Flow-virtual: resolve to a LazyFrame and ship as IPC bytes.
-            lf = self.resolve_virtual_flow_table(
-                table.id,
-                user_id=user_id,
-                run_location="remote" if _should_offload() else "local",
-            )
-            buf = io.BytesIO()
-            lf.collect().write_ipc(buf)
-            ipc_bytes = buf.getvalue()
-            ipc_b64 = base64.b64encode(ipc_bytes).decode()
-            digest = hashlib.md5(ipc_bytes).hexdigest()
+            lf = self.resolve_virtual_flow_table(table.id, user_id=user_id, run_location="remote")
+            versions_hash = _hash_source_versions(table.source_table_versions)
+            res = trigger_resolve_virtual_table(table.id, lf.serialize(), versions_hash)
             return {
-                "kind": "ipc",
-                "session_key": f"fvt:{table.id}:{digest}",
-                "ipc_b64": ipc_b64,
+                "kind": "ipc_path",
+                "session_key": f"fvt:{table.id}:{int(res['mtime'])}",
+                "ipc_path": res["ipc_path"],
+                "mtime": res["mtime"],
             }
 
         # Ad-hoc SQL — used by the editor / SqlExplorePanel preview path.
@@ -3318,8 +3319,9 @@ class CatalogService:
     def _build_sql_worker_source(self, sql_query: str, user_id: int | None) -> dict:
         """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup.
 
-        Resolves catalog references, pre-materialises any referenced flow-virtual
-        tables to IPC, and emits a deterministic session key.
+        Resolves catalog references, asks the worker to materialise each
+        referenced flow-virtual table to its IPC cache, and emits a
+        deterministic session key.
         """
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
@@ -3335,17 +3337,14 @@ class CatalogService:
         rewritten = _rewrite_qualified_references(sql_query, {*delta_map, *virtual_map})
         referenced_virtuals = {n for n in virtual_map if _is_table_reference(n, rewritten)}
 
-        virtual_ipc: dict[str, str] = {}
+        virtual_refs: dict[str, str] = {}
         for vname in referenced_virtuals:
             try:
-                lf = self.resolve_virtual_flow_table(
-                    virtual_map[vname],
-                    user_id=user_id,
-                    run_location="remote" if _should_offload() else "local",
-                )
-                buf = io.BytesIO()
-                lf.collect().write_ipc(buf)
-                virtual_ipc[vname] = base64.b64encode(buf.getvalue()).decode()
+                vid = virtual_map[vname]
+                lf = self.resolve_virtual_flow_table(vid, user_id=user_id, run_location="remote")
+                versions_hash = _hash_source_versions(self.repo.get_table(vid).source_table_versions)
+                res = trigger_resolve_virtual_table(vid, lf.serialize(), versions_hash)
+                virtual_refs[vname] = res["ipc_path"]
             except Exception:
                 logger.warning("Could not resolve virtual table %r for viz", vname)
 
@@ -3354,16 +3353,16 @@ class CatalogService:
         referenced_delta = {n: d for n, d in delta_map.items() if _is_table_reference(n, rewritten)}
 
         key_material = json.dumps(
-            {"q": rewritten, "d": sorted(referenced_delta.items()), "v": sorted(virtual_ipc.keys())},
+            {"q": rewritten, "d": sorted(referenced_delta.items()), "v": sorted(virtual_refs.items())},
             sort_keys=True,
         )
-        digest = hashlib.md5(key_material.encode()).hexdigest()
+        digest = hashlib.sha256(key_material.encode()).hexdigest()
         return {
             "kind": "sql",
             "session_key": f"sql:{digest}",
             "sql_query": rewritten,
             "tables": referenced_delta,
-            "virtual_tables_ipc": virtual_ipc or None,
+            "virtual_refs": virtual_refs or None,
         }
 
     def _dispatch_visualize_query(

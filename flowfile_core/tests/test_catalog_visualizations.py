@@ -372,3 +372,74 @@ class TestVisualizationCompute:
         assert resp.status_code == 200, resp.text
         assert captured["source"]["kind"] == "physical"
         assert captured["source"]["session_key"].startswith(f"tbl:{table_id}:")
+
+    def test_compute_flow_virtual_table_ships_ipc_path(self):
+        """Flow-virtual tables ship an ipc_path reference, not inline bytes."""
+        import polars as pl
+        from flowfile_core.catalog import service as svc_module
+        from flowfile_core.database.connection import get_db_context
+        from flowfile_core.database.models import CatalogNamespace, CatalogTable
+
+        with get_db_context() as db:
+            ns = CatalogNamespace(name="vns", parent_id=None, level=0, owner_id=1)
+            db.add(ns)
+            db.commit()
+            db.refresh(ns)
+            table = CatalogTable(
+                name="fvt",
+                namespace_id=ns.id,
+                owner_id=1,
+                table_type="virtual",
+                producer_registration_id=None,
+                source_table_versions=None,
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            viz_id = client.post(
+                "/catalog/visualizations",
+                json={
+                    "name": "vfvt",
+                    "spec": SAMPLE_SPEC,
+                    "source_type": "table",
+                    "catalog_table_id": table.id,
+                },
+            ).json()["id"]
+            tid = table.id
+
+        captured: dict = {}
+
+        def fake_trigger(worker_source, payload, max_rows):
+            captured["source"] = worker_source
+            return {
+                "rows": [],
+                "total_rows": 0,
+                "truncated": False,
+                "elapsed_ms": 0.0,
+                "cache_hit": False,
+            }
+
+        def fake_resolve(self, table_id, **kwargs):
+            return pl.LazyFrame({"x": [1, 2, 3]})
+
+        def fake_resolve_virtual(table_id, plan_bytes, source_versions_hash):
+            captured["resolve"] = {
+                "table_id": table_id,
+                "hash": source_versions_hash,
+            }
+            return {"ipc_path": f"fvt-{table_id}-noversions00000.arrow", "mtime": 1234.5, "row_count": 3}
+
+        with (
+            patch.object(svc_module.CatalogService, "resolve_virtual_flow_table", fake_resolve),
+            patch.object(svc_module, "trigger_resolve_virtual_table", side_effect=fake_resolve_virtual),
+            patch.object(svc_module, "trigger_visualize_query", side_effect=fake_trigger),
+        ):
+            resp = client.post(f"/catalog/visualizations/{viz_id}/compute", json={})
+
+        assert resp.status_code == 200, resp.text
+        assert captured["source"]["kind"] == "ipc_path"
+        assert captured["source"]["ipc_path"].startswith(f"fvt-{tid}-")
+        assert captured["source"]["mtime"] == 1234.5
+        assert captured["source"]["session_key"] == f"fvt:{tid}:1234"
+        assert captured["resolve"]["table_id"] == tid
+        assert captured["resolve"]["hash"] == "noversions"

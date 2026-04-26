@@ -19,6 +19,7 @@ DirectoryOptions = Literal[
     "global_artifacts_directory",
     "artifact_staging_directory",
     "catalog_tables_directory",
+    "catalog_virtual_results_directory",
 ]
 
 
@@ -191,6 +192,13 @@ class FlowfileStorage:
         return self.base_directory / "catalog_tables"
 
     @property
+    def catalog_virtual_results_directory(self) -> Path:
+        """Worker-side IPC cache for materialised flow-virtual tables."""
+        if _is_docker_mode():
+            return self.user_data_directory / "catalog_virtual_results"
+        return self.base_directory / "catalog_virtual_results"
+
+    @property
     def artifact_staging_directory(self) -> Path:
         """Directory for staging artifact uploads before finalization.
 
@@ -227,6 +235,7 @@ class FlowfileStorage:
             self.user_defined_nodes_icons,
             self.global_artifacts_directory,
             self.catalog_tables_directory,
+            self.catalog_virtual_results_directory,
             self.template_data_directory,
         ]
 

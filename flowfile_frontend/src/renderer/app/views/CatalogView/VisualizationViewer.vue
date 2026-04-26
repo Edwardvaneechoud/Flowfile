@@ -54,10 +54,9 @@
       </div>
     </div>
 
-    <pre
-      v-if="sqlExpanded && viz?.source_type === 'sql' && viz.sql_query"
-      class="viz-sql-block"
-    >{{ viz.sql_query }}</pre>
+    <pre v-if="sqlExpanded && viz?.source_type === 'sql' && viz.sql_query" class="viz-sql-block">{{
+      viz.sql_query
+    }}</pre>
 
     <div v-if="loadingMeta || loadingData" class="viz-viewer-state">
       <el-skeleton :rows="6" animated />
@@ -81,6 +80,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
+import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/dist/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -88,10 +88,10 @@ import type { CatalogVisualization } from "../../types";
 
 const props = defineProps<{
   vizId: number;
-  appearance?: string;
+  appearance?: IDarkMode;
 }>();
 
-const emit = defineEmits<{
+defineEmits<{
   (e: "close"): void;
   (e: "deleted", vizId: number): void;
 }>();
@@ -100,7 +100,7 @@ const store = useCatalogStore();
 const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const viz = ref<CatalogVisualization | null>(null);
-const fields = ref<Record<string, any>[]>([]);
+const fields = ref<IMutField[]>([]);
 const loadingMeta = ref(true);
 const loadingData = ref(true);
 const errorMessage = ref<string | null>(null);
@@ -151,8 +151,10 @@ const schemaNamespaces = computed(() => {
 const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const plainFields = computed(() => toPlainJson(fields.value));
-const plainSpecList = computed(() =>
-  viz.value?.spec && viz.value.spec.length ? toPlainJson(viz.value.spec) : undefined,
+const plainSpecList = computed<IChart[] | undefined>(() =>
+  viz.value?.spec && viz.value.spec.length
+    ? (toPlainJson(viz.value.spec) as unknown as IChart[])
+    : undefined,
 );
 
 const sqlExpanded = ref(false);
@@ -164,11 +166,7 @@ const sourceLabel = computed(() => {
   }
   // Prefer the qualified ``namespace.tablename`` form; fall back to the bare
   // table name when no namespace is set, then to a placeholder for orphans.
-  return (
-    viz.value.table_full_name ??
-    viz.value.table_name ??
-    "(deleted table)"
-  );
+  return viz.value.table_full_name ?? viz.value.table_name ?? "(deleted table)";
 });
 
 async function load() {
@@ -186,7 +184,7 @@ async function load() {
   loadingMeta.value = false;
   // Make sure the namespace tree is available so the picker is populated.
   if (store.tree.length === 0) {
-    store.loadTree().catch(() => {});
+    store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   }
 
   loadingData.value = true;
@@ -198,7 +196,7 @@ async function load() {
     if (fieldsResp.error) {
       errorMessage.value = fieldsResp.error;
     } else {
-      fields.value = fieldsResp.fields;
+      fields.value = fieldsResp.fields as IMutField[];
     }
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail ?? err?.message ?? String(err);
@@ -221,9 +219,7 @@ async function captureThumbnail(): Promise<string | null> {
     const dataUrl = await gwRef.value.exportImage();
     if (!dataUrl) return null;
     if (dataUrl.length > THUMBNAIL_MAX_BYTES) {
-      console.warn(
-        `[viz] thumbnail too large (${dataUrl.length} bytes), skipping`,
-      );
+      console.warn(`[viz] thumbnail too large (${dataUrl.length} bytes), skipping`);
       return null;
     }
     return dataUrl;
@@ -251,7 +247,7 @@ async function onSave() {
     viz.value = updated;
     namespaceDraft.value = updated.namespace_id ?? null;
     ElMessage.success("Saved chart updates");
-    store.loadTree().catch(() => {});
+    store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   } finally {
@@ -272,7 +268,7 @@ async function onNamespaceChange(value: number | null | undefined) {
     });
     viz.value = updated;
     namespaceDraft.value = updated.namespace_id ?? null;
-    store.loadTree().catch(() => {});
+    store.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
     // Roll the picker back if the update failed.
     namespaceDraft.value = viz.value.namespace_id ?? null;

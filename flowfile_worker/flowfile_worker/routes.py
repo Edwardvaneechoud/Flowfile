@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import json
 import os
@@ -430,6 +431,20 @@ def create_table(
 
     except Exception as e:
         logger.error(f"Error creating table: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/flow/resolve_virtual_table", response_model=models.ResolveVirtualTableResponse)
+def resolve_virtual_table(payload: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
+    """Materialise a flow-virtual table from a serialised polars plan.
+
+    Idempotent on ``(table_id, source_versions_hash)`` — repeated calls return
+    the same IPC file without re-executing the producer plan.
+    """
+    try:
+        return funcs.resolve_virtual_table(payload)
+    except Exception as e:
+        logger.error(f"Error in resolve_virtual_table: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

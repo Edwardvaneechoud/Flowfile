@@ -53,8 +53,8 @@
             />
           </el-select>
           <div class="save-form-hint">
-            Charts without a namespace are accessible from the Visualizations tab
-            but won't appear in the namespace tree.
+            Charts without a namespace are accessible from the Visualizations tab but won't appear
+            in the namespace tree.
           </div>
         </el-form-item>
         <el-form-item label="Description">
@@ -218,7 +218,10 @@ function defaultSavedChartName(): string {
   const now = new Date();
   const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
     now.getDate(),
-  ).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  ).padStart(
+    2,
+    "0",
+  )} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   return `Saved chart ${ts}`;
 }
 
@@ -256,7 +259,7 @@ async function openSaveDialog() {
   saveForm.namespaceId = props.saveNamespaceId ?? null;
   // Make sure the picker has data to render.
   if (catalogStore.tree.length === 0) {
-    catalogStore.loadTree().catch(() => {});
+    catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   }
   saveDialogOpen.value = true;
 }
@@ -280,13 +283,13 @@ async function onConfirmSave() {
       namespace_id: saveForm.namespaceId ?? null,
     });
     const where = saveForm.namespaceId
-      ? schemaNamespaces.value.find((n) => n.id === saveForm.namespaceId)?.label ?? "the catalog"
+      ? (schemaNamespaces.value.find((n) => n.id === saveForm.namespaceId)?.label ?? "the catalog")
       : "the Visualizations tab";
     ElMessage.success(`Saved chart "${name}" to ${where}.`);
     saveDialogOpen.value = false;
     // Refresh the namespace tree so the new chart shows up under its
     // catalog/schema right away.
-    catalogStore.loadTree().catch(() => {});
+    catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   } finally {

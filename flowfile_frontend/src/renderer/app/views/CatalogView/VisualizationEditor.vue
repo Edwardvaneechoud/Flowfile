@@ -15,21 +15,11 @@
         />
       </div>
       <div class="viz-editor-actions">
-        <el-tooltip
-          v-if="disabledReason"
-          :content="disabledReason"
-          placement="top"
-        >
+        <el-tooltip v-if="disabledReason" :content="disabledReason" placement="top">
           <span class="viz-disabled-hint">{{ disabledReason }}</span>
         </el-tooltip>
         <el-button size="small" :disabled="saving" @click="emit('cancel')">Cancel</el-button>
-        <el-button
-          type="primary"
-          size="small"
-          :loading="saving"
-          :disabled="!canSave"
-          @click="save"
-        >
+        <el-button type="primary" size="small" :loading="saving" :disabled="!canSave" @click="save">
           {{ viz ? "Save changes" : "Save visualization" }}
         </el-button>
       </div>
@@ -57,18 +47,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
+import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/dist/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
-import type {
-  CatalogVisualization,
-  VizSourceDescriptor,
-} from "../../types";
+import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 
 const props = defineProps<{
   source: VizSourceDescriptor;
   viz?: CatalogVisualization | null;
-  appearance?: string;
+  appearance?: IDarkMode;
   /** Optional override for the table id when saving a viz from an ad-hoc SQL source. */
   saveTargetTableId?: number | null;
 }>();
@@ -86,7 +74,7 @@ const saving = ref(false);
 
 const loadingSample = ref(true);
 const loadError = ref<string | null>(null);
-const fields = ref<Record<string, any>[]>([]);
+const fields = ref<IMutField[]>([]);
 
 const initialSpec = computed(() => props.viz?.spec ?? null);
 
@@ -94,9 +82,9 @@ const initialSpec = computed(() => props.viz?.spec ?? null);
 // payload (Vue refs / proxies trip up postMessage).
 const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const plainFields = computed(() => toPlainJson(fields.value));
-const plainInitialSpecList = computed(() =>
+const plainInitialSpecList = computed<IChart[] | undefined>(() =>
   initialSpec.value && initialSpec.value.length > 0
-    ? toPlainJson(initialSpec.value)
+    ? (toPlainJson(initialSpec.value) as unknown as IChart[])
     : undefined,
 );
 
@@ -108,11 +96,7 @@ const plainInitialSpecList = computed(() =>
  */
 async function computeOnWorker(payload: any): Promise<any[]> {
   try {
-    const resp = await CatalogApi.computeAdHocVisualization(
-      props.source,
-      payload,
-      SAMPLE_ROWS,
-    );
+    const resp = await CatalogApi.computeAdHocVisualization(props.source, payload, SAMPLE_ROWS);
     if (resp.error) {
       console.error("[viz] ad-hoc compute failed:", resp.error);
       return [];
@@ -141,7 +125,7 @@ onMounted(async () => {
     // Just fetch the field schema. GraphicWalker pulls rows on demand via
     // computeOnWorker so every aggregation pushes down to polars-gw on the
     // worker (matching the polars-gw walk() reference pattern).
-    fields.value = await store.loadVisualizationFields(props.source);
+    fields.value = (await store.loadVisualizationFields(props.source)) as IMutField[];
   } catch (err: any) {
     loadError.value = err?.response?.data?.detail ?? err?.message ?? String(err);
   } finally {
@@ -162,9 +146,7 @@ async function captureThumbnail(): Promise<string | null> {
     const dataUrl = await gwRef.value.exportImage();
     if (!dataUrl) return null;
     if (dataUrl.length > THUMBNAIL_MAX_BYTES) {
-      console.warn(
-        `[viz] thumbnail too large (${dataUrl.length} bytes), skipping`,
-      );
+      console.warn(`[viz] thumbnail too large (${dataUrl.length} bytes), skipping`);
       return null;
     }
     return dataUrl;
@@ -203,9 +185,8 @@ const save = async () => {
         spec,
         source_type: props.source.source_type,
         catalog_table_id:
-          props.source.source_type === "table" ? props.source.table_id ?? null : null,
-        sql_query:
-          props.source.source_type === "sql" ? props.source.sql_query ?? null : null,
+          props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
+        sql_query: props.source.source_type === "sql" ? (props.source.sql_query ?? null) : null,
         thumbnail_data_url,
       });
     }

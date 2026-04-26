@@ -135,9 +135,7 @@ const loading = computed(
 
 function sourceLabel(item: VisualizationLibraryItem): string {
   if (item.source_type === "sql") {
-    return item.namespace_name
-      ? `SQL · ${item.namespace_name}`
-      : "SQL query";
+    return item.namespace_name ? `SQL · ${item.namespace_name}` : "SQL query";
   }
   return item.table_full_name ?? "Catalog table";
 }
@@ -167,16 +165,16 @@ function openViz(item: VisualizationLibraryItem) {
 function closeViewer() {
   viewerOpen.value = false;
   active.value = null;
-  store.loadVisualizationLibrary().catch(() => {});
+  store
+    .loadVisualizationLibrary()
+    .catch((err) => console.warn("[catalog] viz library refresh failed", err));
 }
 
 async function onDelete(item: VisualizationLibraryItem) {
   try {
-    await ElMessageBox.confirm(
-      `Delete visualization "${item.name}"?`,
-      "Confirm delete",
-      { type: "warning" },
-    );
+    await ElMessageBox.confirm(`Delete visualization "${item.name}"?`, "Confirm delete", {
+      type: "warning",
+    });
   } catch {
     return;
   }

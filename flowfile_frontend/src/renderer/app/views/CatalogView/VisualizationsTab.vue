@@ -63,13 +63,9 @@ const appearance = useGraphicWalkerAppearance();
 const editorOpen = ref(false);
 const editingViz = ref<CatalogVisualization | null>(null);
 
-const visualizations = computed(
-  () => store.visualizationsByTable[props.tableId] ?? [],
-);
+const visualizations = computed(() => store.visualizationsByTable[props.tableId] ?? []);
 
-const loading = computed(
-  () => store.loadingVisualizations && !visualizations.value.length,
-);
+const loading = computed(() => store.loadingVisualizations && !visualizations.value.length);
 
 const tableSource = computed<VizSourceDescriptor>(() => ({
   source_type: "table",
@@ -106,11 +102,9 @@ const onSaved = () => {
 
 const onDelete = async (viz: CatalogVisualization) => {
   try {
-    await ElMessageBox.confirm(
-      `Delete visualization "${viz.name}"?`,
-      "Confirm delete",
-      { type: "warning" },
-    );
+    await ElMessageBox.confirm(`Delete visualization "${viz.name}"?`, "Confirm delete", {
+      type: "warning",
+    });
   } catch {
     return;
   }

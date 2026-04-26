@@ -562,7 +562,7 @@ function closeVizViewer() {
   vizViewerOpen.value = false;
   activeVizId.value = null;
   // Keep the namespace tree in sync if the user renamed/deleted from the viewer.
-  catalogStore.loadTree().catch(() => {});
+  catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
 }
 
 function selectArtifact(artifactId: number) {

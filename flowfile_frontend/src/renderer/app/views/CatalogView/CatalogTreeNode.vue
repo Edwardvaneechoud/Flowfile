@@ -203,7 +203,9 @@
       <div v-if="showVisualizationsSection" class="tree-section">
         <button class="section-header" @click.stop="toggleVisualizations">
           <i
-            :class="visualizationsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
+            :class="
+              visualizationsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'
+            "
             class="section-chevron"
           ></i>
           <span class="section-title">Visualizations</span>

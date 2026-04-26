@@ -1,3 +1,4 @@
+import base64
 import io
 import logging
 import os
@@ -10,7 +11,7 @@ import polars as pl
 from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 
-from flowfile_worker import models
+from flowfile_worker import models, mp_context
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
@@ -24,6 +25,15 @@ from shared.storage_config import storage
 def _validate_catalog_path(table_name: str) -> Path:
     """Validate and resolve *table_name* under the catalog tables directory."""
     return validate_catalog_path(table_name, storage.catalog_tables_directory)
+
+
+def _validate_virtual_results_path(name: str) -> Path:
+    """Validate and resolve *name* under the catalog_virtual_results directory."""
+    return validate_catalog_path(name, storage.catalog_virtual_results_directory)
+
+
+def _row_count_ipc(p: Path) -> int:
+    return int(pl.scan_ipc(str(p)).select(pl.len()).collect().item())
 
 
 def _get_delta_size_bytes(delta_dir: Path) -> int:
@@ -638,8 +648,6 @@ def execute_sql_query(
 
     Returns a dict matching the SqlQueryResponse schema.
     """
-    import base64
-    import io
     import re
     import time
 
@@ -821,151 +829,54 @@ def generic_task(
     queue.put(lf.serialize())
 
 
-# ==================== Visualization compute (polars-gw) ====================
+# ==================== Virtual flow-table resolution =========================
 
 
-def _build_sql_lazyframe(
-    sql_query: str,
-    tables: dict[str, str] | None,
-    virtual_tables_ipc: dict[str, str] | None,
-) -> pl.LazyFrame:
-    """Build a LazyFrame from a SQL query against catalog tables (no collect).
-
-    Mirrors the registration logic in :func:`execute_sql_query`, but stops at
-    the LazyFrame so the caller can run polars-gw on top with full lazy
-    optimisation.
-    """
-    import base64
-
-    ctx = pl.SQLContext()
-    for name, dir_name in (tables or {}).items():
-        p = _validate_catalog_path(dir_name)
-        if not p.is_dir() or not (p / "_delta_log").is_dir():
-            raise ValueError(f"Table '{name}' is not a valid Delta table")
-        ctx.register(name, pl.scan_delta(str(p)))
-
-    if virtual_tables_ipc:
-        for name, b64_data in virtual_tables_ipc.items():
-            ipc_bytes = base64.b64decode(b64_data)
-            ctx.register(name, pl.read_ipc(io.BytesIO(ipc_bytes)).lazy())
-
-    return ctx.execute(sql_query)
+def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Queue) -> None:
+    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC."""
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
+        df = lf.collect()
+        target = Path(target_path)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        df.write_ipc(str(tmp))
+        os.replace(str(tmp), str(target))
+        queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
+    except Exception as exc:
+        queue.put({"error": str(exc)[:1024]})
 
 
-def _build_viz_loader(source: models.VizWorkerSource):
-    """Return a zero-arg callable that builds the LazyFrame for *source*.
+def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
+    """Materialise a virtual flow table to disk; idempotent on (table_id, source_versions_hash)."""
+    target_dir = storage.catalog_virtual_results_directory
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
+    if target.exists():
+        return models.ResolveVirtualTableResponse(
+            ipc_path=target.name,
+            mtime=target.stat().st_mtime,
+            row_count=_row_count_ipc(target),
+        )
 
-    Lazy on purpose: the manager only invokes the loader on cache miss.
-    """
-    import base64
-
-    if source.kind == "physical":
-        if source.table_path is None:
-            raise ValueError("table_path is required for physical source")
-        p = _validate_catalog_path(source.table_path)
-        storage_format = source.storage_format or "delta"
-
-        def _load_physical() -> pl.LazyFrame:
-            if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
-                return pl.scan_delta(str(p))
-            return pl.scan_parquet(p)
-
-        return _load_physical
-
-    if source.kind == "sql":
-        if not source.sql_query:
-            raise ValueError("sql_query is required for sql source")
-        sql_query = source.sql_query
-        tables = source.tables
-        virtual_ipc = source.virtual_tables_ipc
-
-        def _load_sql() -> pl.LazyFrame:
-            return _build_sql_lazyframe(sql_query, tables, virtual_ipc)
-
-        return _load_sql
-
-    if source.kind == "ipc":
-        if not source.ipc_b64:
-            raise ValueError("ipc_b64 is required for ipc source")
-        ipc_bytes = base64.b64decode(source.ipc_b64)
-
-        def _load_ipc() -> pl.LazyFrame:
-            return pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
-
-        return _load_ipc
-
-    raise ValueError(f"Unknown viz source kind: {source.kind}")
-
-
-def execute_visualize_query(req: models.VisualizeQueryRequest) -> dict:
-    """Run a Graphic Walker workflow against a cached LazyFrame via polars-gw."""
-    import time
-
-    import polars_gw
-
-    from flowfile_worker.viz_sessions import viz_session_manager
-
-    logger.info(
-        "[viz] execute_visualize_query session_key=%s kind=%s max_rows=%d",
-        req.source.session_key,
-        req.source.kind,
-        req.max_rows,
+    queue: Queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=_resolve_virtual_table_child,
+        kwargs={"plan_bytes": req.plan_bytes, "target_path": str(target), "queue": queue},
     )
-
-    loader = _build_viz_loader(req.source)
-    start = time.perf_counter()
-    rows, cache_hit = viz_session_manager.execute(
-        req.source.session_key,
-        loader,
-        lambda lf: polars_gw.execute_workflow(lf, req.payload, max_rows=req.max_rows),
-    )
-    elapsed = (time.perf_counter() - start) * 1000
-
-    # polars-gw already casts temporal/Decimal scalars; make_json_safe is a
-    # cheap belt-and-braces pass for any edge dtypes that slip through.
-    safe_rows = [{k: make_json_safe(v) for k, v in row.items()} for row in rows]
-
-    logger.info(
-        "[viz] execute_visualize_query session_key=%s rows=%d elapsed_ms=%.1f cache_hit=%s",
-        req.source.session_key,
-        len(safe_rows),
-        round(elapsed, 1),
-        cache_hit,
-    )
-
-    return {
-        "rows": safe_rows,
-        "total_rows": len(safe_rows),
-        "truncated": len(safe_rows) >= req.max_rows,
-        "elapsed_ms": round(elapsed, 1),
-        "cache_hit": cache_hit,
-    }
-
-
-def read_visualize_fields(req: models.VisualizeFieldsRequest) -> dict:
-    """Return the Graphic Walker IMutField list for a viz source (cached)."""
-    import polars_gw
-
-    from flowfile_worker.viz_sessions import viz_session_manager
-
-    logger.info(
-        "[viz] read_visualize_fields session_key=%s kind=%s",
-        req.source.session_key,
-        req.source.kind,
-    )
-
-    loader = _build_viz_loader(req.source)
-    fields, cache_hit = viz_session_manager.fields(
-        req.source.session_key,
-        loader,
-        lambda lf: polars_gw.get_fields(lf),
-    )
-
-    logger.info(
-        "[viz] read_visualize_fields session_key=%s field_count=%d cache_hit=%s",
-        req.source.session_key,
-        len(fields),
-        cache_hit,
-    )
-
-    return {"fields": fields, "cache_hit": cache_hit}
+    p.start()
+    p.join()
+    try:
+        if queue.empty():
+            raise RuntimeError(f"resolve_virtual_table child exited without result (exitcode={p.exitcode})")
+        result = queue.get_nowait()
+        if "error" in result:
+            raise RuntimeError(f"resolve_virtual_table child failed: {result['error']}")
+        return models.ResolveVirtualTableResponse(
+            ipc_path=result["name"],
+            mtime=result["mtime"],
+            row_count=result["row_count"],
+        )
+    finally:
+        if p.is_alive():
+            p.terminate()
+            p.join()

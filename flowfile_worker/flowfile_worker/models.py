@@ -223,6 +223,20 @@ class SqlQueryResponse(BaseModel):
     error: str | None = None
 
 
+class ResolveVirtualTableRequest(BaseModel):
+    """Ask the worker to materialise a flow-virtual table from a serialised plan."""
+
+    table_id: int
+    plan_bytes: Base64Bytes
+    source_versions_hash: str
+
+
+class ResolveVirtualTableResponse(BaseModel):
+    ipc_path: str
+    mtime: float
+    row_count: int
+
+
 class VizWorkerSource(BaseModel):
     """Source descriptor for a viz session.
 
@@ -231,14 +245,15 @@ class VizWorkerSource(BaseModel):
     requests against the same source skip the load step.
     """
 
-    kind: Literal["physical", "sql", "ipc"]
+    kind: Literal["physical", "sql", "ipc_path"]
     session_key: str
     table_path: str | None = None  # bare directory name for kind="physical"
     storage_format: Literal["delta", "parquet"] | None = None
     sql_query: str | None = None
     tables: dict[str, str] | None = None  # logical name -> directory name (kind="sql")
-    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64 IPC (kind="sql")
-    ipc_b64: str | None = None  # base64 IPC bytes (kind="ipc")
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
+    ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
+    mtime: float | None = None  # cache file mtime; used in session-key contract
 
 
 class VisualizeQueryRequest(BaseModel):

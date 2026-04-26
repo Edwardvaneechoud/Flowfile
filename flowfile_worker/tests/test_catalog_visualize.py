@@ -138,6 +138,87 @@ def test_visualize_fields_endpoint_returns_imutfields(tmp_path, monkeypatch):
 
 
 @pytest.mark.worker
+def test_visualize_query_endpoint_ipc_path(tmp_path):
+    _setup_storage(tmp_path)
+    viz_session_manager.evict_all()
+
+    # Seed an IPC file under catalog_virtual_results_directory.
+    target_dir = storage.catalog_virtual_results_directory
+    target_dir.mkdir(parents=True, exist_ok=True)
+    ipc_name = "fvt-1-deadbeefdeadbeef.arrow"
+    pl.DataFrame({"category": ["a", "b", "a"], "value": [1, 2, 3]}).write_ipc(str(target_dir / ipc_name))
+
+    client = TestClient(main.app)
+    payload = {
+        "source": {
+            "kind": "ipc_path",
+            "session_key": "test:fvt:1",
+            "ipc_path": ipc_name,
+            "mtime": 1.0,
+        },
+        "payload": {
+            "workflow": [
+                {
+                    "type": "view",
+                    "query": [
+                        {
+                            "op": "aggregate",
+                            "groupBy": ["category"],
+                            "measures": [
+                                {"field": "value", "agg": "sum", "asFieldKey": "value_sum"}
+                            ],
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+    r = client.post("/catalog/visualize_query", json=payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    by_cat = {row["category"]: row["value_sum"] for row in body["rows"]}
+    assert by_cat == {"a": 4, "b": 2}
+
+
+@pytest.mark.worker
+def test_visualize_query_sql_with_virtual_refs(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    viz_session_manager.evict_all()
+
+    # Seed an IPC file the SQL context will scan as a virtual reference.
+    target_dir = storage.catalog_virtual_results_directory
+    target_dir.mkdir(parents=True, exist_ok=True)
+    ipc_name = "fvt-2-cafebabecafebabe.arrow"
+    pl.DataFrame({"category": ["a", "b"], "boost": [10, 20]}).write_ipc(str(target_dir / ipc_name))
+
+    client = TestClient(main.app)
+    payload = {
+        "source": {
+            "kind": "sql",
+            "session_key": "test:sql:virt:1",
+            "sql_query": (
+                'SELECT t.category, t.value + b.boost AS combined '
+                'FROM "viz_test" AS t JOIN "boosts" AS b ON t.category = b.category'
+            ),
+            "tables": {"viz_test": table_dir},
+            "virtual_refs": {"boosts": ipc_name},
+        },
+        "payload": {
+            "workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}],
+        },
+    }
+    r = client.post("/catalog/visualize_query", json=payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    rows = sorted(body["rows"], key=lambda r: (r["category"], r["combined"]))
+    assert rows[0]["combined"] == 11  # a: 1+10
+    assert rows[-1]["combined"] == 25  # b: 5+20
+
+
+@pytest.mark.worker
 def test_visualize_evict_endpoint(tmp_path):
     _setup_storage(tmp_path)
     _write_delta_table(tmp_path)

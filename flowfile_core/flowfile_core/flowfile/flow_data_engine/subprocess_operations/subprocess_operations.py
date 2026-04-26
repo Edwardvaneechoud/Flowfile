@@ -187,6 +187,30 @@ def trigger_catalog_materialize(
     return response
 
 
+def trigger_resolve_virtual_table(
+    table_id: int,
+    plan_bytes: bytes,
+    source_versions_hash: str,
+) -> dict:
+    """Ask the worker to materialise a flow-virtual table to its IPC cache.
+
+    Ships *plan_bytes* (output of ``pl.LazyFrame.serialize()``); the worker
+    deserialises in a spawned child, collects, and writes IPC. Idempotent on
+    ``(table_id, source_versions_hash)``.
+    """
+    from base64 import b64encode
+
+    payload = {
+        "table_id": table_id,
+        "plan_bytes": b64encode(plan_bytes).decode("ascii"),
+        "source_versions_hash": source_versions_hash,
+    }
+    response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
+    if not response.ok:
+        raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")
+    return response.json()
+
+
 def trigger_sql_query(
     query: str,
     tables: dict[str, str],
