@@ -4,7 +4,7 @@
       <div>
         <h2>Visualizations</h2>
         <p class="viz-library-sub">
-          Saved Graphic Walker charts across the catalog. Click any chart to open it.
+          Saved charts across the catalog. Click any chart to open it.
         </p>
       </div>
       <el-input

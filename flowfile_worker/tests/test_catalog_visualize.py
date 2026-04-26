@@ -187,7 +187,10 @@ def test_two_session_keys_run_in_parallel(tmp_path):
         for t in threads:
             t.join()
         t_par = time.perf_counter() - t_start
-        assert t_par < 0.7 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
+        # 0.85 (was 0.7): GitHub-hosted runners only have 4 vCPUs and Polars
+        # is multithreaded, so two parallel workloads compete for cores.
+        # Catastrophic serialisation still gives ratio ~1.0 and trips this.
+        assert t_par < 0.85 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
     finally:
         reg.shutdown()
 
@@ -260,48 +263,40 @@ def test_concurrent_same_session_key_no_response_steals(tmp_path):
         reg.shutdown()
 
 
-@pytest.mark.slow
 def test_concurrent_different_session_keys_not_serialised_by_lock(tmp_path):
+    """parent_lock is per SessionHandle: holding one must not block another key."""
     _setup_storage(tmp_path)
-    big_df = pl.DataFrame(
-        {
-            "category": ["a", "b", "c", "d"] * 250_000,
-            "value": list(range(1_000_000)),
-        }
-    )
-    big_dir = storage.catalog_tables_directory / "viz_par_lock"
-    big_dir.mkdir(parents=True, exist_ok=True)
-    big_df.write_delta(str(big_dir))
+    table_dir = _write_delta_table(tmp_path)
     reg = VizSessionRegistry()
-    payload = _RAW_PAYLOAD
-    max_rows = 1_000_000
     try:
-        s1 = _physical_source("unit:lockpar:s1", "viz_par_lock")
-        t0 = time.perf_counter()
-        reg.execute(s1, "execute", payload, max_rows)
-        t1 = time.perf_counter() - t0
-        s2 = _physical_source("unit:lockpar:s2", "viz_par_lock")
-        t0 = time.perf_counter()
-        reg.execute(s2, "execute", payload, max_rows)
-        t2 = time.perf_counter() - t0
+        s1 = _physical_source("unit:locksep:s1", table_dir)
+        s2 = _physical_source("unit:locksep:s2", table_dir)
+        reg.execute(s1, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(s2, "execute", _AGG_PAYLOAD, 100)
+        h1 = reg._sessions[s1.session_key]
+        h2 = reg._sessions[s2.session_key]
+        assert h1.parent_lock is not h2.parent_lock
 
-        if t1 + t2 < 0.1:
-            pytest.skip(f"workload too fast to measure overlap: t1+t2={t1 + t2:.4f}s")
+        result: list = []
+        error: list = []
 
-        p1 = _physical_source("unit:lockpar:p1", "viz_par_lock")
-        p2 = _physical_source("unit:lockpar:p2", "viz_par_lock")
+        def _run_s2():
+            try:
+                res, _ = reg.execute(s2, "execute", _AGG_PAYLOAD, 100)
+                result.append(res)
+            except BaseException as exc:
+                error.append(exc)
 
-        def _run(src):
-            reg.execute(src, "execute", payload, max_rows)
-
-        threads = [threading.Thread(target=_run, args=(s,)) for s in (p1, p2)]
-        t_start = time.perf_counter()
-        for t in threads:
+        with h1.parent_lock:
+            t = threading.Thread(target=_run_s2)
             t.start()
-        for t in threads:
-            t.join()
-        t_par = time.perf_counter() - t_start
-        assert t_par < 0.7 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
+            t.join(timeout=15.0)
+            assert not t.is_alive(), (
+                "execute(s2) blocked while s1.parent_lock held — "
+                "parent_lock must be per-handle, not shared across keys"
+            )
+        assert not error, f"execute(s2) failed: {error[0]!r}"
+        assert result, "execute(s2) returned no result"
     finally:
         reg.shutdown()
 
