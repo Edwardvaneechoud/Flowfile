@@ -705,9 +705,17 @@ def compute_saved_visualization(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Stream the source rows behind a saved viz for client-side GW rendering."""
+    """Compute chart rows for a saved viz.
+
+    GraphicWalker's ``computation`` callback POSTs the IDataQueryPayload
+    here on every aggregation; the worker session cache keeps the source
+    LazyFrame warm so successive calls skip the load.
+    """
     return service.compute_saved_visualization_rows(
-        viz_id, body.max_rows, user_id=current_user.id
+        viz_id,
+        body.max_rows,
+        user_id=current_user.id,
+        payload=body.payload,
     )
 
 

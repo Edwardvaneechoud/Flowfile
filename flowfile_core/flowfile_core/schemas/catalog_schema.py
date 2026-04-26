@@ -423,9 +423,17 @@ class VisualizationComputeRequest(BaseModel):
 
 
 class VisualizationSavedComputeRequest(BaseModel):
-    """Body for the saved-viz compute route. The query payload is read from
-    the stored spec, so callers only optionally override max_rows."""
+    """Body for the saved-viz compute route.
 
+    When ``payload`` is set, the worker runs ``polars_gw.execute_workflow``
+    with that GraphicWalker IDataQueryPayload against the viz's stored
+    source — this is the path GW's ``computation`` callback drives so every
+    aggregation pushes down to the worker. When ``payload`` is omitted the
+    server falls back to a "raw select all" so legacy callers (and the
+    initial sample-fetch path) keep working.
+    """
+
+    payload: dict | None = None
     max_rows: int | None = None
 
 

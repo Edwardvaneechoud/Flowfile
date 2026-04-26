@@ -30,15 +30,12 @@
         <el-alert :title="errorMessage" type="error" :closable="false" show-icon />
       </div>
       <VueGraphicWalker
-        v-else-if="rows.length"
-        :data="plainRows"
+        v-else
+        :computation="computeOnWorker"
         :fields="plainFields"
         :spec-list="plainSpecList"
         :appearance="appearance"
       />
-      <div v-else class="viz-card-state">
-        <el-empty :image-size="60" description="No data" />
-      </div>
     </div>
   </div>
 </template>
@@ -48,7 +45,6 @@ import { computed, onMounted, ref, watch } from "vue";
 import { Delete, Edit, MoreFilled } from "@element-plus/icons-vue";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
-import { useCatalogStore } from "../../stores/catalog-store";
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 
 /**
@@ -68,14 +64,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: "edit"): void; (e: "delete"): void }>();
 
-const store = useCatalogStore();
-
-const rows = ref<Record<string, any>[]>([]);
 const fields = ref<Record<string, any>[]>([]);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
 
-const plainRows = computed(() => toPlainJson(rows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainSpecList = computed(() =>
   props.viz.spec && props.viz.spec.length ? toPlainJson(props.viz.spec) : undefined,
@@ -83,25 +75,34 @@ const plainSpecList = computed(() =>
 
 const SAMPLE_ROWS = 100_000;
 
+/** Hand every GW aggregation to the worker via polars-gw. */
+async function computeOnWorker(payload: any): Promise<any[]> {
+  try {
+    const resp = await CatalogApi.computeSavedVisualization(props.viz.id, {
+      payload,
+      maxRows: SAMPLE_ROWS,
+    });
+    if (resp.error) {
+      console.error("[viz] card compute failed:", resp.error);
+      return [];
+    }
+    return resp.rows;
+  } catch (err: any) {
+    console.error("[viz] card compute threw:", err);
+    return [];
+  }
+}
+
 const load = async () => {
   loading.value = true;
   errorMessage.value = null;
   try {
-    // GraphicWalker resolves the saved spec's encodings into a query
-    // client-side, so we ship the source rows + field schema and let GW
-    // render. The worker session cache keeps the source LazyFrame loaded
-    // so subsequent card opens reuse it.
-    const [data, fieldsResp] = await Promise.all([
-      CatalogApi.computeSavedVisualization(props.viz.id, SAMPLE_ROWS),
-      CatalogApi.getSavedVisualizationFields(props.viz.id),
-    ]);
-    if (data.error) {
-      errorMessage.value = data.error;
-      rows.value = [];
+    // Only the field schema is fetched up front; rows are pulled on demand
+    // by GraphicWalker through the computeOnWorker callback.
+    const fieldsResp = await CatalogApi.getSavedVisualizationFields(props.viz.id);
+    if (fieldsResp.error) {
+      errorMessage.value = fieldsResp.error;
     } else {
-      rows.value = data.rows;
-    }
-    if (!fieldsResp.error) {
       fields.value = fieldsResp.fields;
     }
   } catch (err: any) {
@@ -114,11 +115,6 @@ const load = async () => {
 onMounted(load);
 
 watch(() => props.viz.id, load);
-watch(
-  () => props.viz.spec,
-  load,
-  { deep: true },
-);
 </script>
 
 <style scoped>

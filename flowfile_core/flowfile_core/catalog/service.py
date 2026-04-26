@@ -3354,31 +3354,41 @@ class CatalogService:
         return VisualizationComputeResponse(**data)
 
     def compute_saved_visualization_rows(
-        self, viz_id: int, max_rows: int | None, user_id: int
+        self,
+        viz_id: int,
+        max_rows: int | None,
+        user_id: int,
+        payload: dict | None = None,
     ) -> VisualizationComputeResponse:
-        """Stream the source rows behind a saved viz for client-side rendering.
+        """Compute rows for a saved viz against its embedded source.
 
-        GraphicWalker resolves the saved chart spec (encodings) into a query
-        client-side, so the server's job here is just to deliver the source
-        data. We dispatch a "raw select" payload through the worker session
-        cache so the source LazyFrame stays warm across card opens.
+        When ``payload`` is provided, this is the GraphicWalker
+        ``computation`` callback path — every chart aggregation the user
+        builds becomes one POST and the worker runs polars-gw with the GW
+        workflow against the cached LazyFrame. When ``payload`` is None
+        the server falls back to a raw-select so the initial sample-fetch
+        path (used by VisualizationCard's preview, etc.) keeps working.
         """
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
         source = self._viz_source_descriptor(viz)
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        effective_payload = payload or {
+            "workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]
+        }
         logger.info(
-            "[viz] dispatch saved compute viz_id=%s source_type=%s kind=%s session_key=%s max_rows=%s",
+            "[viz] dispatch saved compute viz_id=%s source_type=%s kind=%s "
+            "session_key=%s max_rows=%s gw_workflow=%s",
             viz_id,
             viz.source_type,
             worker_source["kind"],
             worker_source["session_key"],
             max_rows,
+            payload is not None,
         )
-        raw_payload = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
         return self._dispatch_visualize_query(
-            worker_source, raw_payload, self._clamp_max_rows(max_rows)
+            worker_source, effective_payload, self._clamp_max_rows(max_rows)
         )
 
     def get_visualization_fields_for_viz(

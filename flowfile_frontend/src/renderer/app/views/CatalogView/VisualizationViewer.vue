@@ -70,7 +70,7 @@
     <VueGraphicWalker
       v-else
       ref="gwRef"
-      :data="plainRows"
+      :computation="computeOnWorker"
       :fields="plainFields"
       :spec-list="plainSpecList"
       :appearance="appearance"
@@ -100,7 +100,6 @@ const store = useCatalogStore();
 const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const viz = ref<CatalogVisualization | null>(null);
-const rows = ref<Record<string, any>[]>([]);
 const fields = ref<Record<string, any>[]>([]);
 const loadingMeta = ref(true);
 const loadingData = ref(true);
@@ -111,6 +110,30 @@ const saving = ref(false);
 const namespaceDraft = ref<number | null>(null);
 
 const SAMPLE_ROWS = 100_000;
+
+/**
+ * GraphicWalker computation callback — every aggregation the user builds in
+ * the chart hits this function with an IDataQueryPayload, and we POST it
+ * straight to the worker via /catalog/visualizations/{id}/compute. The
+ * worker session cache keeps the source LazyFrame warm so successive
+ * aggregations skip the load step.
+ */
+async function computeOnWorker(payload: any): Promise<any[]> {
+  try {
+    const resp = await CatalogApi.computeSavedVisualization(props.vizId, {
+      payload,
+      maxRows: SAMPLE_ROWS,
+    });
+    if (resp.error) {
+      console.error("[viz] saved compute failed:", resp.error);
+      return [];
+    }
+    return resp.rows;
+  } catch (err: any) {
+    console.error("[viz] saved compute threw:", err);
+    return [];
+  }
+}
 
 // Flat schema-level list for the namespace picker. Mirrors the SQL save dialog.
 const schemaNamespaces = computed(() => {
@@ -127,7 +150,6 @@ const schemaNamespaces = computed(() => {
 // payload without tripping on Vue reactive proxies / getters.
 const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
-const plainRows = computed(() => toPlainJson(rows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainSpecList = computed(() =>
   viz.value?.spec && viz.value.spec.length ? toPlainJson(viz.value.spec) : undefined,
@@ -169,17 +191,12 @@ async function load() {
 
   loadingData.value = true;
   try {
-    const [data, fieldsResp] = await Promise.all([
-      CatalogApi.computeSavedVisualization(props.vizId, SAMPLE_ROWS),
-      CatalogApi.getSavedVisualizationFields(props.vizId),
-    ]);
-    if (data.error) {
-      errorMessage.value = data.error;
-    } else {
-      rows.value = data.rows;
-    }
+    // We only fetch the field schema up front — GraphicWalker pulls rows
+    // on demand through computeOnWorker so every aggregation pushes down
+    // to polars-gw.
+    const fieldsResp = await CatalogApi.getSavedVisualizationFields(props.vizId);
     if (fieldsResp.error) {
-      errorMessage.value = errorMessage.value ?? fieldsResp.error;
+      errorMessage.value = fieldsResp.error;
     } else {
       fields.value = fieldsResp.fields;
     }

@@ -411,13 +411,19 @@ export class CatalogApi {
     await axios.delete(`/catalog/visualizations/${vizId}`);
   }
 
-  /** Stream the source rows behind a saved viz for client-side rendering. */
+  /** Compute rows for a saved viz.
+   *
+   * Pass ``payload`` (a GraphicWalker IDataQueryPayload) to push a chart
+   * aggregation down to the worker via polars-gw. Omit it for a raw row
+   * fetch (used as a fallback / for preview cards).
+   */
   static async computeSavedVisualization(
     vizId: number,
-    maxRows?: number,
+    options: { maxRows?: number; payload?: Record<string, any> } = {},
   ): Promise<VisualizationComputeResponse> {
     const body: Record<string, unknown> = {};
-    if (maxRows !== undefined) body.max_rows = maxRows;
+    if (options.maxRows !== undefined) body.max_rows = options.maxRows;
+    if (options.payload !== undefined) body.payload = options.payload;
     const response = await axios.post<VisualizationComputeResponse>(
       `/catalog/visualizations/${vizId}/compute`,
       body,

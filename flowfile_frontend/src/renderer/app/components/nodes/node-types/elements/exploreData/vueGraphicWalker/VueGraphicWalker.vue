@@ -14,6 +14,17 @@ interface VueGWProps {
   themeKey?: IGWProps["themeKey"];
   /** Which segment tab to show initially: "data" or "vis" (default: "vis") */
   defaultTab?: "data" | "vis";
+  /**
+   * Server-side compute callback. When provided, every chart aggregation
+   * GraphicWalker performs is forwarded here as an IDataQueryPayload —
+   * this is the polars-gw walk() pattern. The caller should POST the
+   * payload to a backend endpoint (e.g. /catalog/visualizations/compute)
+   * and return the resulting rows.
+   *
+   * If both ``data`` and ``computation`` are provided, ``computation``
+   * wins and ``data`` is ignored — GW will not need it.
+   */
+  computation?: (payload: any) => Promise<IRow[]>;
 }
 
 const props = defineProps<VueGWProps>();
@@ -39,16 +50,25 @@ const dummyComputation = async (): Promise<IRow[]> => {
 
 const getReactProps = () => {
   const chartSpecArray = props.specList ? toRaw(props.specList) : [];
+  const usingComputation = typeof props.computation === "function";
 
   const reactProps: Record<string, any> = {
-    data: props.data ? toRaw(props.data) : undefined,
     fields: props.fields ? toRaw(props.fields) : undefined,
     appearance: props.appearance || "light",
     themeKey: props.themeKey,
     storeRef: internalStoreRef.value,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
-    computation: dummyComputation,
   };
+
+  if (usingComputation) {
+    // Server-side compute path: GW fires one fetch per aggregation. We must
+    // not pass ``data`` — GW would otherwise short-circuit and aggregate in
+    // the browser.
+    reactProps.computation = props.computation;
+  } else {
+    reactProps.data = props.data ? toRaw(props.data) : undefined;
+    reactProps.computation = dummyComputation;
+  }
 
   Object.keys(reactProps).forEach((key) => {
     if (reactProps[key] === undefined) {

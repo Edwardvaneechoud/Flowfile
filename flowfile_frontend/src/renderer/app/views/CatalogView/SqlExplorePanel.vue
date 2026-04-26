@@ -21,7 +21,8 @@
     </div>
     <VueGraphicWalker
       ref="vueGraphicWalkerRef"
-      :data="gwData"
+      :computation="useWorkerCompute ? computeOnWorker : undefined"
+      :data="useWorkerCompute ? undefined : gwData"
       :fields="gwFields"
       default-tab="data"
     />
@@ -175,6 +176,33 @@ const gwFields = computed<IMutField[]>(() =>
     };
   }),
 );
+
+/**
+ * Use the worker compute path when we have the SQL query in hand. This makes
+ * every chart aggregation in GraphicWalker round-trip through the worker via
+ * polars-gw, so the chart aggregates over the full table behind the SQL —
+ * not just the (typically 10k-row) preview the SQL editor cached.
+ */
+const useWorkerCompute = computed(() => !!props.sourceQuery);
+
+async function computeOnWorker(payload: any): Promise<IRow[]> {
+  if (!props.sourceQuery) return [];
+  try {
+    const resp = await CatalogApi.computeAdHocVisualization(
+      { source_type: "sql", sql_query: props.sourceQuery },
+      payload,
+      100_000,
+    );
+    if (resp.error) {
+      console.error("[viz] sql-explore compute failed:", resp.error);
+      return [];
+    }
+    return resp.rows as IRow[];
+  } catch (err: any) {
+    console.error("[viz] sql-explore compute threw:", err);
+    return [];
+  }
+}
 
 const gwData = computed<IRow[]>(() =>
   props.result.rows.map((row) => {

@@ -46,7 +46,7 @@
     <VueGraphicWalker
       v-else
       ref="gwRef"
-      :data="plainSampleRows"
+      :computation="computeOnWorker"
       :fields="plainFields"
       :spec-list="plainInitialSpecList"
       :appearance="appearance"
@@ -86,7 +86,6 @@ const saving = ref(false);
 
 const loadingSample = ref(true);
 const loadError = ref<string | null>(null);
-const sampleRows = ref<Record<string, any>[]>([]);
 const fields = ref<Record<string, any>[]>([]);
 
 const initialSpec = computed(() => props.viz?.spec ?? null);
@@ -94,13 +93,36 @@ const initialSpec = computed(() => props.viz?.spec ?? null);
 // Deep-clone JSON so GraphicWalker's web worker can structuredClone the
 // payload (Vue refs / proxies trip up postMessage).
 const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const plainSampleRows = computed(() => toPlainJson(sampleRows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainInitialSpecList = computed(() =>
   initialSpec.value && initialSpec.value.length > 0
     ? toPlainJson(initialSpec.value)
     : undefined,
 );
+
+/**
+ * GraphicWalker computation callback — every aggregation the user builds
+ * fires this with an IDataQueryPayload. We POST it to the ad-hoc compute
+ * endpoint with the editor's source descriptor; the worker resolves the
+ * source once into its session cache and runs polars-gw on top.
+ */
+async function computeOnWorker(payload: any): Promise<any[]> {
+  try {
+    const resp = await CatalogApi.computeAdHocVisualization(
+      props.source,
+      payload,
+      SAMPLE_ROWS,
+    );
+    if (resp.error) {
+      console.error("[viz] ad-hoc compute failed:", resp.error);
+      return [];
+    }
+    return resp.rows;
+  } catch (err: any) {
+    console.error("[viz] ad-hoc compute threw:", err);
+    return [];
+  }
+}
 
 const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
 
@@ -116,21 +138,10 @@ onMounted(async () => {
   loadingSample.value = true;
   loadError.value = null;
   try {
+    // Just fetch the field schema. GraphicWalker pulls rows on demand via
+    // computeOnWorker so every aggregation pushes down to polars-gw on the
+    // worker (matching the polars-gw walk() reference pattern).
     fields.value = await store.loadVisualizationFields(props.source);
-    // Pull a small representative sample so the GraphicWalker editor has data
-    // to draw against while the user iterates. Heavy aggregations the user
-    // builds on top route through the sample client-side; saving and the
-    // saved-viz playback always re-run server-side via the worker cache.
-    const sample = await CatalogApi.computeAdHocVisualization(
-      props.source,
-      { workflow: [{ type: "view", query: [{ op: "raw", fields: ["*"] }] }] },
-      SAMPLE_ROWS,
-    );
-    if (sample.error) {
-      loadError.value = sample.error;
-    } else {
-      sampleRows.value = sample.rows;
-    }
   } catch (err: any) {
     loadError.value = err?.response?.data?.detail ?? err?.message ?? String(err);
   } finally {
