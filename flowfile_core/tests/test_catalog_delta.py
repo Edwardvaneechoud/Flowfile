@@ -875,7 +875,7 @@ class TestMaterializeWorkerDeltaResponse:
 
         response_payload = {
             "table_path": "/tmp/delta_out",
-            "schema": [{"name": "col_x", "dtype": "Float64"}],
+            "column_schema": [{"name": "col_x", "dtype": "Float64"}],
             "row_count": 42,
             "column_count": 1,
             "size_bytes": 9999,

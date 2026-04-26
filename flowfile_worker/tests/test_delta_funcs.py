@@ -338,7 +338,7 @@ class TestWorkerRoutes:
         assert data["row_count"] == 3
         assert data["column_count"] == 2
         assert data["size_bytes"] > 0
-        assert len(data["schema"]) == 2
+        assert len(data["column_schema"]) == 2
 
     def test_delta_history(self, worker_client, versioned_delta):
         resp = worker_client.post(

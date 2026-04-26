@@ -248,7 +248,7 @@ class TestCatalogTableMaterialization:
 
             response_payload = {
                 "table_path": "/tmp/fake_delta",
-                "schema": [{"name": "col_a", "dtype": "Int64"}],
+                "column_schema": [{"name": "col_a", "dtype": "Int64"}],
                 "row_count": 12,
                 "column_count": 1,
                 "size_bytes": 2048,

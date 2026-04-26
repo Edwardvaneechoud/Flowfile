@@ -208,7 +208,7 @@ class TestVisualizationCRUD:
                 "catalog_table_id": table_id,
             },
         ).json()
-        new_spec = {**SAMPLE_SPEC, "extra": "x"}
+        new_spec = [{**SAMPLE_CHART, "extra": "x"}]
         resp = client.put(
             f"/catalog/visualizations/{created['id']}",
             json={"name": "v1-renamed", "spec": new_spec},
