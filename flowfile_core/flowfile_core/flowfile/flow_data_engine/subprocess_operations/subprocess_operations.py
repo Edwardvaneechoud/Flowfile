@@ -34,7 +34,7 @@ from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTable
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
-from flowfile_worker.viz_sessions import HTTP_TIMEOUT_SECONDS
+from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
 
 def trigger_df_operation(

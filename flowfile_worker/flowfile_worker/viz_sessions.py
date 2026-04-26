@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from flowfile_worker import models, mp_context
+from shared.viz_protocol import REQUEST_TIMEOUT_SECONDS
 
 try:
     import psutil as _psutil
@@ -28,8 +29,6 @@ except ImportError:
 logger = logging.getLogger(__name__).getChild("viz")
 
 
-HTTP_TIMEOUT_SECONDS = 120
-REQUEST_TIMEOUT_SECONDS = HTTP_TIMEOUT_SECONDS - 5
 SHUTDOWN_GRACE_SECONDS = 10
 REQUEST_QUEUE_MAXSIZE = 8
 

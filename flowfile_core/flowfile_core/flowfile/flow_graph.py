@@ -3477,13 +3477,13 @@ class FlowGraph:
         )
         from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
         from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key
-        from flowfile_worker.external_sources.google_analytics_source.models import (
+        from shared.google_analytics.models import (
             GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
         )
-        from flowfile_worker.external_sources.google_analytics_source.models import (
+        from shared.google_analytics.models import (
             GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
         )
-        from flowfile_worker.external_sources.google_analytics_source.models import (
+        from shared.google_analytics.models import (
             GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
         )
 
