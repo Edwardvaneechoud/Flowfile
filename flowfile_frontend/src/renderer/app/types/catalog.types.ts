@@ -364,13 +364,19 @@ export interface SqlQueryResult {
 // Visualizations
 // ============================================================================
 
+export type VizSourceKind = "table" | "sql";
+
 export interface CatalogVisualization {
   id: number;
-  catalog_table_id: number;
   name: string;
+  description: string | null;
   chart_type: string | null;
   spec: Record<string, any>;
   spec_gw_version: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id: number | null;
+  sql_query: string | null;
+  namespace_id: number | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -378,16 +384,25 @@ export interface CatalogVisualization {
 
 export interface VisualizationCreatePayload {
   name: string;
+  description?: string | null;
   chart_type?: string | null;
   spec: Record<string, any>;
   spec_gw_version?: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id?: number | null;
+  sql_query?: string | null;
+  namespace_id?: number | null;
 }
 
 export interface VisualizationUpdatePayload {
   name?: string;
+  description?: string | null;
   chart_type?: string | null;
   spec?: Record<string, any>;
   spec_gw_version?: string | null;
+  namespace_id?: number | null;
+  sql_query?: string | null;
+  catalog_table_id?: number | null;
 }
 
 /** Source descriptor sent to the ad-hoc compute and fields endpoints. */
@@ -414,15 +429,20 @@ export interface VisualizationFieldsResponse {
 
 export interface VisualizationLibraryItem {
   id: number;
-  catalog_table_id: number;
   name: string;
+  description: string | null;
   chart_type: string | null;
   spec_gw_version: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id: number | null;
+  sql_query: string | null;
+  namespace_id: number | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
-  table_name: string;
+  table_name: string | null;
   table_namespace_name: string | null;
-  table_full_name: string;
-  table_type: string;
+  table_full_name: string | null;
+  table_type: string | null;
+  namespace_name: string | null;
 }

@@ -384,25 +384,33 @@ class CatalogTableReadLink(Base):
 
 
 class CatalogVisualization(Base):
-    """A saved GraphicWalker chart spec attached to a catalog table.
+    """A saved GraphicWalker chart spec.
 
-    The spec is stored as JSON (the GW IChart shape) and is rendered client-side
-    by feeding rows from the worker visualize endpoint into ``@kanaries/graphic-walker``.
+    Visualizations are first-class catalog entities. A viz may reference a
+    catalog table (``source_type="table"``, ``catalog_table_id`` set), or
+    embed a SQL query that runs against the catalog (``source_type="sql"``,
+    ``sql_query`` set). ``namespace_id`` controls where the viz lives in
+    the catalog hierarchy independently of any source table.
     """
 
     __tablename__ = "catalog_visualizations"
 
     id = Column(Integer, primary_key=True, index=True)
-    catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
     chart_type = Column(String, nullable=True)
     spec_json = Column(Text, nullable=False)
     spec_gw_version = Column(String, nullable=True)
+
+    source_type = Column(String, nullable=False, default="table")
+    catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True, index=True)
+    sql_query = Column(Text, nullable=True)
+
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
-
-    __table_args__ = (UniqueConstraint("catalog_table_id", "name", name="uq_viz_table_name"),)
 
 
 class SchedulerLock(Base):

@@ -117,8 +117,9 @@ const onDelete = async (viz: CatalogVisualization) => {
     return;
   }
   try {
-    await store.deleteVisualization(props.tableId, viz.id);
+    await store.deleteVisualization(viz.id);
     ElMessage.success(`Deleted "${viz.name}"`);
+    await store.loadVisualizations(props.tableId);
   } catch (err: any) {
     ElMessage.error(`Failed to delete: ${err?.message ?? err}`);
   }

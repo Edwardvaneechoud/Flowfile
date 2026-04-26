@@ -4,13 +4,13 @@
       <div>
         <h2>Visualizations</h2>
         <p class="viz-library-sub">
-          Saved Graphic Walker charts across the catalog. Click a chart to open the source table.
+          Saved Graphic Walker charts across the catalog. Click any chart to open it.
         </p>
       </div>
       <el-input
         v-model="search"
         size="small"
-        placeholder="Filter by name or table"
+        placeholder="Filter by name or source"
         class="viz-library-search"
         clearable
       >
@@ -24,103 +24,165 @@
       <el-skeleton :rows="6" animated />
     </div>
 
-    <div v-else-if="!groups.length" class="viz-library-state">
+    <div v-else-if="!filtered.length" class="viz-library-state">
       <el-empty
         description="No saved visualizations yet. Open a table or run a SQL query to create one."
       />
     </div>
 
-    <div v-else class="viz-library-groups">
-      <div v-for="group in groups" :key="group.tableId" class="viz-library-group">
-        <div class="viz-library-group-header" @click="emit('viewTable', group.tableId)">
+    <div v-else class="viz-library-grid">
+      <div
+        v-for="item in filtered"
+        :key="item.id"
+        class="viz-library-card"
+        role="button"
+        tabindex="0"
+        @click="openViz(item)"
+        @keydown.enter="openViz(item)"
+      >
+        <div class="viz-library-card-header">
           <i
             :class="
-              group.tableType === 'virtual'
-                ? 'fa-solid fa-bolt group-icon virtual'
-                : 'fa-solid fa-table group-icon'
+              item.source_type === 'sql'
+                ? 'fa-solid fa-code source-icon sql'
+                : item.table_type === 'virtual'
+                  ? 'fa-solid fa-bolt source-icon virtual'
+                  : 'fa-solid fa-table source-icon'
             "
           ></i>
-          <span class="group-name">{{ group.tableFullName }}</span>
-          <span class="group-count">{{ group.items.length }}</span>
-        </div>
-        <div class="viz-library-group-items">
-          <div
-            v-for="item in group.items"
-            :key="item.id"
-            class="viz-library-item"
-            role="button"
-            tabindex="0"
-            @click="emit('viewTable', item.catalog_table_id)"
-            @keydown.enter="emit('viewTable', item.catalog_table_id)"
-          >
-            <div class="viz-library-item-name">{{ item.name }}</div>
-            <div class="viz-library-item-meta">
-              <span v-if="item.chart_type">{{ item.chart_type }}</span>
-              <span class="dot">·</span>
-              <span>{{ formatDate(item.updated_at) }}</span>
-            </div>
+          <div class="viz-library-card-title">
+            <div class="viz-name">{{ item.name }}</div>
+            <div class="viz-source">{{ sourceLabel(item) }}</div>
           </div>
+          <el-dropdown trigger="click" @click.stop>
+            <el-icon class="viz-card-menu" @click.stop><MoreFilled /></el-icon>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="openViz(item)">
+                  <el-icon><Edit /></el-icon> Open
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="item.catalog_table_id"
+                  @click="emit('viewTable', item.catalog_table_id!)"
+                >
+                  <el-icon><FolderOpened /></el-icon> Source table
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="onDelete(item)">
+                  <el-icon><Delete /></el-icon> Delete
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <div class="viz-library-card-meta">
+          <span v-if="item.chart_type">{{ item.chart_type }}</span>
+          <span v-if="item.chart_type" class="dot">·</span>
+          <span>Updated {{ formatDate(item.updated_at) }}</span>
         </div>
       </div>
     </div>
+
+    <el-dialog
+      v-model="viewerOpen"
+      :title="active?.name ?? ''"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+    >
+      <VisualizationViewer
+        v-if="viewerOpen && active"
+        :viz-id="active.id"
+        :appearance="appearance"
+        @close="closeViewer"
+        @deleted="onDeletedFromViewer"
+      />
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Search } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { Delete, Edit, FolderOpened, MoreFilled, Search } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { formatDate } from "./catalog-formatters";
 import type { VisualizationLibraryItem } from "../../types";
+import VisualizationViewer from "./VisualizationViewer.vue";
 
 const emit = defineEmits<{
   (e: "viewTable", tableId: number): void;
 }>();
 
 const store = useCatalogStore();
+const appearance = useGraphicWalkerAppearance();
+
 const search = ref("");
+const viewerOpen = ref(false);
+const active = ref<VisualizationLibraryItem | null>(null);
 
 const loading = computed(
   () => store.loadingVisualizationLibrary && !store.visualizationLibrary.length,
 );
 
+function sourceLabel(item: VisualizationLibraryItem): string {
+  if (item.source_type === "sql") {
+    return item.namespace_name
+      ? `SQL · ${item.namespace_name}`
+      : "SQL query";
+  }
+  return item.table_full_name ?? "Catalog table";
+}
+
 const filtered = computed<VisualizationLibraryItem[]>(() => {
   const q = search.value.trim().toLowerCase();
   if (!q) return store.visualizationLibrary;
-  return store.visualizationLibrary.filter(
-    (it) =>
-      it.name.toLowerCase().includes(q) ||
-      it.table_full_name.toLowerCase().includes(q) ||
-      (it.chart_type ?? "").toLowerCase().includes(q),
-  );
+  return store.visualizationLibrary.filter((it) => {
+    const haystack = [
+      it.name,
+      it.table_full_name ?? "",
+      it.namespace_name ?? "",
+      it.chart_type ?? "",
+      it.source_type,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
 });
 
-interface Group {
-  tableId: number;
-  tableFullName: string;
-  tableType: string;
-  items: VisualizationLibraryItem[];
+function openViz(item: VisualizationLibraryItem) {
+  active.value = item;
+  viewerOpen.value = true;
 }
 
-const groups = computed<Group[]>(() => {
-  const byTable = new Map<number, Group>();
-  for (const item of filtered.value) {
-    const existing = byTable.get(item.catalog_table_id);
-    if (existing) {
-      existing.items.push(item);
-    } else {
-      byTable.set(item.catalog_table_id, {
-        tableId: item.catalog_table_id,
-        tableFullName: item.table_full_name,
-        tableType: item.table_type,
-        items: [item],
-      });
-    }
+function closeViewer() {
+  viewerOpen.value = false;
+  active.value = null;
+  store.loadVisualizationLibrary().catch(() => {});
+}
+
+async function onDelete(item: VisualizationLibraryItem) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete visualization "${item.name}"?`,
+      "Confirm delete",
+      { type: "warning" },
+    );
+  } catch {
+    return;
   }
-  return Array.from(byTable.values()).sort((a, b) =>
-    a.tableFullName.localeCompare(b.tableFullName),
-  );
-});
+  try {
+    await store.deleteVisualization(item.id);
+    ElMessage.success(`Deleted "${item.name}"`);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+  }
+}
+
+function onDeletedFromViewer() {
+  closeViewer();
+}
 
 onMounted(() => {
   store.loadVisualizationLibrary();
@@ -160,79 +222,78 @@ onMounted(() => {
   justify-content: center;
   padding: 48px 0;
 }
-.viz-library-groups {
+.viz-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.viz-library-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-.viz-library-group {
+  gap: 8px;
+  padding: 12px 14px;
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   background: var(--el-bg-color);
-  overflow: hidden;
-}
-.viz-library-group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--el-fill-color-lighter);
   cursor: pointer;
-  font-weight: 600;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-.viz-library-group-header:hover {
-  background: var(--el-fill-color);
-}
-.group-icon {
-  color: var(--el-text-color-regular);
-}
-.group-icon.virtual {
-  color: var(--el-color-warning);
-}
-.group-name {
-  flex: 1;
-  font-size: 14px;
-}
-.group-count {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  background: var(--el-bg-color);
-  border-radius: 999px;
-  padding: 1px 8px;
-  border: 1px solid var(--el-border-color-lighter);
-}
-.viz-library-group-items {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1px;
-  background: var(--el-border-color-lighter);
-}
-.viz-library-item {
-  background: var(--el-bg-color);
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.viz-library-item:hover,
-.viz-library-item:focus-visible {
+.viz-library-card:hover,
+.viz-library-card:focus-visible {
   background: var(--el-fill-color-lighter);
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
   outline: none;
 }
-.viz-library-item-name {
-  font-weight: 500;
-  font-size: 13px;
+.viz-library-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.source-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--el-text-color-regular);
+}
+.source-icon.virtual {
+  color: var(--el-color-warning);
+}
+.source-icon.sql {
+  color: var(--el-color-primary);
+}
+.viz-library-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.viz-name {
+  font-weight: 600;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.viz-library-item-meta {
+.viz-source {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.viz-card-menu {
+  cursor: pointer;
+  color: var(--el-text-color-secondary);
+}
+.viz-library-card-meta {
   display: flex;
   gap: 6px;
-  margin-top: 4px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
 }
-.viz-library-item-meta .dot {
+.viz-library-card-meta .dot {
   color: var(--el-text-color-disabled);
 }
 </style>

@@ -136,19 +136,8 @@ onMounted(async () => {
   }
 });
 
-const resolveTargetTableId = (): number | null => {
-  if (props.saveTargetTableId !== undefined && props.saveTargetTableId !== null) {
-    return props.saveTargetTableId;
-  }
-  if (props.viz) return props.viz.catalog_table_id;
-  if (props.source.source_type === "table" && props.source.table_id) {
-    return props.source.table_id;
-  }
-  return null;
-};
-
 const isExistingViz = (v: any): v is CatalogVisualization =>
-  v && typeof v === "object" && typeof v.id === "number" && typeof v.catalog_table_id === "number";
+  v && typeof v === "object" && typeof v.id === "number";
 
 const save = async () => {
   if (!gwRef.value) return;
@@ -161,26 +150,24 @@ const save = async () => {
     ElMessage.error("No chart to save — build one in the editor first.");
     return;
   }
-  const tableId = resolveTargetTableId();
-  if (tableId === null) {
-    ElMessage.error(
-      "This chart is built from a SQL query that hasn't been promoted to a catalog table yet.",
-    );
-    return;
-  }
   const spec = charts[0] as Record<string, any>;
   saving.value = true;
   try {
     let saved: CatalogVisualization;
     if (isExistingViz(props.viz)) {
-      saved = await store.updateVisualization(tableId, props.viz.id, {
+      saved = await store.updateVisualization(props.viz.id, {
         name: name.value.trim(),
         spec,
       });
     } else {
-      saved = await store.createVisualization(tableId, {
+      saved = await store.createVisualization({
         name: name.value.trim(),
         spec,
+        source_type: props.source.source_type,
+        catalog_table_id:
+          props.source.source_type === "table" ? props.source.table_id ?? null : null,
+        sql_query:
+          props.source.source_type === "sql" ? props.source.sql_query ?? null : null,
       });
     }
     ElMessage.success(`Saved "${saved.name}"`);

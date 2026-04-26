@@ -158,23 +158,6 @@ def _is_table_reference(name: str, query: str) -> bool:
     return bool(pattern.search(query))
 
 
-def _extract_gw_query_payload(spec: dict) -> dict | None:
-    """Extract a Graphic Walker IDataQueryPayload from a saved chart spec.
-
-    GW persists the active query under ``encodings.workflow`` (or, for older
-    chart formats, the spec itself is the payload). Return ``None`` if neither
-    shape is present so the caller can surface a clear error.
-    """
-    if not isinstance(spec, dict):
-        return None
-    if "workflow" in spec:
-        return {"workflow": spec["workflow"], "limit": spec.get("limit")}
-    encodings = spec.get("encodings")
-    if isinstance(encodings, dict) and "workflow" in encodings:
-        return {"workflow": encodings["workflow"], "limit": encodings.get("limit")}
-    return None
-
-
 def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
     """Convert raw deltalake history dicts into typed ``DeltaVersionCommit`` models."""
     return [
@@ -3028,17 +3011,24 @@ class CatalogService:
             spec = {}
         return VisualizationOut(
             id=viz.id,
-            catalog_table_id=viz.catalog_table_id,
             name=viz.name,
+            description=viz.description,
             chart_type=viz.chart_type,
             spec=spec,
             spec_gw_version=viz.spec_gw_version,
+            source_type=viz.source_type or "table",
+            catalog_table_id=viz.catalog_table_id,
+            sql_query=viz.sql_query,
+            namespace_id=viz.namespace_id,
             created_by=viz.created_by,
             created_at=viz.created_at,
             updated_at=viz.updated_at,
         )
 
-    def list_visualizations(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
+    def list_visualizations_for_table(
+        self, table_id: int, user_id: int | None = None
+    ) -> list[VisualizationOut]:
+        """Filtered listing — viz that reference a specific catalog table."""
         if self.repo.get_table(table_id) is None:
             raise TableNotFoundError(table_id=table_id)
         return [self._viz_to_out(v) for v in self.repo.list_visualizations(table_id)]
@@ -3046,17 +3036,17 @@ class CatalogService:
     def list_visualization_library(
         self, user_id: int | None = None
     ) -> list[VisualizationLibraryItem]:
-        """Return all saved visualizations enriched with their parent table metadata.
+        """Return all saved visualizations as catalog library entries.
 
-        Powers the catalog-wide "Visualizations" tab. We resolve namespace +
-        table info in bulk to avoid N+1 lookups, and silently drop any orphaned
-        rows whose parent table has been deleted (defensive; the cascade in
-        ``delete_table`` should already prevent this).
+        SQL-source viz carry only their inline query and namespace; table-source
+        viz also surface their parent table's name + namespace. Orphaned rows
+        (parent table deleted) are returned without table info rather than
+        being dropped, so users can still find/edit/delete them.
         """
         rows = self.repo.list_all_visualizations()
         if not rows:
             return []
-        table_ids = {r.catalog_table_id for r in rows}
+        table_ids = {r.catalog_table_id for r in rows if r.catalog_table_id is not None}
         tables_by_id: dict[int, CatalogTable] = {}
         for tid in table_ids:
             t = self.repo.get_table(tid)
@@ -3064,79 +3054,132 @@ class CatalogService:
                 tables_by_id[tid] = t
         items: list[VisualizationLibraryItem] = []
         for viz in rows:
-            table = tables_by_id.get(viz.catalog_table_id)
-            if table is None:
-                continue
-            ns_name = self._resolve_namespace_name(table.namespace_id)
+            ns_name: str | None = None
+            table_name: str | None = None
+            table_full_name: str | None = None
+            table_type: str | None = None
+            namespace_name: str | None = None
+
+            table = tables_by_id.get(viz.catalog_table_id) if viz.catalog_table_id else None
+            if table is not None:
+                ns_name = self._resolve_namespace_name(table.namespace_id)
+                table_name = table.name
+                table_full_name = self._format_full_name(ns_name, table.name)
+                table_type = table.table_type or "physical"
+            if viz.namespace_id is not None:
+                namespace_name = self._resolve_namespace_name(viz.namespace_id)
+            elif ns_name is not None:
+                namespace_name = ns_name
+
             items.append(
                 VisualizationLibraryItem(
                     id=viz.id,
-                    catalog_table_id=viz.catalog_table_id,
                     name=viz.name,
+                    description=viz.description,
                     chart_type=viz.chart_type,
                     spec_gw_version=viz.spec_gw_version,
+                    source_type=viz.source_type or "table",
+                    catalog_table_id=viz.catalog_table_id,
+                    sql_query=viz.sql_query,
+                    namespace_id=viz.namespace_id,
                     created_by=viz.created_by,
                     created_at=viz.created_at,
                     updated_at=viz.updated_at,
-                    table_name=table.name,
+                    table_name=table_name,
                     table_namespace_name=ns_name,
-                    table_full_name=self._format_full_name(ns_name, table.name),
-                    table_type=table.table_type or "physical",
+                    table_full_name=table_full_name,
+                    table_type=table_type,
+                    namespace_name=namespace_name,
                 )
             )
         return items
 
+    def get_visualization(self, viz_id: int, user_id: int | None = None) -> VisualizationOut:
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        return self._viz_to_out(viz)
+
+    def _validate_viz_source(self, payload: VisualizationCreate | VisualizationUpdate) -> None:
+        """Ensure the source descriptor on the payload is internally consistent."""
+        source_type = getattr(payload, "source_type", None)
+        if source_type == "table":
+            if payload.catalog_table_id is None:
+                raise ValueError("catalog_table_id is required when source_type='table'")
+        elif source_type == "sql":
+            if not payload.sql_query or not payload.sql_query.strip():
+                raise ValueError("sql_query is required when source_type='sql'")
+
     def create_visualization(
-        self, table_id: int, payload: VisualizationCreate, user_id: int
+        self, payload: VisualizationCreate, user_id: int
     ) -> VisualizationOut:
-        if self.repo.get_table(table_id) is None:
-            raise TableNotFoundError(table_id=table_id)
-        if self.repo.get_visualization_by_name(table_id, payload.name) is not None:
-            raise VisualizationExistsError(payload.name, table_id)
+        self._validate_viz_source(payload)
+
+        # Default the namespace to the parent table's namespace when this is
+        # a table-source viz and the caller didn't pick one. SQL-source viz
+        # without a namespace stay unscoped.
+        namespace_id = payload.namespace_id
+        if payload.source_type == "table":
+            table = self.repo.get_table(payload.catalog_table_id) if payload.catalog_table_id else None
+            if table is None:
+                raise TableNotFoundError(table_id=payload.catalog_table_id or 0)
+            if namespace_id is None:
+                namespace_id = table.namespace_id
+
         viz = CatalogVisualization(
-            catalog_table_id=table_id,
             name=payload.name,
+            description=payload.description,
             chart_type=payload.chart_type,
             spec_json=json.dumps(payload.spec),
             spec_gw_version=payload.spec_gw_version,
+            source_type=payload.source_type or "table",
+            catalog_table_id=payload.catalog_table_id if payload.source_type == "table" else None,
+            sql_query=payload.sql_query if payload.source_type == "sql" else None,
+            namespace_id=namespace_id,
             created_by=user_id,
         )
         try:
             created = self.repo.create_visualization(viz)
         except IntegrityError as exc:
-            raise VisualizationExistsError(payload.name, table_id) from exc
+            raise VisualizationExistsError(payload.name, payload.catalog_table_id or 0) from exc
         return self._viz_to_out(created)
 
     def update_visualization(
-        self, table_id: int, viz_id: int, payload: VisualizationUpdate, user_id: int
+        self, viz_id: int, payload: VisualizationUpdate, user_id: int
     ) -> VisualizationOut:
         viz = self.repo.get_visualization(viz_id)
-        if viz is None or viz.catalog_table_id != table_id:
-            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
-        if payload.name is not None and payload.name != viz.name:
-            existing = self.repo.get_visualization_by_name(table_id, payload.name)
-            if existing is not None and existing.id != viz_id:
-                raise VisualizationExistsError(payload.name, table_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        if payload.name is not None:
             viz.name = payload.name
+        if payload.description is not None:
+            viz.description = payload.description
         if payload.chart_type is not None:
             viz.chart_type = payload.chart_type
         if payload.spec is not None:
             viz.spec_json = json.dumps(payload.spec)
         if payload.spec_gw_version is not None:
             viz.spec_gw_version = payload.spec_gw_version
+        if payload.namespace_id is not None:
+            viz.namespace_id = payload.namespace_id
+        if payload.sql_query is not None and viz.source_type == "sql":
+            viz.sql_query = payload.sql_query
+        if payload.catalog_table_id is not None and viz.source_type == "table":
+            viz.catalog_table_id = payload.catalog_table_id
         try:
             updated = self.repo.update_visualization(viz)
         except IntegrityError as exc:
-            raise VisualizationExistsError(payload.name or viz.name, table_id) from exc
+            raise VisualizationExistsError(viz.name, viz.catalog_table_id or 0) from exc
         return self._viz_to_out(updated)
 
-    def delete_visualization(self, table_id: int, viz_id: int, user_id: int) -> None:
+    def delete_visualization(self, viz_id: int, user_id: int) -> None:
         viz = self.repo.get_visualization(viz_id)
-        if viz is None or viz.catalog_table_id != table_id:
-            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
         # Best-effort eviction in worker; non-fatal if it fails.
         try:
-            trigger_visualize_evict(self._session_key_for_table(viz.catalog_table_id))
+            if viz.catalog_table_id is not None:
+                trigger_visualize_evict(self._session_key_for_table(viz.catalog_table_id))
         except Exception:
             logger.debug("visualize_evict failed (worker offline?)", exc_info=True)
         self.repo.delete_visualization(viz_id)
@@ -3275,23 +3318,40 @@ class CatalogService:
             raise VisualizationComputeError(str(exc)) from exc
         return VisualizationComputeResponse(**data)
 
-    def compute_saved_visualization(
-        self, table_id: int, viz_id: int, max_rows: int | None, user_id: int
+    def compute_saved_visualization_rows(
+        self, viz_id: int, max_rows: int | None, user_id: int
     ) -> VisualizationComputeResponse:
+        """Stream the source rows behind a saved viz for client-side rendering.
+
+        GraphicWalker resolves the saved chart spec (encodings) into a query
+        client-side, so the server's job here is just to deliver the source
+        data. We dispatch a "raw select" payload through the worker session
+        cache so the source LazyFrame stays warm across card opens.
+        """
         viz = self.repo.get_visualization(viz_id)
-        if viz is None or viz.catalog_table_id != table_id:
-            raise VisualizationNotFoundError(viz_id=viz_id, table_id=table_id)
-        try:
-            spec = json.loads(viz.spec_json) if viz.spec_json else {}
-        except (TypeError, ValueError) as exc:
-            raise VisualizationComputeError(f"Saved spec is not valid JSON: {exc}") from exc
-        gw_payload = _extract_gw_query_payload(spec)
-        if gw_payload is None:
-            raise VisualizationComputeError("Saved spec does not embed a query payload")
-        worker_source = self._resolve_source_for_worker(
-            VizSourceDescriptor(source_type="table", table_id=table_id), user_id=user_id
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        source = self._viz_source_descriptor(viz)
+        worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        raw_payload = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
+        return self._dispatch_visualize_query(
+            worker_source, raw_payload, self._clamp_max_rows(max_rows)
         )
-        return self._dispatch_visualize_query(worker_source, gw_payload, self._clamp_max_rows(max_rows))
+
+    def get_visualization_fields_for_viz(
+        self, viz_id: int, user_id: int
+    ) -> VisualizationFieldsResponse:
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        source = self._viz_source_descriptor(viz)
+        return self.get_visualization_fields(source, user_id=user_id)
+
+    @staticmethod
+    def _viz_source_descriptor(viz: CatalogVisualization) -> VizSourceDescriptor:
+        if viz.source_type == "sql":
+            return VizSourceDescriptor(source_type="sql", sql_query=viz.sql_query or "")
+        return VizSourceDescriptor(source_type="table", table_id=viz.catalog_table_id)
 
     def compute_ad_hoc_visualization(
         self,

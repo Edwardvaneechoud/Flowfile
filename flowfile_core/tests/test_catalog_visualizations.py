@@ -93,62 +93,77 @@ def _make_table() -> int:
 SAMPLE_SPEC = {
     "name": "sum chart",
     "encodings": {
-        "workflow": [
-            {
-                "type": "view",
-                "query": [
-                    {
-                        "op": "aggregate",
-                        "groupBy": ["category"],
-                        "measures": [{"field": "value", "agg": "sum", "asFieldKey": "value_sum"}],
-                    }
-                ],
-            }
-        ],
+        "rows": [{"fid": "value", "aggName": "sum"}],
+        "columns": [{"fid": "category"}],
     },
 }
 
 
 class TestVisualizationCRUD:
-    def test_create_and_list(self):
+    def test_create_table_source_and_list(self):
         table_id = _make_table()
         resp = client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "viz1", "chart_type": "bar", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "viz1",
+                "chart_type": "bar",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["name"] == "viz1"
-        assert body["chart_type"] == "bar"
+        assert body["source_type"] == "table"
+        assert body["catalog_table_id"] == table_id
         assert body["spec"] == SAMPLE_SPEC
 
-        list_resp = client.get(f"/catalog/tables/{table_id}/visualizations")
-        assert list_resp.status_code == 200
-        items = list_resp.json()
+        # Library listing returns it.
+        lib = client.get("/catalog/visualizations")
+        assert lib.status_code == 200
+        items = lib.json()
         assert len(items) == 1
         assert items[0]["id"] == body["id"]
+        assert items[0]["table_name"] == "t1"
 
-    def test_duplicate_name_returns_409(self):
-        table_id = _make_table()
-        client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "dup", "spec": SAMPLE_SPEC},
-        )
+    def test_create_sql_source_no_table(self):
         resp = client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "dup", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "sql viz",
+                "spec": SAMPLE_SPEC,
+                "source_type": "sql",
+                "sql_query": "SELECT 1 AS x",
+            },
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["source_type"] == "sql"
+        assert body["catalog_table_id"] is None
+        assert body["sql_query"] == "SELECT 1 AS x"
+
+    def test_create_sql_source_missing_query_returns_422(self):
+        resp = client.post(
+            "/catalog/visualizations",
+            json={"name": "x", "spec": SAMPLE_SPEC, "source_type": "sql"},
+        )
+        assert resp.status_code == 422
 
     def test_update_name_and_spec(self):
         table_id = _make_table()
         created = client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "v1", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "v1",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
         ).json()
         new_spec = {**SAMPLE_SPEC, "extra": "x"}
         resp = client.put(
-            f"/catalog/tables/{table_id}/visualizations/{created['id']}",
+            f"/catalog/visualizations/{created['id']}",
             json={"name": "v1-renamed", "spec": new_spec},
         )
         assert resp.status_code == 200, resp.text
@@ -156,27 +171,9 @@ class TestVisualizationCRUD:
         assert body["name"] == "v1-renamed"
         assert body["spec"] == new_spec
 
-    def test_update_other_table_returns_404(self):
-        a = _make_table()
-        with get_db_context() as db:
-            other = CatalogTable(
-                name="other",
-                namespace_id=db.query(CatalogNamespace).first().id,
-                owner_id=1,
-                file_path="/tmp/flowfile-test/other",
-                storage_format="delta",
-                table_type="physical",
-            )
-            db.add(other)
-            db.commit()
-            db.refresh(other)
-            other_id = other.id
-        viz = client.post(
-            f"/catalog/tables/{a}/visualizations",
-            json={"name": "v", "spec": SAMPLE_SPEC},
-        ).json()
+    def test_update_unknown_returns_404(self):
         resp = client.put(
-            f"/catalog/tables/{other_id}/visualizations/{viz['id']}",
+            "/catalog/visualizations/99999",
             json={"name": "renamed"},
         )
         assert resp.status_code == 404
@@ -184,35 +181,50 @@ class TestVisualizationCRUD:
     def test_delete(self):
         table_id = _make_table()
         viz = client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "v", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "v",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
         ).json()
         with patch(
             "flowfile_core.catalog.service.trigger_visualize_evict",
             return_value=None,
         ):
-            resp = client.delete(f"/catalog/tables/{table_id}/visualizations/{viz['id']}")
+            resp = client.delete(f"/catalog/visualizations/{viz['id']}")
         assert resp.status_code == 204
-        list_resp = client.get(f"/catalog/tables/{table_id}/visualizations")
+        list_resp = client.get("/catalog/visualizations")
         assert list_resp.json() == []
 
-    def test_delete_table_cascades_visualizations(self):
+    def test_table_filtered_listing(self):
         table_id = _make_table()
         client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "v", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "v",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
         )
-        client.delete(f"/catalog/tables/{table_id}")
-        with get_db_context() as db:
-            assert db.query(CatalogVisualization).count() == 0
+        resp = client.get(f"/catalog/tables/{table_id}/visualizations")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
 
 
 class TestVisualizationCompute:
     def test_compute_saved_dispatches_with_table_session_key(self):
         table_id = _make_table()
         viz = client.post(
-            f"/catalog/tables/{table_id}/visualizations",
-            json={"name": "v", "spec": SAMPLE_SPEC},
+            "/catalog/visualizations",
+            json={
+                "name": "v",
+                "spec": SAMPLE_SPEC,
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
         ).json()
 
         captured: dict = {}
@@ -234,7 +246,7 @@ class TestVisualizationCompute:
             side_effect=fake_trigger,
         ):
             resp = client.post(
-                f"/catalog/tables/{table_id}/visualizations/{viz['id']}/compute",
+                f"/catalog/visualizations/{viz['id']}/compute",
                 json={"max_rows": 1000},
             )
 
@@ -242,11 +254,43 @@ class TestVisualizationCompute:
         body = resp.json()
         assert body["error"] is None
         assert body["rows"] == [{"category": "a", "value_sum": 4}]
-        # The worker source must be physical, and key must include the table id.
+        # The worker source must be physical, with the table-derived session key.
         assert captured["source"]["kind"] == "physical"
         assert captured["source"]["table_path"] == "t1"
         assert captured["source"]["session_key"].startswith(f"tbl:{table_id}:")
         assert captured["max_rows"] == 1000
+
+    def test_compute_saved_for_sql_source(self):
+        viz = client.post(
+            "/catalog/visualizations",
+            json={
+                "name": "sql v",
+                "spec": SAMPLE_SPEC,
+                "source_type": "sql",
+                "sql_query": "SELECT 1 AS x",
+            },
+        ).json()
+
+        captured: dict = {}
+
+        def fake_trigger(worker_source, payload, max_rows):
+            captured["source"] = worker_source
+            return {
+                "rows": [],
+                "total_rows": 0,
+                "truncated": False,
+                "elapsed_ms": 0.5,
+                "cache_hit": True,
+            }
+
+        with patch(
+            "flowfile_core.catalog.service.trigger_visualize_query",
+            side_effect=fake_trigger,
+        ):
+            resp = client.post(f"/catalog/visualizations/{viz['id']}/compute", json={})
+
+        assert resp.status_code == 200, resp.text
+        assert captured["source"]["kind"] == "sql"
 
     def test_compute_ad_hoc_with_table_source(self):
         table_id = _make_table()

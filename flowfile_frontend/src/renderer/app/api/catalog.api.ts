@@ -370,57 +370,67 @@ export class CatalogApi {
 
   // ====== Visualizations ======
 
-  /** List every saved visualization in the catalog, with parent table metadata. */
+  /** List every saved visualization in the catalog. */
   static async listVisualizationLibrary(): Promise<VisualizationLibraryItem[]> {
     const response = await axios.get<VisualizationLibraryItem[]>("/catalog/visualizations");
     return response.data;
   }
 
-  static async listVisualizations(tableId: number): Promise<CatalogVisualization[]> {
+  /** Filtered listing — viz that reference a specific catalog table. */
+  static async listVisualizationsForTable(tableId: number): Promise<CatalogVisualization[]> {
     const response = await axios.get<CatalogVisualization[]>(
       `/catalog/tables/${tableId}/visualizations`,
     );
     return response.data;
   }
 
+  static async getVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.get<CatalogVisualization>(`/catalog/visualizations/${vizId}`);
+    return response.data;
+  }
+
   static async createVisualization(
-    tableId: number,
     payload: VisualizationCreatePayload,
   ): Promise<CatalogVisualization> {
-    const response = await axios.post<CatalogVisualization>(
-      `/catalog/tables/${tableId}/visualizations`,
-      payload,
-    );
+    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
     return response.data;
   }
 
   static async updateVisualization(
-    tableId: number,
     vizId: number,
     payload: VisualizationUpdatePayload,
   ): Promise<CatalogVisualization> {
     const response = await axios.put<CatalogVisualization>(
-      `/catalog/tables/${tableId}/visualizations/${vizId}`,
+      `/catalog/visualizations/${vizId}`,
       payload,
     );
     return response.data;
   }
 
-  static async deleteVisualization(tableId: number, vizId: number): Promise<void> {
-    await axios.delete(`/catalog/tables/${tableId}/visualizations/${vizId}`);
+  static async deleteVisualization(vizId: number): Promise<void> {
+    await axios.delete(`/catalog/visualizations/${vizId}`);
   }
 
-  /** Run a saved chart's stored payload through the worker viz cache. */
+  /** Stream the source rows behind a saved viz for client-side rendering. */
   static async computeSavedVisualization(
-    tableId: number,
     vizId: number,
     maxRows?: number,
   ): Promise<VisualizationComputeResponse> {
     const body: Record<string, unknown> = {};
     if (maxRows !== undefined) body.max_rows = maxRows;
     const response = await axios.post<VisualizationComputeResponse>(
-      `/catalog/tables/${tableId}/visualizations/${vizId}/compute`,
+      `/catalog/visualizations/${vizId}/compute`,
       body,
+    );
+    return response.data;
+  }
+
+  /** Get the field schema for a saved viz's source (worker-cached). */
+  static async getSavedVisualizationFields(
+    vizId: number,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      `/catalog/visualizations/${vizId}/fields`,
     );
     return response.data;
   }

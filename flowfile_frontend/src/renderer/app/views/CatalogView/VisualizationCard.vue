@@ -89,13 +89,9 @@ const load = async () => {
     // client-side, so we ship the source rows + field schema and let GW
     // render. The worker session cache keeps the source LazyFrame loaded
     // so subsequent card opens reuse it.
-    const [data, schemaFields] = await Promise.all([
-      CatalogApi.computeAdHocVisualization(
-        props.source,
-        { workflow: [{ type: "view", query: [{ op: "raw", fields: ["*"] }] }] },
-        SAMPLE_ROWS,
-      ),
-      store.loadVisualizationFields(props.source),
+    const [data, fieldsResp] = await Promise.all([
+      CatalogApi.computeSavedVisualization(props.viz.id, SAMPLE_ROWS),
+      CatalogApi.getSavedVisualizationFields(props.viz.id),
     ]);
     if (data.error) {
       errorMessage.value = data.error;
@@ -103,7 +99,9 @@ const load = async () => {
     } else {
       rows.value = data.rows;
     }
-    fields.value = schemaFields;
+    if (!fieldsResp.error) {
+      fields.value = fieldsResp.fields;
+    }
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail ?? err?.message ?? String(err);
   } finally {

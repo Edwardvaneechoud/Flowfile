@@ -150,12 +150,12 @@ async function onSaveChart() {
   let promptResult: { value: string } | null = null;
   try {
     promptResult = (await ElMessageBox.prompt(
-      "Save this chart to the catalog. The current SQL query is promoted to a query-virtual-table so the chart can be reopened later.",
+      "Save this chart to the Visualizations library. The chart keeps a reference to the SQL query you ran.",
       "Save chart",
       {
         confirmButtonText: "Save",
         cancelButtonText: "Cancel",
-        inputPlaceholder: "Name for the saved chart and table",
+        inputPlaceholder: "Name for the saved chart",
         inputValue: defaultSavedChartName(),
         inputValidator: (val) => (val && val.trim().length > 0 ? true : "Name is required"),
       },
@@ -167,16 +167,14 @@ async function onSaveChart() {
 
   saving.value = true;
   try {
-    const table = await CatalogApi.createQueryVirtualTable({
-      name,
-      sql_query: props.sourceQuery,
-      namespace_id: props.saveNamespaceId ?? undefined,
-    });
-    await CatalogApi.createVisualization(table.id, {
+    await CatalogApi.createVisualization({
       name,
       spec: charts[0] as Record<string, any>,
+      source_type: "sql",
+      sql_query: props.sourceQuery,
+      namespace_id: props.saveNamespaceId ?? null,
     });
-    ElMessage.success(`Saved chart "${name}" under catalog table.`);
+    ElMessage.success(`Saved chart "${name}" to the Visualizations library.`);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   } finally {

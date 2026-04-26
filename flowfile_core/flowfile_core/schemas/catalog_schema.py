@@ -351,26 +351,44 @@ class SaveQueryAsFlowRequest(BaseModel):
 
 
 class VisualizationCreate(BaseModel):
+    """Create a viz. The source must be either a catalog table or an inline
+    SQL query — set ``source_type`` accordingly. ``namespace_id`` defaults to
+    the parent table's namespace (when ``source_type="table"``) but can be
+    overridden so a viz can live anywhere in the catalog tree."""
+
     name: str
+    description: str | None = None
     chart_type: str | None = None
     spec: dict
     spec_gw_version: str | None = None
+    source_type: Literal["table", "sql"] = "table"
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
 
 
 class VisualizationUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
     chart_type: str | None = None
     spec: dict | None = None
     spec_gw_version: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+    catalog_table_id: int | None = None
 
 
 class VisualizationOut(BaseModel):
     id: int
-    catalog_table_id: int
     name: str
+    description: str | None = None
     chart_type: str | None = None
     spec: dict
     spec_gw_version: str | None = None
+    source_type: str
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
@@ -428,20 +446,27 @@ class VisualizationFieldsResponse(BaseModel):
 
 
 class VisualizationLibraryItem(BaseModel):
-    """Catalog-wide listing entry: a saved viz with its parent table info."""
+    """Catalog-wide listing entry. Includes parent table / namespace info
+    when the viz references one; ``source_type="sql"`` viz carry only the
+    namespace and the inline SQL."""
 
     id: int
-    catalog_table_id: int
     name: str
+    description: str | None = None
     chart_type: str | None = None
     spec_gw_version: str | None = None
+    source_type: str
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
-    table_name: str
+    table_name: str | None = None
     table_namespace_name: str | None = None
-    table_full_name: str
-    table_type: str
+    table_full_name: str | None = None
+    table_type: str | None = None
+    namespace_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

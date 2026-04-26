@@ -648,71 +648,78 @@ def list_visualization_library(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return every saved visualization across the catalog with parent table metadata."""
+    """Return every saved visualization across the catalog."""
     return service.list_visualization_library(user_id=current_user.id)
 
 
-@router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])
-@handle_catalog_exceptions()
-def list_visualizations(
-    table_id: int,
-    current_user=Depends(get_current_active_user),
-    service: CatalogService = Depends(get_catalog_service),
-):
-    """List saved Graphic Walker chart specs attached to a catalog table."""
-    return service.list_visualizations(table_id, user_id=current_user.id)
-
-
-@router.post("/tables/{table_id}/visualizations", response_model=VisualizationOut, status_code=201)
+@router.post("/visualizations", response_model=VisualizationOut, status_code=201)
 @handle_catalog_exceptions()
 def create_visualization(
-    table_id: int,
     body: VisualizationCreate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.create_visualization(table_id, body, user_id=current_user.id)
+    """Create a saved viz. Source is either a catalog table or an inline SQL query."""
+    return service.create_visualization(body, user_id=current_user.id)
 
 
-@router.put("/tables/{table_id}/visualizations/{viz_id}", response_model=VisualizationOut)
+@router.get("/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def get_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_visualization(viz_id, user_id=current_user.id)
+
+
+@router.put("/visualizations/{viz_id}", response_model=VisualizationOut)
 @handle_catalog_exceptions()
 def update_visualization(
-    table_id: int,
     viz_id: int,
     body: VisualizationUpdate,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.update_visualization(table_id, viz_id, body, user_id=current_user.id)
+    return service.update_visualization(viz_id, body, user_id=current_user.id)
 
 
-@router.delete("/tables/{table_id}/visualizations/{viz_id}", status_code=204)
+@router.delete("/visualizations/{viz_id}", status_code=204)
 @handle_catalog_exceptions()
 def delete_visualization(
-    table_id: int,
     viz_id: int,
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    service.delete_visualization(table_id, viz_id, user_id=current_user.id)
+    service.delete_visualization(viz_id, user_id=current_user.id)
 
 
 @router.post(
-    "/tables/{table_id}/visualizations/{viz_id}/compute",
+    "/visualizations/{viz_id}/compute",
     response_model=VisualizationComputeResponse,
 )
 @handle_catalog_exceptions()
 def compute_saved_visualization(
-    table_id: int,
     viz_id: int,
     body: VisualizationSavedComputeRequest = Body(default_factory=VisualizationSavedComputeRequest),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Run a saved chart's query payload through the worker viz cache."""
-    return service.compute_saved_visualization(
-        table_id, viz_id, body.max_rows, user_id=current_user.id
+    """Stream the source rows behind a saved viz for client-side GW rendering."""
+    return service.compute_saved_visualization_rows(
+        viz_id, body.max_rows, user_id=current_user.id
     )
+
+
+@router.post("/visualizations/{viz_id}/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_saved_visualization_fields(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the GW field schema for a saved viz's source."""
+    return service.get_visualization_fields_for_viz(viz_id, user_id=current_user.id)
 
 
 @router.post("/visualizations/compute", response_model=VisualizationComputeResponse)
@@ -722,11 +729,7 @@ def compute_ad_hoc_visualization(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Compute a chart from a transient source (ad-hoc SQL or a catalog table).
-
-    Used by the live Graphic Walker editor — including the SQL Explore panel —
-    to share the worker's per-source LazyFrame cache while iterating on a chart.
-    """
+    """Compute a chart from a transient source (ad-hoc SQL or a catalog table)."""
     return service.compute_ad_hoc_visualization(
         source=body.source,
         payload=body.payload,
@@ -742,8 +745,19 @@ def get_visualization_fields(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the Graphic Walker field schema for a viz source."""
+    """Return the Graphic Walker field schema for a viz source descriptor."""
     return service.get_visualization_fields(body.source, user_id=current_user.id)
+
+
+@router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualizations_for_table(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Filtered listing — viz that reference this table."""
+    return service.list_visualizations_for_table(table_id, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
