@@ -51,6 +51,7 @@ import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/dist
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { captureThumbnail } from "../../composables/useChartThumbnail";
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 
 const props = defineProps<{
@@ -136,26 +137,6 @@ onMounted(async () => {
 const isExistingViz = (v: any): v is CatalogVisualization =>
   v && typeof v === "object" && typeof v.id === "number";
 
-// Drop the thumbnail rather than fail the save if GW returns something
-// bigger than the server cap. Catalog grids fall back to the chart icon.
-const THUMBNAIL_MAX_BYTES = 200_000;
-
-async function captureThumbnail(): Promise<string | null> {
-  if (!gwRef.value || typeof gwRef.value.exportImage !== "function") return null;
-  try {
-    const dataUrl = await gwRef.value.exportImage();
-    if (!dataUrl) return null;
-    if (dataUrl.length > THUMBNAIL_MAX_BYTES) {
-      console.warn(`[viz] thumbnail too large (${dataUrl.length} bytes), skipping`);
-      return null;
-    }
-    return dataUrl;
-  } catch (err) {
-    console.warn("[viz] thumbnail capture failed:", err);
-    return null;
-  }
-}
-
 const save = async () => {
   if (!gwRef.value) return;
   if (!name.value.trim()) {
@@ -169,7 +150,7 @@ const save = async () => {
   }
   // Save the full IChart[] so multi-tab specs round-trip.
   const spec = charts as Record<string, any>[];
-  const thumbnail_data_url = await captureThumbnail();
+  const thumbnail_data_url = await captureThumbnail(gwRef);
   saving.value = true;
   try {
     let saved: CatalogVisualization;

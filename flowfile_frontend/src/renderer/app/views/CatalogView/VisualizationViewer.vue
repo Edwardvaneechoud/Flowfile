@@ -84,6 +84,7 @@ import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/dist
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { captureThumbnail } from "../../composables/useChartThumbnail";
 import type { CatalogVisualization } from "../../types";
 
 const props = defineProps<{
@@ -209,26 +210,6 @@ async function reload() {
   await load();
 }
 
-// Match the server-side cap; drop the thumbnail rather than fail the save
-// when GW returns a larger PNG.
-const THUMBNAIL_MAX_BYTES = 200_000;
-
-async function captureThumbnail(): Promise<string | null> {
-  if (!gwRef.value || typeof gwRef.value.exportImage !== "function") return null;
-  try {
-    const dataUrl = await gwRef.value.exportImage();
-    if (!dataUrl) return null;
-    if (dataUrl.length > THUMBNAIL_MAX_BYTES) {
-      console.warn(`[viz] thumbnail too large (${dataUrl.length} bytes), skipping`);
-      return null;
-    }
-    return dataUrl;
-  } catch (err) {
-    console.warn("[viz] thumbnail capture failed:", err);
-    return null;
-  }
-}
-
 async function onSave() {
   if (!gwRef.value || !viz.value) return;
   const charts = await gwRef.value.exportCode();
@@ -236,7 +217,7 @@ async function onSave() {
     ElMessage.error("No chart to save — build one in the editor first.");
     return;
   }
-  const thumbnail_data_url = await captureThumbnail();
+  const thumbnail_data_url = await captureThumbnail(gwRef);
   saving.value = true;
   try {
     const updated = await store.updateVisualization(props.vizId, {
