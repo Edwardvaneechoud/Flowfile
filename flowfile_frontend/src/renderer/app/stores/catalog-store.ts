@@ -641,7 +641,7 @@ export const useCatalogStore = defineStore("catalog", {
         };
       }
       // Refresh library so the catalog tab reflects the new entry.
-      this.loadVisualizationLibrary().catch(() => {});
+      this.loadVisualizationLibrary().catch(() => undefined);
       return created;
     },
 
@@ -654,7 +654,7 @@ export const useCatalogStore = defineStore("catalog", {
           [updated.catalog_table_id]: current.map((v) => (v.id === vizId ? updated : v)),
         };
       }
-      this.loadVisualizationLibrary().catch(() => {});
+      this.loadVisualizationLibrary().catch(() => undefined);
       return updated;
     },
 
