@@ -2125,9 +2125,15 @@ class FlowGraph:
                     "Train Model: 'model_name' is required when 'publish_to_catalog' is enabled."
                 )
 
-            # Validate model_type early so the user gets a clear error from core,
-            # not a worker-side stack trace.
+            # Validate model_type and hyperparameters early so the user gets
+            # a clear error from core, not a worker-side stack trace.
             trainer = get_trainer(settings.model_type)
+            try:
+                trainer.params_class(**settings.params)
+            except Exception as e:
+                raise ValueError(
+                    f"Train Model: invalid params for model_type={settings.model_type!r}: {e}"
+                ) from e
 
             # Always write the model to a flow-scoped path keyed off this node's id;
             # downstream Apply Model nodes in this flow read from there, no catalog
@@ -2195,6 +2201,7 @@ class FlowGraph:
                 staging_path = Path(prepared.path)
 
             node = self.get_node(node_id=train_settings.node_id)
+            flow_path_written = False
             try:
                 fetcher = MLTrainFetcher(
                     lf=data.data_frame,
@@ -2216,9 +2223,15 @@ class FlowGraph:
                     )
 
                 if prepared is not None:
-                    # The staging file is also our flow-scoped copy — duplicate it
-                    # before finalize_upload moves the staging file away.
-                    shutil.copyfile(staging_path, flow_path)
+                    # The staging file is also our flow-scoped copy. Atomically
+                    # replace flow_path (write to .tmp, then os.replace) so a
+                    # concurrent Apply Model reader can't see a half-written
+                    # file. Done before finalize_upload (which moves the
+                    # staging file away).
+                    flow_tmp = flow_path.with_suffix(flow_path.suffix + ".tmp")
+                    shutil.copyfile(staging_path, flow_tmp)
+                    os.replace(flow_tmp, flow_path)
+                    flow_path_written = True
                     with get_db_context() as db:
                         ArtifactService(db, storage_backend).finalize_upload(
                             artifact_id=prepared.artifact_id,
@@ -2238,6 +2251,14 @@ class FlowGraph:
                             logger.exception(
                                 "Failed to roll back pending artifact %s", prepared.artifact_id
                             )
+                    # Also roll back the flow_path copy if we wrote it; otherwise
+                    # the next Apply Model run could quietly use the artifact
+                    # whose catalog row we just deleted.
+                    if flow_path_written:
+                        try:
+                            flow_path.unlink(missing_ok=True)
+                        except Exception:
+                            logger.exception("Failed to roll back flow_path copy %s", flow_path)
                 raise
 
             if prepared is not None:
@@ -2375,8 +2396,25 @@ class FlowGraph:
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]
             input_schema_cols = list(input_node.schema)
-            output_column = apply_settings.apply_input.output_column or "prediction"
-            return input_schema_cols + [FlowfileColumn.from_input(output_column, "Float64")]
+            s = apply_settings.apply_input
+            output_column = s.output_column or "prediction"
+            # source='upstream' lets us read the trainer's declared output_dtype
+            # so a future non-Float64 trainer (e.g. classification) gets the
+            # right schema. source='catalog' falls back to Float64 — resolving
+            # via the catalog DB at schema-resolve time would be too eager.
+            output_dtype = "Float64"
+            if s.source == "upstream" and s.upstream_node_id is not None:
+                upstream = self.get_node(s.upstream_node_id)
+                train_input = getattr(getattr(upstream, "setting_input", None), "train_input", None)
+                model_type = getattr(train_input, "model_type", None)
+                if model_type:
+                    try:
+                        from shared.ml.trainers import get_trainer
+
+                        output_dtype = get_trainer(model_type).output_dtype
+                    except ValueError:
+                        pass
+            return input_schema_cols + [FlowfileColumn.from_input(output_column, output_dtype)]
 
         depending_on_id = (
             apply_settings.depending_on_id

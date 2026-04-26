@@ -19,9 +19,8 @@
       <!-- Upstream source -->
       <div v-if="nodeApplyModel.apply_input.source === 'upstream'" class="listbox-wrapper">
         <p class="hint">
-          Pick a Train Model node from this flow's upstream chain. The trained
-          model is read directly from the flow cache — no catalog lookup, and
-          you can wire it up at design time.
+          Pick a Train Model node from this flow's upstream chain. The trained model is read
+          directly from the flow cache — no catalog lookup, and you can wire it up at design time.
         </p>
 
         <el-row class="setting-row">
@@ -43,13 +42,9 @@
           </el-col>
         </el-row>
 
-        <div
-          v-if="upstreamOptions.length === 0 && !loadingUpstream"
-          class="info-banner"
-        >
-          No Train Model nodes found upstream. Add one and connect it (use a
-          Wait For node if you also need to enforce ordering on a parallel
-          branch).
+        <div v-if="upstreamOptions.length === 0 && !loadingUpstream" class="info-banner">
+          No Train Model nodes found upstream. Add one and connect it (use a Wait For node if you
+          also need to enforce ordering on a parallel branch).
         </div>
       </div>
 
@@ -105,22 +100,14 @@
               clearable
               @change="onVersionSelected"
             >
-              <el-option
-                v-for="v in versionOptions"
-                :key="v"
-                :label="`v${v}`"
-                :value="v"
-              />
+              <el-option v-for="v in versionOptions" :key="v" :label="`v${v}`" :value="v" />
             </el-select>
           </el-col>
         </el-row>
 
-        <div
-          v-if="availableModels.length === 0 && !loadingModels"
-          class="info-banner"
-        >
-          No trained ML models found in the catalog yet. Train one with
-          "Save to catalog" enabled to register it.
+        <div v-if="availableModels.length === 0 && !loadingModels" class="info-banner">
+          No trained ML models found in the catalog yet. Train one with "Save to catalog" enabled to
+          register it.
         </div>
       </div>
 
@@ -200,9 +187,7 @@ function flattenNamespaceTree(
 }
 
 const namespaceOptions = computed(() =>
-  flattenNamespaceTree(namespaceTree.value, null).sort((a, b) =>
-    a.label.localeCompare(b.label),
-  ),
+  flattenNamespaceTree(namespaceTree.value, null).sort((a, b) => a.label.localeCompare(b.label)),
 );
 
 const filteredArtifacts = computed(() => {
@@ -360,11 +345,7 @@ const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeApplyModel.value = nodeData.value?.setting_input as NodeApplyModel;
   const flowId = Number(nodeData.value?.flow_id);
-  await Promise.all([
-    loadModels(),
-    loadNamespaces(),
-    loadUpstreamTrainNodes(flowId, nodeId),
-  ]);
+  await Promise.all([loadModels(), loadNamespaces(), loadUpstreamTrainNodes(flowId, nodeId)]);
   if (nodeApplyModel.value) {
     if (!nodeApplyModel.value.is_setup || !nodeApplyModel.value.apply_input) {
       nodeApplyModel.value.apply_input = {

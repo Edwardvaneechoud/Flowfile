@@ -48,14 +48,7 @@ import { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 
-type CategoryKey =
-  | "input"
-  | "transform"
-  | "combine"
-  | "aggregate"
-  | "ml"
-  | "output"
-  | "custom";
+type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "ml" | "output" | "custom";
 
 interface CategoryInfo {
   name: string;

@@ -8,13 +8,12 @@
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Wait For</div>
         <p class="explainer">
-          The <strong>left</strong> input flows through unchanged. The
-          <strong>right</strong> input only enforces ordering — its data is
-          discarded; we just wait for that node to complete.
+          The <strong>left</strong> input flows through unchanged. The <strong>right</strong> input
+          only enforces ordering — its data is discarded; we just wait for that node to complete.
         </p>
         <p class="explainer">
-          Use this to make Apply Model wait for Train Model, or to gate any
-          downstream node on a side-effect node finishing first.
+          Use this to make Apply Model wait for Train Model, or to gate any downstream node on a
+          side-effect node finishing first.
         </p>
       </div>
     </generic-node-settings>

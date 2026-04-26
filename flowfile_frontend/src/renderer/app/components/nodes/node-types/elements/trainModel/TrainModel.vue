@@ -30,9 +30,8 @@
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">Catalog</div>
         <p class="hint">
-          The trained model is always available to downstream Apply Model nodes
-          in this flow. Toggle this on to also publish it to the catalog so it
-          can be reused across flows and runs.
+          The trained model is always available to downstream Apply Model nodes in this flow. Toggle
+          this on to also publish it to the catalog so it can be reused across flows and runs.
         </p>
 
         <el-row class="setting-row">
@@ -128,15 +127,15 @@
       </div>
 
       <div v-if="!flowRegistered" class="warning-banner">
-        Train Model writes to the catalog, so the flow must be registered first.
-        Save and register the flow before running it.
+        Train Model writes to the catalog, so the flow must be registered first. Save and register
+        the flow before running it.
       </div>
     </generic-node-settings>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed } from "vue";
 import axios from "axios";
 import type {
   NodeTrainModel,
@@ -179,9 +178,7 @@ function flattenNamespaceTree(
 }
 
 const namespaceOptions = computed(() =>
-  flattenNamespaceTree(namespaceTree.value, null).sort((a, b) =>
-    a.label.localeCompare(b.label),
-  ),
+  flattenNamespaceTree(namespaceTree.value, null).sort((a, b) => a.label.localeCompare(b.label)),
 );
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -268,8 +265,6 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });
-
-onMounted(() => {});
 </script>
 
 <style scoped>

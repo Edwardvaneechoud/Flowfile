@@ -635,8 +635,9 @@ def _wire_wait_for(graph: FlowGraph, *, node_id: int, left: int, right: int) -> 
     graph.add_node_promise(promise_w)
     left_conn = input_schema.NodeConnection.create_from_simple_input(left, node_id)
     add_connection(graph, left_conn)
-    right_conn = input_schema.NodeConnection.create_from_simple_input(right, node_id)
-    right_conn.input_connection.connection_class = "input-1"
+    right_conn = input_schema.NodeConnection.create_from_simple_input(
+        right, node_id, input_type="right"
+    )
     add_connection(graph, right_conn)
     graph.add_wait_for(
         input_schema.NodeWaitFor(

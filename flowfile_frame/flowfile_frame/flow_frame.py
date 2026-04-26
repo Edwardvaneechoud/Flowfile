@@ -1422,9 +1422,8 @@ class FlowFrame:
         )
         self.flow_graph.add_wait_for(wait_settings)
         right_conn = _is.NodeConnection.create_from_simple_input(
-            dependency.node_id, new_node_id
+            dependency.node_id, new_node_id, input_type="right"
         )
-        right_conn.input_connection.connection_class = "input-1"
         add_connection(self.flow_graph, right_conn)
         return self._create_child_frame(new_node_id)
 
