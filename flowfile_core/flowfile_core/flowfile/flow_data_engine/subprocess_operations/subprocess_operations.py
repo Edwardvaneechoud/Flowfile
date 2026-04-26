@@ -32,6 +32,7 @@ from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTable
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
+from flowfile_worker.viz_sessions import HTTP_TIMEOUT_SECONDS
 
 
 def trigger_df_operation(
@@ -249,7 +250,9 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
         max_rows,
     )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
-    response = requests.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=120)
+    response = requests.post(
+        f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS
+    )
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",

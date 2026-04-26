@@ -585,10 +585,23 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
 
 
 @router.post("/catalog/visualize_query", response_model=models.VisualizeQueryResponse)
-def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.VisualizeQueryResponse:
+async def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.VisualizeQueryResponse:
     """Run a Graphic Walker workflow against a cached source LazyFrame."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    loop = asyncio.get_running_loop()
     try:
-        return models.VisualizeQueryResponse(**funcs.execute_visualize_query(payload))
+        result, _ = await loop.run_in_executor(
+            None,
+            viz_session_registry.execute,
+            payload.source,
+            "execute",
+            payload.payload,
+            payload.max_rows,
+        )
+        return models.VisualizeQueryResponse(**result)
+    except HTTPException:
+        raise
     except ValueError as e:
         return models.VisualizeQueryResponse(error=str(e))
     except Exception as e:
@@ -597,10 +610,23 @@ def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.Vis
 
 
 @router.post("/catalog/visualize_fields", response_model=models.VisualizeFieldsResponse)
-def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> models.VisualizeFieldsResponse:
+async def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> models.VisualizeFieldsResponse:
     """Return the Graphic Walker field schema for a cached source LazyFrame."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    loop = asyncio.get_running_loop()
     try:
-        return models.VisualizeFieldsResponse(**funcs.read_visualize_fields(payload))
+        result, cache_hit = await loop.run_in_executor(
+            None,
+            viz_session_registry.execute,
+            payload.source,
+            "fields",
+            None,
+            None,
+        )
+        return models.VisualizeFieldsResponse(fields=result["fields"], cache_hit=cache_hit)
+    except HTTPException:
+        raise
     except ValueError as e:
         return models.VisualizeFieldsResponse(error=str(e))
     except Exception as e:
@@ -611,18 +637,18 @@ def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> models.V
 @router.post("/catalog/visualize_evict")
 def catalog_visualize_evict(session_key: str):
     """Drop a cached viz session (called by core after a table update/delete)."""
-    from flowfile_worker.viz_sessions import viz_session_manager
+    from flowfile_worker.viz_sessions import viz_session_registry
 
-    viz_session_manager.evict(session_key)
+    viz_session_registry.evict(session_key)
     return {"ok": True, "session_key": session_key}
 
 
 @router.get("/catalog/visualize_stats")
-def catalog_visualize_stats():
-    """Return current viz-session cache statistics (debug/observability)."""
-    from flowfile_worker.viz_sessions import viz_session_manager
+def catalog_visualize_stats() -> list[dict]:
+    """Return per-child viz-session statistics (debug/observability)."""
+    from flowfile_worker.viz_sessions import viz_session_registry
 
-    return viz_session_manager.stats()
+    return viz_session_registry.stats()
 
 
 def validate_result(task_id: str) -> bool | None:

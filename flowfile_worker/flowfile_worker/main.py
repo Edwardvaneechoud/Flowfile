@@ -20,15 +20,15 @@ async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown"""
     logger.info("Starting application...")
     try:
-        import polars_gw
-
-        logger.info("polars_gw version: %s", polars_gw.__version__)
-    except Exception as exc:
-        logger.warning("Could not import polars_gw at startup: %s", exc)
-    try:
         yield
     finally:
         logger.info("Shutting down application...")
+        try:
+            from flowfile_worker.viz_sessions import viz_session_registry
+
+            viz_session_registry.shutdown()
+        except Exception as e:
+            logger.error(f"viz registry shutdown failed: {e}")
         logger.info("Cleaning up worker resources...")
         for p in mp_context.active_children():
             try:

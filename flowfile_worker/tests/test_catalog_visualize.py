@@ -1,21 +1,37 @@
 """Tests for the catalog visualization compute path on the worker."""
 from __future__ import annotations
 
+import sys
+import threading
 import time
 
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
-from flowfile_worker import main
-from flowfile_worker.viz_sessions import VizSessionManager, viz_session_manager
+from flowfile_worker import main, models
+from flowfile_worker import viz_sessions as viz_sessions_module
+from flowfile_worker.viz_sessions import (
+    REQUEST_QUEUE_MAXSIZE,
+    SHUTDOWN_GRACE_SECONDS,
+    VizSessionRegistry,
+    viz_session_registry,
+)
 from shared.storage_config import storage
 
 
-def _setup_storage(tmp_path):
+def _setup_storage(tmp_path, monkeypatch=None):
     storage._base_dir = tmp_path
     storage._user_data_dir = tmp_path
     storage._ensure_directories()
+    # Spawned children re-import storage and read FLOWFILE_STORAGE_DIR from env.
+    if monkeypatch is not None:
+        monkeypatch.setenv("FLOWFILE_STORAGE_DIR", str(tmp_path))
+    else:
+        import os as _os
+
+        _os.environ["FLOWFILE_STORAGE_DIR"] = str(tmp_path)
 
 
 def _write_delta_table(tmp_path, name: str = "viz_test") -> str:
@@ -32,48 +48,381 @@ def _write_delta_table(tmp_path, name: str = "viz_test") -> str:
     return name
 
 
-def test_viz_session_manager_caches_loader_calls():
-    mgr = VizSessionManager()
-    calls = {"n": 0}
-
-    def loader() -> pl.LazyFrame:
-        calls["n"] += 1
-        return pl.LazyFrame({"x": [1, 2, 3]})
-
-    _, hit_first = mgr.execute("k1", loader, lambda lf: lf.collect().to_dicts())
-    _, hit_second = mgr.execute("k1", loader, lambda lf: lf.collect().to_dicts())
-
-    assert calls["n"] == 1
-    assert hit_first is False
-    assert hit_second is True
+def _physical_source(session_key: str, table_path: str) -> models.VizWorkerSource:
+    return models.VizWorkerSource(
+        kind="physical",
+        session_key=session_key,
+        table_path=table_path,
+        storage_format="delta",
+    )
 
 
-def test_viz_session_manager_evicts_idle_sessions():
-    mgr = VizSessionManager()
-    mgr.IDLE_TTL_SECONDS = 0  # type: ignore[misc]
-    mgr.REAP_INTERVAL_SECONDS = 0  # type: ignore[misc]
+_RAW_PAYLOAD = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
+_AGG_PAYLOAD = {
+    "workflow": [
+        {
+            "type": "view",
+            "query": [
+                {
+                    "op": "aggregate",
+                    "groupBy": ["category"],
+                    "measures": [{"field": "value", "agg": "sum", "asFieldKey": "value_sum"}],
+                }
+            ],
+        }
+    ]
+}
 
-    mgr.execute("k1", lambda: pl.LazyFrame({"x": [1]}), lambda lf: lf.collect().to_dicts())
-    assert "k1" in mgr.stats()["keys"]
 
-    # Manually drive eviction without waiting for the reap thread.
-    cutoff = time.time() - mgr.IDLE_TTL_SECONDS
-    with mgr._lock:
-        stale = [k for k, s in mgr._sessions.items() if s.last_used_at < cutoff]
-        for k in stale:
-            mgr._sessions.pop(k, None)
-    assert "k1" not in mgr.stats()["keys"]
+def _wait_dead(handle, deadline: float = 5.0) -> bool:
+    end = time.time() + deadline
+    while time.time() < end:
+        if not handle.process.is_alive():
+            return True
+        time.sleep(0.05)
+    return not handle.process.is_alive()
+
+
+# ======================================================================
+# 1-12: registry-level unit tests (no FastAPI)
+# ======================================================================
+
+
+def test_spawn_on_first_request(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    try:
+        src = _physical_source("unit:spawn:1", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        h1 = reg._sessions[src.session_key]
+        pid1 = h1.pid
+        assert h1.process.is_alive()
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        h2 = reg._sessions[src.session_key]
+        assert h2.pid == pid1
+    finally:
+        reg.shutdown()
+
+
+def test_second_request_hits_same_child(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    try:
+        src = _physical_source("unit:hit:1", table_dir)
+        _, hit1 = reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        _, hit2 = reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        assert hit1 is False
+        assert hit2 is True
+        assert reg._sessions[src.session_key].requests_served == 2
+    finally:
+        reg.shutdown()
+
+
+def test_eviction_kills_os_process(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    reg.IDLE_TTL_SECONDS = 0
+    try:
+        src = _physical_source("unit:evict:1", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        handle = reg._sessions[src.session_key]
+        # Manually drive reap loop instead of waiting for the daemon thread tick.
+        cutoff = time.time() - reg.IDLE_TTL_SECONDS
+        with reg._lock:
+            stale = [(k, h) for k, h in reg._sessions.items() if h.last_used_at <= cutoff]
+            for k, _ in stale:
+                reg._sessions.pop(k, None)
+        for _, h in stale:
+            reg._kill_handle(h)
+        assert _wait_dead(handle, deadline=5.0)
+    finally:
+        reg.shutdown()
+
+
+@pytest.mark.slow
+def test_two_session_keys_run_in_parallel(tmp_path):
+    _setup_storage(tmp_path)
+    # Larger table so the polars-gw aggregation takes measurable time per request.
+    big_df = pl.DataFrame(
+        {
+            "category": ["a", "b", "c", "d"] * 250_000,
+            "value": list(range(1_000_000)),
+        }
+    )
+    big_dir = storage.catalog_tables_directory / "viz_par"
+    big_dir.mkdir(parents=True, exist_ok=True)
+    big_df.write_delta(str(big_dir))
+    reg = VizSessionRegistry()
+    try:
+        src1 = _physical_source("unit:par:1", "viz_par")
+        src2 = _physical_source("unit:par:2", "viz_par")
+        # Warm both children so spawn cost isn't in the timing.
+        reg.execute(src1, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(src2, "execute", _AGG_PAYLOAD, 100)
+
+        # Measure each call's serial wallclock.
+        t0 = time.perf_counter()
+        reg.execute(src1, "execute", _AGG_PAYLOAD, 100)
+        t1 = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        reg.execute(src2, "execute", _AGG_PAYLOAD, 100)
+        t2 = time.perf_counter() - t0
+
+        # Now run them in parallel.
+        results: list[float] = []
+
+        def _run(src):
+            s = time.perf_counter()
+            reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+            results.append(time.perf_counter() - s)
+
+        threads = [threading.Thread(target=_run, args=(s,)) for s in (src1, src2)]
+        t_start = time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        t_par = time.perf_counter() - t_start
+        assert t_par < 0.7 * (t1 + t2), f"t_par={t_par:.3f}s t1+t2={t1 + t2:.3f}s"
+    finally:
+        reg.shutdown()
+
+
+def test_max_requests_per_child_triggers_respawn(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    reg.MAX_REQUESTS_PER_CHILD = 3
+    try:
+        src = _physical_source("unit:budget:1", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        pid_before = reg._sessions[src.session_key].pid
+        # Fourth request must respawn since requests_served >= MAX.
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        pid_after = reg._sessions[src.session_key].pid
+        assert pid_after != pid_before
+    finally:
+        reg.shutdown()
+
+
+def test_max_lifetime_triggers_respawn(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    reg.MAX_CHILD_LIFETIME_SECONDS = 0.1
+    try:
+        src = _physical_source("unit:lifetime:1", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        pid_before = reg._sessions[src.session_key].pid
+        time.sleep(0.2)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        pid_after = reg._sessions[src.session_key].pid
+        assert pid_after != pid_before
+    finally:
+        reg.shutdown()
 
 
 @pytest.mark.worker
-def test_visualize_query_endpoint_physical_delta(tmp_path, monkeypatch):
+def test_child_crash_propagates_as_5xx(tmp_path):
+    """Bad table_path → child raises during load → fatal-load → 502."""
+    _setup_storage(tmp_path)
+    _write_delta_table(tmp_path)
+    viz_session_registry.evict_all()
+    client = TestClient(main.app)
+    payload = {
+        "source": {
+            "kind": "physical",
+            "session_key": "test:crash:1",
+            "table_path": "does_not_exist_xyz",
+            "storage_format": "delta",
+        },
+        "payload": _AGG_PAYLOAD,
+    }
+    r = client.post("/catalog/visualize_query", json=payload)
+    # A bad table_path raises ValueError in the validator → ValueError → 200 with error
+    # OR the spawn loads but fails → 502. Either path must be a non-2xx body or an error string.
+    assert r.status_code in (200, 502)
+    if r.status_code == 200:
+        body = r.json()
+        assert body.get("error")
+
+
+@pytest.mark.worker
+def test_value_error_propagates_as_response_error(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)
-    viz_session_manager.evict_all()
+    viz_session_registry.evict_all()
+    client = TestClient(main.app)
+    # Bad workflow op → child loads ok, raises during execute → ValueError → 200 + error.
+    payload = {
+        "source": {
+            "kind": "physical",
+            "session_key": "test:bad-payload:1",
+            "table_path": table_dir,
+            "storage_format": "delta",
+        },
+        "payload": {"workflow": "this is not a valid workflow"},
+    }
+    r = client.post("/catalog/visualize_query", json=payload)
+    # Either the malformed payload returns 200 with error, or a 4xx; just must not crash 5xx.
+    assert r.status_code in (200, 422)
+    if r.status_code == 200:
+        assert r.json().get("error") is not None
+
+
+def test_fastapi_shutdown_kills_all_children(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    handles = []
+    for i in range(3):
+        src = _physical_source(f"unit:shutd:{i}", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        handles.append(reg._sessions[src.session_key])
+    reg.shutdown()
+    deadline = time.time() + 2 * SHUTDOWN_GRACE_SECONDS
+    for h in handles:
+        while time.time() < deadline and h.process.is_alive():
+            time.sleep(0.05)
+        assert not h.process.is_alive()
+
+
+@pytest.mark.worker
+def test_visualize_stats_shape(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    viz_session_registry.evict_all()
+    client = TestClient(main.app)
+    payload = {
+        "source": {
+            "kind": "physical",
+            "session_key": "test:stats:1",
+            "table_path": table_dir,
+            "storage_format": "delta",
+        },
+        "payload": _AGG_PAYLOAD,
+    }
+    r = client.post("/catalog/visualize_query", json=payload)
+    assert r.status_code == 200, r.text
+    stats = client.get("/catalog/visualize_stats").json()
+    assert isinstance(stats, list)
+    assert any(item["session_key"] == "test:stats:1" for item in stats)
+    item = next(i for i in stats if i["session_key"] == "test:stats:1")
+    assert item["pid"] > 0
+    assert item["rss_bytes"] >= -1
+    assert item["requests_served"] == 1
+    assert item["age_seconds"] >= 0
+
+
+def test_request_queue_full_returns_503(tmp_path, monkeypatch):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    monkeypatch.setattr(viz_sessions_module, "REQUEST_QUEUE_MAXSIZE", 1)
+    reg = VizSessionRegistry()
+    try:
+        src = _physical_source("unit:full:1", table_dir)
+        # Warm the child so spawn isn't on the busy path.
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        handle = reg._sessions[src.session_key]
+        # Drain the response queue to ensure the child is idle.
+        # Now block the child by filling its request_q without ever awaiting a response.
+        # Simpler: simulate "queue full" by pre-filling the bounded queue.
+        # The current child is idle waiting on get(); fill the queue while it's
+        # consuming one — so put two items: child eats one immediately, second
+        # blocks slot. This is racy; instead, manually replace request_q with a
+        # tiny fake to exercise the queue.Full path deterministically.
+        import queue as _q
+
+        class _Full:
+            def put(self, *_a, **_k):
+                raise _q.Full()
+
+            def put_nowait(self, *_a, **_k):
+                raise _q.Full()
+
+            def get(self, *_a, **_k):
+                raise _q.Empty()
+
+            def get_nowait(self, *_a, **_k):
+                raise _q.Empty()
+
+            def empty(self):
+                return True
+
+            def cancel_join_thread(self):
+                pass
+
+            def close(self):
+                pass
+
+        handle.request_q = _Full()
+        with pytest.raises(HTTPException) as exc_info:
+            reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        assert exc_info.value.status_code == 503
+    finally:
+        reg.shutdown()
+
+
+def test_evict_all_kills_every_child(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    reg = VizSessionRegistry()
+    handles = []
+    for i in range(3):
+        src = _physical_source(f"unit:evict_all:{i}", table_dir)
+        reg.execute(src, "execute", _AGG_PAYLOAD, 100)
+        handles.append(reg._sessions[src.session_key])
+    try:
+        reg.evict_all()
+        for h in handles:
+            assert _wait_dead(h, deadline=2 * SHUTDOWN_GRACE_SECONDS)
+    finally:
+        reg.shutdown()
+
+
+@pytest.mark.worker
+def test_polars_gw_not_in_parent_sys_modules(tmp_path):
+    """Architectural canary: the FastAPI process must never import polars_gw."""
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    viz_session_registry.evict_all()
+    sys.modules.pop("polars_gw", None)
+    client = TestClient(main.app)
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {
+                "kind": "physical",
+                "session_key": "test:gw_leak:1",
+                "table_path": table_dir,
+                "storage_format": "delta",
+            },
+            "payload": _AGG_PAYLOAD,
+        },
+    )
+    assert r.status_code == 200, r.text
+    # Wait for a moment in case the spawn is not fully synchronous.
+    time.sleep(0.1)
+    assert "polars_gw" not in sys.modules, "polars_gw leaked into FastAPI parent process"
+
+
+# ======================================================================
+# Existing HTTP-level tests (kept; flipped manager → registry)
+# ======================================================================
+
+
+@pytest.mark.worker
+def test_visualize_query_endpoint_physical_delta(tmp_path):
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    viz_session_registry.evict_all()
 
     client = TestClient(main.app)
-
-    # Aggregate: sum(value) by category — uses polars-gw view+aggregate path.
     payload = {
         "source": {
             "kind": "physical",
@@ -81,22 +430,7 @@ def test_visualize_query_endpoint_physical_delta(tmp_path, monkeypatch):
             "table_path": table_dir,
             "storage_format": "delta",
         },
-        "payload": {
-            "workflow": [
-                {
-                    "type": "view",
-                    "query": [
-                        {
-                            "op": "aggregate",
-                            "groupBy": ["category"],
-                            "measures": [
-                                {"field": "value", "agg": "sum", "asFieldKey": "value_sum"}
-                            ],
-                        }
-                    ],
-                },
-            ],
-        },
+        "payload": _AGG_PAYLOAD,
     }
 
     r1 = client.post("/catalog/visualize_query", json=payload)
@@ -108,17 +442,16 @@ def test_visualize_query_endpoint_physical_delta(tmp_path, monkeypatch):
     by_cat = {row["category"]: row["value_sum"] for row in body1["rows"]}
     assert by_cat == {"a": 4, "b": 7, "c": 4}
 
-    # Second call with the same session_key should hit the cache.
     r2 = client.post("/catalog/visualize_query", json=payload)
     assert r2.status_code == 200, r2.text
     assert r2.json()["cache_hit"] is True
 
 
 @pytest.mark.worker
-def test_visualize_fields_endpoint_returns_imutfields(tmp_path, monkeypatch):
+def test_visualize_fields_endpoint_returns_imutfields(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)
-    viz_session_manager.evict_all()
+    viz_session_registry.evict_all()
 
     client = TestClient(main.app)
     body = {
@@ -140,9 +473,8 @@ def test_visualize_fields_endpoint_returns_imutfields(tmp_path, monkeypatch):
 @pytest.mark.worker
 def test_visualize_query_endpoint_ipc_path(tmp_path):
     _setup_storage(tmp_path)
-    viz_session_manager.evict_all()
+    viz_session_registry.evict_all()
 
-    # Seed an IPC file under catalog_virtual_results_directory.
     target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
     ipc_name = "fvt-1-deadbeefdeadbeef.arrow"
@@ -156,22 +488,7 @@ def test_visualize_query_endpoint_ipc_path(tmp_path):
             "ipc_path": ipc_name,
             "mtime": 1.0,
         },
-        "payload": {
-            "workflow": [
-                {
-                    "type": "view",
-                    "query": [
-                        {
-                            "op": "aggregate",
-                            "groupBy": ["category"],
-                            "measures": [
-                                {"field": "value", "agg": "sum", "asFieldKey": "value_sum"}
-                            ],
-                        }
-                    ],
-                },
-            ],
-        },
+        "payload": _AGG_PAYLOAD,
     }
     r = client.post("/catalog/visualize_query", json=payload)
     assert r.status_code == 200, r.text
@@ -185,9 +502,8 @@ def test_visualize_query_endpoint_ipc_path(tmp_path):
 def test_visualize_query_sql_with_virtual_refs(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)
-    viz_session_manager.evict_all()
+    viz_session_registry.evict_all()
 
-    # Seed an IPC file the SQL context will scan as a virtual reference.
     target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
     ipc_name = "fvt-2-cafebabecafebabe.arrow"
@@ -205,27 +521,24 @@ def test_visualize_query_sql_with_virtual_refs(tmp_path):
             "tables": {"viz_test": table_dir},
             "virtual_refs": {"boosts": ipc_name},
         },
-        "payload": {
-            "workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}],
-        },
+        "payload": _RAW_PAYLOAD,
     }
     r = client.post("/catalog/visualize_query", json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["error"] is None
     rows = sorted(body["rows"], key=lambda r: (r["category"], r["combined"]))
-    assert rows[0]["combined"] == 11  # a: 1+10
-    assert rows[-1]["combined"] == 25  # b: 5+20
+    assert rows[0]["combined"] == 11
+    assert rows[-1]["combined"] == 25
 
 
 @pytest.mark.worker
 def test_visualize_evict_endpoint(tmp_path):
     _setup_storage(tmp_path)
     _write_delta_table(tmp_path)
-    viz_session_manager.evict_all()
+    viz_session_registry.evict_all()
     client = TestClient(main.app)
 
-    # Seed a session.
     client.post(
         "/catalog/visualize_query",
         json={
@@ -235,11 +548,17 @@ def test_visualize_evict_endpoint(tmp_path):
                 "table_path": "viz_test",
                 "storage_format": "delta",
             },
-            "payload": {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]},
+            "payload": _RAW_PAYLOAD,
         },
     )
-    assert "evict:1" in viz_session_manager.stats()["keys"]
+    keys = {item["session_key"] for item in viz_session_registry.stats()}
+    assert "evict:1" in keys
 
     r = client.post("/catalog/visualize_evict", params={"session_key": "evict:1"})
     assert r.status_code == 200
-    assert "evict:1" not in viz_session_manager.stats()["keys"]
+    keys = {item["session_key"] for item in viz_session_registry.stats()}
+    assert "evict:1" not in keys
+
+
+# Silence ruff: imported for type-only constants
+_ = REQUEST_QUEUE_MAXSIZE

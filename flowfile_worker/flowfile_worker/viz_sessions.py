@@ -57,9 +57,7 @@ class VizSessionRegistry:
         self._sessions: dict[str, SessionHandle] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._reaper = threading.Thread(
-            target=self._reap_loop, daemon=True, name="viz-session-reaper"
-        )
+        self._reaper = threading.Thread(target=self._reap_loop, daemon=True, name="viz-session-reaper")
         self._reaper.start()
 
     # -- public API ---------------------------------------------------------
@@ -264,9 +262,7 @@ class VizSessionRegistry:
             except _queue_mod.Empty as exc:
                 if not handle.process.is_alive():
                     self._evict_handle(handle)
-                    raise HTTPException(
-                        status_code=502, detail="viz worker died unexpectedly"
-                    ) from exc
+                    raise HTTPException(status_code=502, detail="viz worker died unexpectedly") from exc
                 raise HTTPException(
                     status_code=504,
                     detail=f"viz compute timed out after {REQUEST_TIMEOUT_SECONDS}s",

@@ -122,10 +122,6 @@ def viz_session_main(source: dict[str, Any], request_q, response_q) -> None:
                 raise ValueError(f"unknown op: {op!r}")
             response_q.put({"request_id": rid, "ok": True, "result": result})
         except ValueError as exc:
-            response_q.put(
-                {"request_id": rid, "ok": False, "error": str(exc)[:1024], "type": "ValueError"}
-            )
+            response_q.put({"request_id": rid, "ok": False, "error": str(exc)[:1024], "type": "ValueError"})
         except Exception as exc:
-            response_q.put(
-                {"request_id": rid, "ok": False, "error": str(exc)[:1024], "type": type(exc).__name__}
-            )
+            response_q.put({"request_id": rid, "ok": False, "error": str(exc)[:1024], "type": type(exc).__name__})
