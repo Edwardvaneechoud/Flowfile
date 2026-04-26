@@ -648,3 +648,11 @@ button {
   border-top-color: var(--color-border-primary) !important;
 }
 
+/* vega-tooltip injects #vg-tooltip-element into <body> with z-index: 1000.
+   Element Plus dialogs sit at z-index ≈ 2001, so chart-mark tooltips inside
+   a dialog (catalog viewer/editor) render behind the modal. Lift the tooltip
+   above the modal layer so hover works inside dialogs. */
+#vg-tooltip-element {
+  z-index: 4000 !important;
+}
+

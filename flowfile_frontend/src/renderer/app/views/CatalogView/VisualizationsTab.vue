@@ -21,8 +21,6 @@
         v-for="viz in visualizations"
         :key="viz.id"
         :viz="viz"
-        :source="tableSource"
-        :appearance="appearance"
         @edit="openEditor(viz)"
         @delete="onDelete(viz)"
       />

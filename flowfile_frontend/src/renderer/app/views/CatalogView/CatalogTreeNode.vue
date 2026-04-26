@@ -52,6 +52,7 @@
           @select-flow="$emit('selectFlow', $event)"
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
+          @select-visualization="$emit('selectVisualization', $event)"
           @toggle-favorite="$emit('toggleFavorite', $event)"
           @toggle-table-favorite="$emit('toggleTableFavorite', $event)"
           @register-flow="$emit('registerFlow', $event)"

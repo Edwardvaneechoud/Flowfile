@@ -1,19 +1,27 @@
 <template>
-  <div class="viz-card">
+  <div
+    class="viz-card"
+    role="button"
+    tabindex="0"
+    :title="`Open ${viz.name}`"
+    @click="emit('edit')"
+    @keydown.enter="emit('edit')"
+  >
     <div class="viz-card-header">
+      <i :class="iconClass" class="viz-card-icon"></i>
       <div class="viz-card-title">
         <span class="viz-name">{{ viz.name }}</span>
         <span v-if="viz.chart_type" class="viz-chart-type">{{ viz.chart_type }}</span>
       </div>
-      <el-dropdown trigger="click">
-        <el-icon class="viz-card-menu"><MoreFilled /></el-icon>
+      <el-dropdown trigger="click" @click.stop>
+        <el-icon class="viz-card-menu" @click.stop><MoreFilled /></el-icon>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="emit('edit')">
+            <el-dropdown-item @click.stop="emit('edit')">
               <el-icon><Edit /></el-icon>
-              Edit
+              Open
             </el-dropdown-item>
-            <el-dropdown-item @click="emit('delete')" divided>
+            <el-dropdown-item divided @click.stop="emit('delete')">
               <el-icon><Delete /></el-icon>
               Delete
             </el-dropdown-item>
@@ -22,99 +30,49 @@
       </el-dropdown>
     </div>
 
-    <div class="viz-card-body">
-      <div v-if="loading" class="viz-card-state">
-        <el-skeleton :rows="4" animated />
-      </div>
-      <div v-else-if="errorMessage" class="viz-card-state viz-card-error">
-        <el-alert :title="errorMessage" type="error" :closable="false" show-icon />
-      </div>
-      <VueGraphicWalker
-        v-else
-        :computation="computeOnWorker"
-        :fields="plainFields"
-        :spec-list="plainSpecList"
-        :appearance="appearance"
+    <div class="viz-card-body" :class="{ 'viz-card-body-image': !!viz.thumbnail_data_url }">
+      <img
+        v-if="viz.thumbnail_data_url"
+        :src="viz.thumbnail_data_url"
+        :alt="`Thumbnail of ${viz.name}`"
+        class="viz-card-thumb-img"
+        loading="lazy"
+        decoding="async"
       />
+      <template v-else>
+        <i :class="iconClass" class="viz-card-thumb-icon"></i>
+        <p v-if="viz.description" class="viz-card-desc">{{ viz.description }}</p>
+        <p v-else class="viz-card-desc viz-card-desc-empty">
+          Click to open and view this visualization.
+        </p>
+      </template>
+    </div>
+
+    <div class="viz-card-footer">
+      <span v-if="viz.chart_type">{{ viz.chart_type }}</span>
+      <span v-if="viz.chart_type" class="dot">·</span>
+      <span>Updated {{ formatDate(viz.updated_at) }}</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed } from "vue";
 import { Delete, Edit, MoreFilled } from "@element-plus/icons-vue";
-import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
-import { CatalogApi } from "../../api/catalog.api";
-import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
-
-/**
- * Deep-clone via JSON round-trip so GraphicWalker's web worker can
- * structuredClone the payload. Vue refs/proxies and any getters can
- * otherwise trigger ``Failed to execute 'postMessage' on 'Worker'``.
- */
-function toPlainJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value));
-}
+import type { CatalogVisualization } from "../../types";
+import { formatDate } from "./catalog-formatters";
 
 const props = defineProps<{
   viz: CatalogVisualization;
-  source: VizSourceDescriptor;
-  appearance?: string;
 }>();
 
 const emit = defineEmits<{ (e: "edit"): void; (e: "delete"): void }>();
 
-const fields = ref<Record<string, any>[]>([]);
-const loading = ref(false);
-const errorMessage = ref<string | null>(null);
-
-const plainFields = computed(() => toPlainJson(fields.value));
-const plainSpecList = computed(() =>
-  props.viz.spec && props.viz.spec.length ? toPlainJson(props.viz.spec) : undefined,
+const iconClass = computed(() =>
+  props.viz.source_type === "sql"
+    ? "fa-solid fa-code viz-source-sql"
+    : "fa-solid fa-chart-column viz-source-table",
 );
-
-const SAMPLE_ROWS = 100_000;
-
-/** Hand every GW aggregation to the worker via polars-gw. */
-async function computeOnWorker(payload: any): Promise<any[]> {
-  try {
-    const resp = await CatalogApi.computeSavedVisualization(props.viz.id, {
-      payload,
-      maxRows: SAMPLE_ROWS,
-    });
-    if (resp.error) {
-      console.error("[viz] card compute failed:", resp.error);
-      return [];
-    }
-    return resp.rows;
-  } catch (err: any) {
-    console.error("[viz] card compute threw:", err);
-    return [];
-  }
-}
-
-const load = async () => {
-  loading.value = true;
-  errorMessage.value = null;
-  try {
-    // Only the field schema is fetched up front; rows are pulled on demand
-    // by GraphicWalker through the computeOnWorker callback.
-    const fieldsResp = await CatalogApi.getSavedVisualizationFields(props.viz.id);
-    if (fieldsResp.error) {
-      errorMessage.value = fieldsResp.error;
-    } else {
-      fields.value = fieldsResp.fields;
-    }
-  } catch (err: any) {
-    errorMessage.value = err?.response?.data?.detail ?? err?.message ?? String(err);
-  } finally {
-    loading.value = false;
-  }
-};
-
-onMounted(load);
-
-watch(() => props.viz.id, load);
 </script>
 
 <style scoped>
@@ -125,19 +83,37 @@ watch(() => props.viz.id, load);
   border-radius: 8px;
   background: var(--el-bg-color);
   overflow: hidden;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.viz-card:hover,
+.viz-card:focus-visible {
+  background: var(--el-fill-color-lighter);
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+  outline: none;
 }
 .viz-card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.viz-card-icon {
+  color: var(--el-color-primary);
+  font-size: 14px;
+  flex-shrink: 0;
 }
 .viz-card-title {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  flex: 1;
 }
 .viz-name {
   font-weight: 600;
@@ -153,19 +129,56 @@ watch(() => props.viz.id, load);
 }
 .viz-card-menu {
   cursor: pointer;
+  color: var(--el-text-color-secondary);
 }
 .viz-card-body {
-  position: relative;
-  height: 320px;
-}
-.viz-card-state {
-  height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  gap: 12px;
+  padding: 24px 16px;
+  min-height: 140px;
+  background: var(--el-fill-color-blank);
 }
-.viz-card-error {
-  align-items: stretch;
+.viz-card-body-image {
+  padding: 0;
+}
+.viz-card-thumb-img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: var(--el-fill-color-blank);
+}
+.viz-card-thumb-icon {
+  font-size: 36px;
+  color: var(--el-color-primary-light-3);
+}
+.viz-card-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+  max-width: 32ch;
+  line-height: 1.4;
+}
+.viz-card-desc-empty {
+  color: var(--el-text-color-disabled);
+  font-style: italic;
+}
+.viz-card-footer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.viz-card-footer .dot {
+  color: var(--el-text-color-disabled);
+}
+.viz-source-sql {
+  color: var(--el-color-warning);
 }
 </style>

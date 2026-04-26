@@ -369,6 +369,7 @@ class VisualizationCreate(BaseModel):
     catalog_table_id: int | None = None
     sql_query: str | None = None
     namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
 
 
 class VisualizationUpdate(BaseModel):
@@ -380,6 +381,7 @@ class VisualizationUpdate(BaseModel):
     namespace_id: int | None = None
     sql_query: str | None = None
     catalog_table_id: int | None = None
+    thumbnail_data_url: str | None = None
 
 
 class VisualizationOut(BaseModel):
@@ -393,6 +395,7 @@ class VisualizationOut(BaseModel):
     catalog_table_id: int | None = None
     sql_query: str | None = None
     namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
@@ -476,6 +479,7 @@ class VisualizationLibraryItem(BaseModel):
     catalog_table_id: int | None = None
     sql_query: str | None = None
     namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime

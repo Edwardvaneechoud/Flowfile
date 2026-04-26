@@ -379,6 +379,8 @@ export interface CatalogVisualization {
   catalog_table_id: number | null;
   sql_query: string | null;
   namespace_id: number | null;
+  /** Base64 PNG data URL captured on save by GraphicWalker's exportChart. */
+  thumbnail_data_url: string | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -399,6 +401,7 @@ export interface VisualizationCreatePayload {
   catalog_table_id?: number | null;
   sql_query?: string | null;
   namespace_id?: number | null;
+  thumbnail_data_url?: string | null;
 }
 
 export interface VisualizationUpdatePayload {
@@ -410,6 +413,7 @@ export interface VisualizationUpdatePayload {
   namespace_id?: number | null;
   sql_query?: string | null;
   catalog_table_id?: number | null;
+  thumbnail_data_url?: string | null;
 }
 
 /** Source descriptor sent to the ad-hoc compute and fields endpoints. */
@@ -444,6 +448,7 @@ export interface VisualizationLibraryItem {
   catalog_table_id: number | null;
   sql_query: string | null;
   namespace_id: number | null;
+  thumbnail_data_url: string | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;

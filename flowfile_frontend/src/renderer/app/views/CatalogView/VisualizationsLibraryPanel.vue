@@ -74,6 +74,14 @@
             </template>
           </el-dropdown>
         </div>
+        <img
+          v-if="item.thumbnail_data_url"
+          :src="item.thumbnail_data_url"
+          :alt="`Thumbnail of ${item.name}`"
+          class="viz-library-card-thumb"
+          loading="lazy"
+          decoding="async"
+        />
         <div class="viz-library-card-meta">
           <span v-if="item.chart_type">{{ item.chart_type }}</span>
           <span v-if="item.chart_type" class="dot">·</span>
@@ -286,6 +294,15 @@ onMounted(() => {
 .viz-card-menu {
   cursor: pointer;
   color: var(--el-text-color-secondary);
+}
+.viz-library-card-thumb {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: contain;
+  background: var(--el-fill-color-blank);
+  border-radius: 4px;
+  border: 1px solid var(--el-border-color-lighter);
 }
 .viz-library-card-meta {
   display: flex;

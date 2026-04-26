@@ -2,7 +2,13 @@
 import { ref, onMounted, onUnmounted, defineProps, defineExpose, toRaw } from "vue";
 
 // Types only - these don't add to bundle size
-import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/dist/interfaces";
+import type {
+  IRow,
+  IMutField,
+  IChart,
+  IGWProps,
+  IGWHandler,
+} from "@kanaries/graphic-walker/dist/interfaces";
 import { ISegmentKey } from "@kanaries/graphic-walker/dist/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/dist/store/visualSpecStore";
 
@@ -40,6 +46,11 @@ let ReactDOMClient: any = null;
 let GraphicWalker: any = null;
 
 const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null });
+
+// Handle to GraphicWalker's forwarded ref. Holds the IGWHandlerInsider methods
+// (exportChart, exportChartList, renderStatus, …). Allocated lazily after the
+// React import so we can use React.createRef from the dynamically loaded module.
+let gwHandleRef: { current: IGWHandler | null } | null = null;
 
 const dummyComputation = async (): Promise<IRow[]> => {
   console.warn(
@@ -99,9 +110,12 @@ onMounted(async () => {
     ReactDOMClient = reactDomModule;
     GraphicWalker = gwModule.GraphicWalker;
 
+    gwHandleRef = React.createRef();
     reactRootInstance = ReactDOMClient.createRoot(container.value);
     const componentProps = getReactProps();
-    reactRootInstance.render(React.createElement(GraphicWalker, componentProps));
+    reactRootInstance.render(
+      React.createElement(GraphicWalker, { ...componentProps, ref: gwHandleRef }),
+    );
     isLoading.value = false;
 
     // Set the default tab if specified
@@ -131,6 +145,27 @@ onUnmounted(() => {
   }
 });
 
+/**
+ * Capture the currently visible chart as a base64 PNG data URL via
+ * GraphicWalker's exportChart('data-url'). Returns null when the chart
+ * isn't ready (no fields, render error, or unmounted). The catalog uses
+ * this as a static thumbnail so list views don't need to remount GW.
+ */
+const exportImage = async (): Promise<string | null> => {
+  const handle = gwHandleRef?.current;
+  if (!handle || typeof handle.exportChart !== "function") {
+    return null;
+  }
+  try {
+    const result = await handle.exportChart("data-url");
+    const first = result?.charts?.[0]?.data;
+    return typeof first === "string" && first.startsWith("data:image/") ? first : null;
+  } catch (error) {
+    console.error("[VueGW] exportImage failed:", error);
+    return null;
+  }
+};
+
 const exportCode = async (): Promise<IChart[] | null> => {
   const storeInstance = internalStoreRef.value?.current;
   if (!storeInstance) {
@@ -158,6 +193,7 @@ const exportCode = async (): Promise<IChart[] | null> => {
 
 defineExpose({
   exportCode,
+  exportImage,
 });
 </script>
 

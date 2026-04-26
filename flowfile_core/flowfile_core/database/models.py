@@ -406,6 +406,11 @@ class CatalogVisualization(Base):
     catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True, index=True)
     sql_query = Column(Text, nullable=True)
 
+    # Base64 PNG data URL captured client-side via GraphicWalker's
+    # exportChart('data-url'). Used as a static thumbnail in catalog grids
+    # so we don't have to re-mount the chart per card.
+    thumbnail_data_url = Column(Text, nullable=True)
+
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)

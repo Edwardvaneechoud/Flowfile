@@ -211,6 +211,28 @@ async function reload() {
   await load();
 }
 
+// Match the server-side cap; drop the thumbnail rather than fail the save
+// when GW returns a larger PNG.
+const THUMBNAIL_MAX_BYTES = 200_000;
+
+async function captureThumbnail(): Promise<string | null> {
+  if (!gwRef.value || typeof gwRef.value.exportImage !== "function") return null;
+  try {
+    const dataUrl = await gwRef.value.exportImage();
+    if (!dataUrl) return null;
+    if (dataUrl.length > THUMBNAIL_MAX_BYTES) {
+      console.warn(
+        `[viz] thumbnail too large (${dataUrl.length} bytes), skipping`,
+      );
+      return null;
+    }
+    return dataUrl;
+  } catch (err) {
+    console.warn("[viz] thumbnail capture failed:", err);
+    return null;
+  }
+}
+
 async function onSave() {
   if (!gwRef.value || !viz.value) return;
   const charts = await gwRef.value.exportCode();
@@ -218,11 +240,13 @@ async function onSave() {
     ElMessage.error("No chart to save — build one in the editor first.");
     return;
   }
+  const thumbnail_data_url = await captureThumbnail();
   saving.value = true;
   try {
     const updated = await store.updateVisualization(props.vizId, {
       spec: charts as Record<string, any>[],
       namespace_id: namespaceDraft.value,
+      thumbnail_data_url,
     });
     viz.value = updated;
     namespaceDraft.value = updated.namespace_id ?? null;

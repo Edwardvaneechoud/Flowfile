@@ -3052,6 +3052,7 @@ class CatalogService:
             catalog_table_id=viz.catalog_table_id,
             sql_query=viz.sql_query,
             namespace_id=viz.namespace_id,
+            thumbnail_data_url=viz.thumbnail_data_url,
             created_by=viz.created_by,
             created_at=viz.created_at,
             updated_at=viz.updated_at,
@@ -3117,6 +3118,7 @@ class CatalogService:
                     catalog_table_id=viz.catalog_table_id,
                     sql_query=viz.sql_query,
                     namespace_id=viz.namespace_id,
+                    thumbnail_data_url=viz.thumbnail_data_url,
                     created_by=viz.created_by,
                     created_at=viz.created_at,
                     updated_at=viz.updated_at,
@@ -3145,6 +3147,23 @@ class CatalogService:
             if not payload.sql_query or not payload.sql_query.strip():
                 raise ValueError("sql_query is required when source_type='sql'")
 
+    # Cap thumbnails at ~200KB so a runaway client (or a chart with a giant
+    # legend) can't bloat the catalog DB. The frontend captures via
+    # GraphicWalker's exportChart('data-url'); typical 600×400 PNGs land
+    # well under this.
+    _THUMBNAIL_MAX_BYTES = 200_000
+
+    def _validate_thumbnail(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.startswith("data:image/"):
+            raise ValueError("thumbnail_data_url must be a data:image/* URL")
+        if len(value) > self._THUMBNAIL_MAX_BYTES:
+            raise ValueError(
+                f"thumbnail_data_url exceeds {self._THUMBNAIL_MAX_BYTES} bytes"
+            )
+        return value
+
     def create_visualization(
         self, payload: VisualizationCreate, user_id: int
     ) -> VisualizationOut:
@@ -3170,6 +3189,7 @@ class CatalogService:
             source_type=payload.source_type or "table",
             catalog_table_id=payload.catalog_table_id if payload.source_type == "table" else None,
             sql_query=payload.sql_query if payload.source_type == "sql" else None,
+            thumbnail_data_url=self._validate_thumbnail(payload.thumbnail_data_url),
             namespace_id=namespace_id,
             created_by=user_id,
         )
@@ -3201,6 +3221,8 @@ class CatalogService:
             viz.sql_query = payload.sql_query
         if payload.catalog_table_id is not None and viz.source_type == "table":
             viz.catalog_table_id = payload.catalog_table_id
+        if payload.thumbnail_data_url is not None:
+            viz.thumbnail_data_url = self._validate_thumbnail(payload.thumbnail_data_url)
         try:
             updated = self.repo.update_visualization(viz)
         except IntegrityError as exc:

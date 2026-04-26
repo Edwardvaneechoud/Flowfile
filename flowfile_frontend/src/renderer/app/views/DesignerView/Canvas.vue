@@ -834,9 +834,21 @@ onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown);
 
   nodeStore.setVueFlowInstance(instance);
-  loadFlow();
 
-  // Refresh artifact data when flow execution completes
+  watch(
+    () => flowStore.flowId,
+    async (id) => {
+      if (id && id > 0) {
+        try {
+          await loadFlow();
+        } catch (e) {
+          console.error("loadFlow failed:", e);
+        }
+      }
+    },
+    { immediate: true },
+  );
+
   watch(
     () => editorStore.isRunning,
     (running, wasRunning) => {
