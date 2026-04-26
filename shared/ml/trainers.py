@@ -17,8 +17,10 @@ import polars as pl
 from pydantic import BaseModel
 
 from shared.ml.algorithms import (
+    HyperparamsKNNClassifier,
     HyperparamsLasso,
     HyperparamsLinear,
+    HyperparamsLogistic,
     HyperparamsRidge,
     MLAlgorithmSpec,
     MLParamSpec,
@@ -223,10 +225,318 @@ class LassoRegressionTrainer(_LinearFamilyTrainer):
         return kwargs
 
 
+class LogisticRegressionTrainer:
+    """Binary logistic regression backed by polars_ds.logistic_reg.
+
+    Targets must be 0/1 integer labels; predictions are the argmax of the
+    sigmoid (logit > 0 -> class 1) cast to Int64. Same JSON wire format as
+    the regression family, so the worker dispatch path is unchanged.
+    """
+
+    model_type: ClassVar[str] = "logistic_regression"
+    label: ClassVar[str] = "Logistic Regression"
+    description: ClassVar[str | None] = (
+        "Binary classification. Target column must contain 0/1 integer labels."
+    )
+    task_type: ClassVar[str] = "classification"
+    output_dtype: ClassVar[str] = "Int64"
+    serialization_format: ClassVar[str] = "json"
+    params_class: ClassVar[type[BaseModel]] = HyperparamsLogistic
+
+    extra_param_specs: ClassVar[tuple[MLParamSpec, ...]] = (
+        MLParamSpec(
+            name="l2_reg",
+            type="number",
+            label="L2 penalty",
+            default=0.0,
+            min=0.0,
+            step=0.01,
+            description="L2 (Ridge) regularisation strength. 0 means unregularised.",
+        ),
+        MLParamSpec(
+            name="l1_reg",
+            type="number",
+            label="L1 penalty",
+            default=0.0,
+            min=0.0,
+            step=0.01,
+            description=(
+                "L1 (Lasso) regularisation. Non-zero switches the solver to "
+                "OWL-QN and yields sparser coefficients."
+            ),
+        ),
+        MLParamSpec(
+            name="max_iter",
+            type="integer",
+            label="Max iterations",
+            default=200,
+            min=1,
+            step=1,
+            description="Maximum L-BFGS / OWL-QN iterations.",
+        ),
+    )
+
+    def spec(self) -> MLAlgorithmSpec:
+        params: list[MLParamSpec] = [
+            MLParamSpec(
+                name="add_bias",
+                type="boolean",
+                label="Include intercept",
+                default=True,
+                description="Fit a bias / intercept term in addition to the feature coefficients.",
+            ),
+            *self.extra_param_specs,
+        ]
+        return MLAlgorithmSpec(
+            model_type=self.model_type,
+            label=self.label,
+            task_type=self.task_type,
+            output_dtype=self.output_dtype,
+            params=params,
+            description=self.description,
+        )
+
+    def train(
+        self,
+        lf: pl.LazyFrame,
+        target: str,
+        features: list[str],
+        params: dict[str, Any],
+    ) -> bytes:
+        import polars_ds as pds
+
+        validated = self.params_class(**params)
+        coefs_frame = lf.select(
+            pds.logistic_reg(
+                *features,
+                target=target,
+                add_bias=validated.add_bias,
+                l1_reg=validated.l1_reg,
+                l2_reg=validated.l2_reg,
+                max_iter=validated.max_iter,
+            )
+        ).collect()
+        if coefs_frame.height == 0:
+            raise ValueError(
+                "Training data is empty; cannot fit a logistic regression model."
+            )
+        coeffs = coefs_frame.row(0)[0]
+        if validated.add_bias:
+            *coefficients, intercept = coeffs
+        else:
+            coefficients = list(coeffs)
+            intercept = 0.0
+
+        if len(coefficients) != len(features):
+            raise ValueError(
+                f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
+                "polars_ds.logistic_reg returned an unexpected shape."
+            )
+
+        model = {
+            "model_type": self.model_type,
+            "task_type": self.task_type,
+            "target": target,
+            "features": list(features),
+            "coefficients": list(coefficients),
+            "intercept": float(intercept),
+            "params": validated.model_dump(),
+            "output_dtype": self.output_dtype,
+        }
+        return json.dumps(model).encode("utf-8")
+
+    def apply(
+        self,
+        lf: pl.LazyFrame,
+        model: dict[str, Any],
+        output_column: str,
+    ) -> pl.LazyFrame:
+        features = model["features"]
+        coefficients = model["coefficients"]
+        intercept = float(model.get("intercept", 0.0))
+        missing = [f for f in features if f not in lf.collect_schema().names()]
+        if missing:
+            raise ValueError(
+                f"Apply Model: input is missing required feature column(s) {missing!r}. "
+                f"Model was trained on {features!r}."
+            )
+        # Decision boundary: sigmoid(logit) > 0.5  <=>  logit > 0; skip the
+        # exp/log roundtrip and threshold the linear combination directly.
+        logit = pl.lit(intercept, dtype=pl.Float64)
+        for feature_name, coef in zip(features, coefficients, strict=True):
+            logit = logit + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
+        return lf.with_columns((logit > 0).cast(pl.Int64).alias(output_column))
+
+
+class KNNClassifierTrainer:
+    """Binary KNN classification backed by polars_ds.query_knn_ptwise.
+
+    KNN is non-parametric: the "model" is the training feature matrix and
+    label vector serialised inside our JSON envelope. At apply time we vstack
+    the training rows on top of the query rows, run the kd-tree query with
+    ``data_mask`` so only training rows are candidate neighbours, and take a
+    majority vote over the k retrieved labels for each query row.
+
+    Targets must be 0/1 integer labels. The serialised model size grows with
+    the training set; suitable for demo-scale data, less so for million-row
+    training sets.
+    """
+
+    model_type: ClassVar[str] = "knn_classifier"
+    label: ClassVar[str] = "K-Nearest Neighbours (Classifier)"
+    description: ClassVar[str | None] = (
+        "Non-parametric binary classification. Stores training data in the "
+        "model artifact and predicts via majority vote over k nearest neighbours."
+    )
+    task_type: ClassVar[str] = "classification"
+    output_dtype: ClassVar[str] = "Int64"
+    serialization_format: ClassVar[str] = "json"
+    params_class: ClassVar[type[BaseModel]] = HyperparamsKNNClassifier
+
+    def spec(self) -> MLAlgorithmSpec:
+        params: list[MLParamSpec] = [
+            MLParamSpec(
+                name="k",
+                type="integer",
+                label="Neighbours (k)",
+                default=5,
+                min=1,
+                step=1,
+                description="Number of nearest neighbours to consult for the majority vote.",
+            ),
+            MLParamSpec(
+                name="distance",
+                type="select",
+                label="Distance metric",
+                default="sql2",
+                options=["sql2", "l1", "l2", "inf"],
+                description=(
+                    "Distance function. 'sql2' is squared L2 (fastest), 'l1' is "
+                    "Manhattan, 'l2' is Euclidean, 'inf' is Chebyshev."
+                ),
+            ),
+        ]
+        return MLAlgorithmSpec(
+            model_type=self.model_type,
+            label=self.label,
+            task_type=self.task_type,
+            output_dtype=self.output_dtype,
+            params=params,
+            description=self.description,
+        )
+
+    def train(
+        self,
+        lf: pl.LazyFrame,
+        target: str,
+        features: list[str],
+        params: dict[str, Any],
+    ) -> bytes:
+        validated = self.params_class(**params)
+        df = lf.select([*features, target]).drop_nulls().collect()
+        if df.height == 0:
+            raise ValueError("Training data is empty; cannot fit a KNN model.")
+
+        distinct_y = sorted(set(df[target].to_list()))
+        if not set(distinct_y).issubset({0, 1}):
+            raise ValueError(
+                "KNN classifier requires a binary 0/1 target column; "
+                f"got distinct values {distinct_y!r}."
+            )
+
+        train_X = {f: df[f].cast(pl.Float64).to_list() for f in features}
+        train_y = df[target].cast(pl.Int64).to_list()
+
+        model = {
+            "model_type": self.model_type,
+            "task_type": self.task_type,
+            "target": target,
+            "features": list(features),
+            "k": validated.k,
+            "distance": validated.distance,
+            "train_X": train_X,
+            "train_y": train_y,
+            "params": validated.model_dump(),
+            "output_dtype": self.output_dtype,
+        }
+        return json.dumps(model).encode("utf-8")
+
+    def apply(
+        self,
+        lf: pl.LazyFrame,
+        model: dict[str, Any],
+        output_column: str,
+    ) -> pl.LazyFrame:
+        import polars_ds as pds
+
+        features = model["features"]
+        train_X = model["train_X"]
+        train_y = model["train_y"]
+        k = int(model["k"])
+        dist = model.get("distance", "sql2")
+
+        missing = [f for f in features if f not in lf.collect_schema().names()]
+        if missing:
+            raise ValueError(
+                f"Apply Model: input is missing required feature column(s) {missing!r}. "
+                f"Model was trained on {features!r}."
+            )
+
+        n_train = len(train_y)
+        train_df = pl.DataFrame(
+            {f: train_X[f] for f in features},
+            schema={f: pl.Float64 for f in features},
+        ).with_columns(pl.lit(True).alias("__is_train"))
+
+        # Single collect of the input — we need eager rows to vstack with the
+        # training set and to stitch predictions back in input order.
+        test_df = lf.collect()
+        test_features = test_df.select(
+            [pl.col(f).cast(pl.Float64) for f in features]
+        ).with_columns(pl.lit(False).alias("__is_train"))
+
+        combined = pl.concat([train_df, test_features], how="vertical").with_row_index(
+            "__row_idx"
+        )
+
+        knn_df = combined.with_columns(
+            pds.query_knn_ptwise(
+                *features,
+                index="__row_idx",
+                k=k,
+                dist=dist,
+                data_mask="__is_train",
+            ).alias("__nb_idx")
+        )
+
+        # Filter preserves the order test rows appeared in `combined`, which
+        # is the same as their order in `test_df`.
+        test_with_nb = knn_df.filter(~pl.col("__is_train"))
+        nb_idxs = test_with_nb["__nb_idx"].to_list()
+
+        preds: list[int] = []
+        for nbs in nb_idxs:
+            if not nbs:
+                # No candidates within max_bound (or k==0); abstain to class 0.
+                preds.append(0)
+                continue
+            labels = [train_y[int(i)] for i in nbs if i is not None and int(i) < n_train]
+            if not labels:
+                preds.append(0)
+                continue
+            # Majority vote; ties (k=2 with split labels) break to class 1.
+            preds.append(1 if sum(labels) * 2 >= len(labels) else 0)
+
+        result = test_df.with_columns(pl.Series(output_column, preds, dtype=pl.Int64))
+        return result.lazy()
+
+
 _TRAINERS: tuple[Trainer, ...] = (
     LinearRegressionTrainer(),
     RidgeRegressionTrainer(),
     LassoRegressionTrainer(),
+    LogisticRegressionTrainer(),
+    KNNClassifierTrainer(),
 )
 
 TRAINER_REGISTRY: dict[str, Trainer] = {t.model_type: t for t in _TRAINERS}

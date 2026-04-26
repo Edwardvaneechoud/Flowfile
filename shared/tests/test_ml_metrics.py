@@ -70,5 +70,58 @@ def test_same_column_for_actual_and_predicted_is_rejected():
 
 def test_unsupported_task_type_lists_supported_options():
     df = pl.DataFrame({"y": [1.0], "p": [1.0]})
-    with pytest.raises(ValueError, match="regression"):
-        compute_metrics(df.lazy(), actual_column="y", predicted_column="p", task_type="classification")
+    with pytest.raises(ValueError, match="ranking"):
+        compute_metrics(df.lazy(), actual_column="y", predicted_column="p", task_type="ranking")
+
+
+def test_classification_perfect_predictions():
+    df = pl.DataFrame({"y": [0, 1, 1, 0, 1], "p": [0, 1, 1, 0, 1]})
+    m = _metrics(df, actual_column="y", predicted_column="p", task_type="classification")
+    assert m["accuracy"] == 1.0
+    assert m["precision"] == 1.0
+    assert m["recall"] == 1.0
+    assert m["f1"] == 1.0
+    assert m["n_correct"] == 5.0
+    assert m["n_total"] == 5.0
+
+
+def test_classification_all_wrong_predictions():
+    df = pl.DataFrame({"y": [0, 0, 1, 1], "p": [1, 1, 0, 0]})
+    m = _metrics(df, actual_column="y", predicted_column="p", task_type="classification")
+    assert m["accuracy"] == 0.0
+    assert m["f1"] == 0.0
+    assert m["n_correct"] == 0.0
+    assert m["n_total"] == 4.0
+
+
+def test_classification_imbalanced_three_class_macro_averages():
+    # Confusion arrangement (rows = actual, cols = predicted):
+    #         pred=A pred=B pred=C
+    # y=A       3      1      0
+    # y=B       0      2      1
+    # y=C       1      0      2
+    # Per-class:
+    #   A: TP=3 FP=1 FN=1 -> P=3/4 R=3/4 F1=3/4
+    #   B: TP=2 FP=1 FN=1 -> P=2/3 R=2/3 F1=2/3
+    #   C: TP=2 FP=1 FN=1 -> P=2/3 R=2/3 F1=2/3
+    df = pl.DataFrame(
+        {
+            "y": ["A", "A", "A", "A", "B", "B", "B", "C", "C", "C"],
+            "p": ["A", "A", "A", "B", "B", "B", "C", "C", "C", "A"],
+        }
+    )
+    m = _metrics(df, actual_column="y", predicted_column="p", task_type="classification")
+    expected_macro = (3 / 4 + 2 / 3 + 2 / 3) / 3
+    assert m["accuracy"] == pytest.approx(7 / 10)
+    assert m["precision"] == pytest.approx(expected_macro)
+    assert m["recall"] == pytest.approx(expected_macro)
+    assert m["f1"] == pytest.approx(expected_macro)
+    assert m["n_correct"] == 7.0
+    assert m["n_total"] == 10.0
+
+
+def test_classification_drops_nulls_before_aggregation():
+    df = pl.DataFrame({"y": [0, 1, None, 1], "p": [0, 1, 0, None]})
+    m = _metrics(df, actual_column="y", predicted_column="p", task_type="classification")
+    assert m["n_total"] == 2.0
+    assert m["accuracy"] == 1.0

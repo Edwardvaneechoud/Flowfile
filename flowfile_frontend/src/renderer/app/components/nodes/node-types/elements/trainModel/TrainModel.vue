@@ -126,10 +126,6 @@
         <p v-else class="hint">Pick an algorithm to see its hyperparameters.</p>
       </div>
 
-      <div v-if="!flowRegistered" class="warning-banner">
-        Train Model writes to the catalog, so the flow must be registered first. Save and register
-        the flow before running it.
-      </div>
     </generic-node-settings>
   </div>
 </template>
@@ -196,13 +192,6 @@ const featureColumnOptions = computed(() => {
 const selectedSpec = computed(() => {
   const t = nodeTrainModel.value?.train_input.model_type;
   return algorithms.value.find((a) => a.model_type === t) ?? null;
-});
-
-// Surface the catalog-registration precondition prominently.
-const flowRegistered = computed(() => {
-  const settings = (nodeStore as { flowSettings?: { source_registration_id?: number | null } })
-    .flowSettings;
-  return settings?.source_registration_id != null;
 });
 
 function defaultsForSpec(spec: MLAlgorithmSpec): Record<string, unknown> {
@@ -281,15 +270,6 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   color: var(--color-text-secondary);
   font-style: italic;
   font-size: var(--font-size-sm);
-}
-
-.warning-banner {
-  margin-top: var(--spacing-3);
-  padding: var(--spacing-2) var(--spacing-3);
-  background-color: var(--color-warning-background, #fff7e6);
-  border-left: 3px solid var(--color-warning, #faad14);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
 }
 
 input[type="text"] {

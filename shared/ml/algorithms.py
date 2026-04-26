@@ -38,6 +38,22 @@ class HyperparamsLasso(BaseModel):
     max_iter: int = Field(default=200, ge=1)
 
 
+class HyperparamsLogistic(BaseModel):
+    """Hyperparameters for binary logistic regression (polars_ds L-BFGS / OWL-QN)."""
+
+    add_bias: bool = True
+    l2_reg: float = Field(default=0.0, ge=0.0)
+    l1_reg: float = Field(default=0.0, ge=0.0)
+    max_iter: int = Field(default=200, ge=1)
+
+
+class HyperparamsKNNClassifier(BaseModel):
+    """Hyperparameters for binary KNN classification (polars_ds kd-tree)."""
+
+    k: int = Field(default=5, ge=1)
+    distance: Literal["sql2", "l1", "l2", "inf"] = "sql2"
+
+
 MLParamType = Literal["boolean", "number", "integer", "select"]
 
 

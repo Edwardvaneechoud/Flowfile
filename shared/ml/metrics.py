@@ -15,7 +15,15 @@ from __future__ import annotations
 import polars as pl
 
 REGRESSION_METRICS: tuple[str, ...] = ("mae", "mse", "rmse", "r2", "mape", "n")
-SUPPORTED_TASK_TYPES: tuple[str, ...] = ("regression",)
+CLASSIFICATION_METRICS: tuple[str, ...] = (
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "n_correct",
+    "n_total",
+)
+SUPPORTED_TASK_TYPES: tuple[str, ...] = ("regression", "classification")
 
 
 def compute_metrics(
@@ -43,6 +51,8 @@ def compute_metrics(
         )
     if task_type == "regression":
         return _regression_metrics(lf, actual_column, predicted_column)
+    if task_type == "classification":
+        return _classification_metrics(lf, actual_column, predicted_column)
     raise ValueError(
         f"Evaluate Model: unsupported task_type {task_type!r}. "
         f"Supported: {SUPPORTED_TASK_TYPES!r}."
@@ -82,4 +92,81 @@ def _regression_metrics(
         on=list(REGRESSION_METRICS),
         variable_name="metric",
         value_name="value",
+    ).with_columns(pl.col("value").cast(pl.Float64))
+
+
+def _classification_metrics(
+    lf: pl.LazyFrame,
+    actual: str,
+    predicted: str,
+) -> pl.LazyFrame:
+    """Macro-averaged classification metrics in long form.
+
+    Both columns are cast to Utf8 so integer 0/1 labels and string labels share
+    one grouping path. Macro-averaging treats each class equally regardless of
+    support — fair on imbalanced data, which is the common classification case.
+
+    Polars has no native confusion-matrix expression and the per-class loop is
+    awkward in pure expressions, so we collect the two label vectors once and
+    compute in Python. Aggregated label counts are tiny relative to the prior
+    train/apply hops, so the collect cost is negligible.
+    """
+    base = (
+        lf.drop_nulls(subset=[actual, predicted])
+        .with_columns(
+            pl.col(actual).cast(pl.Utf8).alias("__a"),
+            pl.col(predicted).cast(pl.Utf8).alias("__p"),
+        )
+        .select("__a", "__p")
+        .collect()
+    )
+    n_total = base.height
+    if n_total == 0:
+        return _empty_classification_metrics()
+
+    correct = int((base["__a"] == base["__p"]).sum())
+    accuracy = correct / n_total
+    classes = sorted(set(base["__a"].to_list()) | set(base["__p"].to_list()))
+
+    precisions: list[float] = []
+    recalls: list[float] = []
+    f1s: list[float] = []
+    for cls in classes:
+        a_eq = base["__a"] == cls
+        p_eq = base["__p"] == cls
+        tp = int((a_eq & p_eq).sum())
+        fp = int((~a_eq & p_eq).sum())
+        fn = int((a_eq & ~p_eq).sum())
+        # Zero-denominator -> 0.0 (sklearn's zero_division=0). NaN would
+        # propagate through the macro mean and silently destroy F1 whenever
+        # any single class has no predicted positives.
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+        precisions.append(prec)
+        recalls.append(rec)
+        f1s.append(f1)
+
+    n_classes = len(classes) or 1
+    return pl.LazyFrame(
+        {
+            "metric": list(CLASSIFICATION_METRICS),
+            "value": [
+                float(accuracy),
+                sum(precisions) / n_classes,
+                sum(recalls) / n_classes,
+                sum(f1s) / n_classes,
+                float(correct),
+                float(n_total),
+            ],
+        }
+    ).with_columns(pl.col("value").cast(pl.Float64))
+
+
+def _empty_classification_metrics() -> pl.LazyFrame:
+    return pl.LazyFrame(
+        {
+            "metric": list(CLASSIFICATION_METRICS),
+            "value": [0.0] * len(CLASSIFICATION_METRICS),
+        }
     ).with_columns(pl.col("value").cast(pl.Float64))

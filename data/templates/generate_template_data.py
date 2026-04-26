@@ -8,6 +8,7 @@ Usage:
 """
 
 import csv
+import math
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -387,6 +388,51 @@ def generate_house_prices():
     )
 
 
+def generate_customer_churn():
+    """~500 rows of synthetic churn data for the binary classification ML template.
+
+    Each row's ``churned`` label is a Bernoulli draw from a sigmoid of the
+    feature vector + Gaussian noise on the logit, so logistic regression can
+    recover the true coefficients while leaving non-trivial irreducible noise.
+    """
+    rows = []
+    for i in range(1, 501):
+        tenure_months = random.randint(1, 72)
+        monthly_charges = round(random.uniform(20.0, 150.0), 2)
+        support_calls = random.randint(0, 10)
+        has_contract = random.choice([0, 1])
+        # Ground-truth logit:
+        #   - longer tenure         -> less churn
+        #   - higher monthly charge -> more churn
+        #   - more support calls    -> more churn
+        #   - has contract          -> less churn
+        logit = (
+            -1.5
+            - 0.05 * tenure_months
+            + 0.02 * monthly_charges
+            + 0.4 * support_calls
+            - 1.2 * has_contract
+            + random.gauss(0.0, 0.5)
+        )
+        prob = 1.0 / (1.0 + math.exp(-logit))
+        churned = 1 if random.random() < prob else 0
+        rows.append(
+            [i, tenure_months, monthly_charges, support_calls, has_contract, churned]
+        )
+    write_csv(
+        "customer_churn.csv",
+        [
+            "customer_id",
+            "tenure_months",
+            "monthly_charges",
+            "support_calls",
+            "has_contract",
+            "churned",
+        ],
+        rows,
+    )
+
+
 if __name__ == "__main__":
     print("Generating template data files...")
     generate_sales_data()
@@ -399,4 +445,5 @@ if __name__ == "__main__":
     generate_support_tickets()
     generate_fuzzy_match_data()
     generate_house_prices()
+    generate_customer_churn()
     print("Done!")

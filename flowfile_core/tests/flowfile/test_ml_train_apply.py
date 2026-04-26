@@ -96,6 +96,59 @@ def test_train_model_schema_passes_through_input_schema():
     assert {c.column_name for c in predicted} == {"x1", "x2", "y"}
 
 
+def test_train_model_schema_passes_through_for_logistic_regression():
+    """Logistic regression trainer integrates with the schema callback."""
+    graph = _make_graph()
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+
+    train_settings = input_schema.NodeTrainModel(
+        flow_id=graph.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        train_input=input_schema.TrainModelSettings(
+            target_column="y",
+            feature_columns=["x1", "x2"],
+            model_type="logistic_regression",
+            params={
+                "add_bias": True,
+                "l2_reg": 0.0,
+                "l1_reg": 0.0,
+                "max_iter": 200,
+            },
+        ),
+    )
+    graph.add_train_model(train_settings)
+
+    train_node = graph.get_node(2)
+    predicted = train_node.schema
+    assert {c.column_name for c in predicted} == {"x1", "x2", "y"}
+
+
+def test_train_model_schema_passes_through_for_knn_classifier():
+    """KNN classifier trainer integrates with the schema callback."""
+    graph = _make_graph()
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+
+    train_settings = input_schema.NodeTrainModel(
+        flow_id=graph.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        train_input=input_schema.TrainModelSettings(
+            target_column="y",
+            feature_columns=["x1", "x2"],
+            model_type="knn_classifier",
+            params={"k": 3, "distance": "sql2"},
+        ),
+    )
+    graph.add_train_model(train_settings)
+
+    train_node = graph.get_node(2)
+    predicted = train_node.schema
+    assert {c.column_name for c in predicted} == {"x1", "x2", "y"}
+
+
 def test_apply_model_schema_appends_float64_prediction_column():
     graph = _make_graph()
     _seed_manual_input(graph, node_id=1)

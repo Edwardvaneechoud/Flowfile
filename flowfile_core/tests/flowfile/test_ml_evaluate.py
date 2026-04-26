@@ -180,3 +180,67 @@ def test_evaluate_model_auto_task_type_uses_upstream_trainer():
     df = graph.get_node(20).get_resulting_data().data_frame.collect()
     assert "mae" in df["metric"].to_list()
 
+
+def test_evaluate_model_auto_task_type_resolves_classification_via_upstream():
+    """task_type='auto' + logistic_regression upstream emits classification metrics."""
+    graph = _make_graph(flow_id=5252)
+    promise = input_schema.NodePromise(
+        flow_id=graph.flow_id, node_id=1, node_type="manual_input"
+    )
+    graph.add_node_promise(promise)
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=graph.flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist(
+                [
+                    {"y": 0, "prediction": 0, "x1": 0.1},
+                    {"y": 1, "prediction": 1, "x1": 0.9},
+                    {"y": 0, "prediction": 1, "x1": 0.2},
+                    {"y": 1, "prediction": 1, "x1": 0.8},
+                ]
+            ),
+        )
+    )
+
+    _wire(graph, "train_model", node_id=10, upstream_id=1)
+    graph.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=graph.flow_id,
+            node_id=10,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1"],
+                model_type="logistic_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+
+    _wire(graph, "evaluate_model", node_id=20, upstream_id=1)
+    graph.add_evaluate_model(
+        input_schema.NodeEvaluateModel(
+            flow_id=graph.flow_id,
+            node_id=20,
+            depending_on_id=1,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column="y",
+                predicted_column="prediction",
+                task_type="auto",
+                upstream_train_node_id=10,
+            ),
+        )
+    )
+
+    df = graph.get_node(20).get_resulting_data().data_frame.collect()
+    metrics = set(df["metric"].to_list())
+    assert {"accuracy", "precision", "recall", "f1", "n_correct", "n_total"} <= metrics
+    metric_map = dict(
+        zip(df["metric"].to_list(), df["value"].to_list(), strict=True)
+    )
+    # 3 correct out of 4: y=[0,1,0,1], pred=[0,1,1,1]
+    assert metric_map["accuracy"] == pytest.approx(0.75)
+    assert metric_map["n_correct"] == 3.0
+    assert metric_map["n_total"] == 4.0
+
