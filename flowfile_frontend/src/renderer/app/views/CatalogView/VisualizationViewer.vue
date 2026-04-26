@@ -23,6 +23,24 @@
         <div v-if="viz?.description" class="viz-viewer-desc">{{ viz.description }}</div>
       </div>
       <div class="viz-viewer-actions">
+        <div class="viz-namespace-picker">
+          <span class="viz-namespace-label">Catalog</span>
+          <el-select
+            v-model="namespaceDraft"
+            size="small"
+            placeholder="(none)"
+            clearable
+            :disabled="loadingMeta || loadingData || saving"
+            @change="onNamespaceChange"
+          >
+            <el-option
+              v-for="ns in schemaNamespaces"
+              :key="ns.id"
+              :label="ns.label"
+              :value="ns.id"
+            />
+          </el-select>
+        </div>
         <el-button size="small" :disabled="saving || loadingData" @click="reload">Reset</el-button>
         <el-button
           type="primary"
@@ -89,7 +107,21 @@ const loadingData = ref(true);
 const errorMessage = ref<string | null>(null);
 const saving = ref(false);
 
+// User-edited namespace; persisted to the viz on save (or eagerly on change).
+const namespaceDraft = ref<number | null>(null);
+
 const SAMPLE_ROWS = 100_000;
+
+// Flat schema-level list for the namespace picker. Mirrors the SQL save dialog.
+const schemaNamespaces = computed(() => {
+  const items: { id: number; label: string }[] = [];
+  for (const cat of store.tree) {
+    for (const schema of cat.children) {
+      items.push({ id: schema.id, label: `${cat.name} / ${schema.name}` });
+    }
+  }
+  return items;
+});
 
 // Deep-clone JSON so GraphicWalker's web worker can structuredClone the
 // payload without tripping on Vue reactive proxies / getters.
@@ -122,6 +154,7 @@ async function load() {
   loadingMeta.value = true;
   try {
     viz.value = await CatalogApi.getVisualization(props.vizId);
+    namespaceDraft.value = viz.value?.namespace_id ?? null;
   } catch (err: any) {
     errorMessage.value = err?.response?.data?.detail ?? err?.message ?? String(err);
     loadingMeta.value = false;
@@ -129,6 +162,10 @@ async function load() {
     return;
   }
   loadingMeta.value = false;
+  // Make sure the namespace tree is available so the picker is populated.
+  if (store.tree.length === 0) {
+    store.loadTree().catch(() => {});
+  }
 
   loadingData.value = true;
   try {
@@ -168,10 +205,36 @@ async function onSave() {
   try {
     const updated = await store.updateVisualization(props.vizId, {
       spec: charts as Record<string, any>[],
+      namespace_id: namespaceDraft.value,
     });
     viz.value = updated;
+    namespaceDraft.value = updated.namespace_id ?? null;
     ElMessage.success("Saved chart updates");
+    store.loadTree().catch(() => {});
   } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+  } finally {
+    saving.value = false;
+  }
+}
+
+/** Persist a namespace move immediately so users don't have to click Save
+ * just to relocate a chart. The chart spec is left untouched. */
+async function onNamespaceChange(value: number | null | undefined) {
+  if (!viz.value) return;
+  const next = value ?? null;
+  if (next === viz.value.namespace_id) return;
+  saving.value = true;
+  try {
+    const updated = await store.updateVisualization(props.vizId, {
+      namespace_id: next,
+    });
+    viz.value = updated;
+    namespaceDraft.value = updated.namespace_id ?? null;
+    store.loadTree().catch(() => {});
+  } catch (err: any) {
+    // Roll the picker back if the update failed.
+    namespaceDraft.value = viz.value.namespace_id ?? null;
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   } finally {
     saving.value = false;
@@ -250,7 +313,21 @@ onMounted(load);
 }
 .viz-viewer-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+.viz-namespace-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+.viz-namespace-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.viz-namespace-picker .el-select {
+  width: 220px;
 }
 .viz-viewer-state {
   flex: 1;

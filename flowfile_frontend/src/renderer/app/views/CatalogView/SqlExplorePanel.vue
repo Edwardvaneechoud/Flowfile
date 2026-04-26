@@ -6,7 +6,7 @@
         class="action-btn"
         :disabled="saving"
         title="Save current chart to the catalog"
-        @click="onSaveChart"
+        @click="openSaveDialog"
       >
         <i class="fa-regular fa-bookmark"></i>
         Save chart
@@ -25,12 +25,64 @@
       :fields="gwFields"
       default-tab="data"
     />
+
+    <el-dialog
+      v-model="saveDialogOpen"
+      title="Save chart"
+      width="480px"
+      append-to-body
+      destroy-on-close
+    >
+      <el-form label-position="top" @submit.prevent="onConfirmSave">
+        <el-form-item label="Name" required>
+          <el-input v-model="saveForm.name" placeholder="e.g. Revenue by industry" />
+        </el-form-item>
+        <el-form-item label="Catalog / Schema">
+          <el-select
+            v-model="saveForm.namespaceId"
+            placeholder="Pick a namespace so the chart shows up in the catalog tree"
+            clearable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="ns in schemaNamespaces"
+              :key="ns.id"
+              :label="ns.label"
+              :value="ns.id"
+            />
+          </el-select>
+          <div class="save-form-hint">
+            Charts without a namespace are accessible from the Visualizations tab
+            but won't appear in the namespace tree.
+          </div>
+        </el-form-item>
+        <el-form-item label="Description">
+          <el-input
+            v-model="saveForm.description"
+            type="textarea"
+            :rows="2"
+            placeholder="Optional"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="saving" @click="saveDialogOpen = false">Cancel</el-button>
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="!saveForm.name.trim()"
+          @click="onConfirmSave"
+        >
+          Save
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { computed, reactive, ref, onBeforeUnmount, watch } from "vue";
+import { ElMessage } from "element-plus";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
 import type {
   IMutField,
@@ -39,6 +91,9 @@ import type {
 } from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/interfaces";
 import type { SqlQueryResult } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
+import { useCatalogStore } from "../../stores/catalog-store";
+
+const catalogStore = useCatalogStore();
 
 const props = defineProps<{
   result: SqlQueryResult;
@@ -139,43 +194,71 @@ function defaultSavedChartName(): string {
   return `Saved chart ${ts}`;
 }
 
-async function onSaveChart() {
+const saveDialogOpen = ref(false);
+const saveForm = reactive({
+  name: "",
+  description: "",
+  namespaceId: null as number | null,
+});
+const exportedCharts = ref<Record<string, any>[]>([]);
+
+// Flatten the namespace tree to a list of schema-level entries the user
+// can attach a chart to. Mirrors the existing virtual-table save form.
+const schemaNamespaces = computed(() => {
+  const items: { id: number; label: string }[] = [];
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      items.push({ id: schema.id, label: `${catalog.name} / ${schema.name}` });
+    }
+  }
+  return items;
+});
+
+async function openSaveDialog() {
   if (!props.sourceQuery || !vueGraphicWalkerRef.value) return;
   const charts = await vueGraphicWalkerRef.value.exportCode();
   if (!charts || !charts.length) {
     ElMessage.warning("Build a chart in the editor before saving.");
     return;
   }
+  exportedCharts.value = charts as Record<string, any>[];
+  saveForm.name = defaultSavedChartName();
+  saveForm.description = "";
+  // Default to the namespace the SQL editor is configured against, if any.
+  saveForm.namespaceId = props.saveNamespaceId ?? null;
+  // Make sure the picker has data to render.
+  if (catalogStore.tree.length === 0) {
+    catalogStore.loadTree().catch(() => {});
+  }
+  saveDialogOpen.value = true;
+}
 
-  let promptResult: { value: string } | null = null;
-  try {
-    promptResult = (await ElMessageBox.prompt(
-      "Save this chart to the Visualizations library. The chart keeps a reference to the SQL query you ran.",
-      "Save chart",
-      {
-        confirmButtonText: "Save",
-        cancelButtonText: "Cancel",
-        inputPlaceholder: "Name for the saved chart",
-        inputValue: defaultSavedChartName(),
-        inputValidator: (val) => (val && val.trim().length > 0 ? true : "Name is required"),
-      },
-    )) as { value: string };
-  } catch {
+async function onConfirmSave() {
+  if (!props.sourceQuery) return;
+  const name = saveForm.name.trim();
+  if (!name) {
+    ElMessage.warning("Enter a name to save the visualization.");
     return;
   }
-  const name = promptResult.value.trim();
-
   saving.value = true;
   try {
     await CatalogApi.createVisualization({
       name,
+      description: saveForm.description.trim() || null,
       // Save the full IChart[] so multi-tab specs round-trip.
-      spec: charts as Record<string, any>[],
+      spec: exportedCharts.value,
       source_type: "sql",
       sql_query: props.sourceQuery,
-      namespace_id: props.saveNamespaceId ?? null,
+      namespace_id: saveForm.namespaceId ?? null,
     });
-    ElMessage.success(`Saved chart "${name}" to the Visualizations library.`);
+    const where = saveForm.namespaceId
+      ? schemaNamespaces.value.find((n) => n.id === saveForm.namespaceId)?.label ?? "the catalog"
+      : "the Visualizations tab";
+    ElMessage.success(`Saved chart "${name}" to ${where}.`);
+    saveDialogOpen.value = false;
+    // Refresh the namespace tree so the new chart shows up under its
+    // catalog/schema right away.
+    catalogStore.loadTree().catch(() => {});
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
   } finally {
@@ -246,6 +329,13 @@ async function onSaveChart() {
 .action-btn:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.save-form-hint {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .fullscreen-toggle:hover {
