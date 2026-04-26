@@ -45,6 +45,7 @@ class NamespaceTree(NamespaceOut):
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
+    visualizations: list["VisualizationLibraryItem"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -359,7 +360,10 @@ class VisualizationCreate(BaseModel):
     name: str
     description: str | None = None
     chart_type: str | None = None
-    spec: dict
+    # ``spec`` is the array of GraphicWalker IChart entries that
+    # ``exportCode()`` returns — one per chart tab. A single-entry list is
+    # the common case but multi-tab specs round-trip too.
+    spec: list[dict]
     spec_gw_version: str | None = None
     source_type: Literal["table", "sql"] = "table"
     catalog_table_id: int | None = None
@@ -371,7 +375,7 @@ class VisualizationUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     chart_type: str | None = None
-    spec: dict | None = None
+    spec: list[dict] | None = None
     spec_gw_version: str | None = None
     namespace_id: int | None = None
     sql_query: str | None = None
@@ -383,7 +387,7 @@ class VisualizationOut(BaseModel):
     name: str
     description: str | None = None
     chart_type: str | None = None
-    spec: dict
+    spec: list[dict] = Field(default_factory=list)
     spec_gw_version: str | None = None
     source_type: str
     catalog_table_id: int | None = None
@@ -392,6 +396,11 @@ class VisualizationOut(BaseModel):
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
+    # Enrichment so the viewer can show "ns.tablename" without a second
+    # round-trip. None for SQL-source viz or when the parent table was deleted.
+    table_name: str | None = None
+    table_namespace_name: str | None = None
+    table_full_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

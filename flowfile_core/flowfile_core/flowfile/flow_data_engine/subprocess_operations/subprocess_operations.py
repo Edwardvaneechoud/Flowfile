@@ -216,24 +216,68 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
     ``worker_source["session_key"]`` so successive calls on the same source
     skip the load step.
     """
+    session_key = worker_source.get("session_key")
+    logger.info(
+        "[viz] -> worker /catalog/visualize_query session_key=%s kind=%s payload_keys=%s max_rows=%d",
+        session_key,
+        worker_source.get("kind"),
+        list(payload.keys()),
+        max_rows,
+    )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
     response = requests.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=120)
     if not response.ok:
+        logger.warning(
+            "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
+            session_key,
+            response.status_code,
+            response.text[:300],
+        )
         raise RuntimeError(f"Worker visualize_query failed: {response.text}")
-    return response.json()
+    data = response.json()
+    logger.info(
+        "[viz] <- worker /catalog/visualize_query session_key=%s status=%d cache_hit=%s rows=%d elapsed_ms=%s",
+        session_key,
+        response.status_code,
+        data.get("cache_hit"),
+        len(data.get("rows", [])),
+        data.get("elapsed_ms"),
+    )
+    return data
 
 
 def trigger_visualize_fields(worker_source: dict) -> dict:
     """Ask the worker for the Graphic Walker field schema of a source."""
+    session_key = worker_source.get("session_key")
+    logger.info(
+        "[viz] -> worker /catalog/visualize_fields session_key=%s kind=%s",
+        session_key,
+        worker_source.get("kind"),
+    )
     body = {"source": worker_source}
     response = requests.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
     if not response.ok:
+        logger.warning(
+            "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d body=%s",
+            session_key,
+            response.status_code,
+            response.text[:300],
+        )
         raise RuntimeError(f"Worker visualize_fields failed: {response.text}")
-    return response.json()
+    data = response.json()
+    logger.info(
+        "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d cache_hit=%s field_count=%d",
+        session_key,
+        response.status_code,
+        data.get("cache_hit"),
+        len(data.get("fields", [])),
+    )
+    return data
 
 
 def trigger_visualize_evict(session_key: str) -> None:
     """Ask the worker to drop a cached viz session (e.g. after a table update)."""
+    logger.info("[viz] -> worker /catalog/visualize_evict session_key=%s", session_key)
     response = requests.post(
         f"{WORKER_URL}/catalog/visualize_evict",
         params={"session_key": session_key},

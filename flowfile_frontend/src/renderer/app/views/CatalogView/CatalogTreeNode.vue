@@ -198,6 +198,38 @@
           </div>
         </div>
       </div>
+
+      <div v-if="showVisualizationsSection" class="tree-section">
+        <button class="section-header" @click.stop="toggleVisualizations">
+          <i
+            :class="visualizationsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
+            class="section-chevron"
+          ></i>
+          <span class="section-title">Visualizations</span>
+          <span class="section-count">{{ visibleVisualizations.length }}</span>
+        </button>
+        <div v-if="visualizationsExpanded" class="section-content">
+          <div
+            v-for="viz in visibleVisualizations"
+            :key="'v-' + viz.id"
+            class="tree-table"
+            @click.stop="$emit('selectVisualization', viz.id)"
+          >
+            <i
+              :class="
+                viz.source_type === 'sql'
+                  ? 'fa-solid fa-code table-icon viz-sql-icon'
+                  : 'fa-solid fa-chart-column table-icon viz-icon'
+              "
+              :title="viz.source_type === 'sql' ? 'SQL-source visualization' : 'Visualization'"
+            ></i>
+            <span class="table-name">{{ viz.name }}</span>
+            <span v-if="viz.source_type === 'sql'" class="table-virtual-badge" title="SQL source"
+              >sql</span
+            >
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -231,6 +263,7 @@ defineEmits([
   "selectFlow",
   "selectArtifact",
   "selectTable",
+  "selectVisualization",
   "toggleFavorite",
   "toggleTableFavorite",
   "registerFlow",
@@ -279,6 +312,14 @@ const visibleTables = computed(() => {
   return tables;
 });
 
+const visibleVisualizations = computed(() => {
+  let viz = props.node.visualizations ?? [];
+  if (query.value) {
+    viz = viz.filter((v) => v.name.toLowerCase().includes(query.value));
+  }
+  return viz;
+});
+
 const groupedArtifacts = computed((): ArtifactGroup[] => {
   const byName = new Map<string, GlobalArtifact[]>();
   for (const a of props.node.artifacts ?? []) {
@@ -308,12 +349,16 @@ const toggle = () => {
 const flowsExpanded = ref(false);
 const modelsExpanded = ref(false);
 const tablesExpanded = ref(false);
+const visualizationsExpanded = ref(false);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(
   () => props.node.level === 1 && visibleArtifacts.value.length > 0,
 );
 const showTablesSection = computed(() => props.node.level === 1 && visibleTables.value.length > 0);
+const showVisualizationsSection = computed(
+  () => props.node.level === 1 && visibleVisualizations.value.length > 0,
+);
 
 const toggleFlows = () => {
   flowsExpanded.value = !flowsExpanded.value;
@@ -323,6 +368,9 @@ const toggleModels = () => {
 };
 const toggleTables = () => {
   tablesExpanded.value = !tablesExpanded.value;
+};
+const toggleVisualizations = () => {
+  visualizationsExpanded.value = !visualizationsExpanded.value;
 };
 
 watch(
@@ -360,6 +408,7 @@ watch(query, (value) => {
   if (visibleFlows.value.length > 0) flowsExpanded.value = true;
   if (visibleArtifacts.value.length > 0) modelsExpanded.value = true;
   if (visibleTables.value.length > 0) tablesExpanded.value = true;
+  if (visibleVisualizations.value.length > 0) visualizationsExpanded.value = true;
 });
 
 watch(
@@ -702,6 +751,14 @@ const totalFlows = computed(() => {
 
 .tree-table .virtual-icon {
   color: var(--el-color-primary, var(--color-primary));
+}
+
+.tree-table .viz-icon {
+  color: var(--el-color-primary, var(--color-primary));
+}
+
+.tree-table .viz-sql-icon {
+  color: var(--el-color-warning, #e6a23c);
 }
 
 .table-virtual-badge {

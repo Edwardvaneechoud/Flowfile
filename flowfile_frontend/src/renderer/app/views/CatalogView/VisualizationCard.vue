@@ -77,7 +77,9 @@ const errorMessage = ref<string | null>(null);
 
 const plainRows = computed(() => toPlainJson(rows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
-const plainSpecList = computed(() => [toPlainJson(props.viz.spec)]);
+const plainSpecList = computed(() =>
+  props.viz.spec && props.viz.spec.length ? toPlainJson(props.viz.spec) : undefined,
+);
 
 const SAMPLE_ROWS = 100_000;
 

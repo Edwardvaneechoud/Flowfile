@@ -652,6 +652,15 @@ class CatalogService:
         namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
         namespace_table_map: dict[int, list[CatalogTableOut]] = {}
 
+        # Visualizations are surfaced as a peer of flows / tables / artifacts in
+        # whatever namespace they were saved into (their own ``namespace_id``,
+        # not the parent table's). Resolve once and bucket by namespace.
+        viz_by_namespace: dict[int, list[VisualizationLibraryItem]] = {}
+        for v in self.list_visualization_library(user_id=user_id):
+            if v.namespace_id is None:
+                continue
+            viz_by_namespace.setdefault(v.namespace_id, []).append(v)
+
         for cat in catalogs:
             cat_flows = self.repo.list_flows(namespace_id=cat.id)
             namespace_flow_map[cat.id] = cat_flows
@@ -698,6 +707,7 @@ class CatalogService:
                         flows=flow_outs,
                         artifacts=namespace_artifact_map.get(schema.id, []),
                         tables=namespace_table_map.get(schema.id, []),
+                        visualizations=viz_by_namespace.get(schema.id, []),
                     )
                 )
             cat_flows = namespace_flow_map.get(cat.id, [])
@@ -716,6 +726,7 @@ class CatalogService:
                     flows=root_flow_outs,
                     artifacts=namespace_artifact_map.get(cat.id, []),
                     tables=namespace_table_map.get(cat.id, []),
+                    visualizations=viz_by_namespace.get(cat.id, []),
                 )
             )
         return result
@@ -3003,18 +3014,39 @@ class CatalogService:
 
     # ================== Visualizations =====================================
 
-    @staticmethod
-    def _viz_to_out(viz: CatalogVisualization) -> VisualizationOut:
+    def _viz_to_out(self, viz: CatalogVisualization) -> VisualizationOut:
+        # Specs are stored as JSON. The current shape is ``list[IChart]``
+        # (one per chart tab). Older 008-era rows store a single ``IChart``
+        # dict — coerce to a one-element list on read.
         try:
-            spec = json.loads(viz.spec_json) if viz.spec_json else {}
+            raw = json.loads(viz.spec_json) if viz.spec_json else []
         except (TypeError, ValueError):
-            spec = {}
+            raw = []
+        if isinstance(raw, dict):
+            spec_list = [raw]
+        elif isinstance(raw, list):
+            spec_list = [item for item in raw if isinstance(item, dict)]
+        else:
+            spec_list = []
+
+        # Resolve parent table info once so the viewer can render
+        # ``namespace.tablename`` without a second API call.
+        table_name: str | None = None
+        ns_name: str | None = None
+        full_name: str | None = None
+        if viz.catalog_table_id is not None:
+            table = self.repo.get_table(viz.catalog_table_id)
+            if table is not None:
+                table_name = table.name
+                ns_name = self._resolve_namespace_name(table.namespace_id)
+                full_name = self._format_full_name(ns_name, table.name)
+
         return VisualizationOut(
             id=viz.id,
             name=viz.name,
             description=viz.description,
             chart_type=viz.chart_type,
-            spec=spec,
+            spec=spec_list,
             spec_gw_version=viz.spec_gw_version,
             source_type=viz.source_type or "table",
             catalog_table_id=viz.catalog_table_id,
@@ -3023,6 +3055,9 @@ class CatalogService:
             created_by=viz.created_by,
             created_at=viz.created_at,
             updated_at=viz.updated_at,
+            table_name=table_name,
+            table_namespace_name=ns_name,
+            table_full_name=full_name,
         )
 
     def list_visualizations_for_table(
@@ -3333,6 +3368,14 @@ class CatalogService:
             raise VisualizationNotFoundError(viz_id=viz_id)
         source = self._viz_source_descriptor(viz)
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        logger.info(
+            "[viz] dispatch saved compute viz_id=%s source_type=%s kind=%s session_key=%s max_rows=%s",
+            viz_id,
+            viz.source_type,
+            worker_source["kind"],
+            worker_source["session_key"],
+            max_rows,
+        )
         raw_payload = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
         return self._dispatch_visualize_query(
             worker_source, raw_payload, self._clamp_max_rows(max_rows)
@@ -3361,12 +3404,25 @@ class CatalogService:
         user_id: int,
     ) -> VisualizationComputeResponse:
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        logger.info(
+            "[viz] dispatch ad-hoc compute source_type=%s kind=%s session_key=%s max_rows=%s",
+            source.source_type,
+            worker_source["kind"],
+            worker_source["session_key"],
+            max_rows,
+        )
         return self._dispatch_visualize_query(worker_source, payload, self._clamp_max_rows(max_rows))
 
     def get_visualization_fields(
         self, source: VizSourceDescriptor, user_id: int
     ) -> VisualizationFieldsResponse:
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        logger.info(
+            "[viz] dispatch fields source_type=%s kind=%s session_key=%s",
+            source.source_type,
+            worker_source["kind"],
+            worker_source["session_key"],
+        )
         try:
             data = trigger_visualize_fields(worker_source)
         except RuntimeError as exc:

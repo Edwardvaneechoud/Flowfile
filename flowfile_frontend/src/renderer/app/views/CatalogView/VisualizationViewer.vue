@@ -10,7 +10,15 @@
                 : 'fa-solid fa-table source-icon'
             "
           ></i>
-          <span>{{ sourceLabel }}</span>
+          <span class="viz-source-label">{{ sourceLabel }}</span>
+          <button
+            v-if="viz?.source_type === 'sql' && viz.sql_query"
+            class="viz-toggle-sql"
+            type="button"
+            @click="sqlExpanded = !sqlExpanded"
+          >
+            {{ sqlExpanded ? "Hide query" : "Show query" }}
+          </button>
         </div>
         <div v-if="viz?.description" class="viz-viewer-desc">{{ viz.description }}</div>
       </div>
@@ -27,6 +35,11 @@
         </el-button>
       </div>
     </div>
+
+    <pre
+      v-if="sqlExpanded && viz?.source_type === 'sql' && viz.sql_query"
+      class="viz-sql-block"
+    >{{ viz.sql_query }}</pre>
 
     <div v-if="loadingMeta || loadingData" class="viz-viewer-state">
       <el-skeleton :rows="6" animated />
@@ -85,17 +98,23 @@ const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const plainRows = computed(() => toPlainJson(rows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainSpecList = computed(() =>
-  viz.value?.spec ? [toPlainJson(viz.value.spec)] : undefined,
+  viz.value?.spec && viz.value.spec.length ? toPlainJson(viz.value.spec) : undefined,
 );
+
+const sqlExpanded = ref(false);
 
 const sourceLabel = computed(() => {
   if (!viz.value) return "";
   if (viz.value.source_type === "sql") {
-    return viz.value.sql_query
-      ? `SQL · ${viz.value.sql_query.slice(0, 60)}${viz.value.sql_query.length > 60 ? "…" : ""}`
-      : "SQL query";
+    return "SQL query";
   }
-  return viz.value.catalog_table_id !== null ? `Table id ${viz.value.catalog_table_id}` : "Table";
+  // Prefer the qualified ``namespace.tablename`` form; fall back to the bare
+  // table name when no namespace is set, then to a placeholder for orphans.
+  return (
+    viz.value.table_full_name ??
+    viz.value.table_name ??
+    "(deleted table)"
+  );
 });
 
 async function load() {
@@ -148,7 +167,7 @@ async function onSave() {
   saving.value = true;
   try {
     const updated = await store.updateVisualization(props.vizId, {
-      spec: charts[0] as Record<string, any>,
+      spec: charts as Record<string, any>[],
     });
     viz.value = updated;
     ElMessage.success("Saved chart updates");
@@ -185,9 +204,39 @@ onMounted(load);
 .viz-viewer-source {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+.viz-source-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viz-toggle-sql {
+  border: none;
+  background: transparent;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  text-decoration: underline;
+}
+.viz-toggle-sql:hover {
+  color: var(--el-color-primary-light-3);
+}
+.viz-sql-block {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  font-family: var(--el-font-family-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 30vh;
+  overflow: auto;
 }
 .source-icon {
   color: var(--el-text-color-regular);

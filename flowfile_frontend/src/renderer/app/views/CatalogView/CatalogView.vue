@@ -99,6 +99,7 @@
               @select-flow="selectFlow($event)"
               @select-artifact="selectArtifact($event)"
               @select-table="selectTable($event)"
+              @select-visualization="openVisualization($event)"
               @toggle-favorite="catalogStore.toggleFavorite($event)"
               @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
               @register-flow="openRegisterFlow($event)"
@@ -299,6 +300,23 @@
       @created="handleSyncCreated"
     />
 
+    <!-- Saved-viz viewer (opened from the catalog tree) -->
+    <el-dialog
+      v-model="vizViewerOpen"
+      title="Visualization"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+      @close="closeVizViewer"
+    >
+      <VisualizationViewer
+        v-if="vizViewerOpen && activeVizId !== null"
+        :viz-id="activeVizId"
+        :appearance="vizViewerAppearance"
+        @close="closeVizViewer"
+      />
+    </el-dialog>
+
     <!-- Info Modal -->
     <el-dialog
       v-model="showInfoModal"
@@ -391,6 +409,8 @@ import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
 import VisualizationsLibraryPanel from "./VisualizationsLibraryPanel.vue";
+import VisualizationViewer from "./VisualizationViewer.vue";
+import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   CatalogTab,
   FlowSchedule,
@@ -459,6 +479,11 @@ const registerTableNamespaceId = ref<number | null>(null);
 const showCreateSchedule = ref(false);
 const preselectedFlowId = ref<number | null>(null);
 const showCreateSync = ref(false);
+
+// Saved-viz viewer modal (opened from the catalog tree's Visualizations section).
+const vizViewerOpen = ref(false);
+const activeVizId = ref<number | null>(null);
+const vizViewerAppearance = useGraphicWalkerAppearance();
 const showCreateVirtualTable = ref(false);
 const showSqlEditor = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
@@ -526,6 +551,18 @@ function selectTable(tableId: number) {
     name: "catalog",
     query: { tab: catalogStore.activeTab, tableId: String(tableId) },
   });
+}
+
+function openVisualization(vizId: number) {
+  activeVizId.value = vizId;
+  vizViewerOpen.value = true;
+}
+
+function closeVizViewer() {
+  vizViewerOpen.value = false;
+  activeVizId.value = null;
+  // Keep the namespace tree in sync if the user renamed/deleted from the viewer.
+  catalogStore.loadTree().catch(() => {});
 }
 
 function selectArtifact(artifactId: number) {

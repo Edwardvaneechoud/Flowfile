@@ -21,6 +21,7 @@ export interface NamespaceTree extends CatalogNamespace {
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
   tables: CatalogTable[];
+  visualizations: VisualizationLibraryItem[];
 }
 
 export interface NamespaceCreate {
@@ -371,7 +372,8 @@ export interface CatalogVisualization {
   name: string;
   description: string | null;
   chart_type: string | null;
-  spec: Record<string, any>;
+  /** GraphicWalker IChart[] — one entry per chart tab. */
+  spec: Record<string, any>[];
   spec_gw_version: string | null;
   source_type: VizSourceKind;
   catalog_table_id: number | null;
@@ -380,13 +382,18 @@ export interface CatalogVisualization {
   created_by: number | null;
   created_at: string;
   updated_at: string;
+  /** Parent table info (resolved server-side) so the viewer can render
+   * "namespace.tablename" without a second API call. */
+  table_name?: string | null;
+  table_namespace_name?: string | null;
+  table_full_name?: string | null;
 }
 
 export interface VisualizationCreatePayload {
   name: string;
   description?: string | null;
   chart_type?: string | null;
-  spec: Record<string, any>;
+  spec: Record<string, any>[];
   spec_gw_version?: string | null;
   source_type: VizSourceKind;
   catalog_table_id?: number | null;
@@ -398,7 +405,7 @@ export interface VisualizationUpdatePayload {
   name?: string;
   description?: string | null;
   chart_type?: string | null;
-  spec?: Record<string, any>;
+  spec?: Record<string, any>[];
   spec_gw_version?: string | null;
   namespace_id?: number | null;
   sql_query?: string | null;

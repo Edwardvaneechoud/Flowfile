@@ -97,7 +97,9 @@ const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const plainSampleRows = computed(() => toPlainJson(sampleRows.value));
 const plainFields = computed(() => toPlainJson(fields.value));
 const plainInitialSpecList = computed(() =>
-  initialSpec.value ? [toPlainJson(initialSpec.value)] : undefined,
+  initialSpec.value && initialSpec.value.length > 0
+    ? toPlainJson(initialSpec.value)
+    : undefined,
 );
 
 const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
@@ -150,7 +152,8 @@ const save = async () => {
     ElMessage.error("No chart to save — build one in the editor first.");
     return;
   }
-  const spec = charts[0] as Record<string, any>;
+  // Save the full IChart[] so multi-tab specs round-trip.
+  const spec = charts as Record<string, any>[];
   saving.value = true;
   try {
     let saved: CatalogVisualization;

@@ -169,7 +169,8 @@ async function onSaveChart() {
   try {
     await CatalogApi.createVisualization({
       name,
-      spec: charts[0] as Record<string, any>,
+      // Save the full IChart[] so multi-tab specs round-trip.
+      spec: charts as Record<string, any>[],
       source_type: "sql",
       sql_query: props.sourceQuery,
       namespace_id: props.saveNamespaceId ?? null,

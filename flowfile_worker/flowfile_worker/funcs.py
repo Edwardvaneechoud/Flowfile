@@ -905,6 +905,13 @@ def execute_visualize_query(req: models.VisualizeQueryRequest) -> dict:
 
     from flowfile_worker.viz_sessions import viz_session_manager
 
+    logger.info(
+        "[viz] execute_visualize_query session_key=%s kind=%s max_rows=%d",
+        req.source.session_key,
+        req.source.kind,
+        req.max_rows,
+    )
+
     loader = _build_viz_loader(req.source)
     start = time.perf_counter()
     rows, cache_hit = viz_session_manager.execute(
@@ -917,6 +924,14 @@ def execute_visualize_query(req: models.VisualizeQueryRequest) -> dict:
     # polars-gw already casts temporal/Decimal scalars; make_json_safe is a
     # cheap belt-and-braces pass for any edge dtypes that slip through.
     safe_rows = [{k: make_json_safe(v) for k, v in row.items()} for row in rows]
+
+    logger.info(
+        "[viz] execute_visualize_query session_key=%s rows=%d elapsed_ms=%.1f cache_hit=%s",
+        req.source.session_key,
+        len(safe_rows),
+        round(elapsed, 1),
+        cache_hit,
+    )
 
     return {
         "rows": safe_rows,
@@ -933,10 +948,24 @@ def read_visualize_fields(req: models.VisualizeFieldsRequest) -> dict:
 
     from flowfile_worker.viz_sessions import viz_session_manager
 
+    logger.info(
+        "[viz] read_visualize_fields session_key=%s kind=%s",
+        req.source.session_key,
+        req.source.kind,
+    )
+
     loader = _build_viz_loader(req.source)
     fields, cache_hit = viz_session_manager.fields(
         req.source.session_key,
         loader,
         lambda lf: polars_gw.get_fields(lf),
     )
+
+    logger.info(
+        "[viz] read_visualize_fields session_key=%s field_count=%d cache_hit=%s",
+        req.source.session_key,
+        len(fields),
+        cache_hit,
+    )
+
     return {"fields": fields, "cache_hit": cache_hit}

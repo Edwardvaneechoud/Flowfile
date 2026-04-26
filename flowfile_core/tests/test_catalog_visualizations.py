@@ -90,13 +90,14 @@ def _make_table() -> int:
         return table.id
 
 
-SAMPLE_SPEC = {
+SAMPLE_CHART = {
     "name": "sum chart",
     "encodings": {
         "rows": [{"fid": "value", "aggName": "sum"}],
         "columns": [{"fid": "category"}],
     },
 }
+SAMPLE_SPEC = [SAMPLE_CHART]
 
 
 class TestVisualizationCRUD:
@@ -117,7 +118,13 @@ class TestVisualizationCRUD:
         assert body["name"] == "viz1"
         assert body["source_type"] == "table"
         assert body["catalog_table_id"] == table_id
+        # spec is a list of charts (one per GW tab); we sent one.
+        assert isinstance(body["spec"], list)
         assert body["spec"] == SAMPLE_SPEC
+        # VisualizationOut now carries enriched table info so the viewer can
+        # render "ns.tablename" without a second round-trip.
+        assert body["table_name"] == "t1"
+        assert body["table_full_name"].endswith("t1")
 
         # Library listing returns it.
         lib = client.get("/catalog/visualizations")
@@ -142,6 +149,48 @@ class TestVisualizationCRUD:
         assert body["source_type"] == "sql"
         assert body["catalog_table_id"] is None
         assert body["sql_query"] == "SELECT 1 AS x"
+
+    def test_multi_chart_spec_round_trip(self):
+        """exportCode() returns one IChart per GW tab; we round-trip the array."""
+        table_id = _make_table()
+        chart_a = {**SAMPLE_CHART, "name": "chart A"}
+        chart_b = {**SAMPLE_CHART, "name": "chart B"}
+        resp = client.post(
+            "/catalog/visualizations",
+            json={
+                "name": "multi",
+                "spec": [chart_a, chart_b],
+                "source_type": "table",
+                "catalog_table_id": table_id,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        viz_id = resp.json()["id"]
+        got = client.get(f"/catalog/visualizations/{viz_id}").json()
+        assert got["spec"] == [chart_a, chart_b]
+
+    def test_legacy_single_dict_spec_is_coerced(self):
+        """008-era rows store a single IChart dict; reads coerce to a list."""
+        with get_db_context() as db:
+            ns = CatalogNamespace(name="LegacyNs", parent_id=None, level=0, owner_id=1)
+            db.add(ns)
+            db.commit()
+            db.refresh(ns)
+            row = CatalogVisualization(
+                name="legacy",
+                spec_json=json.dumps(SAMPLE_CHART),  # dict, not list
+                source_type="sql",
+                sql_query="SELECT 1",
+                namespace_id=ns.id,
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            legacy_id = row.id
+
+        got = client.get(f"/catalog/visualizations/{legacy_id}").json()
+        assert isinstance(got["spec"], list)
+        assert got["spec"] == [SAMPLE_CHART]
 
     def test_create_sql_source_missing_query_returns_422(self):
         resp = client.post(

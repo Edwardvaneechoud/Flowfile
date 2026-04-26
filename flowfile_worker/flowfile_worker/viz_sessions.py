@@ -118,7 +118,10 @@ class VizSessionManager:
 
         # Build outside the manager lock so the (potentially slow) loader
         # doesn't serialise other sessions' lookups.
+        logger.info("[viz-session] miss key=%s; loading source", session_key)
+        load_start = time.time()
         lf = loader()
+        load_elapsed = (time.time() - load_start) * 1000
 
         with self._lock:
             existing = self._sessions.get(session_key)
@@ -128,6 +131,12 @@ class VizSessionManager:
             session = VizSession(key=session_key, lf=lf)
             self._sessions[session_key] = session
             self._enforce_lru_limit()
+            logger.info(
+                "[viz-session] loaded key=%s in %.1f ms (sessions=%d)",
+                session_key,
+                load_elapsed,
+                len(self._sessions),
+            )
             return session, False
 
     def _enforce_lru_limit(self) -> None:
@@ -147,7 +156,11 @@ class VizSessionManager:
                 for k in stale:
                     self._sessions.pop(k, None)
             if stale:
-                logger.debug("viz-session-reaper: evicted %d idle session(s)", len(stale))
+                logger.info(
+                    "[viz-session] reaped %d idle session(s) keys=%s",
+                    len(stale),
+                    stale,
+                )
 
 
 viz_session_manager = VizSessionManager()
