@@ -1065,6 +1065,19 @@ export interface NodeApplyModel extends NodeSingleInput {
   apply_input: ApplyModelSettings;
 }
 
+export type EvaluateModelTaskType = "auto" | "regression";
+
+export interface EvaluateModelSettings {
+  actual_column: string;
+  predicted_column: string;
+  task_type: EvaluateModelTaskType;
+  upstream_train_node_id: number | null;
+}
+
+export interface NodeEvaluateModel extends NodeSingleInput {
+  evaluate_input: EvaluateModelSettings;
+}
+
 export interface MLArtifactListItem {
   id: number;
   name: string;

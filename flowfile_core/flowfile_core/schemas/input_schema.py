@@ -1604,3 +1604,38 @@ class NodeWaitFor(NodeMultiInput):
         if n <= 1:
             return "Wait For"
         return f"Wait For ({n - 1} dep{'s' if n > 2 else ''})"
+
+
+class EvaluateModelSettings(BaseModel):
+    """Settings payload for the Evaluate Model node.
+
+    Decoupled from any specific Train/Apply pair: takes a dataframe that
+    already contains both the actual target column and a prediction column
+    and emits a long-form ``(metric, value)`` frame. Reusable on training,
+    test, or hold-out splits.
+
+    ``task_type="auto"`` resolves the metric set from an upstream Train
+    Model node when one is configured; otherwise defaults to ``regression``,
+    which is the only task type the trainer registry currently supports.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    actual_column: str = ""
+    predicted_column: str = "prediction"
+    task_type: Literal["auto", "regression"] = "auto"
+    upstream_train_node_id: int | None = None
+
+
+class NodeEvaluateModel(NodeSingleInput):
+    """Compute model-quality metrics by comparing actual and predicted columns."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    evaluate_input: EvaluateModelSettings = Field(default_factory=EvaluateModelSettings)
+
+    def get_default_description(self) -> str:
+        s = self.evaluate_input
+        if s.actual_column and s.predicted_column:
+            return f"Evaluate {s.predicted_column} vs {s.actual_column}"
+        return "Evaluate Model"

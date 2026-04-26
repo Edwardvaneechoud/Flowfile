@@ -48,6 +48,7 @@ const BUILTIN_ICONS = new Set([
   "view.png",
   "train_model.svg",
   "apply_model.svg",
+  "evaluate_model.svg",
   "wait_for.svg",
 ]);
 

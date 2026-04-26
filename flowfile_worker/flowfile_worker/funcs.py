@@ -137,6 +137,10 @@ def apply_model_task(
             error_message[: len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+        # Intentional early return: file_path was never written, so the
+        # scan_ipc/queue.put below would either crash or push a serialised
+        # plan over a non-existent file. The framework already inspects
+        # progress.value before reading the queue; this keeps that contract.
         return
     lf = pl.scan_ipc(file_path)
     queue.put(lf.serialize())

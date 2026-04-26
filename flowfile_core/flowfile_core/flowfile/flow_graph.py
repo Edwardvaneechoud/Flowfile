@@ -2103,6 +2103,10 @@ class FlowGraph:
         """
 
         def _func(data: FlowDataEngine) -> FlowDataEngine:
+            # Imports are deferred to runtime: importing flowfile_core.artifacts
+            # at module top would trigger Alembic migrations and SQLAlchemy
+            # engine setup (~3.5s), slowing every flow_graph import — including
+            # CLI startup. Keep these inside _func.
             import shutil
 
             from flowfile_core.artifacts import get_storage_backend
@@ -2427,6 +2431,81 @@ class FlowGraph:
             input_columns=[],
             node_type="apply_model",
             setting_input=apply_settings,
+            schema_callback=schema_callback,
+            input_node_ids=[depending_on_id] if depending_on_id is not None else None,
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_evaluate_model(self, evaluate_settings: input_schema.NodeEvaluateModel) -> "FlowGraph":
+        """Adds an Evaluate Model node.
+
+        Compares the *actual* and *predicted* columns already present on the
+        input dataframe and emits a long-form ``(metric, value)`` frame.
+        Pure polars — no worker offload, no model file read.
+
+        ``task_type="auto"`` resolves the metric set from the configured
+        upstream Train Model node's trainer; otherwise defaults to
+        ``regression`` (the only registered task type today).
+        """
+
+        def _resolve_task_type() -> str:
+            s = evaluate_settings.evaluate_input
+            if s.task_type != "auto":
+                return s.task_type
+            if s.upstream_train_node_id is not None:
+                upstream = self.get_node(s.upstream_train_node_id)
+                train_input = getattr(
+                    getattr(upstream, "setting_input", None), "train_input", None
+                )
+                model_type = getattr(train_input, "model_type", None)
+                if model_type:
+                    try:
+                        from shared.ml.trainers import get_trainer
+
+                        return get_trainer(model_type).task_type
+                    except ValueError:
+                        pass
+            return "regression"
+
+        def _func(data: FlowDataEngine) -> FlowDataEngine:
+            from shared.ml.metrics import compute_metrics
+
+            settings = evaluate_settings.evaluate_input
+            if not settings.actual_column:
+                raise ValueError("Evaluate Model requires an 'actual_column'.")
+            if not settings.predicted_column:
+                raise ValueError("Evaluate Model requires a 'predicted_column'.")
+
+            metrics_lf = compute_metrics(
+                data.data_frame,
+                actual_column=settings.actual_column,
+                predicted_column=settings.predicted_column,
+                task_type=_resolve_task_type(),
+            )
+            self.flow_logger.info(
+                f"Evaluate Model: {settings.predicted_column} vs {settings.actual_column} "
+                f"(task_type={_resolve_task_type()})"
+            )
+            return FlowDataEngine(metrics_lf)
+
+        def schema_callback():
+            return [
+                FlowfileColumn.from_input(column_name="metric", data_type="String"),
+                FlowfileColumn.from_input(column_name="value", data_type="Float64"),
+            ]
+
+        depending_on_id = (
+            evaluate_settings.depending_on_id
+            if hasattr(evaluate_settings, "depending_on_id")
+            else None
+        )
+        self.add_node_step(
+            node_id=evaluate_settings.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="evaluate_model",
+            setting_input=evaluate_settings,
             schema_callback=schema_callback,
             input_node_ids=[depending_on_id] if depending_on_id is not None else None,
         )

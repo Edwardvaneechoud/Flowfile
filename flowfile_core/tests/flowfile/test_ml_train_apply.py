@@ -380,9 +380,15 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
     captured: dict = {}
 
     class _FakeFetcher:
-        def __init__(self, *, model_path, **kwargs):
+        # Mirror MLApplyFetcher's real positional signature so a refactor that
+        # switches the call site from kwargs to positional doesn't silently
+        # bypass this mock.
+        def __init__(
+            self, lf, model_path, output_column, flow_id, node_id, file_ref,
+            wait_on_completion=True,
+        ):
             captured["model_path"] = model_path
-            captured["output_column"] = kwargs.get("output_column")
+            captured["output_column"] = output_column
 
         def get_result(self):
             return None
@@ -547,7 +553,11 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
     captured: dict = {}
 
     class _FakeFetcher:
-        def __init__(self, *, staging_path, **_kwargs):
+        # Mirror MLTrainFetcher's real positional signature.
+        def __init__(
+            self, lf, staging_path, model_type, target_column, feature_columns,
+            params, flow_id, node_id, file_ref, wait_on_completion=True,
+        ):
             captured["staging_path"] = staging_path
 
         def get_result(self):
@@ -592,7 +602,11 @@ def test_train_model_artifact_replaces_on_rerun(monkeypatch):
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
 
     class _FakeFetcher:
-        def __init__(self, *, staging_path, **_kwargs):
+        # Mirror MLTrainFetcher's real positional signature.
+        def __init__(
+            self, lf, staging_path, model_type, target_column, feature_columns,
+            params, flow_id, node_id, file_ref, wait_on_completion=True,
+        ):
             from pathlib import Path
             Path(staging_path).parent.mkdir(parents=True, exist_ok=True)
             Path(staging_path).write_text('{"stub": true}')
