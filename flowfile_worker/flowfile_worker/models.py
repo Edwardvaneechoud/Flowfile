@@ -144,7 +144,7 @@ class TrainModelInput(BaseModel):
     model_type: str
     target_column: str
     feature_columns: list[str]
-    params: dict[str, Any] = {}
+    params: dict[str, Any] = Field(default_factory=dict)
     staging_path: str  # absolute path under <staging_root> where the worker writes the model bytes
     flowfile_flow_id: int | None = 1
     flowfile_node_id: int | str | None = -1

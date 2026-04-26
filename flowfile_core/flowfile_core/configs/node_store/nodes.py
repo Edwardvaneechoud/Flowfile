@@ -486,7 +486,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             image="train_model.svg",
             node_group="ml",
             drawer_title="Train ML Model",
-            drawer_intro="Fit a regression model and save it to the catalog",
+            drawer_intro="Fit a regression or classification model; optionally save it to the catalog",
             laziness="eager",
         ),
         NodeTemplate(
@@ -499,7 +499,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             image="apply_model.svg",
             node_group="ml",
             drawer_title="Apply ML Model",
-            drawer_intro="Score data using a trained model from the catalog",
+            drawer_intro="Score data with an upstream Train Model node, or with a trained model from the catalog",
             laziness="eager",
         ),
         NodeTemplate(

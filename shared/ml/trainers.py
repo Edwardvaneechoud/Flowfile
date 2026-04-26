@@ -467,6 +467,19 @@ class KNNClassifierTrainer:
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame:
+        """Apply the KNN model lazily.
+
+        The whole pipeline stays in polars: train rows (carrying labels) are
+        concatenated under the test rows, ``query_knn_ptwise`` produces a list
+        of neighbour row-indices per test row, that list is exploded and
+        self-joined back to the labels, and a group-by + majority vote yields
+        the prediction. The result is left-joined onto the original input via a
+        ``__test_pos`` row index so we never collect the user's data here —
+        downstream nodes can keep streaming.
+
+        Tie-break (e.g. k=2 with split labels) goes to class 1, matching the
+        previous eager implementation.
+        """
         import polars_ds as pds
 
         features = model["features"]
@@ -482,24 +495,31 @@ class KNNClassifierTrainer:
                 f"Model was trained on {features!r}."
             )
 
-        n_train = len(train_y)
-        train_df = pl.DataFrame(
-            {f: train_X[f] for f in features},
-            schema={f: pl.Float64 for f in features},
-        ).with_columns(pl.lit(True).alias("__is_train"))
+        # Train rows carry their label so the neighbour-label lookup is a
+        # single join instead of a Python indexing loop.
+        train_lf = pl.LazyFrame(
+            {**{f: train_X[f] for f in features}, "__label": train_y},
+            schema={**{f: pl.Float64 for f in features}, "__label": pl.Int64},
+        ).with_columns(
+            pl.lit(True).alias("__is_train"),
+            pl.lit(None, dtype=pl.UInt32).alias("__test_pos"),
+        )
 
-        # Single collect of the input — we need eager rows to vstack with the
-        # training set and to stitch predictions back in input order.
-        test_df = lf.collect()
-        test_features = test_df.select(
-            [pl.col(f).cast(pl.Float64) for f in features]
-        ).with_columns(pl.lit(False).alias("__is_train"))
+        # Tag input rows with their position so we can re-attach predictions
+        # to the original LazyFrame without collecting.
+        test_lf = lf.with_row_index("__test_pos")
+        test_features = test_lf.select(
+            *[pl.col(f).cast(pl.Float64) for f in features],
+            pl.lit(None, dtype=pl.Int64).alias("__label"),
+            pl.lit(False).alias("__is_train"),
+            pl.col("__test_pos"),
+        )
 
-        combined = pl.concat([train_df, test_features], how="vertical").with_row_index(
+        combined = pl.concat([train_lf, test_features], how="vertical").with_row_index(
             "__row_idx"
         )
 
-        knn_df = combined.with_columns(
+        knn_lf = combined.with_columns(
             pds.query_knn_ptwise(
                 *features,
                 index="__row_idx",
@@ -509,26 +529,39 @@ class KNNClassifierTrainer:
             ).alias("__nb_idx")
         )
 
-        # Filter preserves the order test rows appeared in `combined`, which
-        # is the same as their order in `test_df`.
-        test_with_nb = knn_df.filter(~pl.col("__is_train"))
-        nb_idxs = test_with_nb["__nb_idx"].to_list()
+        label_lookup = combined.select(
+            pl.col("__row_idx").alias("__nb_idx"),
+            pl.col("__label").alias("__nb_label"),
+        )
 
-        preds: list[int] = []
-        for nbs in nb_idxs:
-            if not nbs:
-                # No candidates within max_bound (or k==0); abstain to class 0.
-                preds.append(0)
-                continue
-            labels = [train_y[int(i)] for i in nbs if i is not None and int(i) < n_train]
-            if not labels:
-                preds.append(0)
-                continue
-            # Majority vote; ties (k=2 with split labels) break to class 1.
-            preds.append(1 if sum(labels) * 2 >= len(labels) else 0)
+        # Explode neighbour indices, join labels, group-by test row, majority-vote.
+        # Empty neighbour lists explode to a single null row -> count=0 -> class 0.
+        voted = (
+            knn_lf.filter(~pl.col("__is_train"))
+            .select("__test_pos", "__nb_idx")
+            .explode("__nb_idx")
+            .join(label_lookup, on="__nb_idx", how="left")
+            .group_by("__test_pos")
+            .agg(
+                pl.col("__nb_label").drop_nulls().sum().alias("__vote_sum"),
+                pl.col("__nb_label").drop_nulls().count().alias("__vote_cnt"),
+            )
+            .with_columns(
+                pl.when(pl.col("__vote_cnt") == 0)
+                .then(pl.lit(0, dtype=pl.Int64))
+                .otherwise(
+                    (pl.col("__vote_sum") * 2 >= pl.col("__vote_cnt")).cast(pl.Int64)
+                )
+                .alias(output_column)
+            )
+            .select("__test_pos", output_column)
+        )
 
-        result = test_df.with_columns(pl.Series(output_column, preds, dtype=pl.Int64))
-        return result.lazy()
+        return (
+            test_lf.join(voted, on="__test_pos", how="left")
+            .with_columns(pl.col(output_column).fill_null(0).cast(pl.Int64))
+            .drop("__test_pos")
+        )
 
 
 _TRAINERS: tuple[Trainer, ...] = (

@@ -2445,8 +2445,8 @@ class FlowGraph:
         Pure polars — no worker offload, no model file read.
 
         ``task_type="auto"`` resolves the metric set from the configured
-        upstream Train Model node's trainer; otherwise defaults to
-        ``regression`` (the only registered task type today).
+        upstream Train Model node's trainer; otherwise uses the explicit
+        ``regression`` / ``classification`` choice from settings.
         """
 
         def _resolve_task_type() -> str:
@@ -2477,15 +2477,16 @@ class FlowGraph:
             if not settings.predicted_column:
                 raise ValueError("Evaluate Model requires a 'predicted_column'.")
 
+            task_type = _resolve_task_type()
             metrics_lf = compute_metrics(
                 data.data_frame,
                 actual_column=settings.actual_column,
                 predicted_column=settings.predicted_column,
-                task_type=_resolve_task_type(),
+                task_type=task_type,
             )
             self.flow_logger.info(
                 f"Evaluate Model: {settings.predicted_column} vs {settings.actual_column} "
-                f"(task_type={_resolve_task_type()})"
+                f"(task_type={task_type})"
             )
             return FlowDataEngine(metrics_lf)
 

@@ -5,8 +5,6 @@ exercise the full ``_func`` path along with the schema callback and validation
 errors. Metric correctness lives in :mod:`shared.tests.test_ml_metrics`.
 """
 
-from typing import Literal
-
 import polars as pl
 import pytest
 

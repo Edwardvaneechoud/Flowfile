@@ -1536,7 +1536,7 @@ class TrainModelSettings(BaseModel):
 
 
 class NodeTrainModel(NodeSingleInput):
-    """Train a regression model and store the artifact in the catalog."""
+    """Train an ML model (regression or classification) and optionally publish it to the catalog."""
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -1615,15 +1615,14 @@ class EvaluateModelSettings(BaseModel):
     test, or hold-out splits.
 
     ``task_type="auto"`` resolves the metric set from an upstream Train
-    Model node when one is configured; otherwise defaults to ``regression``,
-    which is the only task type the trainer registry currently supports.
+    Model node when one is configured; otherwise defaults to ``regression``.
     """
 
     model_config = ConfigDict(protected_namespaces=())
 
     actual_column: str = ""
     predicted_column: str = "prediction"
-    task_type: Literal["auto", "regression"] = "auto"
+    task_type: Literal["auto", "regression", "classification"] = "auto"
     upstream_train_node_id: int | None = None
 
 

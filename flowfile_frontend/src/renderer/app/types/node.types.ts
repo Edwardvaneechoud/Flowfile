@@ -1065,7 +1065,7 @@ export interface NodeApplyModel extends NodeSingleInput {
   apply_input: ApplyModelSettings;
 }
 
-export type EvaluateModelTaskType = "auto" | "regression";
+export type EvaluateModelTaskType = "auto" | "regression" | "classification";
 
 export interface EvaluateModelSettings {
   actual_column: string;

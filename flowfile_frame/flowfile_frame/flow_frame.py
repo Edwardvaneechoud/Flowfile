@@ -1322,10 +1322,10 @@ class FlowFrame:
         description: str | None = None,
     ) -> FlowFrame:
         """
-        Fit an ML regression model and store the artifact in the catalog.
+        Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        Compute runs on the worker. The flow must be registered in the catalog
-        (so the artifact has a ``source_registration_id``); see
+        Compute runs on the worker. Catalog publishing requires the flow to be
+        registered (so the artifact has a ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters
@@ -1338,8 +1338,9 @@ class FlowFrame:
         features:
             Feature columns to fit on. If ``None``, uses every column except *target*.
         model_type:
-            One of ``"linear_regression"``, ``"ridge_regression"``, ``"lasso_regression"``.
-            See ``GET /ml/algorithms`` for the live list.
+            One of ``"linear_regression"``, ``"ridge_regression"``, ``"lasso_regression"``,
+            ``"logistic_regression"``, ``"knn_classifier"``. See ``GET /ml/algorithms``
+            for the live list and per-algorithm hyperparameter specs.
         params:
             Algorithm-specific hyperparameters (e.g. ``{"l2_reg": 0.1}`` for ridge).
         catalog_description / catalog_tags:

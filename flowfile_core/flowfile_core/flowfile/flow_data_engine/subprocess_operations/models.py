@@ -2,7 +2,7 @@ from base64 import b64decode, b64encode
 from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 OperationType = Literal[
     "store",
@@ -63,7 +63,7 @@ class TrainModelInput(BaseModel):
     model_type: str
     target_column: str
     feature_columns: list[str]
-    params: dict[str, Any] = {}
+    params: dict[str, Any] = Field(default_factory=dict)
     staging_path: str
     flowfile_node_id: int | str
     flowfile_flow_id: int

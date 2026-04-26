@@ -48,6 +48,7 @@
             <el-select v-model="nodeEvaluateModel.evaluate_input.task_type">
               <el-option label="Auto (from upstream)" value="auto" />
               <el-option label="Regression" value="regression" />
+              <el-option label="Classification" value="classification" />
             </el-select>
           </el-col>
         </el-row>
@@ -80,7 +81,8 @@
 
       <div class="info-banner">
         Output is a long-form table with two columns: <code>metric</code> and <code>value</code>.
-        Regression emits <code>mae, mse, rmse, r2, mape, n</code>.
+        Regression emits <code>mae, mse, rmse, r2, mape, n</code>; classification emits
+        <code>accuracy, precision, recall, f1, n_correct, n_total</code> (macro-averaged).
       </div>
     </generic-node-settings>
   </div>
