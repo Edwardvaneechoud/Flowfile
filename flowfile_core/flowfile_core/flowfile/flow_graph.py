@@ -24,6 +24,7 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current, delete_table_storage, is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
+from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.database.connection import get_db_context
@@ -33,6 +34,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
     get_local_database_connection,
 )
+from flowfile_core.flowfile.database_connection_manager.ga_connections import get_encrypted_refresh_token
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -82,6 +84,7 @@ from flowfile_core.flowfile.schema_callbacks import (
 )
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
+from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
@@ -111,10 +114,23 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
-from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import (
+    _encrypt_with_master_key,
+    decrypt_secret,
+    get_encrypted_secret,
+)
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.delta_utils import get_delta_size_bytes, merge_into_delta
 from shared.delta_utils import write_delta as _write_delta
+from shared.google_analytics.models import (
+    GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
+)
+from shared.google_analytics.models import (
+    GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
+)
+from shared.google_analytics.models import (
+    GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
+)
 from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
@@ -3471,22 +3487,6 @@ class FlowGraph:
         derived locally from the selected metrics/dimensions — no network call
         is made during schema prediction, keeping downstream nodes lazy.
         """
-        from flowfile_core.configs.app_settings import get_google_oauth_config
-        from flowfile_core.flowfile.database_connection_manager.ga_connections import (
-            get_encrypted_refresh_token,
-        )
-        from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
-        from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key
-        from shared.google_analytics.models import (
-            GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
-        )
-        from shared.google_analytics.models import (
-            GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
-        )
-        from shared.google_analytics.models import (
-            GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
-        )
-
         logger.info("Adding google analytics reader")
         node_type = "google_analytics_reader"
         ga_settings = node_ga_reader.google_analytics_settings
