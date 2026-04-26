@@ -200,7 +200,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             transform_type="narrow",
             node_type="process",
             image="random_split.svg",
-            node_group="transform",
+            node_group="ml",
             drawer_title="Random Split",
             drawer_intro="Randomly partition rows into named groups (e.g. train/test)",
             laziness="lazy",
