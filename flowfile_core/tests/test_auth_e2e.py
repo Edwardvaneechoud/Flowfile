@@ -316,13 +316,14 @@ class TestDockerE2EWithoutAdminCredentials:
             "FLOWFILE_USER_DATA_DIR": "/app/user_data",
         }
 
+        # Don't pass remove=True: a crashed container would be auto-removed
+        # before we can read its logs.
         container = docker_client.containers.run(
             image=docker_image.id,
             detach=True,
             ports={f"{FLOWFILE_CORE_PORT}/tcp": 63590},  # Use unique port to avoid conflicts
             environment=environment,
             name=f"flowfile-e2e-no-admin-{int(time.time())}",
-            remove=True,
         )
 
         try:
@@ -333,13 +334,15 @@ class TestDockerE2EWithoutAdminCredentials:
             logs = ""
 
             while time.time() - start_time < timeout:
-                logs = container.logs().decode("utf-8")
+                logs = container.logs().decode("utf-8", errors="replace")
                 if "FLOWFILE_ADMIN_USER" in logs or "FLOWFILE_ADMIN_PASSWORD" in logs:
                     break
                 elapsed = time.time() - start_time
                 print(f"Waiting for admin warning in logs... ({elapsed:.1f}s / {timeout}s)")
                 time.sleep(interval)
 
+            if "FLOWFILE_ADMIN_USER" not in logs and "FLOWFILE_ADMIN_PASSWORD" not in logs:
+                print(f"\nContainer logs (warning never appeared):\n{logs}")
             # Should contain warning about missing admin credentials
             assert "FLOWFILE_ADMIN_USER" in logs or "FLOWFILE_ADMIN_PASSWORD" in logs
             assert "not set" in logs or "warning" in logs.lower()
@@ -349,6 +352,10 @@ class TestDockerE2EWithoutAdminCredentials:
         finally:
             try:
                 container.stop(timeout=5)
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
             except Exception:
                 pass
 
