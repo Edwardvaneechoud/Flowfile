@@ -161,7 +161,7 @@ class CatalogMaterializeRequest(BaseModel):
 
 class CatalogMaterializeResponse(BaseModel):
     table_path: str
-    schema: list[ColumnSchema]
+    column_schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int
@@ -172,7 +172,7 @@ class TableMetadataRequest(BaseModel):
 
 
 class TableMetadataResponse(BaseModel):
-    schema: list[ColumnSchema]
+    column_schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int

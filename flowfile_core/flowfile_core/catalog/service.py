@@ -382,7 +382,7 @@ class CatalogService:
         if _should_offload():
             try:
                 data = trigger_read_table_metadata(Path(table_path).name)
-                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["schema"]]
+                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
             except Exception:
                 logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
@@ -1434,7 +1434,7 @@ class CatalogService:
             data = response.json()
             schema = [
                 {"name": col["name"], "dtype": col["dtype"]}
-                for col in data.get("schema", [])
+                for col in data.get("column_schema", [])
                 if "name" in col and "dtype" in col
             ]
             return CatalogService.CatalogMaterializationResult(
@@ -3190,8 +3190,14 @@ class CatalogService:
     # legend) can't bloat the catalog DB. The frontend captures via
     # GraphicWalker's exportChart('data-url'); typical 600×400 PNGs land
     # well under this.
-    _THUMBNAIL_MAX_BYTES = 200_000
+    _THUMBNAIL_MAX_BYTES = 500_000
 
+    # TODO(visual-editor task 12): replace ValueError → 422 with a typed
+    # VisualizationThumbnailTooLargeError → 413, and replace the cosmetic
+    # `data:image/*` prefix check with magic-byte sniffing of the decoded
+    # base64 payload (PNG: 89 50 4E 47 0D 0A 1A 0A; JPEG: FF D8 FF). The
+    # current prefix check passes garbage like `data:image/png;base64,XXXX`
+    # which then silently fails to render in <img>.
     def _validate_thumbnail(self, value: str | None) -> str | None:
         if value is None:
             return None

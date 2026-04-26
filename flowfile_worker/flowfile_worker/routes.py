@@ -519,10 +519,10 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
             )
 
         result = queue.get(timeout=5)
-        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        column_schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.CatalogMaterializeResponse(
             table_path=result["table_path"],
-            schema=schema,
+            column_schema=column_schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
@@ -541,9 +541,9 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
     try:
         _validate_catalog_path(payload.table_path)
         result = funcs.read_table_metadata(payload.table_path)
-        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        column_schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.TableMetadataResponse(
-            schema=schema,
+            column_schema=column_schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
