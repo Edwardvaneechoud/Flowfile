@@ -45,6 +45,7 @@ class NamespaceTree(NamespaceOut):
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
     tables: list["CatalogTableOut"] = Field(default_factory=list)
+    visualizations: list["VisualizationOut"] = Field(default_factory=list)
 
 
 # ==================== Flow Registration Schemas ====================
@@ -345,6 +346,125 @@ class SaveQueryAsFlowRequest(BaseModel):
     namespace_id: int | None = None
     description: str | None = None
     used_tables: list[str] = Field(default_factory=list)
+
+
+# ==================== Visualization Schemas ====================
+
+
+class VisualizationCreate(BaseModel):
+    """Create a viz. The source must be either a catalog table or an inline
+    SQL query — set ``source_type`` accordingly. ``namespace_id`` defaults to
+    the parent table's namespace (when ``source_type="table"``) but can be
+    overridden so a viz can live anywhere in the catalog tree."""
+
+    name: str
+    description: str | None = None
+    chart_type: str | None = None
+    # ``spec`` is the array of GraphicWalker IChart entries that
+    # ``exportCode()`` returns — one per chart tab. A single-entry list is
+    # the common case but multi-tab specs round-trip too.
+    spec: list[dict]
+    spec_gw_version: str | None = None
+    source_type: Literal["table", "sql"] = "table"
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
+
+
+class VisualizationUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    chart_type: str | None = None
+    spec: list[dict] | None = None
+    spec_gw_version: str | None = None
+    namespace_id: int | None = None
+    sql_query: str | None = None
+    catalog_table_id: int | None = None
+    thumbnail_data_url: str | None = None
+
+
+class VisualizationOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    chart_type: str | None = None
+    spec: list[dict] = Field(default_factory=list)
+    spec_gw_version: str | None = None
+    source_type: Literal["table", "sql"]
+    catalog_table_id: int | None = None
+    sql_query: str | None = None
+    namespace_id: int | None = None
+    thumbnail_data_url: str | None = None
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Enrichment so the viewer can show "ns.tablename" without a second
+    # round-trip. None for SQL-source viz or when the parent table was deleted.
+    table_name: str | None = None
+    table_namespace_name: str | None = None
+    table_full_name: str | None = None
+    table_type: str | None = None
+    namespace_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VizSourceDescriptor(BaseModel):
+    """Frontend-supplied identifier for the viz source.
+
+    For saved viz this is implied by the URL (table_id); ad-hoc compute
+    explicitly carries the descriptor so the editor can preview before saving.
+    """
+
+    source_type: Literal["table", "sql"]
+    table_id: int | None = None
+    sql_query: str | None = None
+
+
+class VisualizationComputeRequest(BaseModel):
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationSavedComputeRequest(BaseModel):
+    """Body for the saved-viz compute route.
+
+    When ``payload`` is set, the worker runs ``polars_gw.execute_workflow``
+    with that GraphicWalker IDataQueryPayload against the viz's stored
+    source — this is the path GW's ``computation`` callback drives so every
+    aggregation pushes down to the worker. When ``payload`` is omitted the
+    server falls back to a "raw select all" so legacy callers (and the
+    initial sample-fetch path) keep working.
+    """
+
+    payload: dict | None = None
+    max_rows: int | None = None
+
+
+class VisualizationAdHocComputeRequest(BaseModel):
+    source: VizSourceDescriptor
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizationFieldsRequest(BaseModel):
+    source: VizSourceDescriptor
+
+
+class VisualizationComputeResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizationFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
+    error: str | None = None
 
 
 # ==================== Catalog Overview ====================

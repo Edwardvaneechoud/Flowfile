@@ -21,6 +21,7 @@ export interface NamespaceTree extends CatalogNamespace {
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
   tables: CatalogTable[];
+  visualizations: CatalogVisualization[];
 }
 
 export interface NamespaceCreate {
@@ -336,7 +337,14 @@ export interface SchedulerStatus {
 // View state helpers
 // ============================================================================
 
-export type CatalogTab = "catalog" | "favorites" | "following" | "runs" | "schedules" | "sql";
+export type CatalogTab =
+  | "catalog"
+  | "favorites"
+  | "following"
+  | "runs"
+  | "schedules"
+  | "sql"
+  | "visualizations";
 
 // ============================================================================
 // SQL Query types
@@ -350,5 +358,84 @@ export interface SqlQueryResult {
   truncated: boolean;
   execution_time_ms: number;
   used_tables: string[];
+  error: string | null;
+}
+
+// ============================================================================
+// Visualizations
+// ============================================================================
+
+export type VizSourceKind = "table" | "sql";
+
+export interface CatalogVisualization {
+  id: number;
+  name: string;
+  description: string | null;
+  chart_type: string | null;
+  /** GraphicWalker IChart[] — one entry per chart tab. */
+  spec: Record<string, any>[];
+  spec_gw_version: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id: number | null;
+  sql_query: string | null;
+  namespace_id: number | null;
+  /** Base64 PNG data URL captured on save by GraphicWalker's exportChart. */
+  thumbnail_data_url: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  /** Parent table info (resolved server-side) so the viewer can render
+   * "namespace.tablename" without a second API call. */
+  table_name?: string | null;
+  table_namespace_name?: string | null;
+  table_full_name?: string | null;
+  table_type?: string | null;
+  namespace_name?: string | null;
+}
+
+export interface VisualizationCreatePayload {
+  name: string;
+  description?: string | null;
+  chart_type?: string | null;
+  spec: Record<string, any>[];
+  spec_gw_version?: string | null;
+  source_type: VizSourceKind;
+  catalog_table_id?: number | null;
+  sql_query?: string | null;
+  namespace_id?: number | null;
+  thumbnail_data_url?: string | null;
+}
+
+export interface VisualizationUpdatePayload {
+  name?: string;
+  description?: string | null;
+  chart_type?: string | null;
+  spec?: Record<string, any>[];
+  spec_gw_version?: string | null;
+  namespace_id?: number | null;
+  sql_query?: string | null;
+  catalog_table_id?: number | null;
+  thumbnail_data_url?: string | null;
+}
+
+/** Source descriptor sent to the ad-hoc compute and fields endpoints. */
+export interface VizSourceDescriptor {
+  source_type: VizSourceKind;
+  table_id?: number | null;
+  sql_query?: string | null;
+}
+
+export interface VisualizationComputeResponse {
+  rows: Record<string, any>[];
+  total_rows: number;
+  truncated: boolean;
+  elapsed_ms: number;
+  cache_hit: boolean;
+  error: string | null;
+}
+
+export interface VisualizationFieldsResponse {
+  fields: Record<string, any>[];
+  cache_hit: boolean;
   error: string | null;
 }

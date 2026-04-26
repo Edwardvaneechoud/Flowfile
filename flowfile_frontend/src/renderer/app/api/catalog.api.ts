@@ -8,6 +8,7 @@ import type {
   CatalogTableCreate,
   CatalogTablePreview,
   CatalogTableUpdate,
+  CatalogVisualization,
   DeltaTableHistory,
   FlowRegistration,
   FlowRegistrationCreate,
@@ -27,6 +28,11 @@ import type {
   SqlQueryResult,
   VirtualFlowTableCreate,
   VirtualFlowTableUpdate,
+  VisualizationComputeResponse,
+  VisualizationCreatePayload,
+  VisualizationFieldsResponse,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
 } from "../types";
 
 export class CatalogApi {
@@ -358,6 +364,103 @@ export class CatalogApi {
       description,
       used_tables: usedTables ?? [],
     });
+    return response.data;
+  }
+
+  // ====== Visualizations ======
+
+  /** List every saved visualization in the catalog. */
+  static async listVisualizationLibrary(): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>("/catalog/visualizations");
+    return response.data;
+  }
+
+  /** Filtered listing — viz that reference a specific catalog table. */
+  static async listVisualizationsForTable(tableId: number): Promise<CatalogVisualization[]> {
+    const response = await axios.get<CatalogVisualization[]>(
+      `/catalog/tables/${tableId}/visualizations`,
+    );
+    return response.data;
+  }
+
+  static async getVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.get<CatalogVisualization>(`/catalog/visualizations/${vizId}`);
+    return response.data;
+  }
+
+  static async createVisualization(
+    payload: VisualizationCreatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
+    return response.data;
+  }
+
+  static async updateVisualization(
+    vizId: number,
+    payload: VisualizationUpdatePayload,
+  ): Promise<CatalogVisualization> {
+    const response = await axios.put<CatalogVisualization>(
+      `/catalog/visualizations/${vizId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  static async deleteVisualization(vizId: number): Promise<void> {
+    await axios.delete(`/catalog/visualizations/${vizId}`);
+  }
+
+  /** Compute rows for a saved viz.
+   *
+   * Pass ``payload`` (a GraphicWalker IDataQueryPayload) to push a chart
+   * aggregation down to the worker via polars-gw. Omit it for a raw row
+   * fetch (used as a fallback / for preview cards).
+   */
+  static async computeSavedVisualization(
+    vizId: number,
+    options: { maxRows?: number; payload?: Record<string, any> } = {},
+  ): Promise<VisualizationComputeResponse> {
+    const body: Record<string, unknown> = {};
+    if (options.maxRows !== undefined) body.max_rows = options.maxRows;
+    if (options.payload !== undefined) body.payload = options.payload;
+    const response = await axios.post<VisualizationComputeResponse>(
+      `/catalog/visualizations/${vizId}/compute`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Get the field schema for a saved viz's source (worker-cached). */
+  static async getSavedVisualizationFields(
+    vizId: number,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      `/catalog/visualizations/${vizId}/fields`,
+    );
+    return response.data;
+  }
+
+  /** Compute a chart from a transient source (used by the live GW editor). */
+  static async computeAdHocVisualization(
+    source: VizSourceDescriptor,
+    payload: Record<string, any>,
+    maxRows?: number,
+  ): Promise<VisualizationComputeResponse> {
+    const response = await axios.post<VisualizationComputeResponse>(
+      "/catalog/visualizations/compute",
+      { source, payload, max_rows: maxRows ?? 100_000 },
+    );
+    return response.data;
+  }
+
+  /** Return the GraphicWalker IMutField list for a viz source (cached on worker). */
+  static async getVisualizationFields(
+    source: VizSourceDescriptor,
+  ): Promise<VisualizationFieldsResponse> {
+    const response = await axios.post<VisualizationFieldsResponse>(
+      "/catalog/visualizations/fields",
+      { source },
+    );
     return response.data;
   }
 }

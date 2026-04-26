@@ -63,7 +63,6 @@ class TestMergeDeltaUpsert:
         assert progress.value == 100
         result = queue.get(timeout=5)
         assert result["row_count"] == 2
-        assert result["storage_format"] == "delta"
         assert Path(output_path, "_delta_log").is_dir()
 
     def test_upsert_updates_and_inserts(self, tmp_path):

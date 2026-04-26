@@ -31,7 +31,7 @@ def test_catalog_materialize_xlsx(tmp_path, monkeypatch):
     df = pl.read_excel(source_path)
     expected_schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
-    assert data["schema"] == expected_schema
+    assert data["column_schema"] == expected_schema
     assert data["row_count"] == df.height
     assert data["column_count"] == len(df.columns)
     assert data["size_bytes"] == file_size

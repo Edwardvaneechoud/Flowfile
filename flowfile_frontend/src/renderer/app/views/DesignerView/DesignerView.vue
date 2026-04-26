@@ -66,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import Status from "../../features/designer/editor/status.vue";
@@ -252,22 +252,8 @@ const initialSetup = async () => {
     if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
       console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
-
-      // Load the flow data
-      if (canvasFlow.value) {
-        await canvasFlow.value.loadFlow();
-      }
-      if (headerButtons.value) {
-        await headerButtons.value.loadFlowSettings();
-      }
     } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
       console.log("Using existing flow ID:", nodeStore.flow_id);
-      if (canvasFlow.value) {
-        await canvasFlow.value.loadFlow();
-      }
-      if (headerButtons.value) {
-        await headerButtons.value.loadFlowSettings();
-      }
     }
 
     initialLoadComplete.value = true;
@@ -276,6 +262,10 @@ const initialSetup = async () => {
     console.error("Error during initial setup:", error);
   } finally {
     isLoading.value = false;
+    if (nodeStore.flow_id && nodeStore.flow_id > 0) {
+      await nextTick();
+      await headerButtons.value?.loadFlowSettings();
+    }
   }
 };
 

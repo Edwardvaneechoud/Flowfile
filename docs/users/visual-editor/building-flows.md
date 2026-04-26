@@ -3,7 +3,7 @@
 Flowfile allows you to create data pipelines visually by connecting nodes that represent different data operations. This guide will walk you through the process of creating and running flows.
 
 !!! info "Looking for a quickstart overview?"
-    Check out our [Quick Start Guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart) to get up and running in minutes.
+    Check out our [Quick Start Guide](../../quickstart.md#non-technical-quickstart) to get up and running in minutes.
 
 ## Interface Overview
 
@@ -222,7 +222,7 @@ Here's a typical flow that demonstrates common operations:
 
 ---
 ## Want to see another example? 
-Checkout the [quickstart guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart)!
+Checkout the [quickstart guide](../../quickstart.md#non-technical-quickstart)!
 
 ## Next Steps
 

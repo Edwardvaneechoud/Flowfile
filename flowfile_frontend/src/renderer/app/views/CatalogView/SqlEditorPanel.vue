@@ -65,7 +65,11 @@
 
       <!-- Explore results -->
       <div v-else class="result-content">
-        <SqlExplorePanel :result="result!" />
+        <SqlExplorePanel
+          :result="result!"
+          :source-query="lastExecutedQuery"
+          :save-namespace-id="saveForm.namespaceId"
+        />
       </div>
     </div>
 
@@ -254,6 +258,8 @@ function handleReady(payload: { view: EditorView }) {
   editorView.value = payload.view;
 }
 
+const lastExecutedQuery = ref<string>("");
+
 async function runQuery() {
   const q = queryText.value.trim();
   if (!q) return;
@@ -268,6 +274,7 @@ async function runQuery() {
       error.value = res.error;
     } else {
       result.value = res;
+      lastExecutedQuery.value = q;
     }
     saveToHistory(q);
   } catch (e: any) {

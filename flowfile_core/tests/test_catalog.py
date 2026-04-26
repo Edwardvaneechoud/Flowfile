@@ -247,8 +247,8 @@ class TestCatalogTableMaterialization:
             service = CatalogService(repo)
 
             response_payload = {
-                "parquet_path": "/tmp/fake.parquet",
-                "schema": [{"name": "col_a", "dtype": "Int64"}],
+                "table_path": "/tmp/fake_delta",
+                "column_schema": [{"name": "col_a", "dtype": "Int64"}],
                 "row_count": 12,
                 "column_count": 1,
                 "size_bytes": 2048,
@@ -1361,7 +1361,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_ipc=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None):
                 captured["query"] = query
                 return {
                     "columns": [],

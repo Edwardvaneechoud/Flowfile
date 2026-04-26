@@ -34,6 +34,7 @@ from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTable
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
+from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
 
 def trigger_df_operation(
@@ -245,39 +246,142 @@ def trigger_catalog_materialize(
     return response
 
 
+def trigger_resolve_virtual_table(
+    table_id: int,
+    plan_bytes: bytes,
+    source_versions_hash: str,
+) -> dict:
+    """Ask the worker to materialise a flow-virtual table to its IPC cache.
+
+    Ships *plan_bytes* (output of ``pl.LazyFrame.serialize()``); the worker
+    deserialises in a spawned child, collects, and writes IPC. Idempotent on
+    ``(table_id, source_versions_hash)``.
+    """
+    from base64 import b64encode
+
+    payload = {
+        "table_id": table_id,
+        "plan_bytes": b64encode(plan_bytes).decode("ascii"),
+        "source_versions_hash": source_versions_hash,
+    }
+    response = requests.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
+    if not response.ok:
+        raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")
+    return response.json()
+
+
 def trigger_sql_query(
     query: str,
     tables: dict[str, str],
     max_rows: int = 10_000,
-    virtual_ipc: dict[str, str] | None = None,
+    virtual_refs: dict[str, str] | None = None,
 ) -> dict:
     """Ask the worker to execute a SQL query against catalog tables.
 
     *tables* is a mapping of logical table name -> directory name.
-    *virtual_ipc* is an optional mapping of virtual table name -> base64-encoded IPC bytes.
+    *virtual_refs* is an optional mapping of virtual table name -> bare IPC
+    filename under the worker's catalog_virtual_results directory.
     Returns the parsed JSON response dict.
     """
     payload: dict = {"query": query, "tables": tables, "max_rows": max_rows}
-    if virtual_ipc:
-        payload["virtual_tables_ipc"] = virtual_ipc
+    if virtual_refs:
+        payload["virtual_refs"] = virtual_refs
     response = requests.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
     return response.json()
 
 
-def trigger_read_table_metadata(
-    table_name: str,
-    storage_format: str = "delta",
-) -> dict:
+def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -> dict:
+    """Ask the worker to compute a Graphic Walker chart payload.
+
+    *worker_source* is a dict matching the worker's ``VizWorkerSource`` model.
+    The worker maintains a per-source LazyFrame cache keyed on
+    ``worker_source["session_key"]`` so successive calls on the same source
+    skip the load step.
+    """
+    session_key = worker_source.get("session_key")
+    logger.info(
+        "[viz] -> worker /catalog/visualize_query session_key=%s kind=%s payload_keys=%s max_rows=%d",
+        session_key,
+        worker_source.get("kind"),
+        list(payload.keys()),
+        max_rows,
+    )
+    body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
+    response = requests.post(
+        f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS
+    )
+    if not response.ok:
+        logger.warning(
+            "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
+            session_key,
+            response.status_code,
+            response.text[:300],
+        )
+        raise RuntimeError(f"Worker visualize_query failed: {response.text}")
+    data = response.json()
+    logger.info(
+        "[viz] <- worker /catalog/visualize_query session_key=%s status=%d cache_hit=%s rows=%d elapsed_ms=%s",
+        session_key,
+        response.status_code,
+        data.get("cache_hit"),
+        len(data.get("rows", [])),
+        data.get("elapsed_ms"),
+    )
+    return data
+
+
+def trigger_visualize_fields(worker_source: dict) -> dict:
+    """Ask the worker for the Graphic Walker field schema of a source."""
+    session_key = worker_source.get("session_key")
+    logger.info(
+        "[viz] -> worker /catalog/visualize_fields session_key=%s kind=%s",
+        session_key,
+        worker_source.get("kind"),
+    )
+    body = {"source": worker_source}
+    response = requests.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
+    if not response.ok:
+        logger.warning(
+            "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d body=%s",
+            session_key,
+            response.status_code,
+            response.text[:300],
+        )
+        raise RuntimeError(f"Worker visualize_fields failed: {response.text}")
+    data = response.json()
+    logger.info(
+        "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d cache_hit=%s field_count=%d",
+        session_key,
+        response.status_code,
+        data.get("cache_hit"),
+        len(data.get("fields", [])),
+    )
+    return data
+
+
+def trigger_visualize_evict(session_key: str) -> None:
+    """Ask the worker to drop a cached viz session (e.g. after a table update)."""
+    logger.info("[viz] -> worker /catalog/visualize_evict session_key=%s", session_key)
+    response = requests.post(
+        f"{WORKER_URL}/catalog/visualize_evict",
+        params={"session_key": session_key},
+        timeout=10,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Worker visualize_evict failed: {response.text}")
+
+
+def trigger_read_table_metadata(table_name: str) -> dict:
     """Ask the worker to read table metadata (schema, row_count, size_bytes).
 
-    *table_name* is the bare directory/file name inside the catalog tables
+    *table_name* is the bare directory name inside the catalog tables
     directory (no path separators).
 
     Returns the parsed JSON dict on success, raises on failure.
     """
-    payload = {"table_path": table_name, "storage_format": storage_format}
+    payload = {"table_path": table_name}
     response = requests.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")
