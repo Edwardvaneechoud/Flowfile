@@ -2,7 +2,7 @@ from base64 import b64decode, b64encode
 from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match import FuzzyMapping
-from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
@@ -124,6 +124,42 @@ class FuzzyJoinInput(BaseModel):
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
     fuzzy_maps: list[FuzzyMapping]
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
+class TrainModelInput(BaseModel):
+    """Input for the /train_ml_model endpoint.
+
+    Core sends a serialised LazyFrame plus the training spec. The worker writes
+    the resulting model JSON to *staging_path* and reports back ``{sha256, size_bytes}``
+    via the ``Status.results`` field. Core then calls ``ArtifactService.finalize_upload``.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_type: str
+    target_column: str
+    feature_columns: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+    staging_path: str  # absolute path under <staging_root> where the worker writes the model bytes
+    flowfile_flow_id: int | None = 1
+    flowfile_node_id: int | str | None = -1
+
+
+class ApplyModelInput(BaseModel):
+    """Input for the /apply_ml_model endpoint."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    task_id: str | None = None
+    cache_dir: str | None = None
+    df_operation: PolarsOperation
+    model_path: str  # absolute path of the trained-model artifact on the shared volume
+    output_column: str = "prediction"
     flowfile_flow_id: int | None = 1
     flowfile_node_id: int | str | None = -1
 

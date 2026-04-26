@@ -8,13 +8,14 @@ By connecting nodes together, you can create **flexible and scalable workflows**
 
 ## **Node Categories**  
 
-Flowfile nodes are grouped into five main categories:  
+Flowfile nodes are grouped into six main categories:  
 
 - **[Input Nodes](input.md)** – Load data from files, databases, or external sources.  
 - **[Transform Nodes](transform.md)** – Modify, clean, and reshape your data.  
 - **[Combine Nodes](combine.md)** – Merge, join, or match multiple datasets.  
 - **[Aggregate Nodes](aggregate.md)** – Summarize, group, and compute metrics.  
 - **[Output Nodes](output.md)** – Save data to files or explore it interactively.  
+- **[Machine Learning Nodes](ml.md)** – Split data, train and apply models, and evaluate results.  
 
 ---
 

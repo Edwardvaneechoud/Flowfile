@@ -14,10 +14,12 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
+    ApplyModelInput,
     FuzzyJoinInput,
     OperationType,
     PolarsOperation,
     Status,
+    TrainModelInput,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     streaming_receive,
@@ -99,6 +101,62 @@ def trigger_fuzzy_match_operation(
     v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
+    return Status(**v.json())
+
+
+def trigger_train_model_operation(
+    lf: pl.LazyFrame,
+    staging_path: str,
+    model_type: str,
+    target_column: str,
+    feature_columns: list[str],
+    params: dict[str, Any],
+    file_ref: str,
+    flow_id: int,
+    node_id: int | str,
+) -> Status:
+    """Submit a training job to the worker.
+
+    The worker writes the model bytes to *staging_path*; the resulting Status's
+    ``results`` field carries ``{sha256, size_bytes, model_type}`` once complete.
+    """
+    payload = TrainModelInput(
+        df_operation=PolarsOperation(operation=lf.serialize()),
+        model_type=model_type,
+        target_column=target_column,
+        feature_columns=feature_columns,
+        params=params,
+        staging_path=staging_path,
+        task_id=file_ref,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id,
+    )
+    v = requests.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
+    if not v.ok:
+        raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
+    return Status(**v.json())
+
+
+def trigger_apply_model_operation(
+    lf: pl.LazyFrame,
+    model_path: str,
+    output_column: str,
+    file_ref: str,
+    flow_id: int,
+    node_id: int | str,
+) -> Status:
+    """Submit an apply-model job to the worker."""
+    payload = ApplyModelInput(
+        df_operation=PolarsOperation(operation=lf.serialize()),
+        model_path=model_path,
+        output_column=output_column,
+        task_id=file_ref,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id,
+    )
+    v = requests.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
+    if not v.ok:
+        raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
 
 
@@ -871,6 +929,75 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
             left_df=left_df,
             right_df=right_df,
             fuzzy_maps=fuzzy_maps,
+            file_ref=file_ref,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        self.file_ref = r.background_task_id
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class MLTrainFetcher(BaseFetcher):
+    """Fetches the training-completion result, which is a metadata dict
+    (``{sha256, size_bytes, model_type}``) rather than a LazyFrame.
+
+    ``BaseFetcher._handle_completion`` already routes non-polars results
+    straight through ``status.results``, so no overrides are needed.
+    """
+
+    def __init__(
+        self,
+        lf: pl.LazyFrame | pl.DataFrame,
+        staging_path: str,
+        model_type: str,
+        target_column: str,
+        feature_columns: list[str],
+        params: dict[str, Any],
+        flow_id: int,
+        node_id: int | str,
+        file_ref: str,
+        wait_on_completion: bool = True,
+    ):
+        super().__init__(file_ref=file_ref)
+        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        r = trigger_train_model_operation(
+            lf=lf,
+            staging_path=staging_path,
+            model_type=model_type,
+            target_column=target_column,
+            feature_columns=feature_columns,
+            params=params,
+            file_ref=file_ref,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
+        self.file_ref = r.background_task_id
+        self.running = r.status == "Processing"
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class MLApplyFetcher(BaseFetcher):
+    """Fetches the scored LazyFrame produced by :func:`trigger_apply_model_operation`."""
+
+    def __init__(
+        self,
+        lf: pl.LazyFrame | pl.DataFrame,
+        model_path: str,
+        output_column: str,
+        flow_id: int,
+        node_id: int | str,
+        file_ref: str,
+        wait_on_completion: bool = True,
+    ):
+        super().__init__(file_ref=file_ref)
+        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        r = trigger_apply_model_operation(
+            lf=lf,
+            model_path=model_path,
+            output_column=output_column,
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,

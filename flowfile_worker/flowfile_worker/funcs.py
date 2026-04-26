@@ -48,6 +48,114 @@ logger = logging.getLogger("Spawner")
 logger.setLevel(logging.INFO)
 
 
+def train_model_task(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,  # unused for train; kept for the spawner contract
+    model_type: str,
+    target_column: str,
+    feature_columns: list[str],
+    params: dict,
+    staging_path: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Fit a regression model and write the serialised artifact to *staging_path*.
+
+    Pushes ``{sha256, size_bytes, model_type}`` onto the queue so core can call
+    ``ArtifactService.finalize_upload``. Core never sees the bytes.
+    """
+    import hashlib
+
+    from shared.ml.trainers import get_trainer
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(
+        f"Starting train_model_task: model_type={model_type}, target={target_column}, "
+        f"features={feature_columns}, staging_path={staging_path}"
+    )
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        trainer = get_trainer(model_type)
+        model_bytes = trainer.train(
+            lf,
+            target=target_column,
+            features=feature_columns,
+            params=params or {},
+        )
+        os.makedirs(os.path.dirname(staging_path), exist_ok=True)
+        with open(staging_path, "wb") as f:
+            f.write(model_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+        sha256 = hashlib.sha256(model_bytes).hexdigest()
+        size_bytes = len(model_bytes)
+        flowfile_logger.info(f"train_model_task wrote {size_bytes} bytes (sha256={sha256[:12]}...)")
+        queue.put({"sha256": sha256, "size_bytes": size_bytes, "model_type": model_type})
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        flowfile_logger.error(f"Error during train_model_task: {str(e)}")
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
+def apply_model_task(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,  # IPC path written by the worker, returned to core via Status.file_ref
+    model_path: str,
+    output_column: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+):
+    """Score *polars_serializable_object* with the artifact at *model_path*.
+
+    Writes the resulting LazyFrame to *file_path* as IPC and pushes the
+    serialised LazyFrame bytes on the queue (matches ``store``/``fuzzy_join_task``).
+    """
+    import json as _json
+
+    from shared.ml.trainers import get_trainer
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(
+        f"Starting apply_model_task: model_path={model_path}, output_column={output_column}"
+    )
+    try:
+        with open(model_path, "rb") as f:
+            model = _json.loads(f.read())
+        trainer = get_trainer(model["model_type"])
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        scored_lf = trainer.apply(lf, model, output_column)
+        scored_df = collect_lazy_frame(scored_lf)
+        scored_df.write_ipc(file_path)
+        flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows -> {file_path}")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        flowfile_logger.error(f"Error during apply_model_task: {str(e)}")
+        error_msg = str(e).encode()[:1024]
+        with error_message.get_lock():
+            error_message[: len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+        # Intentional early return: file_path was never written, so the
+        # scan_ipc/queue.put below would either crash or push a serialised
+        # plan over a non-existent file. The framework already inspects
+        # progress.value before reading the queue; this keeps that contract.
+        return
+    lf = pl.scan_ipc(file_path)
+    queue.put(lf.serialize())
+
+
 def fuzzy_join_task(
     left_serializable_object: bytes,
     right_serializable_object: bytes,

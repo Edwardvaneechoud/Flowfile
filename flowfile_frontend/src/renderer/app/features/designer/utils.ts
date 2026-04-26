@@ -46,6 +46,10 @@ const BUILTIN_ICONS = new Set([
   "unpivot.png",
   "user-defined-icon.png",
   "view.png",
+  "train_model.svg",
+  "apply_model.svg",
+  "evaluate_model.svg",
+  "wait_for.svg",
 ]);
 
 // Default fallback icon
