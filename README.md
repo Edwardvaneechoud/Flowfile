@@ -5,21 +5,37 @@
 </h1>
 
 <p align="center">
-  <b>Open-source visual ETL on Polars. Runs locally. Generates Python code.</b>
+  <b>Visual ETL that compiles to Polars.</b>
+  <br>
+  <sub>Build pipelines on a canvas, run them locally or in the browser, export them as standalone Python.<br>No platform lock-in. No install required to try it.</sub>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/Flowfile/"><img src="https://img.shields.io/pypi/v/Flowfile?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/Flowfile/"><img src="https://img.shields.io/pypi/dm/Flowfile?style=flat-square&logo=pypi&logoColor=white" alt="PyPI downloads"></a>
+  <a href="https://pypi.org/project/Flowfile/"><img src="https://img.shields.io/pypi/pyversions/Flowfile?style=flat-square&logo=python&logoColor=white" alt="Python versions"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Edwardvaneechoud/Flowfile?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/stargazers"><img src="https://img.shields.io/github/stars/Edwardvaneechoud/Flowfile?style=flat-square&logo=github" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="https://demo.flowfile.org"><b>▶&nbsp;&nbsp;Try it in your browser&nbsp;&nbsp;→</b></a>
+  <br>
+  <sub>No install. No signup. Polars in the browser via Pyodide.</sub>
 </p>
 
 <p align="center">
   <a href="https://edwardvaneechoud.github.io/Flowfile/">Docs</a> ·
-  <a href="https://demo.flowfile.org">Try it in your browser</a> ·
   <a href="https://github.com/Edwardvaneechoud/Flowfile/releases">Releases</a> ·
-  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Architecture</a>
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/discussions">Discussions</a> ·
+  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Architecture deep-dive</a>
 </p>
 
 ---
 
-Flowfile is a visual ETL tool with data platform capabilities built in. Drag nodes on a canvas, or write Python with a Polars-like API — it's the same graph underneath. Pipelines run on Polars, can be exported as Python code, and everything runs on your machine.
+**Visual ETL tools usually trap your work inside their platform. Flowfile doesn't.** Build pipelines on a visual canvas, run them locally or in the browser, and export the result as plain Polars code that runs anywhere — with no Flowfile dependency. Code and visual are two views of the same graph: drag nodes or write Python with a Polars-like API, your choice.
 
-Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedded viz, virtual flow tables, flow parameters, and a built-in scheduler.
+Beyond the canvas: a Delta-backed catalog with time-travel and virtual tables, a SQL editor with embedded viz, flow parameters, sandboxed Python kernels, and a built-in scheduler.
 
 <div align="center">
   <img src=".github/images/flowfile_canvas_code.png" alt="Flowfile — visual pipeline designer with live code generation" width="800"/>
@@ -33,7 +49,7 @@ Beyond the canvas, it includes a Delta-backed catalog, a SQL editor with embedde
 
 ## What's in Flowfile
 
-**A visual canvas** with 30+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want.
+**A visual canvas** with 40+ node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, and more. Read from local files, databases (PostgreSQL, MySQL, SQL Server, Oracle), cloud storage (S3, ADLS, GCS), or Kafka. Write the result wherever you want.
 
 <div align="center">
   <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile demo — joins, fuzzy matching, transformations" width="800"/>
