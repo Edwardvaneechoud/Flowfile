@@ -1,9 +1,6 @@
-# This file was auto-generated to provide type information for flowfile_frame.series
-# DO NOT MODIFY THIS FILE MANUALLY
-# Run `python flowfile_frame/submodule_stub_generator.py` to regenerate
+# Auto-generated stub for flowfile_frame.series — do not edit.
+# Run `make stubs` to regenerate from the Python source.
 from __future__ import annotations
-
-from typing import Any, Callable, Iterable, Optional, Union
 
 from typing import Any
 import polars as pl

@@ -1,7 +1,8 @@
-# This file was auto-generated to provide type information for flowfile_frame.cloud_storage
-# DO NOT MODIFY THIS FILE MANUALLY
-# Run `python flowfile_frame/submodule_stub_generator.py` to regenerate
+# Auto-generated stub for flowfile_frame.cloud_storage — do not edit.
+# Run `make stubs` to regenerate from the Python source.
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Optional, Union
+from . import frame_helpers as frame_helpers
+from . import secret_manager as secret_manager
 
+__all__ = ["frame_helpers", "secret_manager"]

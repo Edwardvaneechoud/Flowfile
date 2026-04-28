@@ -2,13 +2,12 @@
 # DO NOT MODIFY THIS FILE MANUALLY
 # Run `python flowfile_frame/flow_frame_stub_generator.py` to regenerate
 # Standard library imports
-import collections
 import inspect
 import os
 import sys
 import typing
 from io import IOBase
-from typing import (List, Optional, ForwardRef, TypeVar, Any, Iterable, Sequence, Mapping, Collection, Callable, Literal, IO, Union)
+from typing import (List, Optional, TypeVar, Any, Iterable, Sequence, Mapping, Collection, Callable, Literal, IO, Union)
 from datetime import timedelta
 from pathlib import Path
 from collections.abc import Awaitable
@@ -18,16 +17,14 @@ import polars as pl
 from polars._typing import *
 from polars._typing import ParquetMetadata, PlanStage
 from polars._utils.async_ import _GeventDataFrameResult
-from polars.dependencies import polars_cloud as pc
+from polars._dependencies import polars_cloud as pc
 from polars.io.cloud import CredentialProviderFunction
 from polars.lazyframe.frame import LazyGroupBy
-from polars import LazyFrame, DataFrame, QueryOptFlags
-from polars.io.parquet import ParquetFieldOverwrites
+from polars import LazyFrame, DataFrame, QueryOptFlags, Schema, CompatLevel
 from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS
-from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)
+from polars._typing import (IntoExpr, ClosedInterval, Label, StartBy, IpcCompression, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)
 
 # Local application/library specific imports
-import flowfile_frame
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_frame import group_frame

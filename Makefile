@@ -194,12 +194,16 @@ test_coverage:
 # Regenerate the flowfile_frame .pyi stubs (Expr, FlowFrame, and the thin
 # submodules). Run this after changing any public API on FlowFrame, Expr, or a
 # top-level helper exported via flowfile_frame/__init__.py. The Python source
-# is the source of truth; stubs are introspected from it.
+# is the source of truth; stubs are introspected from it. The final ruff pass
+# auto-removes any unused imports the generators (especially the older
+# hardcoded ones) emit.
 stubs:
 	@echo "Regenerating flowfile_frame stubs..."
 	$(POETRY_RUN) python flowfile_frame/expr_stub_generator.py
 	$(POETRY_RUN) python flowfile_frame/flow_frame_stub_generator.py
 	$(POETRY_RUN) python flowfile_frame/submodule_stub_generator.py
+	@echo "Pruning unused imports from generated stubs..."
+	@$(POETRY_RUN) ruff check $$(find flowfile_frame/flowfile_frame -name '*.pyi') --select F401 --fix --quiet || true
 	@echo "Stubs regenerated."
 
 # Drift check for CI: regenerate and fail if anything changed.

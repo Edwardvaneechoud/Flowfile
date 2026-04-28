@@ -269,15 +269,20 @@ def generate_improved_type_stub(
         "from polars._typing import *",
         "from polars._typing import ParquetMetadata, PlanStage",
         "from polars._utils.async_ import _GeventDataFrameResult",
-        "from polars.dependencies import polars_cloud as pc",
+        # `polars._dependencies` (note the leading underscore). Polars never
+        # exposed a public `polars.dependencies`, despite Polars docstrings
+        # occasionally referring to it that way.
+        "from polars._dependencies import polars_cloud as pc",
         "from polars.io.cloud import CredentialProviderFunction",
         "from polars.lazyframe.frame import LazyGroupBy",
-        "from polars import LazyFrame, DataFrame, QueryOptFlags",
-        "from polars.io.parquet import ParquetFieldOverwrites",
+        "from polars import LazyFrame, DataFrame, QueryOptFlags, Schema, CompatLevel",
         "from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS",
-        "from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, "
-        "RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, "
-        "ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)",
+        # `polars.type_aliases` was deprecated in polars 1.0 — the type aliases
+        # moved to the private `polars._typing` module. Most names live there
+        # now; `Schema` / `CompatLevel` are exposed at the top-level above.
+        "from polars._typing import (IntoExpr, ClosedInterval, Label, StartBy, "
+        "IpcCompression, SyncOnCloseMethod, ExplainFormat, EngineType, "
+        "SerializationFormat, AsofJoinStrategy)",
         "",
         "# Local application/library specific imports",
         "import flowfile_frame",
@@ -694,7 +699,58 @@ def generate_improved_type_stub(
     with open(output_file, "w") as f:
         f.write("\n".join(content))
 
+    _validate_emitted_imports(content)
     return output_file
+
+
+def _validate_emitted_imports(content: list[str]) -> None:
+    """Fail loudly if any emitted ``from X import Y`` doesn't resolve.
+
+    The header carries hardcoded polars import paths. When polars renames or
+    moves a symbol upstream, the stub silently emits an unresolvable import —
+    type checkers then treat the imported name as ``Any`` and the staleness
+    is invisible until someone hovers in their IDE. Running this check at
+    generation time turns those into a build error instead.
+    """
+    import importlib
+
+    failures: list[str] = []
+    for line in content:
+        if not isinstance(line, str):
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("from ") or " import " not in stripped:
+            continue
+        # Skip TYPE_CHECKING-gated imports inside `if TYPE_CHECKING:` blocks.
+        if line.startswith("    "):
+            continue
+        try:
+            head, _, tail = stripped.partition(" import ")
+            module_path = head[len("from ") :].strip()
+            names_part = tail.split("#", 1)[0].strip().rstrip(")")
+            names_part = names_part.lstrip("(")
+            module = importlib.import_module(module_path)
+            for raw in names_part.split(","):
+                name = raw.strip()
+                if not name or name == "*":
+                    continue
+                # Strip `as alias`
+                if " as " in name:
+                    name = name.split(" as ", 1)[0].strip()
+                if not hasattr(module, name):
+                    failures.append(f"{module_path}.{name} (in: {stripped})")
+        except ImportError as e:
+            failures.append(f"cannot import {module_path}: {e}")
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"could not validate {stripped!r}: {type(e).__name__}: {e}")
+
+    if failures:
+        msg = "\n  - ".join(failures)
+        raise RuntimeError(
+            f"flow_frame_stub_generator emitted imports that don't resolve at runtime — "
+            f"likely a polars upgrade renamed or removed a symbol. Update the hardcoded "
+            f"import block in this generator. Broken imports:\n  - {msg}"
+        )
 
 
 if __name__ == "__main__":

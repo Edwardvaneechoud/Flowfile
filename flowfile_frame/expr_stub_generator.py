@@ -205,7 +205,9 @@ def generate_expr_type_stub(
         "    from flowfile_core.schemas import transform_schema",
         "import flowfile_frame",
         "from flowfile_frame.selectors import Selector",
-        "from flowfile_frame.expr_name import ExprNameNameSpace",
+        # ExprNameNameSpace and ExprListNameSpace are defined inline below (the
+        # generator walks them as nested classes), so don't import them here —
+        # importing AND redefining the same name is a duplicate-definition error.
         "",
         "# Define NoneType to handle type hints with None",
         "NoneType = type(None)",
