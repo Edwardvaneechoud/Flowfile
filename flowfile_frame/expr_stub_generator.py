@@ -170,6 +170,8 @@ def generate_expr_type_stub(
         "StringMethods": expr_module.StringMethods,
         "DateTimeMethods": expr_module.DateTimeMethods,
         "When": expr_module.When,
+        "ExprNameNameSpace": expr_module.ExprNameNameSpace,
+        "ExprListNameSpace": expr_module.ExprListNameSpace,
     }
 
     # Discover top-level functions dynamically
@@ -234,9 +236,10 @@ def generate_expr_type_stub(
         # Add other attributes
 
         attrs_added = False
+        cls_annotations = vars(cls).get("__annotations__", {})
         for name, value in vars(cls).items():
             if not callable(value) and not isinstance(value, property):
-                type_annotation = vars(cls)["__annotations__"].get(name, "Any")
+                type_annotation = cls_annotations.get(name, "Any")
 
                 attrs_added = True
                 class_lines.append(f"    {name}: {type_annotation}")
@@ -262,17 +265,29 @@ def generate_expr_type_stub(
                 existing_methods.add(name)
             class_lines.extend(extra_lines)
 
-        # If it's the Expr class, add common polars.Expr methods
+        # If it's the Expr class, add common polars.Expr methods.
+        # Sort for deterministic output — sets have non-stable iteration order
+        # across Python runs, which produces spurious diffs when regenerating.
         if include_polars_methods and cls_name == "Expr":
-            for method_name in common_polars_methods:
+            for method_name in sorted(common_polars_methods):
                 if method_name not in existing_methods:
                     class_lines.append(f"    def {method_name}(self, *args, **kwargs) -> 'Expr': ...")
                     class_lines.append("")
 
         return class_lines
 
-    # Process each class in defined order
-    for class_name in ["StringMethods", "DateTimeMethods", "Expr", "Column", "When"]:
+    # Process each class in defined order. Namespace classes (StringMethods,
+    # DateTimeMethods, ExprNameNameSpace, ExprListNameSpace) come first so their
+    # methods are visible when chaining off of `Expr.str`, `Expr.name`, etc.
+    for class_name in [
+        "StringMethods",
+        "DateTimeMethods",
+        "ExprNameNameSpace",
+        "ExprListNameSpace",
+        "Expr",
+        "Column",
+        "When",
+    ]:
         cls = class_map[class_name]
         is_subclass = class_name in ["Column", "When"]
         content.extend(process_class(class_name, cls, is_subclass))

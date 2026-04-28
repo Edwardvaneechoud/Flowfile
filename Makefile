@@ -191,5 +191,25 @@ test_coverage:
 	@echo "To generate XML: $(POETRY_RUN) coverage xml"
 	@echo "To generate HTML: $(POETRY_RUN) coverage html"
 
+# Regenerate the flowfile_frame .pyi stubs (Expr, FlowFrame, and the thin
+# submodules). Run this after changing any public API on FlowFrame, Expr, or a
+# top-level helper exported via flowfile_frame/__init__.py. The Python source
+# is the source of truth; stubs are introspected from it.
+stubs:
+	@echo "Regenerating flowfile_frame stubs..."
+	$(POETRY_RUN) python flowfile_frame/expr_stub_generator.py
+	$(POETRY_RUN) python flowfile_frame/flow_frame_stub_generator.py
+	$(POETRY_RUN) python flowfile_frame/submodule_stub_generator.py
+	@echo "Stubs regenerated."
+
+# Drift check for CI: regenerate and fail if anything changed.
+check_stubs: stubs
+	@echo "Checking for stub drift..."
+	@if ! git diff --exit-code -- 'flowfile_frame/flowfile_frame/*.pyi' 'flowfile_frame/flowfile_frame/**/*.pyi'; then \
+		echo "ERROR: stubs are out of sync with the source. Run 'make stubs' and commit the result."; \
+		exit 1; \
+	fi
+	@echo "Stubs are in sync."
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test build_for_electron_test test_e2e_electron test_coverage
+.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test build_for_electron_test test_e2e_electron test_coverage stubs check_stubs

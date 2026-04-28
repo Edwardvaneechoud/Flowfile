@@ -248,6 +248,9 @@ def generate_improved_type_stub(
         output_file = os.path.join(default_dir, "flow_frame.pyi")
 
     content = [
+        "# This file was auto-generated to provide type information for FlowFrame",
+        "# DO NOT MODIFY THIS FILE MANUALLY",
+        "# Run `python flowfile_frame/flow_frame_stub_generator.py` to regenerate",
         "# Standard library imports",
         "import collections",
         "import inspect",
@@ -300,21 +303,41 @@ def generate_improved_type_stub(
     ]
 
     if include_module_functions:
-        content.extend(
-            [
-                "# Module-level functions (example from your input)",
-                "def can_be_expr(param: inspect.Parameter) -> bool: ...",
-                "def generate_node_id() -> int: ...",
-                "def get_method_name_from_code(code: str) -> str | None: ...",
-                "def _contains_lambda_pattern(text: str) -> bool: ...",
-                "def _to_string_val(v) -> str: ...",
-                "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
-                "def _check_ok_for_serialization("
-                "method_name: str = None, polars_expr: pl.Expr | None = None, "
-                "group_expr: pl.Expr | None = None) -> None: ...",
-                "",
-            ]
-        )
+        content.append("# Module-level functions (auto-discovered from the source module)")
+        flowframe_module = sys.modules.get(flowframe_class.__module__)
+        module_function_lines: list[str] = []
+        if flowframe_module is not None:
+            for fn_name, fn_obj in inspect.getmembers(flowframe_module, inspect.isfunction):
+                if fn_name.startswith("__"):
+                    continue
+                if getattr(fn_obj, "__module__", None) != flowframe_module.__name__:
+                    continue
+                try:
+                    sig = inspect.signature(fn_obj)
+                except (ValueError, TypeError):
+                    module_function_lines.append(f"def {fn_name}(*args, **kwargs) -> Any: ...")
+                    continue
+                params: list[str] = []
+                for p in sig.parameters.values():
+                    if p.kind == inspect.Parameter.VAR_KEYWORD:
+                        params.append(f"**{p.name}")
+                        continue
+                    if p.kind == inspect.Parameter.VAR_POSITIONAL:
+                        params.append(f"*{p.name}")
+                        continue
+                    text = p.name
+                    if p.annotation is not inspect.Parameter.empty:
+                        text = f"{p.name}: {format_type_annotation(p.annotation)}"
+                    if p.default is not inspect.Parameter.empty:
+                        default_repr = format_default_value(p) or "..."
+                        text = f"{text} = {default_repr}"
+                    params.append(text)
+                rt = "Any"
+                if sig.return_annotation is not inspect.Parameter.empty:
+                    rt = format_type_annotation(sig.return_annotation)
+                module_function_lines.append(f"def {fn_name}({', '.join(params)}) -> {rt}: ...")
+        content.extend(module_function_lines)
+        content.append("")
 
     class_name = flowframe_class.__name__
     content.append(f"class {class_name}:")
