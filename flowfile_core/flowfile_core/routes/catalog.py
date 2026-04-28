@@ -16,7 +16,7 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -40,6 +40,9 @@ from flowfile_core.catalog import (
     TableExistsError,
     TableFavoriteNotFoundError,
     TableNotFoundError,
+    VisualizationComputeError,
+    VisualizationExistsError,
+    VisualizationNotFoundError,
 )
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
@@ -80,6 +83,14 @@ from flowfile_core.schemas.catalog_schema import (
     TableFavoriteOut,
     VirtualFlowTableCreate,
     VirtualFlowTableUpdate,
+    VisualizationAdHocComputeRequest,
+    VisualizationComputeResponse,
+    VisualizationCreate,
+    VisualizationFieldsRequest,
+    VisualizationFieldsResponse,
+    VisualizationOut,
+    VisualizationSavedComputeRequest,
+    VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import storage
@@ -118,6 +129,9 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     FollowNotFoundError: (404, "Follow not found"),
     TableFavoriteNotFoundError: (404, "Table favorite not found"),
     NoSnapshotError: (422, "No flow snapshot available for this run"),
+    VisualizationNotFoundError: (404, None),
+    VisualizationExistsError: (409, None),
+    VisualizationComputeError: (502, None),
     ValueError: (422, None),
 }
 
@@ -623,6 +637,137 @@ def remove_table_favorite(
 
 
 # ---------------------------------------------------------------------------
+# Catalog Visualizations
+# ---------------------------------------------------------------------------
+
+
+@router.get("/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualization_library(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved visualization across the catalog."""
+    return service.list_visualization_library(user_id=current_user.id)
+
+
+@router.post("/visualizations", response_model=VisualizationOut, status_code=201)
+@handle_catalog_exceptions()
+def create_visualization(
+    body: VisualizationCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a saved viz. Source is either a catalog table or an inline SQL query."""
+    return service.create_visualization(body, user_id=current_user.id)
+
+
+@router.get("/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def get_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_visualization(viz_id, user_id=current_user.id)
+
+
+@router.put("/visualizations/{viz_id}", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def update_visualization(
+    viz_id: int,
+    body: VisualizationUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_visualization(viz_id, body, user_id=current_user.id)
+
+
+@router.delete("/visualizations/{viz_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_visualization(viz_id, user_id=current_user.id)
+
+
+@router.post(
+    "/visualizations/{viz_id}/compute",
+    response_model=VisualizationComputeResponse,
+)
+@handle_catalog_exceptions()
+def compute_saved_visualization(
+    viz_id: int,
+    body: VisualizationSavedComputeRequest = Body(default_factory=VisualizationSavedComputeRequest),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compute chart rows for a saved viz.
+
+    GraphicWalker's ``computation`` callback POSTs the IDataQueryPayload
+    here on every aggregation; the worker session cache keeps the source
+    LazyFrame warm so successive calls skip the load.
+    """
+    return service.compute_saved_visualization_rows(
+        viz_id,
+        body.max_rows,
+        user_id=current_user.id,
+        payload=body.payload,
+    )
+
+
+@router.post("/visualizations/{viz_id}/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_saved_visualization_fields(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the GW field schema for a saved viz's source."""
+    return service.get_visualization_fields_for_viz(viz_id, user_id=current_user.id)
+
+
+@router.post("/visualizations/compute", response_model=VisualizationComputeResponse)
+@handle_catalog_exceptions()
+def compute_ad_hoc_visualization(
+    body: VisualizationAdHocComputeRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Compute a chart from a transient source (ad-hoc SQL or a catalog table)."""
+    return service.compute_ad_hoc_visualization(
+        source=body.source,
+        payload=body.payload,
+        max_rows=body.max_rows,
+        user_id=current_user.id,
+    )
+
+
+@router.post("/visualizations/fields", response_model=VisualizationFieldsResponse)
+@handle_catalog_exceptions()
+def get_visualization_fields(
+    body: VisualizationFieldsRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return the Graphic Walker field schema for a viz source descriptor."""
+    return service.get_visualization_fields(body.source, user_id=current_user.id)
+
+
+@router.get("/tables/{table_id}/visualizations", response_model=list[VisualizationOut])
+@handle_catalog_exceptions()
+def list_visualizations_for_table(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Filtered listing — viz that reference this table."""
+    return service.list_visualizations_for_table(table_id, user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
 # Virtual Flow Tables
 # ---------------------------------------------------------------------------
 
@@ -670,23 +815,16 @@ def update_virtual_flow_table(
     )
 
 
-@router.post("/virtual-tables/{table_id}/resolve")
+@router.post("/virtual-tables/{table_id}/resolve", response_model=CatalogTablePreview)
 @handle_catalog_exceptions(TableNotFoundError="Virtual table not found", FlowNotFoundError="Producer flow not found")
 def resolve_virtual_flow_table(
     table_id: int,
     limit: int = Query(100, ge=1, le=10000),
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
-):
+) -> CatalogTablePreview:
     """Resolve a virtual flow table and return a preview of the result."""
-    lf = service.resolve_virtual_flow_table(table_id, user_id=current_user.id)
-    df = lf.head(limit).collect()
-    return {
-        "columns": df.columns,
-        "dtypes": [str(dt) for dt in df.dtypes],
-        "rows": df.rows(),
-        "total_rows": df.height,
-    }
+    return service.resolve_virtual_flow_table_preview(table_id, limit, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------

@@ -196,22 +196,19 @@ class CatalogMaterializeRequest(BaseModel):
 
 
 class CatalogMaterializeResponse(BaseModel):
-    parquet_path: str | None = None  # Legacy field for backward compat
     table_path: str
-    storage_format: str = "delta"  # "delta" or "parquet"
-    schema: list[ColumnSchema]
+    column_schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int
 
 
 class TableMetadataRequest(BaseModel):
-    table_path: str  # Bare table directory/file name (no path separators)
-    storage_format: str = "delta"  # "delta" or "parquet"
+    table_path: str  # Bare table directory name (no path separators)
 
 
 class TableMetadataResponse(BaseModel):
-    schema: list[ColumnSchema]
+    column_schema: list[ColumnSchema]
     row_count: int
     column_count: int
     size_bytes: int
@@ -245,7 +242,7 @@ class SqlQueryRequest(BaseModel):
     query: str
     tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
-    virtual_tables_ipc: dict[str, str] | None = None  # name -> base64-encoded IPC bytes
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename under catalog_virtual_results
 
 
 class SqlQueryResponse(BaseModel):
@@ -256,4 +253,61 @@ class SqlQueryResponse(BaseModel):
     truncated: bool = False
     execution_time_ms: float = 0.0
     used_tables: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ResolveVirtualTableRequest(BaseModel):
+    """Ask the worker to materialise a flow-virtual table from a serialised plan."""
+
+    table_id: int
+    plan_bytes: Base64Bytes
+    source_versions_hash: str
+
+
+class ResolveVirtualTableResponse(BaseModel):
+    ipc_path: str
+    mtime: float
+    row_count: int
+
+
+class VizWorkerSource(BaseModel):
+    """Source descriptor for a viz session.
+
+    The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
+    it deterministically (table_id+updated_at, sql hash, etc.) so successive
+    requests against the same source skip the load step.
+    """
+
+    kind: Literal["physical", "sql", "ipc_path"]
+    session_key: str
+    table_path: str | None = None  # bare directory name for kind="physical"
+    sql_query: str | None = None
+    tables: dict[str, str] | None = None  # logical name -> directory name (kind="sql")
+    virtual_refs: dict[str, str] | None = None  # name -> bare ipc filename (kind="sql")
+    ipc_path: str | None = None  # bare filename under catalog_virtual_results_directory
+    mtime: float | None = None  # cache file mtime; used in session-key contract
+
+
+class VisualizeQueryRequest(BaseModel):
+    source: VizWorkerSource
+    payload: dict
+    max_rows: int = 100_000
+
+
+class VisualizeQueryResponse(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    elapsed_ms: float = 0.0
+    cache_hit: bool = False
+    error: str | None = None
+
+
+class VisualizeFieldsRequest(BaseModel):
+    source: VizWorkerSource
+
+
+class VisualizeFieldsResponse(BaseModel):
+    fields: list[dict] = Field(default_factory=list)
+    cache_hit: bool = False
     error: str | None = None

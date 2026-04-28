@@ -383,6 +383,41 @@ class CatalogTableReadLink(Base):
     __table_args__ = (UniqueConstraint("table_id", "registration_id", name="uq_table_read_link"),)
 
 
+class CatalogVisualization(Base):
+    """A saved GraphicWalker chart spec.
+
+    Visualizations are first-class catalog entities. A viz may reference a
+    catalog table (``source_type="table"``, ``catalog_table_id`` set), or
+    embed a SQL query that runs against the catalog (``source_type="sql"``,
+    ``sql_query`` set). ``namespace_id`` controls where the viz lives in
+    the catalog hierarchy independently of any source table.
+    """
+
+    __tablename__ = "catalog_visualizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    chart_type = Column(String, nullable=True)
+    spec_json = Column(Text, nullable=False)
+    spec_gw_version = Column(String, nullable=True)
+
+    source_type = Column(String, nullable=False, default="table")
+    catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True, index=True)
+    sql_query = Column(Text, nullable=True)
+
+    # Base64 PNG data URL captured client-side via GraphicWalker's
+    # exportChart('data-url'). Used as a static thumbnail in catalog grids
+    # so we don't have to re-mount the chart per card.
+    thumbnail_data_url = Column(Text, nullable=True)
+
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class SchedulerLock(Base):
     """Advisory lock row to ensure only one scheduler instance is active.
 

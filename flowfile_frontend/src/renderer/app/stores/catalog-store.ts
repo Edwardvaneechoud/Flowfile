@@ -7,6 +7,7 @@ import type {
   CatalogTab,
   CatalogTable,
   CatalogTablePreview,
+  CatalogVisualization,
   DeltaTableHistory,
   FlowRegistration,
   FlowRun,
@@ -15,6 +16,9 @@ import type {
   GlobalArtifact,
   NamespaceTree,
   SchedulerStatus,
+  VisualizationCreatePayload,
+  VisualizationUpdatePayload,
+  VizSourceDescriptor,
 } from "../types";
 
 interface CatalogState {
@@ -62,6 +66,11 @@ interface CatalogState {
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
+  visualizationsByTable: Record<number, CatalogVisualization[]>;
+  visualizationFieldsBySource: Record<string, Record<string, any>[]>;
+  loadingVisualizations: boolean;
+  visualizationLibrary: CatalogVisualization[];
+  loadingVisualizationLibrary: boolean;
 }
 
 export const useCatalogStore = defineStore("catalog", {
@@ -110,6 +119,11 @@ export const useCatalogStore = defineStore("catalog", {
     activeTab: "runs",
     loading: false,
     error: null,
+    visualizationsByTable: {},
+    visualizationFieldsBySource: {},
+    loadingVisualizations: false,
+    visualizationLibrary: [],
+    loadingVisualizationLibrary: false,
   }),
 
   getters: {
@@ -603,6 +617,78 @@ export const useCatalogStore = defineStore("catalog", {
         this.loadActiveRuns(),
         this.loadSchedulerStatus(),
       ]);
+    },
+
+    // ============== Visualizations ==============
+
+    async loadVisualizations(tableId: number) {
+      this.loadingVisualizations = true;
+      try {
+        const items = await CatalogApi.listVisualizationsForTable(tableId);
+        this.visualizationsByTable = { ...this.visualizationsByTable, [tableId]: items };
+      } finally {
+        this.loadingVisualizations = false;
+      }
+    },
+
+    async createVisualization(payload: VisualizationCreatePayload) {
+      const created = await CatalogApi.createVisualization(payload);
+      if (created.catalog_table_id !== null) {
+        const current = this.visualizationsByTable[created.catalog_table_id] ?? [];
+        this.visualizationsByTable = {
+          ...this.visualizationsByTable,
+          [created.catalog_table_id]: [created, ...current],
+        };
+      }
+      // Refresh library so the catalog tab reflects the new entry.
+      this.loadVisualizationLibrary().catch(() => undefined);
+      return created;
+    },
+
+    async updateVisualization(vizId: number, payload: VisualizationUpdatePayload) {
+      const updated = await CatalogApi.updateVisualization(vizId, payload);
+      if (updated.catalog_table_id !== null) {
+        const current = this.visualizationsByTable[updated.catalog_table_id] ?? [];
+        this.visualizationsByTable = {
+          ...this.visualizationsByTable,
+          [updated.catalog_table_id]: current.map((v) => (v.id === vizId ? updated : v)),
+        };
+      }
+      this.loadVisualizationLibrary().catch(() => undefined);
+      return updated;
+    },
+
+    async deleteVisualization(vizId: number) {
+      await CatalogApi.deleteVisualization(vizId);
+      // Drop from any per-table cache that might be holding it.
+      const next = { ...this.visualizationsByTable };
+      for (const tid of Object.keys(next)) {
+        next[Number(tid)] = next[Number(tid)].filter((v) => v.id !== vizId);
+      }
+      this.visualizationsByTable = next;
+      this.visualizationLibrary = this.visualizationLibrary.filter((v) => v.id !== vizId);
+    },
+
+    async loadVisualizationFields(source: VizSourceDescriptor) {
+      const key = JSON.stringify(source);
+      if (this.visualizationFieldsBySource[key]) return this.visualizationFieldsBySource[key];
+      const result = await CatalogApi.getVisualizationFields(source);
+      if (!result.error) {
+        this.visualizationFieldsBySource = {
+          ...this.visualizationFieldsBySource,
+          [key]: result.fields,
+        };
+      }
+      return result.fields;
+    },
+
+    async loadVisualizationLibrary() {
+      this.loadingVisualizationLibrary = true;
+      try {
+        this.visualizationLibrary = await CatalogApi.listVisualizationLibrary();
+      } finally {
+        this.loadingVisualizationLibrary = false;
+      }
     },
   },
 });

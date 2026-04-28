@@ -7,7 +7,7 @@ import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { useItemStore } from "../../../../common/DraggableItem/stateStore";
-import { useThemeStore } from "../../../../../stores/theme-store";
+import { useGraphicWalkerAppearance } from "../../../../../composables/useGraphicWalkerAppearance";
 
 const isLoading = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
@@ -18,15 +18,9 @@ const errorMessage = ref<string | null>(null);
 const nodeStore = useNodeStore();
 const globalNodeId = ref(-1);
 const windowStore = useItemStore();
-const themeStore = useThemeStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
-// Map theme store values to graphic-walker appearance values
-const graphicWalkerAppearance = computed(() => {
-  const theme = themeStore.mode;
-  if (theme === "system") return "media";
-  return theme; // 'light' or 'dark'
-});
+const graphicWalkerAppearance = useGraphicWalkerAppearance();
 
 const canDisplayVisualization = computed(() => !isLoading.value && !errorMessage.value);
 

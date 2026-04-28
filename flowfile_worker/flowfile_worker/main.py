@@ -23,6 +23,12 @@ async def shutdown_handler(app: FastAPI):
         yield
     finally:
         logger.info("Shutting down application...")
+        try:
+            from flowfile_worker.viz_sessions import viz_session_registry
+
+            viz_session_registry.shutdown()
+        except Exception as e:
+            logger.error(f"viz registry shutdown failed: {e}")
         logger.info("Cleaning up worker resources...")
         for p in mp_context.active_children():
             try:

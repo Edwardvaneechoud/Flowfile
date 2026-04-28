@@ -10,7 +10,8 @@ import polars as pl
 from deltalake import DeltaTable
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
 
-from flowfile_worker import models
+from flowfile_worker import models, mp_context
+from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
@@ -24,6 +25,15 @@ from shared.storage_config import storage
 def _validate_catalog_path(table_name: str) -> Path:
     """Validate and resolve *table_name* under the catalog tables directory."""
     return validate_catalog_path(table_name, storage.catalog_tables_directory)
+
+
+def _validate_virtual_results_path(name: str) -> Path:
+    """Validate and resolve *name* under the catalog_virtual_results directory."""
+    return validate_catalog_path(name, storage.catalog_virtual_results_directory)
+
+
+def _row_count_ipc(p: Path) -> int:
+    return int(pl.scan_ipc(str(p)).select(pl.len()).collect().item())
 
 
 def _get_delta_size_bytes(delta_dir: Path) -> int:
@@ -597,7 +607,6 @@ def write_delta(
         queue.put(
             {
                 "table_path": output_path,
-                "storage_format": "delta",
                 "schema": schema,
                 "row_count": df.height,
                 "column_count": len(df.columns),
@@ -661,7 +670,6 @@ def merge_delta(
         queue.put(
             {
                 "table_path": output_path,
-                "storage_format": "delta",
                 "schema": schema,
                 "row_count": row_count,
                 "column_count": len(schema),
@@ -711,7 +719,6 @@ def materialize_catalog_table_task(
         queue.put(
             {
                 "table_path": dest_path,
-                "storage_format": "delta",
                 "schema": schema,
                 "row_count": df.height,
                 "column_count": len(df.columns),
@@ -732,7 +739,7 @@ def execute_sql_query(
     query: str,
     tables: dict[str, str],
     max_rows: int = 10_000,
-    virtual_tables_ipc: dict[str, str] | None = None,
+    virtual_refs: dict[str, str] | None = None,
 ) -> dict:
     """Execute a SQL query against catalog tables using pl.SQLContext.
 
@@ -741,13 +748,12 @@ def execute_sql_query(
     ``_validate_catalog_path``.  Only tables actually referenced in the
     query plan are reported in *used_tables*.
 
-    *virtual_tables_ipc* is an optional mapping of virtual table name ->
-    base64-encoded IPC bytes for pre-resolved virtual tables.
+    *virtual_refs* is an optional mapping of virtual table name -> bare IPC
+    filename under the catalog_virtual_results directory; the worker scans
+    each via ``pl.scan_ipc``.
 
     Returns a dict matching the SqlQueryResponse schema.
     """
-    import base64
-    import io
     import re
     import time
 
@@ -756,18 +762,12 @@ def execute_sql_query(
     ctx = pl.SQLContext()
     registered_names: list[str] = []
     for name, dir_name in tables.items():
-        p = _validate_catalog_path(dir_name)
-        if not p.is_dir() or not (p / "_delta_log").is_dir():
-            raise ValueError(f"Table '{name}' is not a valid Delta table")
-        ctx.register(name, pl.scan_delta(str(p)))
+        ctx.register(name, open_catalog_table(dir_name))
         registered_names.append(name)
 
-    # Register virtual tables from pre-resolved IPC data
-    if virtual_tables_ipc:
-        for name, b64_data in virtual_tables_ipc.items():
-            ipc_bytes = base64.b64decode(b64_data)
-            lf = pl.read_ipc(io.BytesIO(ipc_bytes)).lazy()
-            ctx.register(name, lf)
+    if virtual_refs:
+        for name, ipc_name in virtual_refs.items():
+            ctx.register(name, open_virtual_result(ipc_name))
             registered_names.append(name)
 
     result_lf = ctx.execute(query)
@@ -803,27 +803,19 @@ def execute_sql_query(
     }
 
 
-def read_table_metadata(table_name: str, storage_format: str = "delta") -> dict:
+def read_table_metadata(table_name: str) -> dict:
     """Read schema, row_count, column_count, size_bytes from a table on disk.
 
-    *table_name* is the bare directory/file name inside the catalog tables
+    *table_name* is the bare directory name inside the catalog tables
     directory (no path separators allowed).
 
     Called by the worker endpoint so the core process never touches data files.
     """
-    p = _validate_catalog_path(table_name)
-    if storage_format == "delta" or (p.is_dir() and (p / "_delta_log").is_dir()):
-        lf = pl.scan_delta(str(p))
-        schema = lf.collect_schema()
-        schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
-        row_count = lf.select(pl.len()).collect().item()
-        size_bytes = _get_delta_size_bytes(p)
-    else:
-        lf = pl.scan_parquet(p)
-        schema = lf.collect_schema()
-        schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
-        row_count = lf.select(pl.len()).collect().item()
-        size_bytes = p.stat().st_size
+    lf = open_catalog_table(table_name)
+    schema = lf.collect_schema()
+    schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
+    row_count = lf.select(pl.len()).collect().item()
+    size_bytes = _get_delta_size_bytes(_validate_catalog_path(table_name))
     return {
         "schema": schema_list,
         "row_count": row_count,
@@ -927,3 +919,56 @@ def generic_task(
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
     # Put raw bytes in queue - encoding happens at the transport boundary
     queue.put(lf.serialize())
+
+
+# ==================== Virtual flow-table resolution =========================
+
+
+def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Queue) -> None:
+    """Subprocess entry point: deserialise the plan, collect, atomic-write IPC."""
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
+        df = lf.collect()
+        target = Path(target_path)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        df.write_ipc(str(tmp))
+        os.replace(str(tmp), str(target))
+        queue.put({"name": target.name, "mtime": target.stat().st_mtime, "row_count": int(df.height)})
+    except Exception as exc:
+        queue.put({"error": str(exc)[:1024]})
+
+
+def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
+    """Materialise a virtual flow table to disk; idempotent on (table_id, source_versions_hash)."""
+    target_dir = storage.catalog_virtual_results_directory
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
+    if target.exists():
+        return models.ResolveVirtualTableResponse(
+            ipc_path=target.name,
+            mtime=target.stat().st_mtime,
+            row_count=_row_count_ipc(target),
+        )
+
+    queue: Queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=_resolve_virtual_table_child,
+        kwargs={"plan_bytes": req.plan_bytes, "target_path": str(target), "queue": queue},
+    )
+    p.start()
+    p.join()
+    try:
+        if queue.empty():
+            raise RuntimeError(f"resolve_virtual_table child exited without result (exitcode={p.exitcode})")
+        result = queue.get_nowait()
+        if "error" in result:
+            raise RuntimeError(f"resolve_virtual_table child failed: {result['error']}")
+        return models.ResolveVirtualTableResponse(
+            ipc_path=result["name"],
+            mtime=result["mtime"],
+            row_count=result["row_count"],
+        )
+    finally:
+        if p.is_alive():
+            p.terminate()
+            p.join()

@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import json
 import os
@@ -440,6 +441,20 @@ def create_table(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/flow/resolve_virtual_table", response_model=models.ResolveVirtualTableResponse)
+def resolve_virtual_table(payload: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
+    """Materialise a flow-virtual table from a serialised polars plan.
+
+    Idempotent on ``(table_id, source_versions_hash)`` — repeated calls return
+    the same IPC file without re-executing the producer plan.
+    """
+    try:
+        return funcs.resolve_virtual_table(payload)
+    except Exception as e:
+        logger.error(f"Error in resolve_virtual_table: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/catalog/sql_query", response_model=models.SqlQueryResponse)
 def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryResponse:
     """Execute a SQL query against catalog tables (physical + virtual)."""
@@ -448,7 +463,7 @@ def catalog_sql_query(payload: models.SqlQueryRequest) -> models.SqlQueryRespons
             payload.query,
             payload.tables,
             payload.max_rows,
-            virtual_tables_ipc=payload.virtual_tables_ipc,
+            virtual_refs=payload.virtual_refs,
         )
         return models.SqlQueryResponse(**result)
     except ValueError as e:
@@ -511,13 +526,10 @@ def materialize_catalog_table(payload: models.CatalogMaterializeRequest) -> mode
             )
 
         result = queue.get(timeout=5)
-        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
-        table_path = result.get("table_path", result.get("parquet_path"))
+        column_schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.CatalogMaterializeResponse(
-            table_path=table_path,
-            parquet_path=table_path,  # backward compat
-            storage_format=result.get("storage_format", "delta"),
-            schema=schema,
+            table_path=result["table_path"],
+            column_schema=column_schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
@@ -535,10 +547,10 @@ def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMet
     """
     try:
         _validate_catalog_path(payload.table_path)
-        result = funcs.read_table_metadata(payload.table_path, payload.storage_format)
-        schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
+        result = funcs.read_table_metadata(payload.table_path)
+        column_schema = [models.ColumnSchema(name=s["name"], dtype=s["dtype"]) for s in result["schema"]]
         return models.TableMetadataResponse(
-            schema=schema,
+            column_schema=column_schema,
             row_count=result["row_count"],
             column_count=result["column_count"],
             size_bytes=result["size_bytes"],
@@ -574,6 +586,73 @@ def get_delta_version_preview(payload: models.DeltaVersionPreviewRequest) -> mod
     except Exception as e:
         logger.error(f"Error reading delta version preview: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/catalog/visualize_query", response_model=models.VisualizeQueryResponse)
+async def catalog_visualize_query(payload: models.VisualizeQueryRequest) -> models.VisualizeQueryResponse:
+    """Run a Graphic Walker workflow against a cached source LazyFrame."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    loop = asyncio.get_running_loop()
+    try:
+        result, _ = await loop.run_in_executor(
+            None,
+            viz_session_registry.execute,
+            payload.source,
+            "execute",
+            payload.payload,
+            payload.max_rows,
+        )
+        return models.VisualizeQueryResponse(**result)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return models.VisualizeQueryResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error in visualize_query: {str(e)}", exc_info=True)
+        return models.VisualizeQueryResponse(error=str(e))
+
+
+@router.post("/catalog/visualize_fields", response_model=models.VisualizeFieldsResponse)
+async def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> models.VisualizeFieldsResponse:
+    """Return the Graphic Walker field schema for a cached source LazyFrame."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    loop = asyncio.get_running_loop()
+    try:
+        result, cache_hit = await loop.run_in_executor(
+            None,
+            viz_session_registry.execute,
+            payload.source,
+            "fields",
+            None,
+            None,
+        )
+        return models.VisualizeFieldsResponse(fields=result["fields"], cache_hit=cache_hit)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return models.VisualizeFieldsResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error in visualize_fields: {str(e)}", exc_info=True)
+        return models.VisualizeFieldsResponse(error=str(e))
+
+
+@router.post("/catalog/visualize_evict")
+def catalog_visualize_evict(session_key: str):
+    """Drop a cached viz session (called by core after a table update/delete)."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    viz_session_registry.evict(session_key)
+    return {"ok": True, "session_key": session_key}
+
+
+@router.get("/catalog/visualize_stats")
+def catalog_visualize_stats() -> list[dict]:
+    """Return per-child viz-session statistics (debug/observability)."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    return viz_session_registry.stats()
 
 
 def validate_result(task_id: str) -> bool | None:

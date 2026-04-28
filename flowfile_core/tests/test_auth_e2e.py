@@ -126,14 +126,14 @@ def running_container(docker_client, docker_image, project_root):
         "PYTHONUNBUFFERED": "1",
     }
 
-    # Start the container
+    # Start the container. Don't pass remove=True: a crashed container would be
+    # auto-removed before we can read its logs, leaving the failure invisible.
     container = docker_client.containers.run(
         image=docker_image.id,
         detach=True,
         ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
         environment=environment,
         name=f"flowfile-e2e-test-{int(time.time())}",
-        remove=True,  # Auto-remove when stopped
     )
 
     try:
@@ -145,8 +145,11 @@ def running_container(docker_client, docker_image, project_root):
 
         if not wait_for_service(service_url):
             # Print container logs for debugging
-            logs = container.logs(tail=50).decode("utf-8")
-            print(f"\nContainer logs:\n{logs}")
+            try:
+                logs = container.logs(tail=200).decode("utf-8", errors="replace")
+                print(f"\nContainer logs:\n{logs}")
+            except Exception as exc:
+                print(f"Could not retrieve logs: {exc}")
             pytest.fail(f"Service did not start within {CONTAINER_STARTUP_TIMEOUT} seconds")
 
         print(f"\n{'='*60}")
@@ -159,10 +162,10 @@ def running_container(docker_client, docker_image, project_root):
         yield container
 
     finally:
-        # Cleanup: Stop and remove the container
+        # Cleanup: Capture logs first, then stop and remove the container.
         print(f"\nStopping container: {container.name}")
         try:
-            logs = container.logs(tail=100).decode("utf-8")
+            logs = container.logs(tail=200).decode("utf-8", errors="replace")
             print(f"\nFinal container logs:\n{logs}")
         except Exception as e:
             print(f"Could not retrieve logs: {e}")
@@ -176,6 +179,11 @@ def running_container(docker_client, docker_image, project_root):
                 container.kill()
             except Exception:
                 pass
+
+        try:
+            container.remove(force=True)
+        except Exception as e:
+            print(f"Error removing container: {e}")
 
 
 class TestDockerE2EAuthentication:
@@ -308,13 +316,14 @@ class TestDockerE2EWithoutAdminCredentials:
             "FLOWFILE_USER_DATA_DIR": "/app/user_data",
         }
 
+        # Don't pass remove=True: a crashed container would be auto-removed
+        # before we can read its logs.
         container = docker_client.containers.run(
             image=docker_image.id,
             detach=True,
             ports={f"{FLOWFILE_CORE_PORT}/tcp": 63590},  # Use unique port to avoid conflicts
             environment=environment,
             name=f"flowfile-e2e-no-admin-{int(time.time())}",
-            remove=True,
         )
 
         try:
@@ -325,13 +334,15 @@ class TestDockerE2EWithoutAdminCredentials:
             logs = ""
 
             while time.time() - start_time < timeout:
-                logs = container.logs().decode("utf-8")
+                logs = container.logs().decode("utf-8", errors="replace")
                 if "FLOWFILE_ADMIN_USER" in logs or "FLOWFILE_ADMIN_PASSWORD" in logs:
                     break
                 elapsed = time.time() - start_time
                 print(f"Waiting for admin warning in logs... ({elapsed:.1f}s / {timeout}s)")
                 time.sleep(interval)
 
+            if "FLOWFILE_ADMIN_USER" not in logs and "FLOWFILE_ADMIN_PASSWORD" not in logs:
+                print(f"\nContainer logs (warning never appeared):\n{logs}")
             # Should contain warning about missing admin credentials
             assert "FLOWFILE_ADMIN_USER" in logs or "FLOWFILE_ADMIN_PASSWORD" in logs
             assert "not set" in logs or "warning" in logs.lower()
@@ -341,6 +352,10 @@ class TestDockerE2EWithoutAdminCredentials:
         finally:
             try:
                 container.stop(timeout=5)
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
             except Exception:
                 pass
 
