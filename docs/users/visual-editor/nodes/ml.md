@@ -7,18 +7,16 @@ do not need scikit-learn or any extra Python environment.
 
 ## The pipeline shape
 
-A typical ML flow uses five nodes in this order:
+A typical ML flow chains five nodes end-to-end:
 
-```
-Read → Random Split → Train Model ─┐
-                            ↓      │
-                          (train)  │
-                                   │
-              ┌── Wait For ────────┘
-              │     ↓
-            (test)  │
-              ↓     ↓
-            Apply Model → Evaluate Model
+```mermaid
+flowchart LR
+    Read[Read] --> Split[Random Split]
+    Split -- train --> Train[Train Model]
+    Split -- test --> Wait[Wait For]
+    Train --> Wait
+    Wait --> Apply[Apply Model]
+    Apply --> Eval[Evaluate Model]
 ```
 
 - **Random Split** carves the input into a `train` and `test` slice.
@@ -31,13 +29,14 @@ Read → Random Split → Train Model ─┐
 - **Evaluate Model** compares the actual and predicted columns and emits a
   `(metric, value)` table.
 
-You can skip Wait For if Apply Model is reading from the catalog instead of
-an upstream node, but the in-flow path is the simplest train→apply chain
-and what the starter templates use.
+!!! tip "Skipping Wait For"
+    You can skip Wait For if Apply Model is reading from the catalog
+    instead of an upstream node. The in-flow path shown above is the
+    simplest train→apply chain and what the starter templates use.
 
 ---
 
-## Random Split
+## ![Random Split](../../../assets/images/nodes/random_split.svg){ width="50" height="50" } Random Split
 
 Randomly partitions rows into named output handles. Default is two outputs,
 `train` (80%) and `test` (20%), but you can configure up to ten splits with
@@ -60,7 +59,7 @@ arbitrary names.
 
 ---
 
-## Train Model
+## ![Train Model](../../../assets/images/nodes/train_model.svg){ width="50" height="50" } Train Model
 
 Fits a model on the input rows and stores the artifact for downstream use.
 The data passes through unchanged on the output, so you can chain other
@@ -99,7 +98,7 @@ nodes off the same Train Model output if you want.
 
 ---
 
-## Wait For
+## ![Wait For](../../../assets/images/nodes/wait_for.svg){ width="50" height="50" } Wait For
 
 Pass-through node with two inputs: the **left** input flows through
 unchanged, the **right** input only enforces ordering. Once both inputs have
@@ -116,7 +115,7 @@ dependency branch into the right input.
 
 ---
 
-## Apply Model
+## ![Apply Model](../../../assets/images/nodes/apply_model.svg){ width="50" height="50" } Apply Model
 
 Adds a prediction column to the input. The model is loaded either from an
 upstream Train Model in the same flow, or by name/version from the catalog.
@@ -144,7 +143,7 @@ upstream Train Model in the same flow, or by name/version from the catalog.
 
 ---
 
-## Evaluate Model
+## ![Evaluate Model](../../../assets/images/nodes/evaluate_model.svg){ width="50" height="50" } Evaluate Model
 
 Compares an actual column against a predicted column and emits a
 `(metric, value)` table. It does not care which Train/Apply pair produced
@@ -258,25 +257,7 @@ The catalog path is also supported — pass `model_name=` (and optionally
 
 ---
 
-## Adding a new algorithm
-
-The algorithm registry lives in `shared/ml/`. Adding one is a backend-only
-change — no new Vue component is required, because the Train Model drawer
-renders its hyperparameter form from the algorithm spec returned by
-`GET /ml/algorithms`.
-
-1. Declare a `Hyperparams<Foo>` Pydantic class in `shared/ml/algorithms.py`
-   with the tunable params and their defaults.
-2. Implement a `Trainer` (the protocol in `shared/ml/trainers.py`) with
-   `train(...)` and `apply(...)` methods, set `model_type`, `label`,
-   `task_type`, `output_dtype`, and a `spec()` describing the form fields.
-3. Register the trainer in `TRAINER_REGISTRY` at the bottom of the module.
-
-If your algorithm needs sklearn, set `serialization_format = "joblib"` and
-extend the worker's `apply_model_task` to load joblib artifacts (the
-default loader is JSON).
-
-For classification algorithms, also make sure
-`shared/ml/metrics.py` covers your metric set — the `_classification_metrics`
-function already handles any binary or multi-class labelling, so you only
-need to touch it if you are adding new metrics.
+!!! info "For contributors"
+    Adding a new algorithm to the registry is a backend-only change. See
+    [Extending ML Nodes](../../../for-developers/extending-ml-nodes.md)
+    for the recipe.

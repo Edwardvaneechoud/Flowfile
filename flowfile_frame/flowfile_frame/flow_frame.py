@@ -1509,6 +1509,78 @@ class FlowFrame:
         self.flow_graph.add_apply_model(apply_settings)
         return self._create_child_frame(new_node_id)
 
+    def evaluate_model(
+        self,
+        actual_column: str,
+        *,
+        predicted_column: str = "prediction",
+        task_type: Literal["auto", "regression", "classification"] = "auto",
+        upstream: FlowFrame | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Compute model-quality metrics by comparing an actual column with a prediction column.
+
+        Returns a long-form ``(metric, value)`` frame. Reusable on training,
+        test, or hold-out splits — there's no built-in coupling to a specific
+        Train/Apply pair. Pass *upstream* (a FlowFrame returned by
+        :meth:`train_model`) so ``task_type="auto"`` can read the trainer's
+        task type; otherwise pass *task_type* explicitly. When neither is set,
+        regression metrics are computed.
+
+        Parameters
+        ----------
+        actual_column:
+            Column on the input frame holding the true values.
+        predicted_column:
+            Column on the input frame holding the predicted values. Defaults
+            to ``"prediction"``, matching :meth:`apply_model`'s default
+            *output_column*.
+        task_type:
+            Metric set to compute. ``"auto"`` resolves the task type from
+            *upstream*'s trainer when provided; otherwise falls back to
+            ``"regression"``.
+        upstream:
+            Optional :class:`FlowFrame` returned by :meth:`train_model`. When
+            given, ``task_type="auto"`` reads the trainer's task type from
+            this node.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with two columns: ``metric`` (String) and
+            ``value`` (Float64).
+        """
+        if actual_column not in self.columns:
+            raise ValueError(f"evaluate_model: actual_column '{actual_column}' not in input columns {self.columns}.")
+        if predicted_column not in self.columns:
+            raise ValueError(
+                f"evaluate_model: predicted_column '{predicted_column}' not in input columns {self.columns}."
+            )
+        if upstream is not None and upstream.flow_graph is not self.flow_graph:
+            raise ValueError("evaluate_model: 'upstream' must belong to the same flow as this frame.")
+
+        new_node_id = generate_node_id()
+        evaluate_settings = input_schema.NodeEvaluateModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column=actual_column,
+                predicted_column=predicted_column,
+                task_type=task_type,
+                upstream_train_node_id=upstream.node_id if upstream is not None else None,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or f"Evaluate {predicted_column} vs {actual_column}",
+        )
+        self.flow_graph.add_evaluate_model(evaluate_settings)
+        return self._create_child_frame(new_node_id)
+
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
         """
         Write the data to a CSV file.
@@ -2079,6 +2151,111 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_graph_solver(graph_solver_settings)
+        return self._create_child_frame(new_node_id)
+
+    def dynamic_rename(
+        self,
+        mode: Literal["prefix", "suffix", "formula", "first_row"] = "prefix",
+        *,
+        prefix: str = "",
+        suffix: str = "",
+        formula: str = "",
+        columns: list[str] | None = None,
+        data_type: Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Rename many columns at once via a single rule.
+
+        One node, four modes — useful when you need a uniform transformation
+        across columns (e.g. prefixing every numeric column with ``"num_"``)
+        or want to promote the first row of a CSV to headers.
+
+        Parameters
+        ----------
+        mode:
+            How to compute new column names.
+
+            - ``"prefix"`` — prepend *prefix* to each selected column's name.
+            - ``"suffix"`` — append *suffix* to each selected column's name.
+            - ``"formula"`` — evaluate a Flowfile formula with
+              ``[column_name]`` bound to each column's current name
+              (e.g. ``"uppercase([column_name])"``).
+            - ``"first_row"`` — promote the first row of data to column
+              headers and drop that row from the output.
+        prefix:
+            Required and only valid when ``mode="prefix"``.
+        suffix:
+            Required and only valid when ``mode="suffix"``.
+        formula:
+            Required and only valid when ``mode="formula"``.
+        columns:
+            When given, apply the rule only to these columns. Mutually
+            exclusive with *data_type*.
+        data_type:
+            When given, apply the rule only to columns of this data-type
+            group. Mutually exclusive with *columns*.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with renamed columns. In ``"first_row"`` mode,
+            the first row is dropped from the output regardless of which
+            columns were selected for renaming.
+        """
+        if mode == "prefix":
+            if not prefix:
+                raise ValueError("dynamic_rename: 'prefix' is required when mode='prefix'.")
+            if suffix or formula:
+                raise ValueError("dynamic_rename: only 'prefix' may be set when mode='prefix'.")
+        elif mode == "suffix":
+            if not suffix:
+                raise ValueError("dynamic_rename: 'suffix' is required when mode='suffix'.")
+            if prefix or formula:
+                raise ValueError("dynamic_rename: only 'suffix' may be set when mode='suffix'.")
+        elif mode == "formula":
+            if not formula.strip():
+                raise ValueError("dynamic_rename: 'formula' is required when mode='formula'.")
+            if prefix or suffix:
+                raise ValueError("dynamic_rename: only 'formula' may be set when mode='formula'.")
+        elif mode == "first_row":
+            if prefix or suffix or formula:
+                raise ValueError(
+                    "dynamic_rename: 'prefix', 'suffix' and 'formula' must be empty when mode='first_row'."
+                )
+
+        if columns is not None and data_type is not None:
+            raise ValueError("dynamic_rename: pass at most one of 'columns' or 'data_type'.")
+
+        if columns is not None:
+            selection_mode = "list"
+        elif data_type is not None:
+            selection_mode = "data_type"
+        else:
+            selection_mode = "all"
+
+        new_node_id = generate_node_id()
+        rename_settings = input_schema.NodeDynamicRename(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode=mode,
+                prefix=prefix,
+                suffix=suffix,
+                formula=formula,
+                selection_mode=selection_mode,
+                selected_columns=list(columns or []),
+                selected_data_type=data_type,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_dynamic_rename(rename_settings)
         return self._create_child_frame(new_node_id)
 
     def cache(self) -> FlowFrame:

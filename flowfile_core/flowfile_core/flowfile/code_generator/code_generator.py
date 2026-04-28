@@ -2077,6 +2077,127 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             f"       )"
         )
 
+    def _handle_train_model(
+        self, settings: input_schema.NodeTrainModel, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Train Model nodes — emit ``df.train_model(...)``."""
+        input_df = input_vars.get("main", "df")
+        s = settings.train_input
+        args = [f"target={s.target_column!r}"]
+        if s.feature_columns:
+            args.append(f"features={s.feature_columns!r}")
+        if s.model_type != "linear_regression":
+            args.append(f"model_type={s.model_type!r}")
+        if s.params:
+            args.append(f"params={s.params!r}")
+        if s.publish_to_catalog:
+            args.append("publish_to_catalog=True")
+            if s.model_name:
+                args.append(f"model_name={s.model_name!r}")
+            if s.namespace_id is not None:
+                args.append(f"namespace_id={s.namespace_id}")
+            if s.catalog_description:
+                args.append(f"catalog_description={s.catalog_description!r}")
+            if s.catalog_tags:
+                args.append(f"catalog_tags={s.catalog_tags!r}")
+        self._add_code(f"{var_name} = {input_df}.train_model({', '.join(args)})")
+        self._add_code("")
+
+    def _handle_apply_model(
+        self, settings: input_schema.NodeApplyModel, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Apply Model nodes — emit ``df.apply_model(...)`` for both upstream and catalog modes."""
+        input_df = input_vars.get("main", "df")
+        s = settings.apply_input
+        args: list[str] = []
+
+        if s.source == "upstream":
+            if s.upstream_node_id is None:
+                self.unsupported_nodes.append(
+                    (settings.node_id, "apply_model", "apply_model in upstream mode has no upstream_node_id")
+                )
+                return
+            upstream_var = self.node_var_mapping.get(s.upstream_node_id)
+            if upstream_var is None:
+                self.unsupported_nodes.append(
+                    (
+                        settings.node_id,
+                        "apply_model",
+                        f"apply_model upstream_node_id={s.upstream_node_id} is not present in the exported graph",
+                    )
+                )
+                return
+            args.append(f"upstream={upstream_var}")
+        else:
+            if not s.model_name:
+                self.unsupported_nodes.append(
+                    (settings.node_id, "apply_model", "apply_model in catalog mode has no model_name configured")
+                )
+                return
+            args.append(f"model_name={s.model_name!r}")
+            if s.model_version is not None:
+                args.append(f"version={s.model_version}")
+            if s.namespace_id is not None:
+                args.append(f"namespace_id={s.namespace_id}")
+
+        if s.output_column != "prediction":
+            args.append(f"output_column={s.output_column!r}")
+
+        self._add_code(f"{var_name} = {input_df}.apply_model({', '.join(args)})")
+        self._add_code("")
+
+    def _handle_evaluate_model(
+        self, settings: input_schema.NodeEvaluateModel, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Evaluate Model nodes — emit ``df.evaluate_model(...)``."""
+        input_df = input_vars.get("main", "df")
+        s = settings.evaluate_input
+        args = [repr(s.actual_column)]
+        if s.predicted_column != "prediction":
+            args.append(f"predicted_column={s.predicted_column!r}")
+        if s.task_type != "auto":
+            args.append(f"task_type={s.task_type!r}")
+        if s.upstream_train_node_id is not None:
+            upstream_var = self.node_var_mapping.get(s.upstream_train_node_id)
+            if upstream_var is not None:
+                args.append(f"upstream={upstream_var}")
+        self._add_code(f"{var_name} = {input_df}.evaluate_model({', '.join(args)})")
+        self._add_code("")
+
+    def _handle_wait_for(
+        self, settings: input_schema.NodeWaitFor, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Wait For nodes — emit ``df.wait_for(dependency)``."""
+        main_df = input_vars.get("main", "df")
+        dep_df = input_vars.get("right")
+        if dep_df is None:
+            self.unsupported_nodes.append(
+                (settings.node_id, "wait_for", "wait_for node has no dependency input wired to its right handle")
+            )
+            return
+        self._add_code(f"{var_name} = {main_df}.wait_for({dep_df})")
+        self._add_code("")
+
+    def _handle_dynamic_rename(
+        self, settings: input_schema.NodeDynamicRename, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle Dynamic Rename nodes — emit ``df.dynamic_rename(...)``."""
+        input_df = input_vars.get("main", "df")
+        s = settings.dynamic_rename_input
+        args = [f"mode={s.rename_mode!r}"]
+        if s.prefix:
+            args.append(f"prefix={s.prefix!r}")
+        if s.suffix:
+            args.append(f"suffix={s.suffix!r}")
+        if s.formula:
+            args.append(f"formula={s.formula!r}")
+        if s.selection_mode == "list":
+            args.append(f"columns={s.selected_columns!r}")
+        elif s.selection_mode == "data_type" and s.selected_data_type is not None:
+            args.append(f"data_type={s.selected_data_type!r}")
+        self._add_code(f"{var_name} = {input_df}.dynamic_rename({', '.join(args)})")
+        self._add_code("")
+
 
 def export_flow_to_polars(flow_graph: FlowGraph) -> str:
     converter = FlowGraphToPolarsConverter(flow_graph)

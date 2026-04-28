@@ -5117,5 +5117,531 @@ def test_kafka_source_code_executes():
             db.commit()
 
 
+# ---------------------------------------------------------------------------
+# ML / DS round-trip tests — train_model, apply_model, evaluate_model, wait_for
+# ---------------------------------------------------------------------------
+
+
+def _create_ml_sample_dataframe_node(flow: FlowGraph, node_id: int = 1) -> FlowGraph:
+    """Manual input with two numeric features and a target — suitable for linear regression."""
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=node_id,
+        raw_data_format=input_schema.RawData.from_pylist(
+            [
+                {"x1": 1.0, "x2": 2.0, "y": 5.0},
+                {"x1": 2.0, "x2": 1.0, "y": 4.0},
+                {"x1": 3.0, "x2": 4.0, "y": 11.0},
+                {"x1": 4.0, "x2": 3.0, "y": 10.0},
+                {"x1": 5.0, "x2": 5.0, "y": 15.0},
+            ]
+        ),
+    )
+    flow.add_manual_input(manual_input)
+    return flow
+
+
+def _create_predictions_dataframe_node(flow: FlowGraph, node_id: int = 1) -> FlowGraph:
+    """Manual input shaped like the output of an Apply Model node — for evaluate-only tests."""
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=node_id,
+        raw_data_format=input_schema.RawData.from_pylist(
+            [
+                {"y": 1.0, "prediction": 1.1},
+                {"y": 2.0, "prediction": 1.9},
+                {"y": 3.0, "prediction": 3.0},
+                {"y": 4.0, "prediction": 4.2},
+                {"y": 5.0, "prediction": 5.1},
+            ]
+        ),
+    )
+    flow.add_manual_input(manual_input)
+    return flow
+
+
+def test_evaluate_model_round_trip():
+    """Evaluate Model alone — pure-polars node, no worker round-trip needed."""
+    flow = create_basic_flow()
+    _create_predictions_dataframe_node(flow, node_id=1)
+    flow.add_evaluate_model(
+        input_schema.NodeEvaluateModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column="y", predicted_column="prediction"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, '.evaluate_model(\'y\')')
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_evaluate_model_classification_round_trip():
+    """Explicit task_type='classification' must be preserved by code-gen."""
+    flow = create_basic_flow()
+    manual_input = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData.from_pylist(
+            [
+                {"y": 0, "prediction": 0},
+                {"y": 1, "prediction": 1},
+                {"y": 0, "prediction": 1},
+                {"y": 1, "prediction": 1},
+            ]
+        ),
+    )
+    flow.add_manual_input(manual_input)
+    flow.add_evaluate_model(
+        input_schema.NodeEvaluateModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column="y", predicted_column="prediction", task_type="classification"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "task_type='classification'")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_train_model_round_trip():
+    """Train Model is pass-through; generated code should produce the same frame as direct execution."""
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1", "x2"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, ".train_model(", "target='y'", "features=['x1', 'x2']")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_train_apply_round_trip():
+    """Train + Apply chained: apply consumes train's output and adds a prediction column."""
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1", "x2"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+    breakpoint()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Apply chains off train so depending_on_id walks back through it (forces train to run first).
+    flow.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            apply_input=input_schema.ApplyModelSettings(
+                source="upstream",
+                upstream_node_id=2,
+                output_column="prediction",
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, ".apply_model(upstream=df_2)")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_apply_model_custom_output_column_round_trip():
+    """A non-default output_column must be preserved in generated code."""
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1", "x2"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            apply_input=input_schema.ApplyModelSettings(
+                source="upstream",
+                upstream_node_id=2,
+                output_column="score",
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "output_column='score'")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    assert "score" in result.columns
+
+
+def test_apply_model_catalog_mode_emits_correct_code():
+    """Catalog-mode apply_model should emit model_name/version/namespace_id without trying to fetch.
+
+    We don't execute the generated code here — the test environment has no
+    catalog backend, and runtime catalog resolution is exercised in
+    ``test_ml_train_apply.py``.
+    """
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            apply_input=input_schema.ApplyModelSettings(
+                source="catalog",
+                model_name="my_model",
+                model_version=3,
+                namespace_id=42,
+                output_column="prediction",
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "model_name='my_model'", "version=3", "namespace_id=42")
+
+
+def test_train_apply_evaluate_full_chain_round_trip():
+    """End-to-end DS pipeline: manual_input -> train -> apply -> evaluate."""
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1", "x2"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            apply_input=input_schema.ApplyModelSettings(
+                source="upstream", upstream_node_id=2, output_column="prediction"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_evaluate_model(
+        input_schema.NodeEvaluateModel(
+            flow_id=flow.flow_id,
+            node_id=4,
+            depending_on_id=3,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column="y",
+                predicted_column="prediction",
+                task_type="auto",
+                upstream_train_node_id=2,
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_ordering(code, ".train_model(", ".apply_model(", ".evaluate_model(")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_wait_for_round_trip():
+    """Wait For should preserve its left input and forward the dependency through code-gen."""
+    flow = create_basic_flow()
+    _create_ml_sample_dataframe_node(flow, node_id=1)
+    flow.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1", "x2"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            apply_input=input_schema.ApplyModelSettings(
+                source="upstream", upstream_node_id=2, output_column="prediction"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    flow.add_wait_for(
+        input_schema.NodeWaitFor(
+            flow_id=flow.flow_id,
+            node_id=4,
+            depending_on_ids=[3, 2],
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4, "main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 4, "right"))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, ".wait_for(df_2)")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(4).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Rename round-trip tests
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_rename_prefix_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    flow.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="prefix", prefix="src_", selection_mode="all"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, ".dynamic_rename(mode='prefix', prefix='src_')")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_dynamic_rename_suffix_with_columns_list_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    flow.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="suffix",
+                suffix="_raw",
+                selection_mode="list",
+                selected_columns=["name"],
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "mode='suffix'", "suffix='_raw'", "columns=['name']")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_dynamic_rename_data_type_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    flow.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="prefix",
+                prefix="num_",
+                selection_mode="data_type",
+                selected_data_type="Numeric",
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "data_type='Numeric'")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_dynamic_rename_formula_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    flow.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="formula",
+                formula="uppercase([column_name])",
+                selection_mode="all",
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "mode='formula'", "uppercase([column_name])")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+def test_dynamic_rename_first_row_round_trip():
+    flow = create_basic_flow()
+    create_sample_dataframe_node(flow, node_id=1)
+    flow.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="first_row", selection_mode="all"
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_flowframe(flow)
+    verify_code_contains(code, "mode='first_row'")
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# Polars-side: confirm these new node types are flagged as unsupported when
+# the user requests a pure-Polars export.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "node_type",
+    ["train_model", "apply_model", "evaluate_model", "wait_for", "dynamic_rename"],
+)
+def test_new_nodes_unsupported_in_polars_export(node_type):
+    flow = create_basic_flow()
+    _create_predictions_dataframe_node(flow, node_id=1)
+    if node_type == "train_model":
+        flow.add_train_model(
+            input_schema.NodeTrainModel(
+                flow_id=flow.flow_id, node_id=2, depending_on_id=1,
+                train_input=input_schema.TrainModelSettings(
+                    target_column="y", feature_columns=["prediction"], model_type="linear_regression"
+                ),
+            )
+        )
+    elif node_type == "apply_model":
+        flow.add_apply_model(
+            input_schema.NodeApplyModel(
+                flow_id=flow.flow_id, node_id=2, depending_on_id=1,
+                apply_input=input_schema.ApplyModelSettings(
+                    source="catalog", model_name="m", output_column="pred"
+                ),
+            )
+        )
+    elif node_type == "evaluate_model":
+        flow.add_evaluate_model(
+            input_schema.NodeEvaluateModel(
+                flow_id=flow.flow_id, node_id=2, depending_on_id=1,
+                evaluate_input=input_schema.EvaluateModelSettings(
+                    actual_column="y", predicted_column="prediction"
+                ),
+            )
+        )
+    elif node_type == "wait_for":
+        flow.add_wait_for(
+            input_schema.NodeWaitFor(flow_id=flow.flow_id, node_id=2, depending_on_ids=[1])
+        )
+    elif node_type == "dynamic_rename":
+        flow.add_dynamic_rename(
+            input_schema.NodeDynamicRename(
+                flow_id=flow.flow_id, node_id=2, depending_on_id=1,
+                dynamic_rename_input=transform_schema.DynamicRenameInput(
+                    rename_mode="prefix", prefix="x_"
+                ),
+            )
+        )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    with pytest.raises(UnsupportedNodeError):
+        export_flow_to_polars(flow)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
