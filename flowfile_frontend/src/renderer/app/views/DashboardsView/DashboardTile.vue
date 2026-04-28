@@ -6,11 +6,7 @@
       'tile-text-view': isText && mode === 'view',
     }"
   >
-    <div
-      v-if="!isText"
-      class="tile-header"
-      :class="{ 'tile-handle': mode === 'edit' }"
-    >
+    <div v-if="!isText" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
       <span class="tile-title">{{ headerTitle }}</span>
       <div class="tile-header-actions">
         <span v-if="lastError" class="tile-error" :title="lastError"
@@ -35,11 +31,7 @@
       </div>
     </div>
 
-    <div
-      v-if="isText && mode === 'edit' && !textEditing"
-      class="tile-text-actions"
-      @mousedown.stop
-    >
+    <div v-if="isText && mode === 'edit' && !textEditing" class="tile-text-actions" @mousedown.stop>
       <el-dropdown trigger="click" @click.stop>
         <el-icon class="tile-menu"><MoreFilled /></el-icon>
         <template #dropdown>
@@ -55,10 +47,7 @@
       </el-dropdown>
     </div>
 
-    <div
-      class="tile-body"
-      :class="{ 'tile-handle': isText && mode === 'edit' && !textEditing }"
-    >
+    <div class="tile-body" :class="{ 'tile-handle': isText && mode === 'edit' && !textEditing }">
       <template v-if="isText">
         <textarea
           v-if="mode === 'edit' && textEditing"
@@ -112,6 +101,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~484 LOC. Plan to extract:
+//   - Move :deep() markdown styles (~lines 399-484) to an external _markdown.css import
+//   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
+//   - useDashboardTileViz composable: viz loading (~lines 155-234)
 import { computed, nextTick, onMounted, ref, toRef, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";

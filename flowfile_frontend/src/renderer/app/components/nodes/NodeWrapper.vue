@@ -165,6 +165,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~709 LOC. Plan to extract:
+//   - NodeContextMenu.vue (~lines 92-161, with positioning at ~263-283)
+//   - NodeDescriptionEditor.vue (~lines 11-48)
+//   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";

@@ -114,6 +114,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~1027 LOC, god component. Plan to extract:
+//   - useDraggableResize composable: per-edge resize handlers (~lines 365-457)
+//   - useDraggablePosition composable: move/sticky helpers (~lines 475-545)
+//   - DraggableItemHeader.vue: header controls (~lines 19-87)
+//   - useGroupSync composable: group dimension sync (~lines 285-316)
 import {
   ref,
   onMounted,
