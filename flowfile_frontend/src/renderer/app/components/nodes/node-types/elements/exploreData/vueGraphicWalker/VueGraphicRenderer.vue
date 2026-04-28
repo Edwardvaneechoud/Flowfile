@@ -61,6 +61,14 @@ const injectShadowOverride = (shadow: ShadowRoot): void => {
 // wrapper is missing h-full), so we measure the tile ourselves and pass
 // the result as `overrideSize: { mode: 'fixed', ... }` — the library
 // treats it as a hard replacement for layout.size.
+//
+// Floor the size we pass so that on tiles smaller than MIN_CHART_*, the
+// chart stays legible and the surrounding `overflow-auto w-full h-full`
+// wrapper that GW already renders shows scrollbars (its inner Resizable
+// is `flex-shrink: 0`).
+const MIN_CHART_W = 280;
+const MIN_CHART_H = 200;
+
 const getReactProps = (): Record<string, any> => {
   const reactProps: Record<string, any> = {
     fields: props.fields ? toRaw(props.fields) : undefined,
@@ -69,7 +77,11 @@ const getReactProps = (): Record<string, any> => {
     themeKey: props.themeKey,
     computation: props.computation,
     containerStyle: { width: "100%", height: "100%" },
-    overrideSize: { mode: "fixed", width: measuredSize.w, height: measuredSize.h },
+    overrideSize: {
+      mode: "fixed",
+      width: Math.max(measuredSize.w, MIN_CHART_W),
+      height: Math.max(measuredSize.h, MIN_CHART_H),
+    },
   };
   Object.keys(reactProps).forEach((key) => {
     if (reactProps[key] === undefined) delete reactProps[key];
