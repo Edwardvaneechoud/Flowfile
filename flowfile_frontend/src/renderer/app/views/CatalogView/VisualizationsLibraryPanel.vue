@@ -3,9 +3,7 @@
     <div class="viz-library-header">
       <div>
         <h2>Visualizations</h2>
-        <p class="viz-library-sub">
-          Saved charts across the catalog. Click any chart to open it.
-        </p>
+        <p class="viz-library-sub">Saved charts across the catalog. Click any chart to open it.</p>
       </div>
       <el-input
         v-model="search"

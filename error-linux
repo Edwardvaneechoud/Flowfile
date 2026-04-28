@@ -1,0 +1,1524 @@
+Stopping container: flowfile-e2e-test-1777223851
+Could not retrieve logs: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+Error stopping container: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/stop?t=10: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+___ ERROR at setup of TestDockerE2EAuthentication.test_service_is_accessible ___
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_authentication_endpoint_exists _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_login_with_valid_admin_credentials _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_login_with_invalid_password _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_login_with_invalid_username _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_login_without_credentials _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+___ ERROR at setup of TestDockerE2EAuthentication.test_authenticated_request ___
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_unauthenticated_request_fails _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+_ ERROR at setup of TestDockerE2EAuthentication.test_container_logs_show_admin_user_creation _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    @pytest.fixture(scope="module")
+    def running_container(docker_client, docker_image, project_root):
+        """Start a Docker container with the test image."""
+        print(f"\n{'='*60}")
+        print(f"Starting Docker container...")
+        print(f"{'='*60}")
+
+        # Environment variables for Docker mode with admin user
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            "FLOWFILE_ADMIN_USER": TEST_ADMIN_USERNAME,
+            "FLOWFILE_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        # Start the container
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": FLOWFILE_CORE_PORT},
+            environment=environment,
+            name=f"flowfile-e2e-test-{int(time.time())}",
+            remove=True,  # Auto-remove when stopped
+        )
+
+        try:
+            print(f"Container started: {container.name} (ID: {container.short_id})")
+
+            # Wait for the service to be ready
+            service_url = f"http://localhost:{FLOWFILE_CORE_PORT}/docs"
+            print(f"\nWaiting for service at {service_url}...")
+
+            if not wait_for_service(service_url):
+                # Print container logs for debugging
+>               logs = container.logs(tail=50).decode("utf-8")
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:148:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+=================================== FAILURES ===================================
+_ TestDockerE2EWithoutAdminCredentials.test_container_starts_without_admin_env_vars _
+
+self = <docker.api.client.APIClient object at 0x7f8b9177ba90>
+response = <Response [404]>
+
+    def _raise_for_status(self, response):
+        """Raises stored :class:`APIError`, if one occurred."""
+        try:
+>           response.raise_for_status()
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:275:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [404]>
+
+    def raise_for_status(self):
+        """Raises :class:`HTTPError`, if one occurred."""
+
+        http_error_msg = ""
+        if isinstance(self.reason, bytes):
+            # We attempt to decode utf-8 first because some servers
+            # choose to localize their reason strings. If the string
+            # isn't utf-8, we fall back to iso-8859-1 for all other
+            # encodings. (See PR #3538)
+            try:
+                reason = self.reason.decode("utf-8")
+            except UnicodeDecodeError:
+                reason = self.reason.decode("iso-8859-1")
+        else:
+            reason = self.reason
+
+        if 400 <= self.status_code < 500:
+            http_error_msg = (
+                f"{self.status_code} Client Error: {reason} for url: {self.url}"
+            )
+
+        elif 500 <= self.status_code < 600:
+            http_error_msg = (
+                f"{self.status_code} Server Error: {reason} for url: {self.url}"
+            )
+
+        if http_error_msg:
+>           raise HTTPError(http_error_msg, response=self)
+E           requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8/json
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/requests/models.py:1028: HTTPError
+
+The above exception was the direct cause of the following exception:
+
+self = <tests.test_auth_e2e.TestDockerE2EWithoutAdminCredentials object at 0x7f8be9fbf250>
+docker_client = <docker.client.DockerClient object at 0x7f8bcbfba890>
+docker_image = <Image: 'flowfile-core:e2e-test'>
+project_root = PosixPath('/home/runner/work/Flowfile/Flowfile')
+
+    def test_container_starts_without_admin_env_vars(self, docker_client, docker_image, project_root):
+        """Test that container starts even without admin credentials (with warning)."""
+        print(f"\n{'='*60}")
+        print(f"Testing container without admin credentials...")
+        print(f"{'='*60}")
+
+        # Environment without admin credentials
+        environment = {
+            "FLOWFILE_MODE": "docker",
+            "JWT_SECRET_KEY": "e2e-test-secret-key-do-not-use-in-production",
+            "FLOWFILE_MASTER_KEY": TEST_MASTER_KEY,
+            # Intentionally omitting FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD
+            "FLOWFILE_STORAGE_DIR": "/app/internal_storage",
+            "FLOWFILE_USER_DATA_DIR": "/app/user_data",
+        }
+
+        container = docker_client.containers.run(
+            image=docker_image.id,
+            detach=True,
+            ports={f"{FLOWFILE_CORE_PORT}/tcp": 63590},  # Use unique port to avoid conflicts
+            environment=environment,
+            name=f"flowfile-e2e-no-admin-{int(time.time())}",
+            remove=True,
+        )
+
+        try:
+            # Poll container logs until the expected warning appears or timeout
+            timeout = 60
+            interval = 2
+            start_time = time.time()
+            logs = ""
+
+            while time.time() - start_time < timeout:
+>               logs = container.logs().decode("utf-8")
+                       ^^^^^^^^^^^^^^^^
+
+flowfile_core/tests/test_auth_e2e.py:328:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/models/containers.py:322: in logs
+    return self.client.api.logs(self.id, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:896: in logs
+    output = self._get_result(container, stream, res)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:483: in _get_result
+    return self._get_result_tty(stream, res, self._check_is_tty(container))
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:479: in _check_is_tty
+    cont = self.inspect_container(container)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/utils/decorators.py:19: in wrapped
+    return f(self, resource_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/container.py:793: in inspect_container
+    return self._result(
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:281: in _result
+    self._raise_for_status(response)
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/api/client.py:277: in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+e = HTTPError('404 Client Error: Not Found for url: http+docker://localhost/v1.48/containers/f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8/json')
+
+    def create_api_error_from_http_exception(e):
+        """
+        Create a suitable APIError from requests.exceptions.HTTPError.
+        """
+        response = e.response
+        try:
+            explanation = response.json()['message']
+        except ValueError:
+            explanation = (response.text or '').strip()
+        cls = APIError
+        if response.status_code == 404:
+            explanation_msg = (explanation or '').lower()
+            if any(fragment in explanation_msg
+                   for fragment in _image_not_found_explanation_fragments):
+                cls = ImageNotFound
+            else:
+                cls = NotFound
+>       raise cls(e, response=response, explanation=explanation) from e
+E       docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8/json: Not Found ("No such container: f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8")
+
+../../../.cache/pypoetry/virtualenvs/flowfile-jg8W8atp-py3.11/lib/python3.11/site-packages/docker/errors.py:39: NotFound
+----------------------------- Captured stdout call -----------------------------
+
+============================================================
+Testing container without admin credentials...
+============================================================
+Waiting for admin warning in logs... (0.0s / 60s)
+Waiting for admin warning in logs... (2.0s / 60s)
+Waiting for admin warning in logs... (4.0s / 60s)
+--------------------------- Captured stdout teardown ---------------------------
+
+Removing test image: ['flowfile-core:e2e-test']
+=========================== short test summary info ============================
+FAILED flowfile_core/tests/test_auth_e2e.py::TestDockerE2EWithoutAdminCredentials::test_container_starts_without_admin_env_vars - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8/json: Not Found ("No such container: f1111af409efa8cd8a816eabfe04d71fe052b52fd9567947daad34940e2c11b8")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_container_is_running - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_service_is_accessible - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_authentication_endpoint_exists - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_login_with_valid_admin_credentials - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_login_with_invalid_password - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_login_with_invalid_username - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_login_without_credentials - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_authenticated_request - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_unauthenticated_request_fails - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+ERROR flowfile_core/tests/test_auth_e2e.py::TestDockerE2EAuthentication::test_container_logs_show_admin_user_creation - docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.48/containers/b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e/json: Not Found ("No such container: b910d3ea98d45ac4f4e3992c2a172f7b7949689a7d5df9add24b8ce600e3688e")
+= 1 failed, 2676 passed, 2 skipped, 72 deselected, 2 xfailed, 2 xpassed, 324 warnings, 10 errors in 1123.62s (0:18:43) =
+Error: Process completed with exit code 1.

@@ -37,6 +37,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.exceptions import (
     AmbiguousTableError,
+    DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -59,6 +60,7 @@ from flowfile_core.catalog.exceptions import (
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import (
+    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
     CatalogVisualization,
@@ -78,6 +80,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_read_table_metadata,
     trigger_resolve_virtual_table,
     trigger_sql_query,
+    trigger_visualize_column_stats,
     trigger_visualize_fields,
     trigger_visualize_query,
 )
@@ -88,6 +91,10 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     CatalogTableSummary,
     ColumnSchema,
+    DashboardCreate,
+    DashboardLayout,
+    DashboardOut,
+    DashboardUpdate,
     DeltaTableHistory,
     DeltaVersionCommit,
     FlowRegistrationOut,
@@ -101,6 +108,7 @@ from flowfile_core.schemas.catalog_schema import (
     SqlQueryResult,
     VisualizationComputeResponse,
     VisualizationCreate,
+    ColumnStatsResponse,
     VisualizationFieldsResponse,
     VisualizationOut,
     VisualizationUpdate,
@@ -3287,6 +3295,109 @@ class CatalogService:
             raise VisualizationNotFoundError(viz_id=viz_id)
         self.repo.delete_visualization(viz_id)
 
+    # ================== Dashboards =========================================
+
+    def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
+        """Ensure every filter.datasource_id refers to an existing CatalogTable."""
+        seen: dict[int, bool] = {}
+        for f in layout.filters:
+            if f.datasource_id is None:
+                continue
+            if f.datasource_id in seen:
+                if not seen[f.datasource_id]:
+                    raise ValueError(
+                        f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}"
+                    )
+                continue
+            exists = self.repo.get_table(f.datasource_id) is not None
+            seen[f.datasource_id] = exists
+            if not exists:
+                raise ValueError(
+                    f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}"
+                )
+
+    def _dashboard_to_out(self, dashboard: CatalogDashboard) -> DashboardOut:
+        try:
+            raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
+        except (TypeError, ValueError):
+            raw = {}
+        layout = DashboardLayout.model_validate(raw) if raw else DashboardLayout()
+        ns_name: str | None = None
+        if dashboard.namespace_id is not None:
+            ns = self.repo.get_namespace(dashboard.namespace_id)
+            ns_name = ns.name if ns is not None else None
+        return DashboardOut(
+            id=dashboard.id,
+            name=dashboard.name,
+            description=dashboard.description,
+            layout=layout,
+            layout_version=dashboard.layout_version or 1,
+            namespace_id=dashboard.namespace_id,
+            namespace_name=ns_name,
+            created_by=dashboard.created_by,
+            created_at=dashboard.created_at,
+            updated_at=dashboard.updated_at,
+        )
+
+    def list_dashboards(self, user_id: int | None = None) -> list[DashboardOut]:
+        return [self._dashboard_to_out(d) for d in self.repo.list_dashboards()]
+
+    def get_dashboard(self, dashboard_id: int, user_id: int | None = None) -> DashboardOut:
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        return self._dashboard_to_out(dashboard)
+
+    def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
+        if payload.namespace_id is not None and self.repo.get_namespace(payload.namespace_id) is None:
+            raise NamespaceNotFoundError(namespace_id=payload.namespace_id)
+        self._validate_filter_datasources(payload.layout)
+        dashboard = CatalogDashboard(
+            name=payload.name,
+            description=payload.description,
+            layout_json=payload.layout.model_dump_json(),
+            layout_version=payload.layout.grid.version,
+            namespace_id=payload.namespace_id,
+            created_by=user_id,
+        )
+        created = self.repo.create_dashboard(dashboard)
+        return self._dashboard_to_out(created)
+
+    def update_dashboard(
+        self, dashboard_id: int, payload: DashboardUpdate, user_id: int
+    ) -> DashboardOut:
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        provided = payload.model_fields_set
+        if "name" in provided:
+            if payload.name is None:
+                raise ValueError("name cannot be cleared")
+            dashboard.name = payload.name
+        if "description" in provided:
+            dashboard.description = payload.description
+        if "namespace_id" in provided:
+            if (
+                payload.namespace_id is not None
+                and self.repo.get_namespace(payload.namespace_id) is None
+            ):
+                raise NamespaceNotFoundError(namespace_id=payload.namespace_id)
+            dashboard.namespace_id = payload.namespace_id
+        if "layout" in provided:
+            if payload.layout is None:
+                raise ValueError("layout cannot be cleared")
+            self._validate_filter_datasources(payload.layout)
+            dashboard.layout_json = payload.layout.model_dump_json()
+            dashboard.layout_version = payload.layout.grid.version
+        updated = self.repo.update_dashboard(dashboard)
+        return self._dashboard_to_out(updated)
+
+    def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        self.repo.delete_dashboard(dashboard_id)
+
     # ---- Compute ----------------------------------------------------------
 
     _MAX_VIZ_ROWS = 500_000
@@ -3498,3 +3609,35 @@ class CatalogService:
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc
         return VisualizationFieldsResponse(**data)
+
+    def get_table_column_stats(
+        self,
+        table_id: int,
+        column: str,
+        limit: int,
+        user_id: int,
+    ) -> ColumnStatsResponse:
+        """Distinct values + min/max for a single column on a catalog table.
+
+        Used by the dashboard filter UI to pre-populate categorical
+        dropdowns and pre-fill numeric range inputs. Reuses the
+        viz-session worker's cached LazyFrame so subsequent calls on the
+        same table skip the load step.
+        """
+        if self.repo.get_table(table_id) is None:
+            raise TableNotFoundError(table_id=table_id)
+        clamped_limit = max(1, min(limit, 1000))
+        source = VizSourceDescriptor(source_type="table", table_id=table_id)
+        worker_source = self._resolve_source_for_worker(source, user_id=user_id)
+        viz_logger.info(
+            "dispatch column_stats kind=%s session_key=%s column=%s limit=%d",
+            worker_source["kind"],
+            worker_source["session_key"],
+            column,
+            clamped_limit,
+        )
+        try:
+            data = trigger_visualize_column_stats(worker_source, column, clamped_limit)
+        except RuntimeError as exc:
+            raise VisualizationComputeError(str(exc)) from exc
+        return ColumnStatsResponse(**data)

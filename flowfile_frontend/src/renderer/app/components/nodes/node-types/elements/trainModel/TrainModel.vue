@@ -125,7 +125,6 @@
         />
         <p v-else class="hint">Pick an algorithm to see its hyperparameters.</p>
       </div>
-
     </generic-node-settings>
   </div>
 </template>

@@ -75,6 +75,8 @@ class VizSessionRegistry:
         if op == "execute":
             msg["payload"] = payload
             msg["max_rows"] = max_rows if max_rows is not None else 100_000
+        elif op == "column_stats":
+            msg["payload"] = payload
         with handle.parent_lock:
             try:
                 handle.request_q.put(msg, timeout=0.5)

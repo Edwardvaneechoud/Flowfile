@@ -344,7 +344,7 @@ export type CatalogTab =
   | "runs"
   | "schedules"
   | "sql"
-  | "visualizations";
+  | "visuals";
 
 // ============================================================================
 // SQL Query types
@@ -436,6 +436,17 @@ export interface VisualizationComputeResponse {
 
 export interface VisualizationFieldsResponse {
   fields: Record<string, any>[];
+  cache_hit: boolean;
+  error: string | null;
+}
+
+export interface ColumnStatsResponse {
+  dtype: string;
+  values: unknown[];
+  truncated: boolean;
+  distinct_count: number | null;
+  min: unknown | null;
+  max: unknown | null;
   cache_hit: boolean;
   error: string | null;
 }
