@@ -91,6 +91,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     CatalogTableSummary,
     ColumnSchema,
+    ColumnStatsResponse,
     DashboardCreate,
     DashboardLayout,
     DashboardOut,
@@ -108,7 +109,6 @@ from flowfile_core.schemas.catalog_schema import (
     SqlQueryResult,
     VisualizationComputeResponse,
     VisualizationCreate,
-    ColumnStatsResponse,
     VisualizationFieldsResponse,
     VisualizationOut,
     VisualizationUpdate,
@@ -133,9 +133,7 @@ def _should_offload() -> bool:
 _TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
 
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
-_GW_RAW_SELECT_ALL_PAYLOAD: dict = {
-    "workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]
-}
+_GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
 
 
 def _rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> str:
@@ -249,9 +247,7 @@ class CatalogService:
         ns = self.repo.get_namespace(namespace_id)
         return ns.name if ns is not None else None
 
-    def _resolve_viz_enrichment(
-        self, viz: CatalogVisualization, table: CatalogTable | None
-    ) -> _VizEnrichment:
+    def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> _VizEnrichment:
         table_name: str | None = None
         table_namespace_name: str | None = None
         table_full_name: str | None = None
@@ -328,9 +324,7 @@ class CatalogService:
             return tables[0]
         return self._disambiguate(f"{ns_name}.{table_name}", tables, strict=strict)
 
-    def _resolve_bare(
-        self, name: str, default_namespace_id: int | None, *, strict: bool
-    ) -> CatalogTable:
+    def _resolve_bare(self, name: str, default_namespace_id: int | None, *, strict: bool) -> CatalogTable:
         if default_namespace_id is not None:
             t = self.repo.get_table_by_name(name, default_namespace_id)
             if t is None:
@@ -343,9 +337,7 @@ class CatalogService:
             return matches[0]
         return self._disambiguate(name, matches, strict=strict)
 
-    def _disambiguate(
-        self, reference: str, matches: list[CatalogTable], *, strict: bool
-    ) -> CatalogTable:
+    def _disambiguate(self, reference: str, matches: list[CatalogTable], *, strict: bool) -> CatalogTable:
         candidates = [
             {
                 "id": t.id,
@@ -359,8 +351,7 @@ class CatalogService:
             raise AmbiguousTableError(name=reference, candidates=candidates)
         picked_candidate, *other_candidates = candidates
         alternatives = ", ".join(
-            f"{self._format_full_name(c['namespace_name'], c['name'])} (id={c['id']})"
-            for c in other_candidates
+            f"{self._format_full_name(c['namespace_name'], c['name'])} (id={c['id']})" for c in other_candidates
         )
         logger.warning(
             "Ambiguous table reference '%s' resolved to id=%s (%s). Other candidates: %s",
@@ -1131,14 +1122,10 @@ class CatalogService:
         return self.repo.create_namespace(ns)
 
     def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child(
-            "Unnamed Flows", "Quick-created flows that have not yet been named"
-        )
+        return self._ensure_general_child("Unnamed Flows", "Quick-created flows that have not yet been named")
 
     def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child(
-            "Local Flows", "Flows saved to disk at user-chosen paths"
-        )
+        return self._ensure_general_child("Local Flows", "Flows saved to disk at user-chosen paths")
 
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""
@@ -2208,9 +2195,7 @@ class CatalogService:
 
         rewritten_query = _rewrite_qualified_references(table.sql_query, alias_to_table.keys())
         referenced_ids = {
-            tbl.id
-            for alias, tbl in alias_to_table.items()
-            if _is_table_reference(alias, rewritten_query)
+            tbl.id for alias, tbl in alias_to_table.items() if _is_table_reference(alias, rewritten_query)
         }
 
         ctx = pl.SQLContext()
@@ -2234,17 +2219,11 @@ class CatalogService:
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
                 try:
-                    return self.resolve_query_virtual_table(
-                        t.id, user_id=user_id, _visited=visited, _depth=depth
-                    )
+                    return self.resolve_query_virtual_table(t.id, user_id=user_id, _visited=visited, _depth=depth)
                 except Exception:
                     logger.warning("Could not resolve nested query virtual table %r", t.name)
                     return None
-            if (
-                t.is_optimized
-                and t.serialized_lazy_frame
-                and check_source_versions_current(t.source_table_versions)
-            ):
+            if t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
                 return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 try:
@@ -3120,17 +3099,13 @@ class CatalogService:
             namespace_name=enrichment.namespace_name,
         )
 
-    def list_visualizations_for_table(
-        self, table_id: int, user_id: int | None = None
-    ) -> list[VisualizationOut]:
+    def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """Filtered listing — viz that reference a specific catalog table."""
         if self.repo.get_table(table_id) is None:
             raise TableNotFoundError(table_id=table_id)
         return [self._viz_to_out(v) for v in self.repo.list_visualizations(table_id)]
 
-    def list_visualization_library(
-        self, user_id: int | None = None
-    ) -> list[VisualizationOut]:
+    def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
         """Return all saved visualizations as catalog library entries.
 
         SQL-source viz carry only their inline query and namespace; table-source
@@ -3212,14 +3187,10 @@ class CatalogService:
         if not value.startswith("data:image/"):
             raise ValueError("thumbnail_data_url must be a data:image/* URL")
         if len(value) > self._THUMBNAIL_MAX_BYTES:
-            raise ValueError(
-                f"thumbnail_data_url exceeds {self._THUMBNAIL_MAX_BYTES} bytes"
-            )
+            raise ValueError(f"thumbnail_data_url exceeds {self._THUMBNAIL_MAX_BYTES} bytes")
         return value
 
-    def create_visualization(
-        self, payload: VisualizationCreate, user_id: int
-    ) -> VisualizationOut:
+    def create_visualization(self, payload: VisualizationCreate, user_id: int) -> VisualizationOut:
         self._validate_viz_source(payload)
 
         # Default the namespace to the parent table's namespace when this is
@@ -3252,9 +3223,7 @@ class CatalogService:
             raise VisualizationExistsError(payload.name, payload.catalog_table_id or 0) from exc
         return self._viz_to_out(created)
 
-    def update_visualization(
-        self, viz_id: int, payload: VisualizationUpdate, user_id: int
-    ) -> VisualizationOut:
+    def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
@@ -3298,23 +3267,23 @@ class CatalogService:
     # ================== Dashboards =========================================
 
     def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
-        """Ensure every filter.datasource_id refers to an existing CatalogTable."""
+        """Ensure filter datasource_ids and target_tile_ids refer to known entities."""
         seen: dict[int, bool] = {}
+        tile_ids = {t.id for t in layout.tiles}
         for f in layout.filters:
+            for tid in f.target_tile_ids:
+                if tid not in tile_ids:
+                    raise ValueError(f"filter '{f.id}' targets unknown tile_id={tid}")
             if f.datasource_id is None:
                 continue
             if f.datasource_id in seen:
                 if not seen[f.datasource_id]:
-                    raise ValueError(
-                        f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}"
-                    )
+                    raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
                 continue
             exists = self.repo.get_table(f.datasource_id) is not None
             seen[f.datasource_id] = exists
             if not exists:
-                raise ValueError(
-                    f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}"
-                )
+                raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
 
     def _dashboard_to_out(self, dashboard: CatalogDashboard) -> DashboardOut:
         try:
@@ -3363,9 +3332,7 @@ class CatalogService:
         created = self.repo.create_dashboard(dashboard)
         return self._dashboard_to_out(created)
 
-    def update_dashboard(
-        self, dashboard_id: int, payload: DashboardUpdate, user_id: int
-    ) -> DashboardOut:
+    def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
@@ -3377,10 +3344,7 @@ class CatalogService:
         if "description" in provided:
             dashboard.description = payload.description
         if "namespace_id" in provided:
-            if (
-                payload.namespace_id is not None
-                and self.repo.get_namespace(payload.namespace_id) is None
-            ):
+            if payload.namespace_id is not None and self.repo.get_namespace(payload.namespace_id) is None:
                 raise NamespaceNotFoundError(namespace_id=payload.namespace_id)
             dashboard.namespace_id = payload.namespace_id
         if "layout" in provided:
@@ -3389,6 +3353,7 @@ class CatalogService:
             self._validate_filter_datasources(payload.layout)
             dashboard.layout_json = payload.layout.model_dump_json()
             dashboard.layout_version = payload.layout.grid.version
+        dashboard.updated_at = datetime.now(timezone.utc)
         updated = self.repo.update_dashboard(dashboard)
         return self._dashboard_to_out(updated)
 
@@ -3414,9 +3379,7 @@ class CatalogService:
         ts = int(table.updated_at.timestamp()) if table.updated_at else 0
         return f"tbl:{table_id}:{ts}"
 
-    def _resolve_source_for_worker(
-        self, source: VizSourceDescriptor, user_id: int | None
-    ) -> dict:
+    def _resolve_source_for_worker(self, source: VizSourceDescriptor, user_id: int | None) -> dict:
         """Translate a frontend source descriptor into a worker source spec.
 
         Returns a dict whose shape matches ``VizWorkerSource`` on the worker side:
@@ -3545,8 +3508,7 @@ class CatalogService:
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
         effective_payload = payload or _GW_RAW_SELECT_ALL_PAYLOAD
         viz_logger.info(
-            "dispatch saved compute viz_id=%s source_type=%s kind=%s "
-            "session_key=%s max_rows=%s gw_workflow=%s",
+            "dispatch saved compute viz_id=%s source_type=%s kind=%s " "session_key=%s max_rows=%s gw_workflow=%s",
             viz_id,
             viz.source_type,
             worker_source["kind"],
@@ -3554,13 +3516,9 @@ class CatalogService:
             max_rows,
             payload is not None,
         )
-        return self._dispatch_visualize_query(
-            worker_source, effective_payload, self._clamp_max_rows(max_rows)
-        )
+        return self._dispatch_visualize_query(worker_source, effective_payload, self._clamp_max_rows(max_rows))
 
-    def get_visualization_fields_for_viz(
-        self, viz_id: int, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields_for_viz(self, viz_id: int, user_id: int) -> VisualizationFieldsResponse:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
@@ -3571,9 +3529,7 @@ class CatalogService:
     def _viz_source_descriptor(viz: CatalogVisualization) -> VizSourceDescriptor:
         if viz.source_type == "sql":
             if not viz.sql_query:
-                raise VisualizationComputeError(
-                    f"sql visualization {viz.id} has no sql_query"
-                )
+                raise VisualizationComputeError(f"sql visualization {viz.id} has no sql_query")
             return VizSourceDescriptor(source_type="sql", sql_query=viz.sql_query)
         return VizSourceDescriptor(source_type="table", table_id=viz.catalog_table_id)
 
@@ -3594,9 +3550,7 @@ class CatalogService:
         )
         return self._dispatch_visualize_query(worker_source, payload, self._clamp_max_rows(max_rows))
 
-    def get_visualization_fields(
-        self, source: VizSourceDescriptor, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields(self, source: VizSourceDescriptor, user_id: int) -> VisualizationFieldsResponse:
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
         viz_logger.info(
             "dispatch fields source_type=%s kind=%s session_key=%s",

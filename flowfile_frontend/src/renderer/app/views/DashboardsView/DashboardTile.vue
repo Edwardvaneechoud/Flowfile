@@ -1,24 +1,21 @@
 <template>
-  <div class="tile" :class="{ 'tile-text': isText, 'tile-text-view': isText && mode === 'view' }">
+  <div
+    class="tile"
+    :class="{
+      'tile-text': isText,
+      'tile-text-view': isText && mode === 'view',
+    }"
+  >
     <div
-      v-if="!isText || mode === 'edit'"
+      v-if="!isText"
       class="tile-header"
       :class="{ 'tile-handle': mode === 'edit' }"
     >
       <span class="tile-title">{{ headerTitle }}</span>
       <div class="tile-header-actions">
-        <span v-if="!isText && lastError" class="tile-error" :title="lastError"
+        <span v-if="lastError" class="tile-error" :title="lastError"
           ><el-icon><Warning /></el-icon
         ></span>
-        <el-icon
-          v-if="isText && mode === 'edit'"
-          class="tile-action-icon"
-          :title="textEditing ? 'Done editing' : 'Edit text'"
-          @click.stop="toggleTextEdit"
-        >
-          <Check v-if="textEditing" />
-          <EditPen v-else />
-        </el-icon>
         <el-icon v-if="mode === 'edit'" class="tile-drag-icon" title="Drag to move"
           ><Rank
         /></el-icon>
@@ -26,16 +23,8 @@
           <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item
-                v-if="!isText"
-                :disabled="tile.viz_id == null"
-                @click="emit('edit-viz')"
-              >
+              <el-dropdown-item :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
-              </el-dropdown-item>
-              <el-dropdown-item v-else @click="toggleTextEdit">
-                <el-icon><EditPen /></el-icon>
-                {{ textEditing ? "Preview" : "Edit text" }}
               </el-dropdown-item>
               <el-dropdown-item divided @click="emit('remove')">
                 <el-icon><Delete /></el-icon> Remove from dashboard
@@ -46,7 +35,30 @@
       </div>
     </div>
 
-    <div class="tile-body">
+    <div
+      v-if="isText && mode === 'edit' && !textEditing"
+      class="tile-text-actions"
+      @mousedown.stop
+    >
+      <el-dropdown trigger="click" @click.stop>
+        <el-icon class="tile-menu"><MoreFilled /></el-icon>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item @click="toggleTextEdit">
+              <el-icon><EditPen /></el-icon> Edit text
+            </el-dropdown-item>
+            <el-dropdown-item divided @click="emit('remove')">
+              <el-icon><Delete /></el-icon> Remove from dashboard
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+
+    <div
+      class="tile-body"
+      :class="{ 'tile-handle': isText && mode === 'edit' && !textEditing }"
+    >
       <template v-if="isText">
         <textarea
           v-if="mode === 'edit' && textEditing"
@@ -104,7 +116,6 @@ import { computed, nextTick, onMounted, ref, toRef, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
-  Check,
   Delete,
   Edit,
   EditPen,
@@ -158,7 +169,12 @@ const { computation, lastError } = useDashboardComputation({
   },
 });
 
-const vizName = computed(() => viz.value?.name ?? `Tile ${props.tile.id.slice(0, 6)}`);
+const vizName = computed(() => {
+  if (viz.value?.name) return viz.value.name;
+  if (loading.value) return "Loading…";
+  if (props.tile.viz_id != null) return `Visualization #${props.tile.viz_id}`;
+  return "Untitled";
+});
 
 const chart = computed(() => {
   if (!viz.value) return null;
@@ -239,8 +255,10 @@ const renderedHtml = computed(() => {
 
 const commitText = () => {
   const next = textDraft.value;
-  if (next === (props.tile.text_md ?? "")) return;
-  emit("update:tile", { ...props.tile, text_md: next });
+  if (next !== (props.tile.text_md ?? "")) {
+    emit("update:tile", { ...props.tile, text_md: next });
+  }
+  textEditing.value = false;
 };
 
 const enterTextEdit = async () => {
@@ -253,25 +271,41 @@ const enterTextEdit = async () => {
 const toggleTextEdit = async () => {
   if (textEditing.value) {
     commitText();
-    textEditing.value = false;
   } else {
     await enterTextEdit();
   }
 };
 
-const headerTitle = computed(() => {
-  if (isText.value) return textEditing.value ? "Editing text" : "Text";
-  return vizName.value;
-});
+const headerTitle = computed(() => vizName.value);
 </script>
 
 <style scoped>
 .tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   background: var(--el-bg-color);
   overflow: hidden;
+}
+.tile-text-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 2px 4px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
+  cursor: default;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tile:hover .tile-text-actions {
+  opacity: 1;
 }
 /* In view mode text tiles look like part of the page, not a card. */
 .tile-text-view {

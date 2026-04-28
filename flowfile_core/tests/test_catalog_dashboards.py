@@ -7,6 +7,7 @@ on persistence and shape.
 """
 
 import json
+import time
 from unittest.mock import patch
 
 import pytest
@@ -183,6 +184,21 @@ class TestDashboardCRUD:
         ids = [d["id"] for d in listed]
         assert ids[0] == first["id"]
         assert ids[1] == second["id"]
+
+    def test_update_bumps_updated_at_even_when_unchanged(self, client):
+        created = client.post(
+            "/catalog/dashboards",
+            json={"name": "Static", "description": "same"},
+        ).json()
+        before = created["updated_at"]
+        time.sleep(1.05)
+        resp = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"description": "same"},
+        )
+        assert resp.status_code == 200
+        after = resp.json()["updated_at"]
+        assert after > before
 
     def test_get_unknown_returns_404(self, client):
         resp = client.get("/catalog/dashboards/99999")
@@ -364,6 +380,46 @@ class TestDashboardFilterDatasource:
                 "target": "all",
                 "target_tile_ids": [],
                 "datasource_id": 99999,
+            }
+        ]
+        resp = client.put(
+            f"/catalog/dashboards/{created['id']}",
+            json={"layout": layout},
+        )
+        assert resp.status_code == 422
+
+    def test_create_with_unknown_target_tile_id_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [
+            {
+                "id": "f_bad",
+                "field_name": "region",
+                "kind": "categorical",
+                "state": {},
+                "target": "tiles",
+                "target_tile_ids": ["bogus"],
+            }
+        ]
+        resp = client.post(
+            "/catalog/dashboards",
+            json={"name": "Bad tile", "layout": layout},
+        )
+        assert resp.status_code == 422
+
+    def test_update_with_unknown_target_tile_id_returns_422(self, client):
+        created = client.post(
+            "/catalog/dashboards",
+            json={"name": "U", "layout": _layout_with_two_tiles()},
+        ).json()
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [
+            {
+                "id": "f_bad",
+                "field_name": "region",
+                "kind": "categorical",
+                "state": {},
+                "target": "tiles",
+                "target_tile_ids": ["bogus"],
             }
         ]
         resp = client.put(
