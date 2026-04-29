@@ -868,6 +868,7 @@ export default function useDragAndDrop() {
     createMultiCopyNodes,
     createManualInputFromClipboard,
     importFlow,
+    createEmptyFlow,
     insertNodeOnEdge,
   };
 }

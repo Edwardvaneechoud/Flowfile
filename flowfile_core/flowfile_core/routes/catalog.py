@@ -631,11 +631,6 @@ def get_table_history(
     return service.get_table_history(table_id, limit=limit)
 
 
-# ---------------------------------------------------------------------------
-# Table Favorites
-# ---------------------------------------------------------------------------
-
-
 @router.get("/table-favorites", response_model=list[CatalogTableOut])
 def list_table_favorites(
     current_user=Depends(get_current_active_user),
@@ -793,11 +788,6 @@ def list_visualizations_for_table(
 ):
     """Filtered listing — viz that reference this table."""
     return service.list_visualizations_for_table(table_id, user_id=current_user.id)
-
-
-# ---------------------------------------------------------------------------
-# Catalog Dashboards
-# ---------------------------------------------------------------------------
 
 
 @router.get("/dashboards", response_model=list[DashboardOut])

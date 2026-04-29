@@ -5,7 +5,7 @@ import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../typ
 import { FlowApi } from "../api";
 import { useEditorStore } from "./editor-store";
 
-const FLOW_ID_STORAGE_KEY = "last_flow_id";
+export const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
 // Default history state
 const defaultHistoryState: HistoryState = {
@@ -47,6 +47,7 @@ export const useFlowStore = defineStore("flow", {
 
   actions: {
     setFlowId(flowId: number) {
+      if (this.flowId === flowId) return;
       this.flowId = flowId;
       try {
         sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());
