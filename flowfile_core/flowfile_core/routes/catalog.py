@@ -843,6 +843,63 @@ def delete_dashboard(
 
 
 # ---------------------------------------------------------------------------
+# Catalog Dashboards
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboards", response_model=list[DashboardOut])
+@handle_catalog_exceptions()
+def list_dashboards(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved dashboard."""
+    return service.list_dashboards(user_id=current_user.id)
+
+
+@router.post("/dashboards", response_model=DashboardOut, status_code=201)
+@handle_catalog_exceptions()
+def create_dashboard(
+    body: DashboardCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a new dashboard. The layout may be empty; tiles can be added later."""
+    return service.create_dashboard(body, user_id=current_user.id)
+
+
+@router.get("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def get_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_dashboard(dashboard_id, user_id=current_user.id)
+
+
+@router.put("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def update_dashboard(
+    dashboard_id: int,
+    body: DashboardUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_dashboard(dashboard_id, body, user_id=current_user.id)
+
+
+@router.delete("/dashboards/{dashboard_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_dashboard(dashboard_id, user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
 # Virtual Flow Tables
 # ---------------------------------------------------------------------------
 
