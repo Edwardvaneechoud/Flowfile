@@ -127,6 +127,10 @@ class CatalogService:
     # Re-exported on the class so tests can reference ``CatalogService.CatalogMaterializationResult``.
     CatalogMaterializationResult = CatalogMaterializationResult
 
+    # Re-exported as a class-level static so tests can call
+    # ``CatalogService._compute_laziness_blockers(flow_path)`` directly.
+    _compute_laziness_blockers = staticmethod(TableService._compute_laziness_blockers)
+
     def __init__(self, repo: CatalogRepository) -> None:
         self.repo = repo
         self._namespaces = NamespaceService(repo)
@@ -148,9 +152,12 @@ class CatalogService:
         self._visualizations = VisualizationService(
             repo, self._namespaces, self._tables, self._virtual_tables, self._sql
         )
-        # Tests monkeypatch ``CatalogService.resolve_virtual_flow_table``; binding
-        # the facade lets VisualizationService route through that override.
+        # Tests monkeypatch ``CatalogService.resolve_virtual_flow_table`` and
+        # ``CatalogService._fire_table_trigger_schedules``; binding the facade
+        # on these sub-services lets those overrides flow through.
         self._visualizations.bind_facade(self)
+        self._sql.bind_facade(self)
+        self._schedules.bind_facade(self)
 
         self._stats = StatsService(repo, self._flows, self._runs, self._tables)
 

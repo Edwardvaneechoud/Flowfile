@@ -40,15 +40,31 @@ class SqlService:
         self.repo = repo
         self._flows = flows
         self._virtual_tables: VirtualTableService | None = None
+        self._facade = None  # set by CatalogService.__init__ via bind_facade()
 
     def bind(self, *, virtual_tables: VirtualTableService) -> None:
         """Late-bind VirtualTableService to break the SqlService↔VirtualTableService cycle."""
         self._virtual_tables = virtual_tables
 
+    def bind_facade(self, facade) -> None:
+        """Late-bind the facade so test monkeypatches on
+        ``CatalogService.resolve_virtual_flow_table`` flow through this service."""
+        self._facade = facade
+
     def _require_virtual_tables(self) -> VirtualTableService:
         if self._virtual_tables is None:
             raise RuntimeError("SqlService.bind(virtual_tables=...) was not called")
         return self._virtual_tables
+
+    def _resolve_virtual_flow_table_via_facade(self, table_id: int, *, user_id: int | None, run_location: str):
+        """Route resolution through the facade if present so tests that
+        patch ``CatalogService.resolve_virtual_flow_table`` (or set it
+        on the instance) see the spy fire."""
+        if self._facade is not None:
+            return self._facade.resolve_virtual_flow_table(table_id, user_id=user_id, run_location=run_location)
+        return self._require_virtual_tables().resolve_virtual_flow_table(
+            table_id, user_id=user_id, run_location=run_location
+        )
 
     def execute_sql_query(
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
@@ -99,8 +115,7 @@ class SqlService:
 
     def _materialise_virtual_for_sql(self, virtual_id: int, user_id: int | None) -> str:
         """Resolve a virtual table to an IPC path for the SQL worker call."""
-        virtual_tables = self._require_virtual_tables()
-        lazy_frame = virtual_tables.resolve_virtual_flow_table(virtual_id, user_id=user_id, run_location="remote")
+        lazy_frame = self._resolve_virtual_flow_table_via_facade(virtual_id, user_id=user_id, run_location="remote")
         versions_hash = hash_source_versions(self.repo.get_table(virtual_id).source_table_versions)
         result = trigger_resolve_virtual_table(virtual_id, lazy_frame.serialize(), versions_hash)
         return result["ipc_path"]

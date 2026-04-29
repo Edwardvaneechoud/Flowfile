@@ -36,6 +36,13 @@ class ScheduleService:
         self.repo = repo
         self._runs = runs
         self._namespaces = namespaces
+        self._facade = None  # set by CatalogService.__init__ via bind_facade()
+
+    def bind_facade(self, facade) -> None:
+        """Late-bind the facade so push-trigger fan-out routes through
+        ``CatalogService._fire_table_trigger_schedules``. Tests monkeypatch
+        that facade method to mock subprocess spawning."""
+        self._facade = facade
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
         """Convert a FlowSchedule ORM instance to its DTO, populating trigger info."""
@@ -251,8 +258,15 @@ class ScheduleService:
         Broad catch is intentional: the poll path in ``FlowScheduler`` is
         the safety net if push fails. Logging here gives visibility without
         surfacing a transient worker hiccup as a 500 to the route caller.
+
+        Routes through the facade's ``_fire_table_trigger_schedules`` when
+        bound so test monkeypatches on that method (used to mock subprocess
+        spawning) take effect.
         """
         try:
-            self.fire_table_trigger_schedules(table_id, table_updated_at)
+            if self._facade is not None:
+                self._facade._fire_table_trigger_schedules(table_id, table_updated_at)
+            else:
+                self.fire_table_trigger_schedules(table_id, table_updated_at)
         except Exception:
             logger.exception("Push trigger fan-out failed for table %s", table_id)
