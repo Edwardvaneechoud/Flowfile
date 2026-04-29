@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="wrapperRef"
     class="layout-widget-wrapper"
     :style="{
       left: position.x + 'px',
@@ -47,7 +48,7 @@
 
 <script setup lang="ts">
 // UPDATED: Added 'computed' and defineEmits
-import { ref, onMounted, onBeforeUnmount, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed, useTemplateRef } from "vue";
 import { useItemStore } from "./stateStore";
 
 // Define emits for parent component communication
@@ -57,6 +58,20 @@ const emit = defineEmits<{
 
 const itemStore = useItemStore();
 const isOpen = ref(false);
+
+const wrapperRef = useTemplateRef<HTMLElement>("wrapperRef");
+
+// The widget now lives inside the canvas <main> element. Bounds (and the
+// pinned bottom-right anchor) come from <main>, not the viewport — otherwise
+// the button would always sit at the absolute bottom of the screen, possibly
+// behind toolbars or off-canvas.
+const getCanvasBounds = () => {
+  const main = wrapperRef.value?.closest("main") as HTMLElement | null;
+  if (main) {
+    return { width: main.clientWidth, height: main.clientHeight };
+  }
+  return { width: window.innerWidth, height: window.innerHeight };
+};
 
 // Position state
 const position = ref({ x: window.innerWidth - 80, y: window.innerHeight - 80 });
@@ -70,17 +85,19 @@ const initialPosition = ref({ x: 0, y: 0 });
 const handleViewportResize = () => {
   const buttonSize = 45;
   const boundaryMargin = 10;
-  // Always position in bottom-right corner on resize for consistent UX
-  position.value.x = window.innerWidth - buttonSize - boundaryMargin;
-  position.value.y = window.innerHeight - buttonSize - boundaryMargin;
+  const bounds = getCanvasBounds();
+  // Always position in bottom-right corner of the canvas on resize.
+  position.value.x = bounds.width - buttonSize - boundaryMargin;
+  position.value.y = bounds.height - buttonSize - boundaryMargin;
   savePosition();
 };
 
 // --- NEW: Computed property for dynamic panel positioning ---
 const panelStyle = computed(() => {
   const style: { [key: string]: string } = {};
-  const isRightHalf = position.value.x > window.innerWidth / 2;
-  const isBottomHalf = position.value.y > window.innerHeight / 2;
+  const bounds = getCanvasBounds();
+  const isRightHalf = position.value.x > bounds.width / 2;
+  const isBottomHalf = position.value.y > bounds.height / 2;
 
   // Position horizontally
   if (isRightHalf) {
@@ -104,12 +121,12 @@ onMounted(() => {
   const buttonSize = 45;
   const boundaryMargin = 10;
   const savedPosition = localStorage.getItem("layoutControlsPosition");
+  const bounds = getCanvasBounds();
+  const maxX = bounds.width - buttonSize - boundaryMargin;
+  const maxY = bounds.height - buttonSize - boundaryMargin;
 
   if (savedPosition) {
     const parsed = JSON.parse(savedPosition);
-    // Validate the saved position is within current viewport bounds
-    const maxX = window.innerWidth - buttonSize - boundaryMargin;
-    const maxY = window.innerHeight - buttonSize - boundaryMargin;
 
     if (
       parsed.x <= maxX &&
@@ -125,9 +142,9 @@ onMounted(() => {
       savePosition();
     }
   } else {
-    // Default to bottom-right corner
-    position.value.x = window.innerWidth - buttonSize - boundaryMargin;
-    position.value.y = window.innerHeight - buttonSize - boundaryMargin;
+    // Default to bottom-right corner of the canvas
+    position.value.x = maxX;
+    position.value.y = maxY;
   }
 
   window.addEventListener("resize", handleViewportResize);
@@ -185,19 +202,13 @@ const onDrag = (e: MouseEvent) => {
     let newX = initialPosition.value.x + deltaX;
     let newY = initialPosition.value.y + deltaY;
 
-    // Keep within viewport bounds
+    // Keep within canvas bounds (the <main> element, not the viewport).
     const buttonSize = 45;
-    const boundaryMargin = 10; // UPDATED: Margin from edge
+    const boundaryMargin = 10;
+    const bounds = getCanvasBounds();
 
-    // UPDATED: Clamping logic now includes the margin
-    newX = Math.max(
-      boundaryMargin,
-      Math.min(window.innerWidth - buttonSize - boundaryMargin, newX),
-    );
-    newY = Math.max(
-      boundaryMargin,
-      Math.min(window.innerHeight - buttonSize - boundaryMargin, newY),
-    );
+    newX = Math.max(boundaryMargin, Math.min(bounds.width - buttonSize - boundaryMargin, newX));
+    newY = Math.max(boundaryMargin, Math.min(bounds.height - buttonSize - boundaryMargin, newY));
 
     position.value = { x: newX, y: newY };
   }
@@ -246,8 +257,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .layout-widget-wrapper {
-  position: fixed;
-  z-index: 20000;
+  position: absolute;
+  /* See zIndex.ts: FLOATING_WIDGET (200) — above panels, below fullscreen. */
+  z-index: 200;
 }
 
 .trigger-btn {
