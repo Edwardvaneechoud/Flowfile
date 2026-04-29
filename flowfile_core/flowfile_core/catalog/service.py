@@ -30,9 +30,7 @@ from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     DEFAULT_VISUALIZATION_ROWS,
     MAX_PREVIEW_LIMIT,
-    MAX_THUMBNAIL_BYTES,
     MAX_VISUALIZATION_ROWS,
-    MIN_SCHEDULE_INTERVAL_SECONDS,
     QUERY_VIRTUAL_TABLE_RECURSION_LIMIT,
     SAVED_FLOW_NODE_X,
     SAVED_FLOW_NODE_Y_STEP,
@@ -81,6 +79,14 @@ from flowfile_core.catalog.text_utils import (
     is_table_reference as _is_table_reference,
     parse_delta_history as _parse_delta_history,
     rewrite_qualified_references as _rewrite_qualified_references,
+)
+from flowfile_core.catalog.validators import (
+    format_full_name,
+    reject_dot_in_name,
+    validate_schedule_create,
+    validate_schedule_update,
+    validate_thumbnail,
+    validate_viz_source,
 )
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import (
@@ -172,19 +178,8 @@ class CatalogService:
     # Private helpers
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _reject_dot_in_name(name: str, kind: str) -> None:
-        if "." in name:
-            raise ValueError(
-                f"{kind} name '{name}' must not contain '.' — the dot is reserved for qualified "
-                f"table references (e.g. 'schema.table_name')."
-            )
-
-    @staticmethod
-    def _format_full_name(namespace_name: str | None, table_name: str) -> str:
-        if namespace_name:
-            return f"{namespace_name}.{table_name}"
-        return table_name
+    _reject_dot_in_name = staticmethod(reject_dot_in_name)
+    _format_full_name = staticmethod(format_full_name)
 
     def _resolve_namespace_name(self, namespace_id: int | None) -> str | None:
         if namespace_id is None:
@@ -2475,25 +2470,13 @@ class CatalogService:
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
 
-        if schedule_type not in ("interval", "table_trigger", "table_set_trigger"):
-            raise ValueError(f"Invalid schedule_type: {schedule_type}")
-
-        if schedule_type == "interval":
-            if interval_seconds is None or interval_seconds < MIN_SCHEDULE_INTERVAL_SECONDS:
-                raise ValueError(f"interval_seconds must be >= {MIN_SCHEDULE_INTERVAL_SECONDS}")
-        elif schedule_type == "table_trigger":
-            if trigger_table_id is None:
-                raise ValueError("trigger_table_id is required for table_trigger schedules")
-            table = self.repo.get_table(trigger_table_id)
-            if table is None:
-                raise TableNotFoundError(table_id=trigger_table_id)
-        elif schedule_type == "table_set_trigger":
-            if not trigger_table_ids or len(trigger_table_ids) < 2:
-                raise ValueError("table_set_trigger requires at least 2 trigger_table_ids")
-            for tid in trigger_table_ids:
-                table = self.repo.get_table(tid)
-                if table is None:
-                    raise TableNotFoundError(table_id=tid)
+        validate_schedule_create(
+            schedule_type=schedule_type,
+            interval_seconds=interval_seconds,
+            trigger_table_id=trigger_table_id,
+            trigger_table_ids=trigger_table_ids,
+            table_exists=lambda table_id: self.repo.get_table(table_id) is not None,
+        )
 
         schedule = FlowSchedule(
             registration_id=registration_id,
@@ -2533,8 +2516,7 @@ class CatalogService:
         if enabled is not None:
             schedule.enabled = enabled
         if interval_seconds is not None:
-            if interval_seconds < MIN_SCHEDULE_INTERVAL_SECONDS:
-                raise ValueError(f"interval_seconds must be >= {MIN_SCHEDULE_INTERVAL_SECONDS}")
+            validate_schedule_update(interval_seconds)
             schedule.interval_seconds = interval_seconds
         if name is not None:
             schedule.name = name
@@ -3057,30 +3039,14 @@ class CatalogService:
             raise VisualizationNotFoundError(viz_id=viz_id)
         return self._viz_to_out(viz)
 
-    def _validate_viz_source(self, payload: VisualizationCreate | VisualizationUpdate) -> None:
-        """Ensure the source descriptor on the payload is internally consistent."""
-        source_type = getattr(payload, "source_type", None)
-        if source_type == "table":
-            if payload.catalog_table_id is None:
-                raise ValueError("catalog_table_id is required when source_type='table'")
-        elif source_type == "sql":
-            if not payload.sql_query or not payload.sql_query.strip():
-                raise ValueError("sql_query is required when source_type='sql'")
-
     # TODO(visual-editor task 12): replace ValueError → 422 with a typed
     # VisualizationThumbnailTooLargeError → 413, and replace the cosmetic
     # `data:image/*` prefix check with magic-byte sniffing of the decoded
     # base64 payload (PNG: 89 50 4E 47 0D 0A 1A 0A; JPEG: FF D8 FF). The
     # current prefix check passes garbage like `data:image/png;base64,XXXX`
     # which then silently fails to render in <img>.
-    def _validate_thumbnail(self, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.startswith("data:image/"):
-            raise ValueError("thumbnail_data_url must be a data:image/* URL")
-        if len(value) > MAX_THUMBNAIL_BYTES:
-            raise ValueError(f"thumbnail_data_url exceeds {MAX_THUMBNAIL_BYTES} bytes")
-        return value
+    _validate_thumbnail = staticmethod(validate_thumbnail)
+    _validate_viz_source = staticmethod(validate_viz_source)
 
     def create_visualization(self, payload: VisualizationCreate, user_id: int) -> VisualizationOut:
         self._validate_viz_source(payload)
