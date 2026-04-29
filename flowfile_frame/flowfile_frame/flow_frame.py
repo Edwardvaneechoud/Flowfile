@@ -1308,6 +1308,61 @@ class FlowFrame:
         )
         return pass_frame, fail_frame
 
+    def random_split(
+        self,
+        splits: Mapping[str, float] | list[input_schema.RandomSplitGroup],
+        seed: int | None = None,
+        description: str | None = None,
+    ) -> tuple[FlowFrame, ...]:
+        """Randomly partition rows into N labeled FlowFrames.
+
+        ``splits`` is either an ordered mapping of split name to percentage
+        (e.g. ``{"train": 80, "test": 20}``) or a list of
+        :class:`flowfile_core.schemas.input_schema.RandomSplitGroup` for the
+        fully-typed form. Percentages must sum to 100; order determines output
+        handles. ``seed`` is the optional shuffle seed.
+
+        Returns a tuple of FlowFrames in the same order as ``splits``.
+        """
+        if isinstance(splits, Mapping):
+            split_groups = [
+                input_schema.RandomSplitGroup(name=n, percentage=p) for n, p in splits.items()
+            ]
+        else:
+            split_groups = list(splits)
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeRandomSplit(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            splits=split_groups,
+            seed=seed,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_random_split(settings)
+        self._add_connection(
+            self.node_id,
+            new_node_id,
+            output_handle=getattr(self, "output_handle", "output-0"),
+        )
+        node = self.flow_graph.get_node(new_node_id)
+        frames: list[FlowFrame] = []
+        for i in range(len(settings.splits)):
+            engine = node.get_output(f"output-{i}") if node is not None else None
+            frames.append(
+                FlowFrame(
+                    data=engine.data_frame if engine is not None else None,
+                    flow_graph=self.flow_graph,
+                    node_id=new_node_id,
+                    parent_node_id=self.node_id,
+                    output_handle=f"output-{i}",
+                )
+            )
+        return tuple(frames)
+
     def train_model(
         self,
         target: str,

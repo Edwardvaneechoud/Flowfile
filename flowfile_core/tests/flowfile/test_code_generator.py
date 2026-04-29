@@ -5642,5 +5642,142 @@ def test_new_nodes_unsupported_in_polars_export(node_type):
         export_flow_to_polars(flow)
 
 
+# ============================================================================
+# Multi-output node code generation: random_split + filter (split_mode)
+# ============================================================================
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_random_split_two_splits(export_func):
+    """random_split with seed: train (output-0) round-trips through code-gen."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    flow.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=80.0),
+                input_schema.RandomSplitGroup(name="test", percentage=20.0),
+            ],
+            seed=42,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "df_2_train", "df_2_test", "shuffle(seed=", "slice(")
+    else:
+        verify_code_contains(code, "df_2_train", "df_2_test", ".random_split({", "seed=42")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_random_split_three_splits(export_func):
+    """Three-way split: offset accumulator and last-split remainder are correct."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    flow.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=60.0),
+                input_schema.RandomSplitGroup(name="val", percentage=30.0),
+                input_schema.RandomSplitGroup(name="test", percentage=10.0),
+            ],
+            seed=7,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    verify_code_contains(code, "df_2_train", "df_2_val", "df_2_test")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_random_split_per_handle_downstream(export_func):
+    """A record_count wired to output-1 (test) must read the test split, not train."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    flow.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=60.0),
+                input_schema.RandomSplitGroup(name="test", percentage=40.0),
+            ],
+            seed=123,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    flow.add_record_count(
+        input_schema.NodeRecordCount(flow_id=1, node_id=3, depending_on_id=2)
+    )
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"),
+    )
+
+    code = export_func(flow)
+    verify_code_contains(code, "df_3 = df_2_test")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_filter_split_mode_pass_and_fail(export_func):
+    """split_mode filter: downstream consumers wired to output-0/output-1 see pass/fail."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                advanced_filter='[age] > 30',
+                filter_type="advanced",
+            ),
+            split_mode=True,
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    flow.add_record_count(
+        input_schema.NodeRecordCount(flow_id=1, node_id=3, depending_on_id=2)
+    )
+    add_connection(
+        flow,
+        input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"),
+    )
+
+    code = export_func(flow)
+    verify_code_contains(code, "df_2_pass", "df_2_fail", "df_3 = df_2_fail")
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

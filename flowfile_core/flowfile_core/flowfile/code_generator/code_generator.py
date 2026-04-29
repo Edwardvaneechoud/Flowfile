@@ -37,6 +37,9 @@ class FlowGraphCodeConverter:
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
         self.node_var_mapping: dict[int, str] = {}
+        # (upstream_node_id, output_handle) -> variable name; populated by
+        # multi-output handlers and consulted by _get_input_vars.
+        self.node_handle_var_mapping: dict[tuple[int, str], str] = {}
         self.imports: set[str] = set()
         self.code_lines: list[str] = []
         self.output_nodes: list[tuple[int, str]] = []
@@ -122,22 +125,41 @@ class FlowGraphCodeConverter:
             self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
             self._add_comment("# This node type is not supported for code export")
 
+    def _resolve_upstream_var(self, downstream: FlowNode, upstream_id: int, default: str) -> str:
+        """Resolve the variable name for an upstream node, honouring its output handle.
+
+        Multi-output upstream nodes register per-handle variable names in
+        ``node_handle_var_mapping``; for single-output upstreams the legacy
+        ``node_var_mapping`` is the single source of truth.
+        """
+        handle = downstream._input_output_handles.get(upstream_id, "output-0")
+        per_handle = self.node_handle_var_mapping.get((upstream_id, handle))
+        if per_handle is not None:
+            return per_handle
+        return self.node_var_mapping.get(upstream_id, default)
+
     def _get_input_vars(self, node: FlowNode) -> dict[str, str]:
         """Get input variable names for a node."""
         input_vars = {}
 
         if node.node_inputs.main_inputs:
             if len(node.node_inputs.main_inputs) == 1:
-                input_vars["main"] = self.node_var_mapping.get(node.node_inputs.main_inputs[0].node_id, "df")
+                input_vars["main"] = self._resolve_upstream_var(
+                    node, node.node_inputs.main_inputs[0].node_id, "df"
+                )
             else:
                 for i, input_node in enumerate(node.node_inputs.main_inputs):
-                    input_vars[f"main_{i}"] = self.node_var_mapping.get(input_node.node_id, f"df_{i}")
+                    input_vars[f"main_{i}"] = self._resolve_upstream_var(node, input_node.node_id, f"df_{i}")
 
         if node.node_inputs.left_input:
-            input_vars["left"] = self.node_var_mapping.get(node.node_inputs.left_input.node_id, "df_left")
+            input_vars["left"] = self._resolve_upstream_var(
+                node, node.node_inputs.left_input.node_id, "df_left"
+            )
 
         if node.node_inputs.right_input:
-            input_vars["right"] = self.node_var_mapping.get(node.node_inputs.right_input.node_id, "df_right")
+            input_vars["right"] = self._resolve_upstream_var(
+                node, node.node_inputs.right_input.node_id, "df_right"
+            )
 
         return input_vars
 
@@ -228,6 +250,10 @@ class FlowGraphCodeConverter:
         """Handle filter nodes."""
         input_df = input_vars.get("main", "df")
 
+        if settings.split_mode:
+            self._handle_filter_split(settings, var_name, input_df)
+            return
+
         if settings.filter_input.is_advanced():
             # Parse the advanced filter expression
             self.imports.add(
@@ -243,6 +269,37 @@ class FlowGraphCodeConverter:
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
+        self._add_code("")
+
+    def _handle_filter_split(self, settings: input_schema.NodeFilter, var_name: str, input_df: str) -> None:
+        """Emit a pass/fail split filter (output-0 = pass, output-1 = fail).
+
+        Mirrors FlowDataEngine.filter_split: ``df.filter(pred)`` for pass,
+        ``df.filter(~pred)`` for fail. Rows where the predicate is null are
+        dropped from both (polars filter semantics).
+        """
+        node_id = settings.node_id
+        pred_var = f"_filter_{node_id}_pred"
+        if settings.filter_input.is_advanced():
+            self.imports.add(
+                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
+            )
+            self._add_code(f'{pred_var} = simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+        else:
+            basic = settings.filter_input.basic_filter
+            if basic is not None and basic.field:
+                self._add_code(f"{pred_var} = {self._create_basic_filter_expr(basic)}")
+            else:
+                # No predicate -> pass keeps everything, fail is empty.
+                self._add_code(f"{pred_var} = {self.framework}.lit(True)")
+        pass_var = f"{var_name}_pass"
+        fail_var = f"{var_name}_fail"
+        self._add_code(f"{pass_var} = {input_df}.filter({pred_var})")
+        self._add_code(f"{fail_var} = {input_df}.filter(~({pred_var}))")
+        self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
+        self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
+        self.node_var_mapping[node_id] = pass_var
+        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
@@ -1699,6 +1756,61 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import polars as pl")
 
+    def _handle_random_split(
+        self, settings: input_schema.NodeRandomSplit, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Inline a polars-equivalent random split that mirrors FlowDataEngine.random_split.
+
+        The shuffled frame is materialised once so each split shares the same
+        permutation; lengths use the FlowDataEngine offset accumulator (last
+        split absorbs the remainder) so generated output equals flow output
+        for the same seed.
+        """
+        input_df = input_vars.get("main", "df")
+        node_id = settings.node_id
+        if settings.seed is None:
+            self.imports.add("import random")
+            seed_expr = "random.randint(0, 2**31 - 1)"
+        else:
+            seed_expr = str(settings.seed)
+        self._add_code(f"_split_{node_id}_seed = {seed_expr}")
+        self._add_code(f"_split_{node_id}_shuffled = (")
+        self._add_code(f"    {input_df}")
+        self._add_code(
+            f"    .with_columns(pl.int_range(0, pl.len()).shuffle(seed=_split_{node_id}_seed)"
+            ".alias('__split_rank__'))"
+        )
+        self._add_code("    .sort('__split_rank__').drop('__split_rank__')")
+        self._add_code("    .collect()")
+        self._add_code(")")
+        self._add_code(f"_split_{node_id}_total = _split_{node_id}_shuffled.height")
+        self._add_code(f"_split_{node_id}_off = 0")
+        splits = settings.splits
+        for i, s in enumerate(splits):
+            split_var = f"{var_name}_{s.name}"
+            if i == len(splits) - 1:
+                self._add_code(
+                    f"{split_var} = _split_{node_id}_shuffled.slice("
+                    f"_split_{node_id}_off, max(0, _split_{node_id}_total - _split_{node_id}_off)"
+                    ").lazy()"
+                )
+            else:
+                self._add_code(
+                    f"_split_{node_id}_len = int(round(_split_{node_id}_total * {s.percentage} / 100.0))"
+                )
+                self._add_code(
+                    f"{split_var} = _split_{node_id}_shuffled.slice("
+                    f"_split_{node_id}_off, max(0, _split_{node_id}_len)"
+                    ").lazy()"
+                )
+                self._add_code(f"_split_{node_id}_off += _split_{node_id}_len")
+            self.node_handle_var_mapping[(node_id, f"output-{i}")] = split_var
+        default_var = f"{var_name}_{splits[0].name}"
+        self.node_var_mapping[node_id] = default_var
+        # Alias the bare var_name so `last_node_var` (set by dispatch) still resolves.
+        self._add_code(f"{var_name} = {default_var}")
+        self._add_code("")
+
     def _handle_catalog_reader(
         self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -1771,6 +1883,24 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         super().__init__(flow_graph)
         self.imports.add("import flowfile as ff")
 
+    def _handle_random_split(
+        self, settings: input_schema.NodeRandomSplit, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Delegate to FlowFrame.random_split, which already returns a tuple of frames."""
+        input_df = input_vars.get("main", "df")
+        node_id = settings.node_id
+        split_vars = [f"{var_name}_{s.name}" for s in settings.splits]
+        splits_arg = ", ".join(f'"{s.name}": {s.percentage}' for s in settings.splits)
+        seed_arg = "" if settings.seed is None else f", seed={settings.seed}"
+        self._add_code(
+            f"{', '.join(split_vars)} = {input_df}.random_split({{{splits_arg}}}{seed_arg})"
+        )
+        for i, sv in enumerate(split_vars):
+            self.node_handle_var_mapping[(node_id, f"output-{i}")] = sv
+        self.node_var_mapping[node_id] = split_vars[0]
+        self._add_code(f"{var_name} = {split_vars[0]}")
+        self._add_code("")
+
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -1830,6 +1960,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         """Handle filter nodes using FlowFrame's native flowfile_formula parameter."""
         input_df = input_vars.get("main", "df")
 
+        if settings.split_mode:
+            self._handle_filter_split(settings, var_name, input_df)
+            return
+
         if settings.filter_input.is_advanced():
             self._add_code(
                 f'{var_name} = {input_df}.filter(flowfile_formula="{settings.filter_input.advanced_filter}")'
@@ -1841,6 +1975,32 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                 self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
             else:
                 self._add_code(f"{var_name} = {input_df}  # No filter applied")
+        self._add_code("")
+
+    def _handle_filter_split(self, settings: input_schema.NodeFilter, var_name: str, input_df: str) -> None:
+        """FlowFrame variant: delegate to FlowFrame.filter_split which already returns (pass, fail)."""
+        node_id = settings.node_id
+        pass_var = f"{var_name}_pass"
+        fail_var = f"{var_name}_fail"
+        if settings.filter_input.is_advanced():
+            self._add_code(
+                f'{pass_var}, {fail_var} = {input_df}.filter_split('
+                f'flowfile_formula="{settings.filter_input.advanced_filter}")'
+            )
+        else:
+            basic = settings.filter_input.basic_filter
+            if basic is not None and basic.field:
+                filter_expr = self._create_basic_filter_expr(basic)
+                self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({filter_expr})")
+            else:
+                # No predicate -> mirror polars-variant fallback (pass keeps all, fail empty).
+                self._add_code(
+                    f'{pass_var}, {fail_var} = {input_df}.filter_split(flowfile_formula="True")'
+                )
+        self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
+        self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
+        self.node_var_mapping[node_id] = pass_var
+        self._add_code(f"{var_name} = {pass_var}")
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:

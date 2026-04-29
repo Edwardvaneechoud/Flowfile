@@ -177,6 +177,51 @@ def test_filter_split_requires_predicate():
         df.filter_split()
 
 
+def test_random_split_two_splits_seeded():
+    """random_split returns FlowFrames in declared order; with seed the partitioning is deterministic."""
+    df = FlowFrame({"id": list(range(10))})
+    train_df, test_df = df.random_split({"train": 70.0, "test": 30.0}, seed=42)
+
+    train_rows = train_df.collect()["id"].to_list()
+    test_rows = test_df.collect()["id"].to_list()
+    assert len(train_rows) + len(test_rows) == 10
+    assert set(train_rows).isdisjoint(set(test_rows))
+    assert set(train_rows) | set(test_rows) == set(range(10))
+    assert train_df.node_id == test_df.node_id
+    assert train_df.output_handle == "output-0"
+    assert test_df.output_handle == "output-1"
+
+
+def test_random_split_accepts_typed_groups():
+    """random_split also accepts a typed list[RandomSplitGroup] for fully-validated input."""
+    from flowfile_core.schemas.input_schema import RandomSplitGroup
+
+    df = FlowFrame({"id": list(range(10))})
+    train_df, test_df = df.random_split(
+        [RandomSplitGroup(name="train", percentage=70.0),
+         RandomSplitGroup(name="test", percentage=30.0)],
+        seed=42,
+    )
+    assert len(train_df.collect()) + len(test_df.collect()) == 10
+
+
+def test_random_split_three_splits_downstream_chain():
+    """Ops chained off each split connect to the correct source handle."""
+    df = FlowFrame({"id": list(range(20))})
+    train_df, val_df, test_df = df.random_split(
+        {"train": 60.0, "val": 30.0, "test": 10.0}, seed=11
+    )
+
+    chained = [s.select(col("id")) for s in (train_df, val_df, test_df)]
+    split_node_id = train_df.node_id
+    for i, c in enumerate(chained):
+        node = c.flow_graph.get_node(c.node_id)
+        assert node._input_output_handles[split_node_id] == f"output-{i}"
+
+    counts = [c.collect().shape[0] for c in chained]
+    assert sum(counts) == 20
+
+
 def test_sort():
     """Test sorting a FlowFrame."""
     from flowfile_core.schemas.input_schema import NodeSort

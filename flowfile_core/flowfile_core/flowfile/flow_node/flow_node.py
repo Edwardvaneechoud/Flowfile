@@ -802,7 +802,9 @@ class FlowNode:
             The FlowDataEngine from the appropriate output handle.
         """
         handle = self._input_output_handles.get(input_node.node_id, DEFAULT_OUTPUT_HANDLE)
-        if handle != DEFAULT_OUTPUT_HANDLE and input_node._named_outputs:
+        if handle != DEFAULT_OUTPUT_HANDLE:
+            # get_output triggers execution first, then routes by handle. Required
+            # for the first-call case where _named_outputs is still empty.
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
