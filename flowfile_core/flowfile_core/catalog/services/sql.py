@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     SAVED_FLOW_NODE_X,
+    SAVED_FLOW_NODE_Y_BASE,
     SAVED_FLOW_NODE_Y_STEP,
     SAVED_FLOW_SQL_NODE_X,
     SAVED_FLOW_SQL_NODE_Y,
@@ -155,7 +156,7 @@ class SqlService:
                     "type": "catalog_reader",
                     "is_start_node": True,
                     "x_position": SAVED_FLOW_NODE_X,
-                    "y_position": SAVED_FLOW_NODE_X + i * SAVED_FLOW_NODE_Y_STEP,
+                    "y_position": SAVED_FLOW_NODE_Y_BASE + i * SAVED_FLOW_NODE_Y_STEP,
                     "input_ids": [],
                     "outputs": [len(used_tables) + 1],
                     "setting_input": {

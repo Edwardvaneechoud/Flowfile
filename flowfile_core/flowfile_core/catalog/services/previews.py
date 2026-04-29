@@ -167,7 +167,7 @@ class TablePreviewService:
         if _should_offload():
             try:
                 return trigger_delta_version_preview(data_path.name, version, limit)
-            except (RuntimeError, OSError):
+            except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
         delta_table = DeltaTable(table_path, version=version)
@@ -192,7 +192,7 @@ class TablePreviewService:
         if _should_offload():
             try:
                 return trigger_delta_history(data_path.name, limit)
-            except (RuntimeError, OSError):
+            except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
 
         delta_table = DeltaTable(table_path, without_files=True)

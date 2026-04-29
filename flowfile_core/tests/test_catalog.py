@@ -1096,7 +1096,10 @@ class TestPushTableTrigger:
         """Overwriting a table should create a FlowRun for its table_trigger schedule."""
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -1112,7 +1115,10 @@ class TestPushTableTrigger:
 
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         # Create an active (unfinished) run
         with get_db_context() as db:
@@ -1141,7 +1147,10 @@ class TestPushTableTrigger:
         """After firing, the schedule's last_triggered_at and last_trigger_table_updated_at should be set."""
         schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -1158,7 +1167,10 @@ class TestPushTableTrigger:
             schedule_type="table_set_trigger"
         )
 
-        monkeypatch.setattr(CatalogService, "_spawn_flow_subprocess", staticmethod(lambda *a, **kw: None))
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: None,
+        )
 
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)

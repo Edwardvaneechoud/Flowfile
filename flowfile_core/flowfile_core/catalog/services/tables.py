@@ -29,7 +29,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
-from flowfile_core.catalog.validators import format_full_name, reject_dot_in_name
+from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_read_table_metadata,
@@ -77,16 +77,14 @@ class TableService:
 
     # ---- Validation + resolution ----------------------------------------- #
 
-    def _validate_table_registration(self, name: str, namespace_id: int | None) -> None:
+    def validate_table_registration(self, name: str, namespace_id: int | None) -> None:
         """Check that the namespace exists and the table name is unique."""
-        reject_dot_in_name(name, "Table")
-        if namespace_id is not None:
-            namespace = self.repo.get_namespace(namespace_id)
-            if namespace is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(name=name, namespace_id=namespace_id)
+        validate_table_registration(
+            name,
+            namespace_id,
+            namespace_exists=lambda nid: self.repo.get_namespace(nid) is not None,
+            table_by_name_exists=lambda n, nid: self.repo.get_table_by_name(n, nid) is not None,
+        )
 
     def resolve_table(
         self,
@@ -171,18 +169,13 @@ class TableService:
 
     @staticmethod
     def _read_table_metadata(table_path: str, storage_format: str) -> tuple[list[dict[str, str]], int, int, int]:
-        """Read schema, row_count, column_count, size_bytes from a table.
-
-        Offloads to the worker when available.  Falls back to local I/O when
-        the worker call fails.  Broad-ish catch is intentional — RuntimeError
-        and OSError are the documented worker / FS error types.
-        """
+        """Read schema, row_count, column_count, size_bytes from a table."""
         if _should_offload():
             try:
                 data = trigger_read_table_metadata(Path(table_path).name)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
-            except (RuntimeError, OSError):
+            except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
 
         path = Path(table_path)
@@ -443,7 +436,7 @@ class TableService:
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
         """Register a new table by materializing it as a Delta table."""
-        self._validate_table_registration(name, namespace_id)
+        self.validate_table_registration(name, namespace_id)
 
         materialized = self._materialize_table_with_worker(
             source_file_path=file_path,
@@ -481,7 +474,7 @@ class TableService:
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
         """Register an already-materialized table (Delta or Parquet) in the catalog."""
-        self._validate_table_registration(name, namespace_id)
+        self.validate_table_registration(name, namespace_id)
 
         if schema is not None and row_count is not None and size_bytes is not None:
             schema_list = schema

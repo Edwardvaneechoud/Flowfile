@@ -88,7 +88,7 @@ class VirtualTableService:
         if producer is None:
             raise FlowNotFoundError(registration_id=producer_registration_id)
 
-        self._tables._validate_table_registration(name, namespace_id)
+        self._tables.validate_table_registration(name, namespace_id)
 
         table = CatalogTable(
             name=name,
@@ -175,7 +175,7 @@ class VirtualTableService:
         except UnsafeSQLError as e:
             raise ValueError(str(e)) from e
 
-        self._tables._validate_table_registration(name, namespace_id)
+        self._tables.validate_table_registration(name, namespace_id)
 
         sql = self._require_sql()
         result = sql.execute_sql_query(sql_query, max_rows=1)

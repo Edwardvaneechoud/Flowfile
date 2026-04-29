@@ -12,7 +12,11 @@ from flowfile_core.catalog.constants import (
     MAX_THUMBNAIL_BYTES,
     MIN_SCHEDULE_INTERVAL_SECONDS,
 )
-from flowfile_core.catalog.exceptions import TableNotFoundError
+from flowfile_core.catalog.exceptions import (
+    NamespaceNotFoundError,
+    TableExistsError,
+    TableNotFoundError,
+)
 
 
 def reject_dot_in_name(name: str, kind: str) -> None:
@@ -29,6 +33,20 @@ def format_full_name(namespace_name: str | None, table_name: str) -> str:
     if namespace_name:
         return f"{namespace_name}.{table_name}"
     return table_name
+
+
+def validate_table_registration(
+    name: str,
+    namespace_id: int | None,
+    namespace_exists: Callable[[int], bool],
+    table_by_name_exists: Callable[[str, int | None], bool],
+) -> None:
+    """Validate a table registration: name shape, namespace presence, name uniqueness."""
+    reject_dot_in_name(name, "Table")
+    if namespace_id is not None and not namespace_exists(namespace_id):
+        raise NamespaceNotFoundError(namespace_id=namespace_id)
+    if table_by_name_exists(name, namespace_id):
+        raise TableExistsError(name=name, namespace_id=namespace_id)
 
 
 def validate_thumbnail(value: str | None) -> str | None:
