@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import signal
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -73,6 +72,7 @@ from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
+from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     artifact_to_out,
@@ -174,6 +174,9 @@ class CatalogService:
         Any object satisfying the ``CatalogRepository`` protocol.
     """
 
+    # Re-exported on the class so tests can reference ``CatalogService.CatalogMaterializationResult``.
+    CatalogMaterializationResult = CatalogMaterializationResult
+
     def __init__(self, repo: CatalogRepository) -> None:
         self.repo = repo
         self._namespaces = NamespaceService(repo)
@@ -181,6 +184,7 @@ class CatalogService:
         self._runs = FlowRunService(repo)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
+        self._tables = TableService(repo, self._namespaces, self._flows, self._schedules)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -215,18 +219,7 @@ class CatalogService:
         )
 
     def _validate_table_registration(self, name: str, namespace_id: int | None) -> None:
-        """Check that the namespace exists and the table name is unique.
-
-        Raises NamespaceNotFoundError or TableExistsError on validation failure.
-        """
-        self._reject_dot_in_name(name, "Table")
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-        existing = self.repo.get_table_by_name(name, namespace_id)
-        if existing is not None:
-            raise TableExistsError(name=name, namespace_id=namespace_id)
+        self._tables._validate_table_registration(name, namespace_id)
 
     def resolve_table(
         self,
@@ -234,125 +227,7 @@ class CatalogService:
         default_namespace_id: int | None = None,
         strict: bool = False,
     ) -> CatalogTable:
-        """Resolve a ``"ns.table"`` or bare ``"table"`` reference to a single CatalogTable."""
-        if not reference:
-            raise TableNotFoundError(name=reference)
-
-        if "." in reference:
-            ns_name, _, table_name = reference.partition(".")
-            if not ns_name or not table_name:
-                raise TableNotFoundError(name=reference)
-            return self._resolve_qualified(ns_name, table_name, strict=strict)
-
-        return self._resolve_bare(reference, default_namespace_id, strict=strict)
-
-    def _all_namespaces_named(self, ns_name: str) -> list[CatalogNamespace]:
-        roots = self.repo.list_root_namespaces()
-        out: list[CatalogNamespace] = list(roots)
-        for root in roots:
-            out.extend(self.repo.list_child_namespaces(root.id))
-        return [ns for ns in out if ns.name == ns_name]
-
-    def _resolve_qualified(self, ns_name: str, table_name: str, *, strict: bool) -> CatalogTable:
-        candidates_ns = self._all_namespaces_named(ns_name)
-        if not candidates_ns:
-            raise NamespaceNotFoundError(name=ns_name)
-
-        tables: list[CatalogTable] = []
-        for ns in candidates_ns:
-            t = self.repo.get_table_by_name(table_name, ns.id)
-            if t is not None:
-                tables.append(t)
-        if not tables:
-            raise TableNotFoundError(name=f"{ns_name}.{table_name}")
-        if len(tables) == 1:
-            return tables[0]
-        return self._disambiguate(f"{ns_name}.{table_name}", tables, strict=strict)
-
-    def _resolve_bare(self, name: str, default_namespace_id: int | None, *, strict: bool) -> CatalogTable:
-        if default_namespace_id is not None:
-            t = self.repo.get_table_by_name(name, default_namespace_id)
-            if t is None:
-                raise TableNotFoundError(name=name)
-            return t
-        matches = self.repo.list_tables_by_name(name)
-        if not matches:
-            raise TableNotFoundError(name=name)
-        if len(matches) == 1:
-            return matches[0]
-        return self._disambiguate(name, matches, strict=strict)
-
-    def _disambiguate(self, reference: str, matches: list[CatalogTable], *, strict: bool) -> CatalogTable:
-        candidates = [
-            {
-                "id": t.id,
-                "name": t.name,
-                "namespace_id": t.namespace_id,
-                "namespace_name": self._resolve_namespace_name(t.namespace_id),
-            }
-            for t in matches
-        ]
-        if strict:
-            raise AmbiguousTableError(name=reference, candidates=candidates)
-        picked_candidate, *other_candidates = candidates
-        alternatives = ", ".join(
-            f"{self._format_full_name(c['namespace_name'], c['name'])} (id={c['id']})" for c in other_candidates
-        )
-        logger.warning(
-            "Ambiguous table reference '%s' resolved to id=%s (%s). Other candidates: %s",
-            reference,
-            picked_candidate["id"],
-            self._format_full_name(picked_candidate["namespace_name"], picked_candidate["name"]),
-            alternatives,
-        )
-        return matches[0]
-
-    @dataclass(frozen=True)
-    class CatalogMaterializationResult:
-        table_path: str
-        schema: list[dict[str, str]]
-        row_count: int
-        column_count: int
-        size_bytes: int
-        storage_format: str = "delta"
-
-    @staticmethod
-    def _read_table_metadata(table_path: str, storage_format: str) -> tuple[list[dict[str, str]], int, int, int]:
-        """Read schema, row_count, column_count, size_bytes from a table.
-
-        Offloads the work to the worker process when available.  Only falls
-        back to local I/O when the worker is not running.
-        """
-        if _should_offload():
-            try:
-                data = trigger_read_table_metadata(Path(table_path).name)
-                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
-                return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
-            except Exception:
-                logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
-
-        # Fallback: read locally (only when worker is unavailable)
-
-        p = Path(table_path)
-
-        if storage_format == "delta" or (storage_format is None and is_delta_table(p)):
-            dt = DeltaTable(str(p))
-            pa_schema = dt.schema().to_arrow()
-            schema_list = [{"name": field.name, "dtype": str(field.type)} for field in pa_schema]
-
-            # Leverage pyarrow dataset for a fast, metadata-only row count
-            row_count = dt.to_pyarrow_dataset().count_rows()
-            size_bytes = get_delta_table_size_bytes(p)
-
-        else:
-            # Handle legacy Parquet files
-            dataset = ds.dataset(str(p), format="parquet")
-            schema_list = [{"name": field.name, "dtype": str(field.type)} for field in dataset.schema]
-
-            row_count = dataset.count_rows()
-            size_bytes = p.stat().st_size
-
-        return schema_list, row_count, len(schema_list), size_bytes
+        return self._tables.resolve_table(reference, default_namespace_id, strict)
 
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
         return self._flows.enrich_flow_registration(flow, user_id)
@@ -679,216 +554,16 @@ class CatalogService:
     # Catalog table operations
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _parse_schema_columns(table: CatalogTable) -> list[ColumnSchema]:
-        """Parse the JSON-encoded column schema from a catalog table."""
-        if not table.schema_json:
-            return []
-        try:
-            raw = json.loads(table.schema_json)
-            return [ColumnSchema(name=c["name"], dtype=c["dtype"]) for c in raw]
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return []
-
-    def _resolve_flow_name(self, registration_id: int | None) -> str | None:
-        """Look up a flow registration name by id, returning None when absent."""
-        if not registration_id:
-            return None
-        reg = self.repo.get_flow(registration_id)
-        return reg.name if reg else None
-
-    def _check_file_exists(self, table: CatalogTable) -> bool:
-        """Determine whether the backing data for a table is available."""
-        is_virtual = getattr(table, "table_type", "physical") == "virtual"
-        if is_virtual:
-            return True
-        fe = table_exists(table.file_path) if table.file_path else False
-        if not fe:
-            logger.warning(
-                "Catalog table %s (id=%d) references missing file: %s",
-                table.name,
-                table.id,
-                table.file_path,
-            )
-        return fe
-
-    @staticmethod
-    def _compute_laziness_blockers(producer_file_path: str | None) -> list[str] | None:
-        """Compute laziness blockers for a virtual table from its producer flow."""
-        if not producer_file_path:
-            return None
-        try:
-            from flowfile_core.flowfile.handler import open_flow
-
-            fg = open_flow(Path(producer_file_path))
-        except Exception as e:
-            logger.warning(f"Could not open the flow or calculate the laziness: \n {e}")
-            return None
-        try:
-            _, reasons = fg.check_flow_laziness()
-            return reasons
-        except Exception as e:
-            logger.warning(f"Could not open the flow or calculate the reasons:\n{e}")
-            return None
-
     def _table_to_out(
         self,
         table: CatalogTable,
         user_id: int | None = None,
         compute_laziness: bool = False,
     ) -> CatalogTableOut:
-        columns = self._parse_schema_columns(table)
-        source_registration_name = self._resolve_flow_name(table.source_registration_id)
-        producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
-
-        readers = self.repo.list_readers_for_table(table.id)
-        read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
-
-        is_fav = False
-        if user_id is not None:
-            is_fav = self.repo.get_table_favorite(user_id, table.id) is not None
-
-        fe = self._check_file_exists(table)
-
-        is_virtual = getattr(table, "table_type", "physical") == "virtual"
-        laziness_blockers: list[str] | None = None
-        if compute_laziness and is_virtual and table.producer_registration_id:
-            producer = self.repo.get_flow(table.producer_registration_id)
-            laziness_blockers = self._compute_laziness_blockers(producer.flow_path if producer else None)
-
-        namespace_name = self._resolve_namespace_name(table.namespace_id)
-        full_table_name = self._format_full_name(namespace_name, table.name)
-
-        return CatalogTableOut(
-            id=table.id,
-            name=table.name,
-            namespace_id=table.namespace_id,
-            namespace_name=namespace_name,
-            full_table_name=full_table_name,
-            description=table.description,
-            owner_id=table.owner_id,
-            file_exists=fe,
-            is_favorite=is_fav,
-            schema_columns=columns,
-            row_count=table.row_count,
-            column_count=table.column_count,
-            size_bytes=table.size_bytes,
-            source_registration_id=table.source_registration_id,
-            source_registration_name=source_registration_name,
-            source_run_id=table.source_run_id,
-            read_by_flows=read_by_flows,
-            table_type=getattr(table, "table_type", "physical"),
-            producer_registration_id=table.producer_registration_id,
-            producer_registration_name=producer_registration_name,
-            is_optimized=getattr(table, "is_optimized", None),
-            laziness_blockers=laziness_blockers,
-            sql_query=getattr(table, "sql_query", None),
-            polars_plan=getattr(table, "polars_plan", None),
-            source_table_versions=getattr(table, "source_table_versions", None),
-            created_at=table.created_at,
-            updated_at=table.updated_at,
-        )
+        return self._tables.table_to_out(table, user_id, compute_laziness)
 
     def _bulk_enrich_tables(self, tables: list[CatalogTable], user_id: int) -> list[CatalogTableOut]:
-        """Enrich multiple tables with favorite status in bulk to avoid N+1 queries."""
-        if not tables:
-            return []
-
-        table_ids = [t.id for t in tables]
-        fav_ids = self.repo.bulk_get_favorite_table_ids(user_id, table_ids)
-
-        ns_name_cache: dict[int, str | None] = {}
-        for t in tables:
-            if t.namespace_id is not None and t.namespace_id not in ns_name_cache:
-                ns_name_cache[t.namespace_id] = self._resolve_namespace_name(t.namespace_id)
-
-        result: list[CatalogTableOut] = []
-        for table in tables:
-            columns = self._parse_schema_columns(table)
-            source_registration_name = self._resolve_flow_name(table.source_registration_id)
-            producer_registration_name = self._resolve_flow_name(table.producer_registration_id)
-
-            readers = self.repo.list_readers_for_table(table.id)
-            read_by_flows = [FlowSummary(id=r.id, name=r.name) for r in readers]
-
-            fe = self._check_file_exists(table)
-
-            namespace_name = ns_name_cache.get(table.namespace_id) if table.namespace_id is not None else None
-            full_table_name = self._format_full_name(namespace_name, table.name)
-
-            result.append(
-                CatalogTableOut(
-                    id=table.id,
-                    name=table.name,
-                    namespace_id=table.namespace_id,
-                    namespace_name=namespace_name,
-                    full_table_name=full_table_name,
-                    description=table.description,
-                    owner_id=table.owner_id,
-                    file_exists=fe,
-                    is_favorite=table.id in fav_ids,
-                    schema_columns=columns,
-                    row_count=table.row_count,
-                    column_count=table.column_count,
-                    size_bytes=table.size_bytes,
-                    source_registration_id=table.source_registration_id,
-                    source_registration_name=source_registration_name,
-                    source_run_id=table.source_run_id,
-                    read_by_flows=read_by_flows,
-                    table_type=getattr(table, "table_type", "physical"),
-                    producer_registration_id=table.producer_registration_id,
-                    producer_registration_name=producer_registration_name,
-                    is_optimized=getattr(table, "is_optimized", None),
-                    sql_query=getattr(table, "sql_query", None),
-                    polars_plan=getattr(table, "polars_plan", None),
-                    source_table_versions=getattr(table, "source_table_versions", None),
-                    created_at=table.created_at,
-                    updated_at=table.updated_at,
-                )
-            )
-        return result
-
-    def _materialize_table_with_worker(
-        self,
-        source_file_path: str,
-        table_name: str | None = None,
-    ) -> CatalogMaterializationResult:
-        response = trigger_catalog_materialize(
-            source_file_path=source_file_path,
-            table_name=table_name,
-        )
-        if response.ok:
-            data = response.json()
-            schema = [
-                {"name": col["name"], "dtype": col["dtype"]}
-                for col in data.get("column_schema", [])
-                if "name" in col and "dtype" in col
-            ]
-            return CatalogService.CatalogMaterializationResult(
-                table_path=data["table_path"],
-                schema=schema,
-                row_count=data["row_count"],
-                column_count=data["column_count"],
-                size_bytes=data["size_bytes"],
-                storage_format="delta",
-            )
-
-        detail = None
-        try:
-            detail = response.json().get("detail")
-        except (ValueError, AttributeError):
-            detail = None
-
-        if response.status_code == 422:
-            if isinstance(detail, dict) and detail.get("error_type") == "unsupported_file_type":
-                raise ValueError(detail.get("message", "Unsupported file type"))
-            raise ValueError(detail.get("message", "Unsupported file type") if isinstance(detail, dict) else "")
-
-        if isinstance(detail, dict):
-            message = detail.get("message", response.text)
-        else:
-            message = response.text
-        raise RuntimeError(f"Worker catalog materialization failed: {message}")
+        return self._tables.bulk_enrich_tables(tables, user_id)
 
     def register_table(
         self,
@@ -900,39 +575,8 @@ class CatalogService:
         source_registration_id: int | None = None,
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
-        """Register a new table in the catalog by materializing it as Parquet.
-
-        The caller must provide ``file_path`` pointing to a supported source
-        file (CSV, Parquet, Excel). The service reads the file, writes a
-        Parquet copy to the catalog tables directory, and records metadata.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If ``namespace_id`` is given but doesn't exist.
-        TableExistsError
-            If a table with this name already exists in the namespace.
-        """
-        self._validate_table_registration(name, namespace_id)
-
-        materialized = self._materialize_table_with_worker(
-            source_file_path=file_path,
-            table_name=name,
-        )
-
-        return self._create_table_record_from_metadata(
-            name=name,
-            table_path=materialized.table_path,
-            schema=materialized.schema,
-            row_count=materialized.row_count,
-            column_count=materialized.column_count,
-            size_bytes=materialized.size_bytes,
-            owner_id=owner_id,
-            namespace_id=namespace_id,
-            description=description,
-            source_registration_id=source_registration_id,
-            source_run_id=source_run_id,
-            storage_format=materialized.storage_format,
+        return self._tables.register_table(
+            name, file_path, owner_id, namespace_id, description, source_registration_id, source_run_id
         )
 
     def register_table_from_data(
@@ -950,49 +594,19 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
-        """Register an already-materialized table (Delta or Parquet) in the catalog.
-
-        Unlike ``register_table``, this does NOT copy the file — it records
-        the given ``table_path`` directly. Use this when the caller has
-        already written the table to the catalog tables directory
-        (e.g. the catalog writer node in a flow graph).
-
-        When *schema*, *row_count*, *column_count*, and *size_bytes* are all
-        provided the service records them directly without reading the table.
-        This is the preferred path — the worker that wrote the table should
-        supply this metadata so the core process never touches the data files.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If ``namespace_id`` is given but doesn't exist.
-        TableExistsError
-            If a table with this name already exists in the namespace.
-        """
-        self._validate_table_registration(name, namespace_id)
-
-        if schema is not None and row_count is not None and size_bytes is not None:
-            # Fast path: caller already computed metadata (from worker)
-            schema_list = schema
-            if column_count is None:
-                column_count = len(schema_list)
-        else:
-            # Fallback: read metadata from the table on disk
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(table_path, storage_format)
-
-        return self._create_table_record_from_metadata(
-            name=name,
-            table_path=table_path,
-            schema=schema_list,
-            row_count=row_count,
-            column_count=column_count,
-            size_bytes=size_bytes,
-            owner_id=owner_id,
-            namespace_id=namespace_id,
-            description=description,
-            source_registration_id=source_registration_id,
-            source_run_id=source_run_id,
-            storage_format=storage_format,
+        return self._tables.register_table_from_data(
+            name,
+            table_path,
+            owner_id,
+            namespace_id,
+            description,
+            source_registration_id,
+            source_run_id,
+            storage_format,
+            schema,
+            row_count,
+            column_count,
+            size_bytes,
         )
 
     def register_table_from_parquet(
@@ -1005,7 +619,9 @@ class CatalogService:
         source_registration_id: int | None = None,
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
-        """Backward-compatible alias for ``register_table_from_data``."""
+        # Body kept on the facade — a test monkeypatches
+        # ``CatalogService.register_table_from_data`` and expects this
+        # alias to route through it.
         return self.register_table_from_data(
             name=name,
             table_path=parquet_path,
@@ -1031,101 +647,22 @@ class CatalogService:
         column_count: int | None = None,
         size_bytes: int | None = None,
     ) -> CatalogTableOut:
-        """Replace the data of an existing catalog table **in-place**.
-
-        This preserves the table's primary-key ID so that all foreign-key
-        references (schedules, read links, favourites, flow definitions)
-        remain valid.
-
-        When *schema*, *row_count*, *column_count*, and *size_bytes* are all
-        provided the service records them directly without reading the table.
-        This is the preferred path.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-
-        # Resolve path: prefer table_path, fall back to parquet_path
-        resolved_path_str = table_path or parquet_path
-        dest_path = Path(resolved_path_str)
-
-        if storage_format is None:
-            storage_format = "delta" if is_delta_table(dest_path) else "parquet"
-
-        if schema is not None and row_count is not None and size_bytes is not None:
-            schema_list = schema
-            if column_count is None:
-                column_count = len(schema_list)
-        else:
-            schema_list, row_count, column_count, size_bytes = self._read_table_metadata(str(dest_path), storage_format)
-
-        # Remove old storage if it differs from the new one
-        old_path = Path(table.file_path)
-        if old_path != dest_path and old_path.exists():
-            try:
-                delete_table_storage(old_path)
-            except OSError:
-                logger.warning("Failed to delete old table storage %s", old_path, exc_info=True)
-
-        # Update fields in-place
-        table.file_path = str(dest_path)
-        table.storage_format = storage_format
-        table.schema_json = json.dumps(schema_list)
-        table.row_count = row_count
-        table.column_count = column_count
-        table.size_bytes = size_bytes
-        if source_registration_id is not None:
-            table.source_registration_id = source_registration_id
-        if source_run_id is not None:
-            table.source_run_id = source_run_id
-        if description is not None:
-            table.description = description
-
-        table = self.repo.update_table(table)
-
-        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
-
-        return self._table_to_out(table)
+        return self._tables.overwrite_table_data(
+            table_id,
+            table_path,
+            parquet_path,
+            source_registration_id,
+            source_run_id,
+            description,
+            storage_format,
+            schema,
+            row_count,
+            column_count,
+            size_bytes,
+        )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
         return self._schedules.fire_table_trigger_schedules(table_id, table_updated_at)
-
-    def _create_table_record_from_metadata(
-        self,
-        name: str,
-        table_path: str,
-        schema: list[dict[str, str]],
-        row_count: int,
-        column_count: int,
-        size_bytes: int,
-        owner_id: int,
-        namespace_id: int | None,
-        description: str | None,
-        source_registration_id: int | None,
-        source_run_id: int | None,
-        storage_format: str = "delta",
-    ) -> CatalogTableOut:
-        table = CatalogTable(
-            name=name,
-            namespace_id=namespace_id,
-            description=description,
-            owner_id=owner_id,
-            file_path=table_path,
-            storage_format=storage_format,
-            schema_json=json.dumps(schema),
-            row_count=row_count,
-            column_count=column_count,
-            size_bytes=size_bytes,
-            source_registration_id=source_registration_id,
-            source_run_id=source_run_id,
-        )
-        table = self.repo.create_table(table)
-        return self._table_to_out(table)
 
     def resolve_write_destination(
         self,
@@ -1134,33 +671,7 @@ class CatalogService:
         write_mode: str,
         catalog_dir: Path,
     ) -> tuple[CatalogTable | None, Path, str]:
-        """Resolve the destination path and Delta write mode for a catalog write.
-
-        Returns ``(existing_table_or_None, dest_path, delta_mode)``.
-
-        Raises
-        ------
-        TableExistsError
-            If the table exists and *write_mode* is ``"error"``.
-        """
-
-        existing = self.repo.get_table_by_name(table_name, namespace_id)
-
-        if existing is not None:
-            if write_mode == "error":
-                raise TableExistsError(name=table_name, namespace_id=namespace_id)
-
-            old_path = Path(existing.file_path)
-            if is_delta_table(old_path):
-                return existing, old_path, write_mode
-
-            # Legacy parquet file — compute new delta dir at same stem.
-            new_dir = old_path.parent / old_path.stem
-            return existing, new_dir, write_mode
-
-        # New table — merge modes handled by the worker (it creates the table)
-        dir_name = f"{table_name}_{uuid4().hex[:8]}"
-        return None, catalog_dir / dir_name, write_mode
+        return self._tables.resolve_write_destination(table_name, namespace_id, write_mode, catalog_dir)
 
     def resolve_table_file_path(
         self,
@@ -1168,32 +679,10 @@ class CatalogService:
         table_name: str | None = None,
         namespace_id: int | None = None,
     ) -> str | None:
-        """Resolve a catalog table's file path by ID or by name + namespace.
-
-        Returns ``None`` if the table cannot be found.
-        """
-        if table_id is not None:
-            table = self.repo.get_table(table_id)
-            if table is not None:
-                return table.file_path
-        elif table_name:
-            table = self.repo.get_table_by_name(table_name, namespace_id)
-            if table is not None:
-                return table.file_path
-        return None
+        return self._tables.resolve_table_file_path(table_id, table_name, namespace_id)
 
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
-        """Get a catalog table by ID.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        return self._table_to_out(table, user_id=user_id)
+        return self._tables.get_table(table_id, user_id)
 
     def resolve_table_out(
         self,
@@ -1202,34 +691,10 @@ class CatalogService:
         strict: bool = False,
         user_id: int | None = None,
     ) -> tuple[CatalogTableOut, list[dict]]:
-        """Resolve a reference and return its DTO plus ambiguity warnings (empty when unambiguous).
-
-        Warnings are populated only when the reference is a bare name matching multiple
-        rows; qualified references (``"ns.name"``) and filtered bare references
-        (``default_namespace_id`` set) never produce warnings.
-        """
-        warnings: list[dict] = []
-        if not strict and "." not in reference and default_namespace_id is None:
-            matches = self.repo.list_tables_by_name(reference)
-            if len(matches) > 1:
-                warnings = [
-                    {
-                        "id": t.id,
-                        "name": t.name,
-                        "namespace_id": t.namespace_id,
-                        "namespace_name": self._resolve_namespace_name(t.namespace_id),
-                    }
-                    for t in matches
-                ]
-        table = self.resolve_table(reference, default_namespace_id=default_namespace_id, strict=strict)
-        return self._table_to_out(table, user_id=user_id), warnings
+        return self._tables.resolve_table_out(reference, default_namespace_id, strict, user_id)
 
     def list_tables(self, namespace_id: int | None = None, user_id: int | None = None) -> list[CatalogTableOut]:
-        """List tables, optionally filtered by namespace."""
-        tables = self.repo.list_tables(namespace_id=namespace_id)
-        if user_id is not None:
-            return self._bulk_enrich_tables(tables, user_id)
-        return [self._table_to_out(t) for t in tables]
+        return self._tables.list_tables(namespace_id, user_id)
 
     def update_table(
         self,
@@ -1238,51 +703,10 @@ class CatalogService:
         description: str | None = None,
         namespace_id: int | None = None,
     ) -> CatalogTableOut:
-        """Update a catalog table's metadata.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        if name is not None:
-            table.name = name
-        if description is not None:
-            table.description = description
-        if namespace_id is not None:
-            table.namespace_id = namespace_id
-        table = self.repo.update_table(table)
-        return self._table_to_out(table)
+        return self._tables.update_table(table_id, name, description, namespace_id)
 
     def delete_table(self, table_id: int) -> None:
-        """Delete a catalog table and its materialized storage (Delta dir or Parquet file).
-
-        Virtual tables have no physical storage for the optimized case, so
-        only metadata is removed.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-
-        file_path = table.file_path
-        self.repo.delete_table(table_id)
-
-        # Only clean up physical storage for non-virtual tables that have a file_path
-        if file_path:
-            try:
-                storage_path = Path(file_path)
-                if storage_path.exists():
-                    delete_table_storage(storage_path)
-            except OSError:
-                logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
+        self._tables.delete_table(table_id)
 
     # ------------------------------------------------------------------ #
     # Virtual Flow Table operations
@@ -1828,44 +1252,13 @@ class CatalogService:
         return DeltaTableHistory(current_version=current_version, history=history)
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
-        """Add a table to user's favourites (idempotent).
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        existing = self.repo.get_table_favorite(user_id, table_id)
-        if existing is not None:
-            return existing
-        fav = TableFavorite(user_id=user_id, table_id=table_id)
-        return self.repo.add_table_favorite(fav)
+        return self._tables.add_table_favorite(user_id, table_id)
 
     def remove_table_favorite(self, user_id: int, table_id: int) -> None:
-        """Remove a table from user's favourites.
-
-        Raises
-        ------
-        TableFavoriteNotFoundError
-            If the favourite doesn't exist.
-        """
-        existing = self.repo.get_table_favorite(user_id, table_id)
-        if existing is None:
-            raise TableFavoriteNotFoundError(user_id=user_id, table_id=table_id)
-        self.repo.remove_table_favorite(user_id, table_id)
+        self._tables.remove_table_favorite(user_id, table_id)
 
     def list_table_favorites(self, user_id: int) -> list[CatalogTableOut]:
-        """List all tables the user has favourited, enriched."""
-        favs = self.repo.list_table_favorites(user_id)
-        tables: list[CatalogTable] = []
-        for fav in favs:
-            table = self.repo.get_table(fav.table_id)
-            if table is not None:
-                tables.append(table)
-        return self._bulk_enrich_tables(tables, user_id)
+        return self._tables.list_table_favorites(user_id)
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
         return self._schedules._schedule_to_out(schedule)
