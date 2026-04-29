@@ -246,3 +246,18 @@ class VisualizationComputeError(CatalogError):
 
     def __init__(self, message: str):
         super().__init__(f"Worker compute failed: {message}")
+
+
+class DashboardNotFoundError(CatalogError):
+    """Raised when a saved dashboard lookup fails."""
+
+    def __init__(self, dashboard_id: int | None = None, name: str | None = None):
+        self.dashboard_id = dashboard_id
+        self.name = name
+        if dashboard_id is not None:
+            detail = f"Dashboard id={dashboard_id} not found"
+        elif name is not None:
+            detail = f"Dashboard '{name}' not found"
+        else:
+            detail = "Dashboard not found"
+        super().__init__(detail)

@@ -157,6 +157,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~906 LOC. Plan to extract:
+//   - DataTabs.vue (~lines 10-28), OutputSelector.vue (~33-46)
+//   - OutdatedDataBanner.vue (~49-61), ArtifactsPanel.vue (~84-155)
+//   - useTableData composable: AG Grid setup + refresh (~lines 316-378)
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";

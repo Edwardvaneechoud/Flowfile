@@ -83,6 +83,23 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CatalogView/CatalogView.vue"),
       },
       {
+        name: "dashboard-new",
+        path: "dashboards/new",
+        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+      },
+      {
+        name: "dashboard-edit",
+        path: "dashboards/:id/edit",
+        component: () => import("../views/DashboardsView/DashboardEditorView.vue"),
+        props: true,
+      },
+      {
+        name: "dashboard-view",
+        path: "dashboards/:id",
+        component: () => import("../views/DashboardsView/DashboardViewerView.vue"),
+        props: true,
+      },
+      {
         name: "nodeDesigner",
         path: "nodeDesigner",
         component: () => import("../pages/NodeDesigner.vue"),

@@ -1,4 +1,9 @@
 <script setup lang="ts">
+// TODO(refactor): ~1170 LOC; bundles 7+ concerns. Plan to extract:
+//   - 6 draggable panel wrappers (~lines 927-1021) → individual *Panel components
+//   - clipboard/copy-paste logic (~lines 533-700) → useFlowClipboard composable
+//   - context menu handling (~lines 702-794) → useContextMenu composable
+//   - keyboard shortcuts (~lines 729-778) → useFlowHotkeys composable
 import {
   ref,
   markRaw,

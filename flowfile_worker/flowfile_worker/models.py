@@ -311,3 +311,20 @@ class VisualizeFieldsResponse(BaseModel):
     fields: list[dict] = Field(default_factory=list)
     cache_hit: bool = False
     error: str | None = None
+
+
+class VisualizeColumnStatsRequest(BaseModel):
+    source: VizWorkerSource
+    column: str
+    limit: int = 100
+
+
+class VisualizeColumnStatsResponse(BaseModel):
+    dtype: str = ""
+    values: list = Field(default_factory=list)
+    truncated: bool = False
+    distinct_count: int | None = None
+    min: object | None = None
+    max: object | None = None
+    cache_hit: bool = False
+    error: str | None = None

@@ -272,6 +272,9 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~768 LOC. Already mostly modular; lower priority.
+//   - useNodeKernel composable: kernel section logic (~lines 302-328)
+//   - useNodeAutoSave composable: auto-save watcher (~lines 390-392)
 import { ref, watch, onMounted, computed } from "vue";
 import axios from "axios";
 

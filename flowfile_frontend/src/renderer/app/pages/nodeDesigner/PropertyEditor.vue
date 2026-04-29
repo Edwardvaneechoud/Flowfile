@@ -375,6 +375,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~588 LOC. Plan to extract:
+//   - 9 conditional type sections (~lines 40-357) → split into per-type panels under
+//     pages/nodeDesigner/propertyPanels/ (TextInputProperties, NumericInputProperties,
+//     SelectProperties, etc.)
+//   - useComponentTypeDetection composable: getTypeForComponent (~lines 396-417)
 import type { DesignerComponent } from "./types";
 import { toSnakeCase } from "./composables/useCodeGeneration";
 import { getComponentIcon } from "./constants";
