@@ -68,6 +68,7 @@ from flowfile_core.catalog.exceptions import (
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.serializers import (
@@ -176,6 +177,7 @@ class CatalogService:
     def __init__(self, repo: CatalogRepository) -> None:
         self.repo = repo
         self._namespaces = NamespaceService(repo)
+        self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo)
 
     # ------------------------------------------------------------------ #
@@ -351,102 +353,10 @@ class CatalogService:
         return schema_list, row_count, len(schema_list), size_bytes
 
     def _enrich_flow_registration(self, flow: FlowRegistration, user_id: int) -> FlowRegistrationOut:
-        """Attach favourite/follow flags and run stats to a single registration.
-
-        Note: For bulk operations, prefer ``_bulk_enrich_flows`` to avoid N+1 queries.
-        """
-        is_fav = self.repo.get_favorite(user_id, flow.id) is not None
-        is_follow = self.repo.get_follow(user_id, flow.id) is not None
-        run_count = self.repo.count_run_for_flow(flow.id)
-        last_run = self.repo.last_run_for_flow(flow.id)
-        artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
-        produced_tables = self.repo.list_tables_for_flow(flow.id)
-        read_tables = self.repo.list_read_tables_for_flow(flow.id)
-        fe = os.path.exists(flow.flow_path) if flow.flow_path else False
-        if not fe:
-            logger.warning(
-                "Registered flow %s (id=%d) references missing file: %s",
-                flow.name,
-                flow.id,
-                flow.flow_path,
-            )
-        return FlowRegistrationOut(
-            id=flow.id,
-            name=flow.name,
-            description=flow.description,
-            flow_path=flow.flow_path,
-            namespace_id=flow.namespace_id,
-            owner_id=flow.owner_id,
-            created_at=flow.created_at,
-            updated_at=flow.updated_at,
-            is_favorite=is_fav,
-            is_following=is_follow,
-            run_count=run_count,
-            last_run_at=last_run.started_at if last_run else None,
-            last_run_success=last_run.success if last_run else None,
-            file_exists=fe,
-            artifact_count=artifact_count,
-            tables_produced=[
-                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
-            ],
-            tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read_tables],
-        )
+        return self._flows.enrich_flow_registration(flow, user_id)
 
     def _bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
-        """Enrich multiple flows with favourites, follows, and run stats in bulk.
-
-        Uses 3 queries total instead of 4×N, dramatically improving performance
-        when listing many flows.
-        """
-        if not flows:
-            return []
-
-        flow_ids = [f.id for f in flows]
-
-        fav_ids = self.repo.bulk_get_favorite_flow_ids(user_id, flow_ids)
-        follow_ids = self.repo.bulk_get_follow_flow_ids(user_id, flow_ids)
-        run_stats = self.repo.bulk_get_run_stats(flow_ids)
-        artifact_counts = self.repo.bulk_get_artifact_counts(flow_ids)
-        tables_by_flow = self.repo.bulk_get_tables_for_flows(flow_ids)
-        read_tables_by_flow = self.repo.bulk_get_read_tables_for_flows(flow_ids)
-
-        result: list[FlowRegistrationOut] = []
-        for flow in flows:
-            run_count, last_run = run_stats.get(flow.id, (0, None))
-            produced = tables_by_flow.get(flow.id, [])
-            read = read_tables_by_flow.get(flow.id, [])
-            fe = os.path.exists(flow.flow_path) if flow.flow_path else False
-            if not fe:
-                logger.warning(
-                    "Registered flow %s (id=%d) references missing file: %s",
-                    flow.name,
-                    flow.id,
-                    flow.flow_path,
-                )
-            result.append(
-                FlowRegistrationOut(
-                    id=flow.id,
-                    name=flow.name,
-                    description=flow.description,
-                    flow_path=flow.flow_path,
-                    namespace_id=flow.namespace_id,
-                    owner_id=flow.owner_id,
-                    created_at=flow.created_at,
-                    updated_at=flow.updated_at,
-                    is_favorite=flow.id in fav_ids,
-                    is_following=flow.id in follow_ids,
-                    run_count=run_count,
-                    last_run_at=last_run.started_at if last_run else None,
-                    last_run_success=last_run.success if last_run else None,
-                    file_exists=fe,
-                    artifact_count=artifact_counts.get(flow.id, 0),
-                    tables_produced=[
-                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
-                    ],
-                    tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read],
-                )
-            )
-        return result
+        return self._flows.bulk_enrich_flows(flows, user_id)
 
     def _resolve_log_path(self, run_id: int, run_type: str) -> str | None:
         return self._runs._resolve_log_path(run_id, run_type)
@@ -591,26 +501,7 @@ class CatalogService:
         namespace_id: int | None = None,
         description: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If ``namespace_id`` is given but doesn't exist.
-        """
-        if namespace_id is not None:
-            ns = self.repo.get_namespace(namespace_id)
-            if ns is None:
-                raise NamespaceNotFoundError(namespace_id=namespace_id)
-        flow = FlowRegistration(
-            name=name,
-            description=description,
-            flow_path=flow_path,
-            namespace_id=namespace_id,
-            owner_id=owner_id,
-        )
-        flow = self.repo.create_flow(flow)
-        return self._enrich_flow_registration(flow, owner_id)
+        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
 
     def update_flow(
         self,
@@ -620,79 +511,21 @@ class CatalogService:
         description: str | None = None,
         namespace_id: int | None = None,
     ) -> FlowRegistrationOut:
-        """Update a flow registration.
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-        if name is not None:
-            flow.name = name
-        if description is not None:
-            flow.description = description
-        if namespace_id is not None:
-            flow.namespace_id = namespace_id
-        flow = self.repo.update_flow(flow)
-        return self._enrich_flow_registration(flow, requesting_user_id)
+        return self._flows.update_flow(
+            registration_id, requesting_user_id, name, description, namespace_id
+        )
 
     def delete_flow(self, registration_id: int) -> None:
-        """Delete a flow and its related favourites/follows.
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        FlowHasArtifactsError
-            If the flow still has active (non-deleted) artifacts.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-
-        artifact_count = self.repo.count_active_artifacts_for_flow(registration_id)
-        if artifact_count > 0:
-            raise FlowHasArtifactsError(registration_id, artifact_count)
-
-        self.repo.delete_flow(registration_id)
+        self._flows.delete_flow(registration_id)
 
     def get_flow(self, registration_id: int, user_id: int) -> FlowRegistrationOut:
-        """Get an enriched flow registration.
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-        return self._enrich_flow_registration(flow, user_id)
+        return self._flows.get_flow(registration_id, user_id)
 
     def list_flows(self, user_id: int, namespace_id: int | None = None) -> list[FlowRegistrationOut]:
-        """List flows, optionally filtered by namespace, enriched with user context.
-
-        Uses bulk enrichment to avoid N+1 queries.
-        """
-        flows = self.repo.list_flows(namespace_id=namespace_id)
-        return self._bulk_enrich_flows(flows, user_id)
+        return self._flows.list_flows(user_id, namespace_id)
 
     def list_artifacts_for_flow(self, registration_id: int) -> list[GlobalArtifactOut]:
-        """List all active artifacts produced by a registered flow.
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-        artifacts = self.repo.list_artifacts_for_flow(registration_id)
-        return [artifact_to_out(a) for a in artifacts]
+        return self._flows.list_artifacts_for_flow(registration_id)
 
     # ------------------------------------------------------------------ #
     # Run operations
@@ -769,16 +602,12 @@ class CatalogService:
         )
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
-        """Register a flow in a default-ish namespace if not already registered.
+        """Auto-register a flow under General > {Unnamed Flows | Local Flows | default}.
 
-        Unnamed/quick-created flows (stored under ``unnamed_flows/``) go into
-        ``General > Unnamed Flows``; everything else goes to ``General > Local
-        Flows`` (flows that live on disk, as opposed to catalog-managed flows
-        created via the Catalog tab).  Falls back to ``General > default`` for
-        older catalogs that predate the Local Flows namespace.
-
-        Returns the registration on success, or None if no suitable namespace
-        exists or the flow is already registered.
+        Body lives on the facade — not FlowRegistrationService — because a test
+        monkeypatches ``CatalogService.ensure_local_flows_namespace`` to simulate
+        an older catalog where that namespace was never seeded. Routing the
+        ``ensure_*`` calls through ``self`` keeps that contract working.
         """
         general = self.repo.get_namespace_by_name("General", parent_id=None)
         if general is None:
@@ -795,14 +624,13 @@ class CatalogService:
             if target_ns is None:
                 target_ns = self.ensure_local_flows_namespace()
             if target_ns is None:
-                # Fallback for older catalogs that still only have 'default'
                 target_ns = self.repo.get_namespace_by_name("default", parent_id=general.id)
         if target_ns is None:
             logger.info("Auto-registration skipped: no suitable namespace found under 'General'")
             return None
         existing = self.repo.get_flow_by_path(flow_path)
         if existing:
-            return None  # already registered
+            return None
         reg = FlowRegistration(
             name=name or Path(flow_path).stem,
             flow_path=flow_path,
@@ -811,38 +639,14 @@ class CatalogService:
         )
         return self.repo.create_flow(reg)
 
-    def _ensure_general_child(self, name: str, description: str) -> CatalogNamespace | None:
-        """Ensure 'General > {name}' namespace exists, creating it if needed.
-
-        Inherits owner_id from the parent 'General' namespace.  Returns the
-        namespace, or None if the parent 'General' namespace does not exist.
-        """
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
-        if general is None:
-            logger.info(f"Cannot ensure '{name}' namespace: parent 'General' not found")
-            return None
-        existing = self.repo.get_namespace_by_name(name, parent_id=general.id)
-        if existing is not None:
-            return existing
-        ns = CatalogNamespace(
-            name=name,
-            parent_id=general.id,
-            level=1,
-            description=description,
-            owner_id=general.owner_id,
-        )
-        return self.repo.create_namespace(ns)
-
     def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child("Unnamed Flows", "Quick-created flows that have not yet been named")
+        return self._flows.ensure_unnamed_flows_namespace()
 
     def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child("Local Flows", "Flows saved to disk at user-chosen paths")
+        return self._flows.ensure_local_flows_namespace()
 
     def resolve_registration_id(self, flow_path: str) -> int | None:
-        """Look up the registration ID for a flow by its file path."""
-        reg = self.repo.get_flow_by_path(flow_path)
-        return reg.id if reg else None
+        return self._flows.resolve_registration_id(flow_path)
 
     def get_run_snapshot(self, run_id: int) -> str:
         return self._runs.get_run_snapshot(run_id)
