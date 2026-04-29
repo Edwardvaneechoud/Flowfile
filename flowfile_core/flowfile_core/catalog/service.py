@@ -72,7 +72,9 @@ from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
+from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
+from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     artifact_to_out,
@@ -185,6 +187,16 @@ class CatalogService:
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
         self._tables = TableService(repo, self._namespaces, self._flows, self._schedules)
+
+        # SqlService and VirtualTableService form a cycle: SqlService.execute_sql_query
+        # uses VirtualTableService for resolution, and VirtualTableService.create_query_virtual_table
+        # uses SqlService to derive the schema. Late-bind to break the cycle.
+        self._sql = SqlService(repo, self._flows)
+        self._virtual_tables = VirtualTableService(
+            repo, self._namespaces, self._tables, self._schedules
+        )
+        self._sql.bind(virtual_tables=self._virtual_tables)
+        self._virtual_tables.bind(sql=self._sql)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -725,42 +737,18 @@ class CatalogService:
         polars_plan: str | None = None,
         source_table_versions: str | None = None,
     ) -> CatalogTableOut:
-        """Create a virtual flow table (non-materialized catalog entry).
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the producer flow doesn't exist.
-        NamespaceNotFoundError
-            If the namespace doesn't exist.
-        TableExistsError
-            If a table with this name already exists in the namespace.
-        """
-        # Validate producer flow
-        producer = self.repo.get_flow(producer_registration_id)
-        if producer is None:
-            raise FlowNotFoundError(registration_id=producer_registration_id)
-
-        # Validate namespace
-        self._validate_table_registration(name, namespace_id)
-
-        table = CatalogTable(
-            name=name,
-            namespace_id=namespace_id,
-            description=description,
-            owner_id=owner_id,
-            file_path=None,
-            storage_format="delta",
-            table_type="virtual",
-            producer_registration_id=producer_registration_id,
-            serialized_lazy_frame=serialized_lazy_frame,
-            is_optimized=is_optimized,
-            schema_json=schema_json,
-            polars_plan=polars_plan,
-            source_table_versions=source_table_versions,
+        return self._virtual_tables.create_virtual_flow_table(
+            name,
+            owner_id,
+            producer_registration_id,
+            namespace_id,
+            description,
+            serialized_lazy_frame,
+            is_optimized,
+            schema_json,
+            polars_plan,
+            source_table_versions,
         )
-        table = self.repo.create_table(table)
-        return self._table_to_out(table)
 
     def update_virtual_flow_table(
         self,
@@ -775,50 +763,18 @@ class CatalogService:
         polars_plan: str | None = None,
         source_table_versions: str | None = None,
     ) -> CatalogTableOut:
-        """Update a virtual flow table's metadata or producer.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist or is not virtual.
-        FlowNotFoundError
-            If the new producer flow doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None or getattr(table, "table_type", "physical") != "virtual":
-            raise TableNotFoundError(table_id=table_id)
-
-        if name is not None:
-            table.name = name
-        if description is not None:
-            table.description = description
-        if namespace_id is not None:
-            table.namespace_id = namespace_id
-        if producer_registration_id is not None:
-            producer = self.repo.get_flow(producer_registration_id)
-            if producer is None:
-                raise FlowNotFoundError(registration_id=producer_registration_id)
-            table.producer_registration_id = producer_registration_id
-        if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame
-        if is_optimized is not None:
-            table.is_optimized = is_optimized
-        if schema_json is not None:
-            table.schema_json = schema_json
-        if polars_plan is not None:
-            table.polars_plan = polars_plan
-        if source_table_versions is not None:
-            table.source_table_versions = source_table_versions
-
-        table = self.repo.update_table(table)
-
-        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
-
-        return self._table_to_out(table)
-
-    # ------------------------------------------------------------------ #
-    # Query-based Virtual Table operations
-    # ------------------------------------------------------------------ #
+        return self._virtual_tables.update_virtual_flow_table(
+            table_id,
+            name,
+            description,
+            namespace_id,
+            producer_registration_id,
+            serialized_lazy_frame,
+            is_optimized,
+            schema_json,
+            polars_plan,
+            source_table_versions,
+        )
 
     def create_query_virtual_table(
         self,
@@ -828,56 +784,9 @@ class CatalogService:
         namespace_id: int | None = None,
         description: str | None = None,
     ) -> CatalogTableOut:
-        """Create a query-based virtual table from a SQL expression.
-
-        The SQL is validated and executed once to derive the output schema.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If the namespace doesn't exist.
-        TableExistsError
-            If a table with this name already exists in the namespace.
-        ValueError
-            If the SQL query is invalid or fails to execute.
-        """
-        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
-            UnsafeSQLError,
-            validate_sql_query,
+        return self._virtual_tables.create_query_virtual_table(
+            name, owner_id, sql_query, namespace_id, description
         )
-
-        try:
-            validate_sql_query(sql_query)
-        except UnsafeSQLError as e:
-            raise ValueError(str(e)) from e
-
-        self._validate_table_registration(name, namespace_id)
-
-        # Execute the query once to derive schema
-        result = self.execute_sql_query(sql_query, max_rows=1)
-        if result.error:
-            raise ValueError(f"SQL query failed: {result.error}")
-
-        schema_list = [{"name": c, "dtype": d} for c, d in zip(result.columns, result.dtypes, strict=False)]
-        schema_json = json.dumps(schema_list) if schema_list else None
-
-        table = CatalogTable(
-            name=name,
-            namespace_id=namespace_id,
-            description=description,
-            owner_id=owner_id,
-            file_path=None,
-            storage_format="delta",
-            table_type="virtual",
-            producer_registration_id=None,
-            serialized_lazy_frame=None,
-            is_optimized=False,
-            sql_query=sql_query,
-            schema_json=schema_json,
-            column_count=len(schema_list),
-        )
-        table = self.repo.create_table(table)
-        return self._table_to_out(table)
 
     def update_query_virtual_table(
         self,
@@ -887,54 +796,9 @@ class CatalogService:
         namespace_id: int | None = None,
         sql_query: str | None = None,
     ) -> CatalogTableOut:
-        """Update a query-based virtual table.
-
-        If sql_query changes, re-derives the schema.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist or is not a query-based virtual table.
-        ValueError
-            If the new SQL query is invalid or fails.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None or getattr(table, "table_type", "physical") != "virtual":
-            raise TableNotFoundError(table_id=table_id)
-        if not getattr(table, "sql_query", None):
-            raise TableNotFoundError(table_id=table_id)
-
-        if name is not None:
-            table.name = name
-        if description is not None:
-            table.description = description
-        if namespace_id is not None:
-            table.namespace_id = namespace_id
-        if sql_query is not None:
-            from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
-                UnsafeSQLError,
-                validate_sql_query,
-            )
-
-            try:
-                validate_sql_query(sql_query)
-            except UnsafeSQLError as e:
-                raise ValueError(str(e)) from e
-
-            result = self.execute_sql_query(sql_query, max_rows=1)
-            if result.error:
-                raise ValueError(f"SQL query failed: {result.error}")
-
-            schema_list = [{"name": c, "dtype": d} for c, d in zip(result.columns, result.dtypes, strict=False)]
-            table.sql_query = sql_query
-            table.schema_json = json.dumps(schema_list) if schema_list else None
-            table.column_count = len(schema_list)
-
-        table = self.repo.update_table(table)
-
-        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
-
-        return self._table_to_out(table)
+        return self._virtual_tables.update_query_virtual_table(
+            table_id, name, description, namespace_id, sql_query
+        )
 
     def resolve_query_virtual_table(
         self,
@@ -943,64 +807,9 @@ class CatalogService:
         _visited: set[int] | None = None,
         _depth: int = 0,
     ) -> pl.LazyFrame:
-        """Resolve a query-based virtual table by executing its stored SQL.
-
-        Builds a pl.SQLContext with all other catalog tables and executes the
-        stored SQL query. Guards against circular references via _visited set.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist or has no sql_query.
-        ValueError
-            If circular reference or recursion limit is hit.
-        """
-        if _depth > QUERY_VIRTUAL_TABLE_RECURSION_LIMIT:
-            raise ValueError(
-                f"Query virtual table recursion limit exceeded (depth > {QUERY_VIRTUAL_TABLE_RECURSION_LIMIT})"
-            )
-        if _visited is None:
-            _visited = set()
-        if table_id in _visited:
-            raise ValueError(f"Circular reference detected in query virtual table {table_id}")
-        _visited.add(table_id)
-
-        table = self.repo.get_table(table_id)
-        if table is None or not getattr(table, "sql_query", None):
-            raise TableNotFoundError(table_id=table_id)
-
-        all_tables = [t for t in self.repo.list_tables() if t.id != table_id]
-        bare_counts: dict[str, int] = {}
-        for t in all_tables:
-            bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
-
-        aliases_by_table: dict[int, list[str]] = {}
-        alias_to_table: dict[str, CatalogTable] = {}
-        for t in all_tables:
-            ns_name = self._resolve_namespace_name(t.namespace_id)
-            qualified = self._format_full_name(ns_name, t.name)
-            aliases = [qualified]
-            if bare_counts.get(t.name, 0) == 1 and qualified != t.name:
-                aliases.append(t.name)
-            aliases_by_table[t.id] = aliases
-            for alias in aliases:
-                alias_to_table[alias] = t
-
-        rewritten_query = _rewrite_qualified_references(table.sql_query, alias_to_table.keys())
-        referenced_ids = {
-            tbl.id for alias, tbl in alias_to_table.items() if _is_table_reference(alias, rewritten_query)
-        }
-
-        ctx = pl.SQLContext()
-        for tbl_id in referenced_ids:
-            t = next(tbl for tbl in all_tables if tbl.id == tbl_id)
-            lf = self._resolve_table_for_sql_context(t, user_id=user_id, visited=_visited, depth=_depth + 1)
-            if lf is None:
-                continue
-            for alias in aliases_by_table[tbl_id]:
-                ctx.register(alias, lf)
-
-        return ctx.execute(rewritten_query)
+        return self._virtual_tables.resolve_query_virtual_table(
+            table_id, user_id=user_id, _visited=_visited, _depth=_depth
+        )
 
     def _resolve_table_for_sql_context(
         self,
@@ -1009,25 +818,7 @@ class CatalogService:
         visited: set[int] | None,
         depth: int,
     ) -> pl.LazyFrame | None:
-        if t.table_type == "virtual":
-            if getattr(t, "sql_query", None):
-                try:
-                    return self.resolve_query_virtual_table(t.id, user_id=user_id, _visited=visited, _depth=depth)
-                except Exception:
-                    logger.warning("Could not resolve nested query virtual table %r", t.name)
-                    return None
-            if t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
-                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
-            if t.producer_registration_id:
-                try:
-                    return self.resolve_virtual_flow_table(t.id, user_id=user_id)
-                except Exception:
-                    logger.warning("Could not resolve flow virtual table %r", t.name)
-                    return None
-            return None
-        if t.file_path and is_delta_table(Path(t.file_path)):
-            return pl.scan_delta(t.file_path)
-        return None
+        return self._virtual_tables._resolve_table_for_sql_context(t, user_id, visited, depth)
 
     def resolve_virtual_flow_table(
         self,
@@ -1036,73 +827,9 @@ class CatalogService:
         run_location: Literal["remote", "local"] | None = None,
         node_logger: NodeLogger | None = None,
     ) -> pl.LazyFrame:
-        """Resolve a virtual flow table to a LazyFrame.
-
-        For optimized tables, deserializes the stored LazyFrame directly.
-        For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, triggers flow execution via the worker
-        and returns a LazyFrame reading the IPC result.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist or is not virtual.
-        ValueError
-            If the virtual table cannot be resolved.
-        """
-        if run_location is None:
-            run_location: Literal["remote", "local"] = "remote" if _should_offload() else "local"
-        if node_logger is None:
-            node_logger = FlowLogger(-1).get_node_logger(-1)
-        from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
-        table = self.repo.get_table(table_id)
-        if table is None or table.table_type != "virtual":
-            raise TableNotFoundError(table_id=table_id)
-        # Query-based virtual table: delegate to SQL resolver
-        if table.sql_query:
-            return self.resolve_query_virtual_table(table_id, user_id=user_id)
-
-        if table.is_optimized and table.serialized_lazy_frame:
-            if check_source_versions_current(table.source_table_versions):
-                return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
-            logger.info(
-                "Source table versions changed for virtual table %r, falling back to flow execution", table.name
-            )
-
-        # Non-optimized path: load the producer flow and execute it
-        if not table.producer_registration_id:
-            raise ValueError(f"Virtual table {table.name} has no producer flow")
-
-        producer = self.repo.get_flow(table.producer_registration_id)
-        if producer is None:
-            raise FlowNotFoundError(registration_id=table.producer_registration_id)
-
-        flow = open_flow(Path(producer.flow_path), user_id=user_id)
-        selected_node = None
-        for node in flow.nodes:
-            if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
-                selected_node = node
-
-        if selected_node is None:
-            raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
-        selected_node.execute_node(
-            run_location=run_location,
-            reset_cache=True,
-            performance_mode=True,
-            optimize_for_downstream=False,
-            node_logger=node_logger,
+        return self._virtual_tables.resolve_virtual_flow_table(
+            table_id, user_id=user_id, run_location=run_location, node_logger=node_logger
         )
-
-        if selected_node.results.errors:
-            raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
-
-        flowframe = selected_node.get_resulting_data()
-        if flowframe is None or flowframe.data_frame is None:
-            raise ValueError(f"No data produced for table '{table.name}'")
-
-        flowframe.lazy = True
-        return flowframe.data_frame
 
     def get_table_preview(
         self,
@@ -1396,80 +1123,15 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
-        """Return a mapping of logical table name -> directory name for all Delta catalog tables."""
-        tables = self.repo.list_tables()
-        return {
-            table.name: Path(table.file_path).name
-            for table in tables
-            if table.file_path and is_delta_table(Path(table.file_path))
-        }
+        return self._virtual_tables.resolve_all_delta_tables()
 
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
-        """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
-        tables = self.repo.list_tables()
-        bare_counts: dict[str, int] = {}
-        for t in tables:
-            if t.table_type == "virtual" or (t.file_path and is_delta_table(Path(t.file_path))):
-                bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
-
-        delta_map: dict[str, str] = {}
-        virtual_map: dict[str, int] = {}
-        for table in tables:
-            ns_name = self._resolve_namespace_name(table.namespace_id)
-            qualified = self._format_full_name(ns_name, table.name)
-            include_bare = bare_counts.get(table.name, 0) == 1
-            if table.table_type == "virtual":
-                virtual_map[qualified] = table.id
-                if include_bare and qualified != table.name:
-                    virtual_map[table.name] = table.id
-            elif table.file_path and is_delta_table(Path(table.file_path)):
-                dir_name = Path(table.file_path).name
-                delta_map[qualified] = dir_name
-                if include_bare and qualified != table.name:
-                    delta_map[table.name] = dir_name
-        return delta_map, virtual_map
+        return self._virtual_tables.resolve_all_queryable_tables()
 
     def execute_sql_query(
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
     ) -> SqlQueryResult:
-        """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
-        from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
-            UnsafeSQLError,
-            validate_sql_query,
-        )
-
-        try:
-            validate_sql_query(query)
-        except UnsafeSQLError as e:
-            return SqlQueryResult(error=str(e))
-
-        delta_map, virtual_map = self.resolve_all_queryable_tables()
-        if not delta_map and not virtual_map:
-            return SqlQueryResult(error="No catalog tables available")
-
-        query = _rewrite_qualified_references(query, {*delta_map, *virtual_map})
-        referenced_virtuals = {vname for vname in virtual_map if _is_table_reference(vname, query)}
-
-        virtual_refs: dict[str, str] = {}
-        ipc_path_by_id: dict[int, str] = {}
-        for vname in referenced_virtuals:
-            vid = virtual_map[vname]
-            if vid not in ipc_path_by_id:
-                try:
-                    lf = self.resolve_virtual_flow_table(vid, user_id=user_id, run_location="remote")
-                    versions_hash = _hash_source_versions(self.repo.get_table(vid).source_table_versions)
-                    res = trigger_resolve_virtual_table(vid, lf.serialize(), versions_hash)
-                    ipc_path_by_id[vid] = res["ipc_path"]
-                except Exception:
-                    logger.warning("Could not resolve virtual table %r for SQL", vname)
-                    continue
-            virtual_refs[vname] = ipc_path_by_id[vid]
-
-        try:
-            result = trigger_sql_query(query, delta_map, max_rows, virtual_refs=virtual_refs or None)
-            return SqlQueryResult(**result)
-        except RuntimeError as e:
-            return SqlQueryResult(error=str(e))
+        return self._sql.execute_sql_query(query, max_rows, user_id)
 
     def save_sql_query_as_flow(
         self,
@@ -1480,90 +1142,7 @@ class CatalogService:
         description: str | None = None,
         used_tables: list[str] | None = None,
     ) -> int:
-        """Create a registered flow from a SQL query.
-
-        Builds a flow YAML with catalog_reader nodes (one per used table)
-        connected to a single sql_query node, saves it, and registers it.
-
-        Returns the registration ID.
-        """
-        import json
-
-        from flowfile_core.flowfile.utils import create_unique_id
-
-        used_tables = used_tables or []
-        flow_id = create_unique_id()
-
-        # Build nodes
-        nodes = []
-        reader_node_ids = []
-
-        for i, table_name in enumerate(used_tables):
-            table = self.repo.get_table_by_name(table_name, namespace_id)
-            if table is None:
-                continue
-            node_id = i + 1
-            reader_node_ids.append(node_id)
-            nodes.append(
-                {
-                    "id": node_id,
-                    "type": "catalog_reader",
-                    "is_start_node": True,
-                    "x_position": SAVED_FLOW_NODE_X,
-                    "y_position": SAVED_FLOW_NODE_X + i * SAVED_FLOW_NODE_Y_STEP,
-                    "input_ids": [],
-                    "outputs": [len(used_tables) + 1],
-                    "setting_input": {
-                        "catalog_table_id": table.id,
-                        "catalog_table_name": table.name,
-                    },
-                }
-            )
-
-        # SQL query node
-        sql_node_id = len(used_tables) + 1
-        nodes.append(
-            {
-                "id": sql_node_id,
-                "type": "sql_query",
-                "is_start_node": len(reader_node_ids) == 0,
-                "x_position": SAVED_FLOW_SQL_NODE_X,
-                "y_position": SAVED_FLOW_SQL_NODE_Y,
-                "input_ids": reader_node_ids,
-                "outputs": [],
-                "setting_input": {
-                    "sql_query_input": {"sql_code": query},
-                },
-            }
-        )
-
-        flow_data = {
-            "flowfile_version": "0.6.3",
-            "flowfile_id": flow_id,
-            "flowfile_name": name,
-            "flowfile_settings": {
-                "flow_id": flow_id,
-                "name": name,
-                "description": description or "",
-                "execution_mode": "Performance",
-            },
-            "nodes": nodes,
-        }
-
-        flows_dir = storage.user_data_directory / "flows"
-        flows_dir.mkdir(parents=True, exist_ok=True)
-        flow_path = flows_dir / f"{name.replace(' ', '_')}_{flow_id}.json"
-        flow_path.write_text(json.dumps(flow_data, indent=2), encoding="utf-8")
-
-        # Register in catalog
-        flow = self.register_flow(
-            name=name,
-            flow_path=str(flow_path),
-            owner_id=owner_id,
-            namespace_id=namespace_id,
-            description=description,
-        )
-        return flow.id
+        return self._sql.save_sql_query_as_flow(query, name, owner_id, namespace_id, description, used_tables)
 
     # ================== Visualizations =====================================
 
