@@ -27,6 +27,20 @@ from deltalake import DeltaTable
 from pyarrow import dataset as ds
 from sqlalchemy.exc import IntegrityError
 
+from flowfile_core.catalog.constants import (
+    DEFAULT_PREVIEW_LIMIT,
+    DEFAULT_SQL_MAX_ROWS,
+    DEFAULT_VISUALIZATION_ROWS,
+    MAX_PREVIEW_LIMIT,
+    MAX_THUMBNAIL_BYTES,
+    MAX_VISUALIZATION_ROWS,
+    MIN_SCHEDULE_INTERVAL_SECONDS,
+    QUERY_VIRTUAL_TABLE_RECURSION_LIMIT,
+    SAVED_FLOW_NODE_X,
+    SAVED_FLOW_NODE_Y_STEP,
+    SAVED_FLOW_SQL_NODE_X,
+    SAVED_FLOW_SQL_NODE_Y,
+)
 from flowfile_core.catalog.delta_utils import (
     check_source_versions_current,
     delete_table_storage,
@@ -2164,8 +2178,10 @@ class CatalogService:
         ValueError
             If circular reference or recursion limit is hit.
         """
-        if _depth > 5:
-            raise ValueError("Query virtual table recursion limit exceeded (depth > 5)")
+        if _depth > QUERY_VIRTUAL_TABLE_RECURSION_LIMIT:
+            raise ValueError(
+                f"Query virtual table recursion limit exceeded (depth > {QUERY_VIRTUAL_TABLE_RECURSION_LIMIT})"
+            )
         if _visited is None:
             _visited = set()
         if table_id in _visited:
@@ -2314,7 +2330,7 @@ class CatalogService:
     def get_table_preview(
         self,
         table_id: int,
-        limit: int = 100,
+        limit: int = DEFAULT_PREVIEW_LIMIT,
         version: int | None = None,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
@@ -2583,8 +2599,8 @@ class CatalogService:
             raise ValueError(f"Invalid schedule_type: {schedule_type}")
 
         if schedule_type == "interval":
-            if interval_seconds is None or interval_seconds < 60:
-                raise ValueError("interval_seconds must be >= 60")
+            if interval_seconds is None or interval_seconds < MIN_SCHEDULE_INTERVAL_SECONDS:
+                raise ValueError(f"interval_seconds must be >= {MIN_SCHEDULE_INTERVAL_SECONDS}")
         elif schedule_type == "table_trigger":
             if trigger_table_id is None:
                 raise ValueError("trigger_table_id is required for table_trigger schedules")
@@ -2637,8 +2653,8 @@ class CatalogService:
         if enabled is not None:
             schedule.enabled = enabled
         if interval_seconds is not None:
-            if interval_seconds < 60:
-                raise ValueError("interval_seconds must be >= 60")
+            if interval_seconds < MIN_SCHEDULE_INTERVAL_SECONDS:
+                raise ValueError(f"interval_seconds must be >= {MIN_SCHEDULE_INTERVAL_SECONDS}")
             schedule.interval_seconds = interval_seconds
         if name is not None:
             schedule.name = name
@@ -2924,7 +2940,9 @@ class CatalogService:
                     delta_map[table.name] = dir_name
         return delta_map, virtual_map
 
-    def execute_sql_query(self, query: str, max_rows: int = 10_000, user_id: int | None = None) -> SqlQueryResult:
+    def execute_sql_query(
+        self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
+    ) -> SqlQueryResult:
         """Execute a SQL query against all catalog tables (physical + virtual) via the worker."""
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
@@ -3002,8 +3020,8 @@ class CatalogService:
                     "id": node_id,
                     "type": "catalog_reader",
                     "is_start_node": True,
-                    "x_position": 100,
-                    "y_position": 100 + i * 150,
+                    "x_position": SAVED_FLOW_NODE_X,
+                    "y_position": SAVED_FLOW_NODE_X + i * SAVED_FLOW_NODE_Y_STEP,
                     "input_ids": [],
                     "outputs": [len(used_tables) + 1],
                     "setting_input": {
@@ -3020,8 +3038,8 @@ class CatalogService:
                 "id": sql_node_id,
                 "type": "sql_query",
                 "is_start_node": len(reader_node_ids) == 0,
-                "x_position": 400,
-                "y_position": 200,
+                "x_position": SAVED_FLOW_SQL_NODE_X,
+                "y_position": SAVED_FLOW_SQL_NODE_Y,
                 "input_ids": reader_node_ids,
                 "outputs": [],
                 "setting_input": {
@@ -3169,12 +3187,6 @@ class CatalogService:
             if not payload.sql_query or not payload.sql_query.strip():
                 raise ValueError("sql_query is required when source_type='sql'")
 
-    # Cap thumbnails at ~200KB so a runaway client (or a chart with a giant
-    # legend) can't bloat the catalog DB. The frontend captures via
-    # GraphicWalker's exportChart('data-url'); typical 600×400 PNGs land
-    # well under this.
-    _THUMBNAIL_MAX_BYTES = 500_000
-
     # TODO(visual-editor task 12): replace ValueError → 422 with a typed
     # VisualizationThumbnailTooLargeError → 413, and replace the cosmetic
     # `data:image/*` prefix check with magic-byte sniffing of the decoded
@@ -3186,8 +3198,8 @@ class CatalogService:
             return None
         if not value.startswith("data:image/"):
             raise ValueError("thumbnail_data_url must be a data:image/* URL")
-        if len(value) > self._THUMBNAIL_MAX_BYTES:
-            raise ValueError(f"thumbnail_data_url exceeds {self._THUMBNAIL_MAX_BYTES} bytes")
+        if len(value) > MAX_THUMBNAIL_BYTES:
+            raise ValueError(f"thumbnail_data_url exceeds {MAX_THUMBNAIL_BYTES} bytes")
         return value
 
     def create_visualization(self, payload: VisualizationCreate, user_id: int) -> VisualizationOut:
@@ -3365,12 +3377,10 @@ class CatalogService:
 
     # ---- Compute ----------------------------------------------------------
 
-    _MAX_VIZ_ROWS = 500_000
-
     def _clamp_max_rows(self, requested: int | None) -> int:
         if requested is None or requested <= 0:
-            return min(100_000, self._MAX_VIZ_ROWS)
-        return min(requested, self._MAX_VIZ_ROWS)
+            return min(DEFAULT_VISUALIZATION_ROWS, MAX_VISUALIZATION_ROWS)
+        return min(requested, MAX_VISUALIZATION_ROWS)
 
     def _session_key_for_table(self, table_id: int) -> str:
         table = self.repo.get_table(table_id)
@@ -3580,7 +3590,7 @@ class CatalogService:
         """
         if self.repo.get_table(table_id) is None:
             raise TableNotFoundError(table_id=table_id)
-        clamped_limit = max(1, min(limit, 1000))
+        clamped_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))
         source = VizSourceDescriptor(source_type="table", table_id=table_id)
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
         viz_logger.info(
