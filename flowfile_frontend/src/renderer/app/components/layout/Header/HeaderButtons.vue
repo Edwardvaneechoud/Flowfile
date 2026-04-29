@@ -47,25 +47,37 @@
       <span class="btn-text">Settings</span>
     </button>
     <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
-    <el-tooltip content="Generate code (Ctrl+G)" placement="bottom" :show-after="400">
-      <button
-        class="action-btn action-btn--icon-only"
-        :class="{ active: nodeStore.showCodeGenerator }"
-        data-tutorial="generate-code-btn"
-        @click="toggleCodeGenerator"
-      >
-        <span class="material-icons btn-icon">code</span>
+    <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+      <button class="action-btn view-btn" :class="{ active: anyViewPanelOpen }">
+        <span class="material-icons btn-icon">view_quilt</span>
+        <span class="btn-text">View</span>
+        <span class="material-icons btn-icon view-caret">arrow_drop_down</span>
       </button>
-    </el-tooltip>
-    <el-tooltip content="Flow Parameters" placement="bottom" :show-after="400">
-      <button
-        class="action-btn action-btn--icon-only"
-        :class="{ active: editorStore.showParametersPanel }"
-        @click="editorStore.toggleParametersPanel()"
-      >
-        <span class="material-icons btn-icon">tune</span>
-      </button>
-    </el-tooltip>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item data-tutorial="generate-code-btn" @click="toggleCodeGenerator">
+            <span class="material-icons view-item-icon">code</span>
+            <span class="view-item-label">Code Generator</span>
+            <span class="view-item-shortcut">Ctrl+G</span>
+            <span
+              class="material-icons view-item-check"
+              :class="{ visible: nodeStore.showCodeGenerator }"
+              >check</span
+            >
+          </el-dropdown-item>
+          <el-dropdown-item @click="editorStore.toggleParametersPanel()">
+            <span class="material-icons view-item-icon">tune</span>
+            <span class="view-item-label">Flow Parameters</span>
+            <span class="view-item-shortcut"></span>
+            <span
+              class="material-icons view-item-check"
+              :class="{ visible: editorStore.showParametersPanel }"
+              >check</span
+            >
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
   </div>
 
   <open-dialog
@@ -245,6 +257,13 @@ const modalVisibleForSettings = ref(false);
 // Save is a no-op when no flow is loaded; hide the button entirely rather
 // than leaving a disabled control in the header.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
+
+// Light up the View button whenever any of its panels are visible — gives the
+// user a clue that toggles inside the menu are doing something even though
+// the menu itself is closed.
+const anyViewPanelOpen = computed(
+  () => !!nodeStore.showCodeGenerator || !!editorStore.showParametersPanel,
+);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
@@ -607,6 +626,40 @@ onMounted(async () => {
   font-size: 16px;
   margin-right: var(--spacing-2);
   vertical-align: middle;
+}
+
+/* View dropdown — chevron is part of the same button face, not a split caret. */
+.view-btn .view-caret {
+  font-size: 20px;
+  margin-left: var(--spacing-1);
+}
+
+/* Each item lays out: [icon] [label .....] [shortcut]  [check]
+   The checkmark column is reserved (visibility: hidden when off) so labels
+   stay aligned whether or not a panel is currently visible. */
+:deep(.el-dropdown-menu__item) .view-item-icon {
+  font-size: 16px;
+  margin-right: var(--spacing-2);
+  color: var(--color-text-secondary);
+}
+:deep(.el-dropdown-menu__item) .view-item-label {
+  flex: 1;
+}
+:deep(.el-dropdown-menu__item) .view-item-shortcut {
+  margin-left: var(--spacing-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  min-width: 40px;
+  text-align: right;
+}
+:deep(.el-dropdown-menu__item) .view-item-check {
+  margin-left: var(--spacing-2);
+  font-size: 16px;
+  color: var(--color-accent);
+  visibility: hidden;
+}
+:deep(.el-dropdown-menu__item) .view-item-check.visible {
+  visibility: visible;
 }
 
 .settings-modal-content {
