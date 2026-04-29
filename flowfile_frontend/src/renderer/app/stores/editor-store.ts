@@ -181,5 +181,18 @@ export const useEditorStore = defineStore("editor", {
     setParametersPanelVisibility(visible: boolean) {
       this.showParametersPanel = visible;
     },
+
+    // ========== Bulk panel control ==========
+    // Closes every floating overlay (right-side and bottom). The left palette
+    // (`dataActions`) is owned by the canvas component and stays visible.
+    hideAllPanels() {
+      this.showFlowResult = false;
+      this.showCodeGenerator = false;
+      this.showParametersPanel = false;
+      this.activeDrawerComponent = null;
+      this.isDrawerOpen = false;
+      this.isShowingLogViewer = false;
+      this.tableVisible = false;
+    },
   },
 });
