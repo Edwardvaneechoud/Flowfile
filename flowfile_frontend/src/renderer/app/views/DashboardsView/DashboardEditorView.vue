@@ -87,7 +87,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowLeft } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
@@ -107,6 +107,7 @@ import {
 
 const props = defineProps<{ id?: string | number }>();
 const router = useRouter();
+const route = useRoute();
 const store = useDashboardsStore();
 const appearance = useGraphicWalkerAppearance();
 
@@ -237,7 +238,36 @@ watch(nameDraft, (v) => {
   if (store.current && v !== store.current.name) dirty.value = true;
 });
 
-onMounted(initialise);
+// Honour ?editViz=<id> from the route by auto-opening the chart edit dialog
+// once the dashboard finishes loading. The param is stripped on consume so a
+// reload or back-nav doesn't keep reopening it.
+const consumeEditVizQuery = async () => {
+  const raw = route.query.editViz;
+  const id = typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(id) || id <= 0) return;
+  const tiles = store.current?.layout.tiles ?? [];
+  const targetTile = tiles.find((t) => t.viz_id === id);
+  if (!targetTile) {
+    // Tile is gone — silently strip the param.
+    await router.replace({
+      name: route.name as string,
+      params: route.params,
+      query: {},
+    });
+    return;
+  }
+  onEditViz(id);
+  await router.replace({
+    name: route.name as string,
+    params: route.params,
+    query: {},
+  });
+};
+
+onMounted(async () => {
+  await initialise();
+  await consumeEditVizQuery();
+});
 onBeforeUnmount(() => store.reset());
 
 const onSave = async () => {
@@ -283,7 +313,12 @@ const onCancel = async () => {
       return;
     }
   }
-  router.push({ name: "catalog", query: { tab: "visuals", kind: "dashboards" } });
+  // Brand-new dashboard with no persisted id has no view route to return to.
+  if (isNew.value || props.id === undefined) {
+    router.push({ name: "catalog", query: { tab: "visuals", kind: "dashboards" } });
+    return;
+  }
+  router.push({ name: "dashboard-view", params: { id: props.id } });
 };
 </script>
 

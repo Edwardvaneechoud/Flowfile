@@ -77,24 +77,40 @@
         <!-- eslint-enable vue/no-v-html -->
       </template>
       <template v-else>
-        <div v-if="loading" class="tile-state">
-          <el-skeleton :rows="3" animated />
+        <div
+          class="tile-viz-body"
+          :class="{ 'tile-viz-clickable': vizClickable }"
+          :title="vizClickable ? 'Double-click to edit chart' : undefined"
+          @dblclick="onVizDblclick"
+        >
+          <button
+            v-if="vizClickable"
+            class="tile-viz-edit-badge"
+            type="button"
+            title="Edit chart"
+            @click.stop="emit('edit-viz')"
+          >
+            <el-icon><Edit /></el-icon>
+          </button>
+          <div v-if="loading" class="tile-state">
+            <el-skeleton :rows="3" animated />
+          </div>
+          <div v-else-if="vizMissing" class="tile-state tile-missing">
+            <el-icon><WarningFilled /></el-icon>
+            <span>Visualization #{{ tile.viz_id }} no longer exists.</span>
+          </div>
+          <div v-else-if="!chart" class="tile-state">
+            <el-empty description="No chart spec at this index" :image-size="48" />
+          </div>
+          <VueGraphicRenderer
+            v-else
+            :key="rendererKey"
+            :chart="chart as any"
+            :fields="fields as any"
+            :computation="computation"
+            :appearance="appearance"
+          />
         </div>
-        <div v-else-if="vizMissing" class="tile-state tile-missing">
-          <el-icon><WarningFilled /></el-icon>
-          <span>Visualization #{{ tile.viz_id }} no longer exists.</span>
-        </div>
-        <div v-else-if="!chart" class="tile-state">
-          <el-empty description="No chart spec at this index" :image-size="48" />
-        </div>
-        <VueGraphicRenderer
-          v-else
-          :key="rendererKey"
-          :chart="chart as any"
-          :fields="fields as any"
-          :computation="computation"
-          :appearance="appearance"
-        />
       </template>
     </div>
   </div>
@@ -149,6 +165,19 @@ const viz = ref<CatalogVisualization | null>(null);
 const fields = ref<Record<string, any>[]>([]);
 const loading = ref(true);
 const vizMissing = ref(false);
+
+// View-mode shortcut: double-click the viz body or click the hover badge to
+// jump straight into the chart editor. Edit mode already exposes "Edit chart"
+// in the tile dropdown, and dragging dominates there, so we don't compete.
+const vizClickable = computed(
+  () => !isText.value && props.mode === "view" && props.tile.viz_id != null && !vizMissing.value,
+);
+
+const onVizDblclick = (e: MouseEvent) => {
+  if (!vizClickable.value) return;
+  e.stopPropagation();
+  emit("edit-viz");
+};
 
 const tileRef = toRef(props, "tile");
 const filtersRef = toRef(props, "filters");
@@ -346,6 +375,50 @@ const headerTitle = computed(() => vizName.value);
   min-height: 0;
   overflow: hidden;
   padding: 4px;
+}
+.tile-viz-body {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.tile-viz-clickable {
+  cursor: zoom-in;
+  border-radius: 4px;
+  transition: outline 0.12s ease;
+}
+.tile-viz-clickable:hover {
+  outline: 1px solid var(--el-color-primary-light-5);
+  outline-offset: -1px;
+}
+.tile-viz-edit-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.tile:hover .tile-viz-edit-badge,
+.tile-viz-edit-badge:focus-visible {
+  opacity: 1;
+}
+.tile-viz-edit-badge:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-5);
 }
 .tile-text-view .tile-body {
   padding: 0;
