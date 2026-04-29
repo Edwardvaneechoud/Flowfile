@@ -5264,7 +5264,6 @@ def test_train_apply_round_trip():
             ),
         )
     )
-    breakpoint()
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     # Apply chains off train so depending_on_id walks back through it (forces train to run first).

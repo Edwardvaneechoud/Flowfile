@@ -2159,6 +2159,9 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             args.append(f"task_type={s.task_type!r}")
         if s.upstream_train_node_id is not None:
             upstream_var = self.node_var_mapping.get(s.upstream_train_node_id)
+            # Drop upstream silently when unresolvable: evaluate_model's task_type="auto"
+            # falls back to "regression", so the export is degraded but still runs.
+            # (Contrast _handle_apply_model, which marks unsupported — apply needs the model.)
             if upstream_var is not None:
                 args.append(f"upstream={upstream_var}")
         self._add_code(f"{var_name} = {input_df}.evaluate_model({', '.join(args)})")
