@@ -74,6 +74,7 @@ from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
+from flowfile_core.catalog.services.stats import StatsService
 from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
@@ -207,6 +208,8 @@ class CatalogService:
         # Tests monkeypatch ``CatalogService.resolve_virtual_flow_table``; binding
         # the facade lets VisualizationService route through that override.
         self._visualizations.bind_facade(self)
+
+        self._stats = StatsService(repo, self._flows, self._runs, self._tables)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -934,53 +937,7 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def get_catalog_stats(self, user_id: int) -> CatalogStats:
-        """Return an overview of the catalog for the dashboard.
-
-        Uses bulk enrichment for favourite flows to avoid N+1 queries.
-        """
-        total_ns = self.repo.count_catalog_namespaces()
-        total_flows = self.repo.count_all_flows()
-        total_runs = self.repo.count_runs()
-        total_favs = self.repo.count_favorites(user_id)
-        total_table_favs = self.repo.count_table_favorites(user_id)
-        total_artifacts = self.repo.count_all_active_artifacts()
-        total_tables = self.repo.count_all_tables()
-        total_virtual_tables = self.repo.count_virtual_tables()
-        total_schedules = self.repo.count_schedules()
-
-        recent_runs_raw = self.repo.list_runs(limit=10, offset=0)
-        recent_out = [self._run_to_out(r) for r in recent_runs_raw]
-
-        # Bulk enrich favourite flows
-        favs = self.repo.list_favorites(user_id)
-        flows: list[FlowRegistration] = []
-        for fav in favs:
-            flow = self.repo.get_flow(fav.registration_id)
-            if flow is not None:
-                flows.append(flow)
-        fav_flows = self._bulk_enrich_flows(flows, user_id)
-
-        # Bulk enrich favourite tables
-        fav_tables = self.list_table_favorites(user_id)
-
-        # Active runs
-        active_runs = self.list_active_runs()
-
-        return CatalogStats(
-            total_namespaces=total_ns,
-            total_flows=total_flows,
-            total_runs=total_runs,
-            total_favorites=total_favs,
-            total_table_favorites=total_table_favs,
-            total_artifacts=total_artifacts,
-            total_tables=total_tables,
-            total_virtual_tables=total_virtual_tables,
-            total_schedules=total_schedules,
-            recent_runs=recent_out,
-            favorite_flows=fav_flows,
-            favorite_tables=fav_tables,
-            active_runs=active_runs,
-        )
+        return self._stats.get_catalog_stats(user_id)
 
     # ------------------------------------------------------------------ #
     # SQL Query
