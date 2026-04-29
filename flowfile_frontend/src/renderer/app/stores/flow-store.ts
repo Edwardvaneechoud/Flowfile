@@ -81,14 +81,19 @@ export const useFlowStore = defineStore("flow", {
       this.historyState = { ...defaultHistoryState };
     },
 
-    // Artifact actions
-    async fetchArtifacts() {
-      if (this.flowId < 0) return;
+    // Artifact actions. Caller may pass an explicit flowId to pin the request
+    // to a specific flow — useful from loadFlow where the active flowId can
+    // change mid-fetch. The result is dropped if the store has moved on.
+    async fetchArtifacts(flowId?: number) {
+      const targetId = flowId ?? this.flowId;
+      if (targetId < 0) return;
       try {
-        this.artifactData = await FlowApi.getArtifacts(this.flowId);
+        const data = await FlowApi.getArtifacts(targetId);
+        if (this.flowId !== targetId) return;
+        this.artifactData = data;
       } catch {
         // Artifacts are optional; don't break the UI
-        this.artifactData = { ...defaultArtifactData };
+        if (this.flowId === targetId) this.artifactData = { ...defaultArtifactData };
       }
     },
 

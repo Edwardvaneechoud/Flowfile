@@ -64,7 +64,7 @@
         @run="headerButtons?.runFlow()"
         @new="headerButtons?.handleQuickCreate()"
       />
-      <div v-if="isSwitching" class="switch-indicator" aria-live="polite">
+      <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
@@ -108,6 +108,12 @@ const nodeStore = useNodeStore();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
+
+// Spinner stays visible across the whole switch sequence: from "user clicked"
+// (isSwitching) through the Canvas watcher's async loadFlow (isLoadingFlow).
+const showSwitchIndicator = computed(
+  () => isSwitching.value || canvasFlow.value?.isLoadingFlow === true,
+);
 
 const fetchActiveFlows = async () => {
   try {

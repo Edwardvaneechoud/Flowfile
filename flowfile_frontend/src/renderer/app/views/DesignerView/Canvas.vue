@@ -71,6 +71,7 @@ import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
 import { ElMessage } from "element-plus";
+import axios from "axios";
 
 /** Typed subset of VueFlow node data used for edge label computation. */
 interface FlowNodeData {
@@ -102,6 +103,10 @@ onPaneReady(() => resolvePaneReady());
 // when a newer one starts. Each call captures its own myToken; if loadToken
 // has advanced past it at any await boundary, that run bails out.
 let loadToken = 0;
+// Reactive flag the parent (DesignerView) reads to drive its switch-indicator.
+// Stays true for the entire async load so the spinner doesn't flicker off
+// before the canvas actually finishes populating.
+const isLoadingFlow = ref(false);
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -287,32 +292,40 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 
 const loadFlow = async () => {
   const myToken = ++loadToken;
-  // Wait for VueFlow to finish its first internal mount before populating it.
-  // Already-resolved on every call after the first.
-  await paneReadyPromise;
-  if (myToken !== loadToken) return;
-
-  const flowIdAtStart = flowStore.flowId;
-  const vueFlowInput = await getFlowData(flowIdAtStart);
-  if (myToken !== loadToken) return;
-
-  await importFlow(vueFlowInput);
-  // Stale check after importFlow: createEmptyFlow inside importFlow already
-  // cleared the canvas, so bailing here is safe — the newer in-flight run
-  // (which bumped loadToken) will repopulate.
-  if (myToken !== loadToken) return;
-
-  await nextTick();
-  restoreViewport();
-
+  isLoadingFlow.value = true;
   try {
-    const historyState = await FlowApi.getHistoryStatus(flowIdAtStart);
+    // Wait for VueFlow to finish its first internal mount before populating it.
+    // Already-resolved on every call after the first.
+    await paneReadyPromise;
     if (myToken !== loadToken) return;
-    flowStore.updateHistoryState(historyState);
-  } catch (error) {
-    console.error("Failed to fetch history state:", error);
+
+    const flowIdAtStart = flowStore.flowId;
+    const vueFlowInput = await getFlowData(flowIdAtStart);
+    if (myToken !== loadToken) return;
+
+    await importFlow(vueFlowInput);
+    // Stale check after importFlow: createEmptyFlow inside importFlow already
+    // cleared the canvas, so bailing here is safe — the newer in-flight run
+    // (which bumped loadToken) will repopulate.
+    if (myToken !== loadToken) return;
+
+    await nextTick();
+    restoreViewport(flowIdAtStart);
+
+    try {
+      const historyState = await FlowApi.getHistoryStatus(flowIdAtStart);
+      if (myToken !== loadToken) return;
+      flowStore.updateHistoryState(historyState);
+    } catch (error) {
+      console.error("Failed to fetch history state:", error);
+    }
+    // Fire-and-forget; fetchArtifacts re-checks flowId before writing.
+    flowStore.fetchArtifacts(flowIdAtStart);
+  } finally {
+    // Only clear if we're still the most recent run — otherwise the newer
+    // run's spinner would be turned off prematurely.
+    if (myToken === loadToken) isLoadingFlow.value = false;
   }
-  flowStore.fetchArtifacts();
 };
 
 const reloadCurrentFlow = () => loadFlow();
@@ -874,8 +887,8 @@ const saveViewportToSession = () => {
   sessionStorage.setItem(key, JSON.stringify(viewport));
 };
 
-const restoreViewport = () => {
-  const key = getViewportStorageKey(flowStore.flowId);
+const restoreViewport = (flowId: number) => {
+  const key = getViewportStorageKey(flowId);
   const saved = sessionStorage.getItem(key);
   if (saved) {
     try {
@@ -916,18 +929,27 @@ onMounted(async () => {
         } catch (e: unknown) {
           console.error("loadFlow failed:", e);
           // A stale flowId in sessionStorage causes a permanent boot loop
-          // (every refresh 404s). Clear it so the next load falls back to
-          // initialSetup picking the first active flow.
-          const status = (e as { response?: { status?: number } })?.response?.status;
-          if (status === 404) {
+          // (every refresh 404s). Clear storage and reset the in-memory id
+          // so the current session recovers without a hard refresh.
+          if (axios.isAxiosError(e) && e.response?.status === 404) {
             sessionStorage.removeItem(FLOW_ID_STORAGE_KEY);
+            flowStore.flowId = -1;
           }
           ElMessage.error("Failed to load flow");
         }
       } else {
         // No active flow — visually clear the canvas (previously handled by
-        // the v-if unmount in DesignerView, which we no longer use).
-        await createEmptyFlow();
+        // the v-if unmount in DesignerView, which we no longer use). Goes
+        // through the same loadToken so a concurrent loadFlow can't lose to
+        // a slow createEmptyFlow.
+        const myToken = ++loadToken;
+        isLoadingFlow.value = true;
+        try {
+          await createEmptyFlow();
+          if (myToken !== loadToken) return;
+        } finally {
+          if (myToken === loadToken) isLoadingFlow.value = false;
+        }
       }
     },
     { immediate: true },
@@ -959,6 +981,7 @@ onUnmounted(() => {
 
 defineExpose({
   reloadCurrentFlow,
+  isLoadingFlow,
   updateEdgeLabelsForNode,
   refreshAllEdgeLabels,
 });
