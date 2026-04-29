@@ -70,6 +70,7 @@ from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
+from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.sql import SqlService
@@ -197,6 +198,8 @@ class CatalogService:
         )
         self._sql.bind(virtual_tables=self._virtual_tables)
         self._virtual_tables.bind(sql=self._sql)
+
+        self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -838,65 +841,7 @@ class CatalogService:
         version: int | None = None,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Read the first N rows from a catalog table.
-
-        Dispatches to the appropriate helper based on table type and version.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-
-        if getattr(table, "table_type", "physical") == "virtual":
-            if getattr(table, "sql_query", None):
-                return self._get_query_virtual_table_preview(table, limit, user_id)
-            return self._get_virtual_table_preview(table, limit, user_id)
-
-        return self._get_physical_table_preview(table, limit, version)
-
-    def _format_virtual_preview(
-        self,
-        lf: pl.LazyFrame,
-        table: CatalogTable,
-        limit: int,
-    ) -> CatalogTablePreview:
-        """Materialise *lf* on the worker, read top-N rows back as PyArrow.
-
-        Honours Rule A: core never collects the LazyFrame — the plan is shipped
-        to the worker, written as IPC, then read back via ``read_top_n``.
-        """
-        versions_hash = _hash_source_versions(table.source_table_versions)
-        res = trigger_resolve_virtual_table(table.id, lf.serialize(), versions_hash)
-        ipc_path = validate_catalog_path(res["ipc_path"], storage.catalog_virtual_results_directory)
-        pa_table = read_top_n(str(ipc_path), n=limit)
-        return format_pyarrow_preview(pa_table, total_rows=res.get("row_count"))
-
-    def _get_query_virtual_table_preview(
-        self,
-        table: CatalogTable,
-        limit: int,
-        user_id: int | None,
-    ) -> CatalogTablePreview:
-        """Resolve a query-based virtual table and return a preview."""
-        try:
-            lf = self.resolve_query_virtual_table(table.id, user_id=user_id)
-            return self._format_virtual_preview(lf, table, limit)
-        except Exception:
-            logger.warning("Could not resolve query virtual table %d for preview", table.id, exc_info=True)
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
-
-    def _get_virtual_table_preview(self, table: CatalogTable, limit: int, user_id: int | None) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview of the collected result."""
-        try:
-            lf = self.resolve_virtual_flow_table(table.id, user_id=user_id)
-            return self._format_virtual_preview(lf, table, limit)
-        except Exception:
-            logger.warning("Could not resolve virtual table %d for preview", table.id, exc_info=True)
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+        return self._previews.get_table_preview(table_id, limit, version, user_id)
 
     def resolve_virtual_flow_table_preview(
         self,
@@ -904,79 +849,10 @@ class CatalogService:
         limit: int,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview (worker-backed)."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        lf = self.resolve_virtual_flow_table(table_id, user_id=user_id)
-        return self._format_virtual_preview(lf, table, limit)
-
-    def _get_physical_table_preview(self, table: CatalogTable, limit: int, version: int | None) -> CatalogTablePreview:
-        """Read a preview from a physical (Delta or Parquet) catalog table."""
-        if not table.file_path:
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
-
-        data_path = Path(table.file_path)
-        if not table_exists(data_path):
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
-
-        if version is not None and is_delta_table(data_path):
-            return self._get_delta_version_preview(data_path, version, limit)
-
-        if is_delta_table(data_path):
-            pa_table = read_delta_preview(str(data_path), n_rows=limit)
-        else:
-            pa_table = read_top_n(str(data_path), n=limit)
-        return format_pyarrow_preview(pa_table, total_rows=table.row_count)
-
-    def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
-        """Read a Delta table preview at a specific version via the worker (or locally)."""
-        table_path = str(data_path)
-        if _should_offload():
-            try:
-                return trigger_delta_version_preview(data_path.name, version, limit)
-            except Exception:
-                logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
-
-        dt = DeltaTable(table_path, version=version)
-        dataset = dt.to_pyarrow_dataset()
-        pa_table = dataset.head(limit)
-        return format_pyarrow_preview(pa_table)
+        return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
-        """Return the version history for a Delta catalog table.
-
-        Returns an empty history for non-Delta tables.
-
-        Raises
-        ------
-        TableNotFoundError
-            If the table doesn't exist.
-        """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-
-        if not table.file_path:
-            return DeltaTableHistory(current_version=0, history=[])
-
-        data_path = Path(table.file_path)
-        if not is_delta_table(data_path):
-            return DeltaTableHistory(current_version=0, history=[])
-
-        table_path = str(data_path)
-        if _should_offload():
-            try:
-                return trigger_delta_history(data_path.name, limit)
-            except Exception:
-                logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
-
-        # Local fallback
-        dt = DeltaTable(table_path, without_files=True)
-        raw_history = dt.history(limit)
-        current_version = dt.version()
-        history = _parse_delta_history(raw_history)
-        return DeltaTableHistory(current_version=current_version, history=history)
+        return self._previews.get_table_history(table_id, limit)
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         return self._tables.add_table_favorite(user_id, table_id)
