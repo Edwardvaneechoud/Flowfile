@@ -68,6 +68,7 @@ from flowfile_core.catalog.exceptions import (
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     artifact_to_out,
@@ -173,6 +174,7 @@ class CatalogService:
 
     def __init__(self, repo: CatalogRepository) -> None:
         self.repo = repo
+        self._namespaces = NamespaceService(repo)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -182,10 +184,7 @@ class CatalogService:
     _format_full_name = staticmethod(format_full_name)
 
     def _resolve_namespace_name(self, namespace_id: int | None) -> str | None:
-        if namespace_id is None:
-            return None
-        ns = self.repo.get_namespace(namespace_id)
-        return ns.name if ns is not None else None
+        return self._namespaces.resolve_namespace_name(namespace_id)
 
     def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> VizEnrichment:
         table_name: str | None = None
@@ -471,39 +470,7 @@ class CatalogService:
         parent_id: int | None = None,
         description: str | None = None,
     ) -> CatalogNamespace:
-        """Create a catalog (level 0) or schema (level 1) namespace.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If ``parent_id`` is given but doesn't exist.
-        NestingLimitError
-            If the parent is already at level 1 (schema).
-        NamespaceExistsError
-            If a namespace with the same name already exists under the parent.
-        """
-        self._reject_dot_in_name(name, "Namespace")
-        level = 0
-        if parent_id is not None:
-            parent = self.repo.get_namespace(parent_id)
-            if parent is None:
-                raise NamespaceNotFoundError(namespace_id=parent_id)
-            if parent.level >= 1:
-                raise NestingLimitError(parent_id=parent_id, parent_level=parent.level)
-            level = parent.level + 1
-
-        existing = self.repo.get_namespace_by_name(name, parent_id)
-        if existing is not None:
-            raise NamespaceExistsError(name=name, parent_id=parent_id)
-
-        ns = CatalogNamespace(
-            name=name,
-            parent_id=parent_id,
-            level=level,
-            description=description,
-            owner_id=owner_id,
-        )
-        return self.repo.create_namespace(ns)
+        return self._namespaces.create_namespace(name, owner_id, parent_id, description)
 
     def update_namespace(
         self,
@@ -511,58 +478,16 @@ class CatalogService:
         name: str | None = None,
         description: str | None = None,
     ) -> CatalogNamespace:
-        """Update a namespace's name and/or description.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If the namespace doesn't exist.
-        """
-        ns = self.repo.get_namespace(namespace_id)
-        if ns is None:
-            raise NamespaceNotFoundError(namespace_id=namespace_id)
-        if name is not None:
-            ns.name = name
-        if description is not None:
-            ns.description = description
-        return self.repo.update_namespace(ns)
+        return self._namespaces.update_namespace(namespace_id, name, description)
 
     def delete_namespace(self, namespace_id: int) -> None:
-        """Delete a namespace if it has no children or flows.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If the namespace doesn't exist.
-        NamespaceNotEmptyError
-            If the namespace has child namespaces or flow registrations.
-        """
-        ns = self.repo.get_namespace(namespace_id)
-        if ns is None:
-            raise NamespaceNotFoundError(namespace_id=namespace_id)
-        children = self.repo.count_children(namespace_id)
-        flows = self.repo.count_flows_in_namespace(namespace_id)
-        tables = self.repo.count_tables_in_namespace(namespace_id)
-        if children > 0 or flows > 0 or tables > 0:
-            raise NamespaceNotEmptyError(namespace_id=namespace_id, children=children, flows=flows, tables=tables)
-        self.repo.delete_namespace(namespace_id)
+        self._namespaces.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
-        """Retrieve a single namespace by ID.
-
-        Raises
-        ------
-        NamespaceNotFoundError
-            If the namespace doesn't exist.
-        """
-        ns = self.repo.get_namespace(namespace_id)
-        if ns is None:
-            raise NamespaceNotFoundError(namespace_id=namespace_id)
-        return ns
+        return self._namespaces.get_namespace(namespace_id)
 
     def list_namespaces(self, parent_id: int | None = None) -> list[CatalogNamespace]:
-        """List namespaces, optionally filtered by parent."""
-        return self.repo.list_namespaces(parent_id)
+        return self._namespaces.list_namespaces(parent_id)
 
     def get_namespace_tree(self, user_id: int) -> list[NamespaceTree]:
         """Build the full catalog tree with flows nested under schemas.
@@ -657,14 +582,7 @@ class CatalogService:
         return result
 
     def get_default_namespace_id(self) -> int | None:
-        """Return the ID of the default 'default' schema under 'General'."""
-        general = self.repo.get_namespace_by_name("General", parent_id=None)
-        if general is None:
-            return None
-        default_schema = self.repo.get_namespace_by_name("default", parent_id=general.id)
-        if default_schema is None:
-            return None
-        return default_schema.id
+        return self._namespaces.get_default_namespace_id()
 
     # ------------------------------------------------------------------ #
     # Flow registration operations
