@@ -70,6 +70,12 @@ from flowfile_core.catalog.exceptions import (
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.serializers import (
+    VizEnrichment,
+    artifact_to_out,
+    format_pyarrow_preview,
+    run_to_out,
+)
 from flowfile_core.catalog.text_utils import (
     hash_source_versions as _hash_source_versions,
     is_table_reference as _is_table_reference,
@@ -87,7 +93,6 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowRun,
     FlowSchedule,
-    GlobalArtifact,
     RunType,
     TableFavorite,
 )
@@ -132,7 +137,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
-from shared.delta_utils import make_json_safe, validate_catalog_path
+from shared.delta_utils import validate_catalog_path
 from shared.storage_config import storage
 from shared.subprocess_utils import spawn_flow_subprocess
 
@@ -149,26 +154,6 @@ def _should_offload() -> bool:
 
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
-
-
-def _format_pyarrow_preview(pa_table, total_rows: int | None = None) -> CatalogTablePreview:
-    """Convert a PyArrow table to a CatalogTablePreview."""
-    columns = pa_table.column_names
-    dtypes = [str(field.type) for field in pa_table.schema]
-    rows_data = pa_table.to_pylist()
-    rows = [[make_json_safe(row.get(c)) for c in columns] for row in rows_data]
-    return CatalogTablePreview(
-        columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows if total_rows is not None else len(rows_data)
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _VizEnrichment:
-    table_name: str | None
-    table_namespace_name: str | None
-    table_full_name: str | None
-    table_type: str | None
-    namespace_name: str | None
 
 
 class CatalogService:
@@ -207,7 +192,7 @@ class CatalogService:
         ns = self.repo.get_namespace(namespace_id)
         return ns.name if ns is not None else None
 
-    def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> _VizEnrichment:
+    def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> VizEnrichment:
         table_name: str | None = None
         table_namespace_name: str | None = None
         table_full_name: str | None = None
@@ -221,7 +206,7 @@ class CatalogService:
             namespace_name = self._resolve_namespace_name(viz.namespace_id)
         else:
             namespace_name = table_namespace_name
-        return _VizEnrichment(
+        return VizEnrichment(
             table_name=table_name,
             table_namespace_name=table_namespace_name,
             table_full_name=table_full_name,
@@ -477,59 +462,8 @@ class CatalogService:
             return str(log_file)
         return None
 
-    @staticmethod
-    def _run_to_out(run: FlowRun) -> FlowRunOut:
-        return FlowRunOut(
-            id=run.id,
-            registration_id=run.registration_id,
-            flow_name=run.flow_name,
-            flow_path=run.flow_path,
-            user_id=run.user_id,
-            started_at=run.started_at,
-            ended_at=run.ended_at,
-            success=run.success,
-            nodes_completed=run.nodes_completed,
-            number_of_nodes=run.number_of_nodes,
-            duration_seconds=run.duration_seconds,
-            run_type=run.run_type,
-            schedule_id=run.schedule_id,
-            has_snapshot=run.flow_snapshot is not None,
-            has_log=CatalogService._resolve_log_path(run.id, run.run_type) is not None,
-        )
-
-    @staticmethod
-    def _artifact_to_out(artifact: GlobalArtifact) -> GlobalArtifactOut:
-        """Convert a GlobalArtifact ORM instance to its Pydantic output schema."""
-        tags: list[str] = []
-        if hasattr(artifact, "tags") and artifact.tags:
-            if isinstance(artifact.tags, list):
-                tags = artifact.tags
-            elif isinstance(artifact.tags, str):
-                try:
-                    tags = json.loads(artifact.tags)
-                except (json.JSONDecodeError, TypeError):
-                    tags = [t.strip() for t in artifact.tags.split(",") if t.strip()]
-
-        return GlobalArtifactOut(
-            id=artifact.id,
-            name=artifact.name,
-            version=artifact.version,
-            status=artifact.status,
-            description=getattr(artifact, "description", None),
-            python_type=getattr(artifact, "python_type", None),
-            python_module=getattr(artifact, "python_module", None),
-            serialization_format=getattr(artifact, "serialization_format", None),
-            size_bytes=getattr(artifact, "size_bytes", None),
-            sha256=getattr(artifact, "sha256", None),
-            tags=tags,
-            namespace_id=artifact.namespace_id,
-            source_registration_id=getattr(artifact, "source_registration_id", None),
-            source_flow_id=getattr(artifact, "source_flow_id", None),
-            source_node_id=getattr(artifact, "source_node_id", None),
-            owner_id=getattr(artifact, "owner_id", None),
-            created_at=getattr(artifact, "created_at", None),
-            updated_at=getattr(artifact, "updated_at", None),
-        )
+    def _run_to_out(self, run: FlowRun) -> FlowRunOut:
+        return run_to_out(run, has_log=self._resolve_log_path(run.id, run.run_type) is not None)
 
     # ------------------------------------------------------------------ #
     # Namespace operations
@@ -662,7 +596,7 @@ class CatalogService:
             namespace_flow_map[cat.id] = cat_flows
             all_flows.extend(cat_flows)
             namespace_artifact_map[cat.id] = [
-                self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
+                artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
             ]
             namespace_table_map[cat.id] = self._bulk_enrich_tables(self.repo.list_tables_for_namespace(cat.id), user_id)
 
@@ -671,7 +605,7 @@ class CatalogService:
                 namespace_flow_map[schema.id] = schema_flows
                 all_flows.extend(schema_flows)
                 namespace_artifact_map[schema.id] = [
-                    self._artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
+                    artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
                 ]
                 namespace_table_map[schema.id] = self._bulk_enrich_tables(
                     self.repo.list_tables_for_namespace(schema.id), user_id
@@ -850,7 +784,7 @@ class CatalogService:
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
         artifacts = self.repo.list_artifacts_for_flow(registration_id)
-        return [self._artifact_to_out(a) for a in artifacts]
+        return [artifact_to_out(a) for a in artifacts]
 
     # ------------------------------------------------------------------ #
     # Run operations
@@ -2315,7 +2249,7 @@ class CatalogService:
         res = trigger_resolve_virtual_table(table.id, lf.serialize(), versions_hash)
         ipc_path = validate_catalog_path(res["ipc_path"], storage.catalog_virtual_results_directory)
         pa_table = read_top_n(str(ipc_path), n=limit)
-        return _format_pyarrow_preview(pa_table, total_rows=res.get("row_count"))
+        return format_pyarrow_preview(pa_table, total_rows=res.get("row_count"))
 
     def _get_query_virtual_table_preview(
         self,
@@ -2369,7 +2303,7 @@ class CatalogService:
             pa_table = read_delta_preview(str(data_path), n_rows=limit)
         else:
             pa_table = read_top_n(str(data_path), n=limit)
-        return _format_pyarrow_preview(pa_table, total_rows=table.row_count)
+        return format_pyarrow_preview(pa_table, total_rows=table.row_count)
 
     def _get_delta_version_preview(self, data_path: Path, version: int, limit: int) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
@@ -2383,7 +2317,7 @@ class CatalogService:
         dt = DeltaTable(table_path, version=version)
         dataset = dt.to_pyarrow_dataset()
         pa_table = dataset.head(limit)
-        return _format_pyarrow_preview(pa_table)
+        return format_pyarrow_preview(pa_table)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table.
@@ -3551,3 +3485,8 @@ class CatalogService:
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc
         return ColumnStatsResponse(**data)
+
+
+# Backward-compat re-export for external code that imported the
+# underscore-prefixed module-level helper.
+_format_pyarrow_preview = format_pyarrow_preview
