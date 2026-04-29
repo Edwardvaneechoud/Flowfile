@@ -89,3 +89,7 @@ test-embed
 # Local review artefacts
 /diff.txt
 
+# Stray runtime artefacts
+error-linux
+.claude/scheduled_tasks.lock
+

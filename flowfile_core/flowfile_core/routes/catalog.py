@@ -24,6 +24,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import (
     AmbiguousTableError,
     CatalogService,
+    DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowHasArtifactsError,
@@ -56,6 +57,9 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableUpdate,
+    DashboardCreate,
+    DashboardOut,
+    DashboardUpdate,
     DeltaTableHistory,
     FavoriteOut,
     FlowRegistrationCreate,
@@ -87,6 +91,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationComputeResponse,
     VisualizationCreate,
     VisualizationFieldsRequest,
+    ColumnStatsResponse,
     VisualizationFieldsResponse,
     VisualizationOut,
     VisualizationSavedComputeRequest,
@@ -132,6 +137,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     VisualizationNotFoundError: (404, None),
     VisualizationExistsError: (409, None),
     VisualizationComputeError: (502, None),
+    DashboardNotFoundError: (404, None),
     ValueError: (422, None),
 }
 
@@ -591,6 +597,28 @@ def get_table_preview(
     return service.get_table_preview(table_id, limit=limit, version=version, user_id=current_user.id)
 
 
+@router.get(
+    "/tables/{table_id}/columns/{column_name}/stats",
+    response_model=ColumnStatsResponse,
+)
+@handle_catalog_exceptions()
+def get_table_column_stats(
+    table_id: int,
+    column_name: str,
+    limit: int = Query(100, ge=1, le=1000),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Distinct values + min/max for a column on a catalog table.
+
+    Used by the dashboard filter UI to pre-populate categorical option
+    lists and pre-fill numeric / date range inputs.
+    """
+    return service.get_table_column_stats(
+        table_id, column_name, limit=limit, user_id=current_user.id
+    )
+
+
 @router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)
 @handle_catalog_exceptions()
 def get_table_history(
@@ -765,6 +793,63 @@ def list_visualizations_for_table(
 ):
     """Filtered listing — viz that reference this table."""
     return service.list_visualizations_for_table(table_id, user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Catalog Dashboards
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboards", response_model=list[DashboardOut])
+@handle_catalog_exceptions()
+def list_dashboards(
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Return every saved dashboard."""
+    return service.list_dashboards(user_id=current_user.id)
+
+
+@router.post("/dashboards", response_model=DashboardOut, status_code=201)
+@handle_catalog_exceptions()
+def create_dashboard(
+    body: DashboardCreate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Create a new dashboard. The layout may be empty; tiles can be added later."""
+    return service.create_dashboard(body, user_id=current_user.id)
+
+
+@router.get("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def get_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.get_dashboard(dashboard_id, user_id=current_user.id)
+
+
+@router.put("/dashboards/{dashboard_id}", response_model=DashboardOut)
+@handle_catalog_exceptions()
+def update_dashboard(
+    dashboard_id: int,
+    body: DashboardUpdate,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.update_dashboard(dashboard_id, body, user_id=current_user.id)
+
+
+@router.delete("/dashboards/{dashboard_id}", status_code=204)
+@handle_catalog_exceptions()
+def delete_dashboard(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    service.delete_dashboard(dashboard_id, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------

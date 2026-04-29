@@ -638,6 +638,33 @@ async def catalog_visualize_fields(payload: models.VisualizeFieldsRequest) -> mo
         return models.VisualizeFieldsResponse(error=str(e))
 
 
+@router.post("/catalog/visualize_column_stats", response_model=models.VisualizeColumnStatsResponse)
+async def catalog_visualize_column_stats(
+    payload: models.VisualizeColumnStatsRequest,
+) -> models.VisualizeColumnStatsResponse:
+    """Distinct values + min/max for a single column on a cached source LazyFrame."""
+    from flowfile_worker.viz_sessions import viz_session_registry
+
+    loop = asyncio.get_running_loop()
+    try:
+        result, cache_hit = await loop.run_in_executor(
+            None,
+            viz_session_registry.execute,
+            payload.source,
+            "column_stats",
+            {"column": payload.column, "limit": payload.limit},
+            None,
+        )
+        return models.VisualizeColumnStatsResponse(**result, cache_hit=cache_hit)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        return models.VisualizeColumnStatsResponse(error=str(e))
+    except Exception as e:
+        logger.error(f"Error in visualize_column_stats: {str(e)}", exc_info=True)
+        return models.VisualizeColumnStatsResponse(error=str(e))
+
+
 @router.post("/catalog/visualize_evict")
 def catalog_visualize_evict(session_key: str):
     """Drop a cached viz session (called by core after a table update/delete)."""

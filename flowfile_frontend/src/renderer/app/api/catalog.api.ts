@@ -8,7 +8,11 @@ import type {
   CatalogTableCreate,
   CatalogTablePreview,
   CatalogTableUpdate,
+  ColumnStatsResponse,
   CatalogVisualization,
+  Dashboard,
+  DashboardCreatePayload,
+  DashboardUpdatePayload,
   DeltaTableHistory,
   FlowRegistration,
   FlowRegistrationCreate,
@@ -239,6 +243,21 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** Distinct values + min/max for a single column on a catalog table.
+   * Used by the dashboard filter UI to pre-populate categorical
+   * dropdowns and pre-fill numeric / date range inputs. */
+  static async getTableColumnStats(
+    tableId: number,
+    columnName: string,
+    limit = 100,
+  ): Promise<ColumnStatsResponse> {
+    const response = await axios.get<ColumnStatsResponse>(
+      `/catalog/tables/${tableId}/columns/${encodeURIComponent(columnName)}/stats`,
+      { params: { limit } },
+    );
+    return response.data;
+  }
+
   // ====== Virtual Flow Tables ======
 
   static async createVirtualTable(body: VirtualFlowTableCreate): Promise<CatalogTable> {
@@ -462,5 +481,31 @@ export class CatalogApi {
       { source },
     );
     return response.data;
+  }
+
+  // ====== Dashboards ======
+
+  static async listDashboards(): Promise<Dashboard[]> {
+    const response = await axios.get<Dashboard[]>("/catalog/dashboards");
+    return response.data;
+  }
+
+  static async getDashboard(id: number): Promise<Dashboard> {
+    const response = await axios.get<Dashboard>(`/catalog/dashboards/${id}`);
+    return response.data;
+  }
+
+  static async createDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
+    const response = await axios.post<Dashboard>("/catalog/dashboards", payload);
+    return response.data;
+  }
+
+  static async updateDashboard(id: number, payload: DashboardUpdatePayload): Promise<Dashboard> {
+    const response = await axios.put<Dashboard>(`/catalog/dashboards/${id}`, payload);
+    return response.data;
+  }
+
+  static async deleteDashboard(id: number): Promise<void> {
+    await axios.delete(`/catalog/dashboards/${id}`);
   }
 }

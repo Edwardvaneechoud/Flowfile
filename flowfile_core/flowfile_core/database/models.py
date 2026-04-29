@@ -418,6 +418,31 @@ class CatalogVisualization(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class CatalogDashboard(Base):
+    """A saved canvas of catalog visualizations.
+
+    A dashboard is a 2D layout of tiles, each referencing an existing
+    ``CatalogVisualization`` by id. The full layout (tiles, grid metadata,
+    optional dashboard-level filters) is serialised into ``layout_json``;
+    no FK to visualizations because tiles are decoupled (deleted-viz tiles
+    surface a placeholder at view time rather than cascading).
+    """
+
+    __tablename__ = "catalog_dashboards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    layout_json = Column(Text, nullable=False)
+    layout_version = Column(Integer, nullable=False, default=1)
+
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class SchedulerLock(Base):
     """Advisory lock row to ensure only one scheduler instance is active.
 

@@ -12,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from flowfile_core.database.models import (
+    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
@@ -266,6 +267,18 @@ class CatalogRepository(Protocol):
     def update_visualization(self, viz: CatalogVisualization) -> CatalogVisualization: ...
 
     def delete_visualization(self, viz_id: int) -> None: ...
+
+    # -- Dashboards ----------------------------------------------------------
+
+    def list_dashboards(self) -> list[CatalogDashboard]: ...
+
+    def get_dashboard(self, dashboard_id: int) -> CatalogDashboard | None: ...
+
+    def create_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
+
+    def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard: ...
+
+    def delete_dashboard(self, dashboard_id: int) -> None: ...
 
     def list_table_trigger_schedules(self) -> list[FlowSchedule]: ...
 
@@ -992,4 +1005,33 @@ class SQLAlchemyCatalogRepository:
         viz = self._db.get(CatalogVisualization, viz_id)
         if viz is not None:
             self._db.delete(viz)
+            self._db.commit()
+
+    # -- Dashboards ----------------------------------------------------------
+
+    def list_dashboards(self) -> list[CatalogDashboard]:
+        return (
+            self._db.query(CatalogDashboard)
+            .order_by(CatalogDashboard.updated_at.desc())
+            .all()
+        )
+
+    def get_dashboard(self, dashboard_id: int) -> CatalogDashboard | None:
+        return self._db.get(CatalogDashboard, dashboard_id)
+
+    def create_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard:
+        self._db.add(dashboard)
+        self._db.commit()
+        self._db.refresh(dashboard)
+        return dashboard
+
+    def update_dashboard(self, dashboard: CatalogDashboard) -> CatalogDashboard:
+        self._db.commit()
+        self._db.refresh(dashboard)
+        return dashboard
+
+    def delete_dashboard(self, dashboard_id: int) -> None:
+        dashboard = self._db.get(CatalogDashboard, dashboard_id)
+        if dashboard is not None:
+            self._db.delete(dashboard)
             self._db.commit()

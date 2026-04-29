@@ -168,115 +168,24 @@
         </div>
       </div>
 
-      <div v-if="catalogStore.flowSchedules.length === 0" class="empty-state">
-        <i class="fa-solid fa-calendar-xmark empty-state-icon"></i>
-        <span>No schedules configured</span>
-      </div>
-      <div v-else class="overview-table schedules-grid">
-        <div class="table-header">
-          <span class="col-status">Status</span>
-          <span class="col-name">Name</span>
-          <span class="col-description">Description</span>
-          <span class="col-type">Type</span>
-          <span class="col-last">Last Triggered</span>
-          <span class="col-actions">Actions</span>
-        </div>
-        <div
-          v-for="schedule in catalogStore.flowSchedules"
-          :key="schedule.id"
-          class="table-row"
-          :class="{ 'row-disabled': !schedule.enabled }"
-          @click="$emit('selectSchedule', schedule.id)"
-        >
-          <div class="col-status">
-            <span v-if="isScheduleRunning(schedule)" class="status-badge running">
-              <i class="fa-solid fa-spinner fa-spin" /> Running
-            </span>
-            <span v-else-if="schedule.enabled" class="status-badge enabled">
-              <i class="fa-solid fa-circle-check" /> Enabled
-            </span>
-            <span v-else class="status-badge paused">
-              <i class="fa-solid fa-circle-pause" /> Disabled
-            </span>
-          </div>
-          <div class="col-name">
-            {{ getScheduleDisplayName(schedule, schedule.id) }}
-          </div>
-          <div class="col-description" @click.stop>
-            <template v-if="editingScheduleId === schedule.id">
-              <input
-                ref="descriptionInput"
-                v-model="editDescription"
-                class="edit-description-input"
-                placeholder="Add description..."
-                maxlength="200"
-                @keydown.enter="saveDescription(schedule.id)"
-                @keydown.escape="cancelEditDescription"
-                @blur="saveDescription(schedule.id)"
-              />
-            </template>
-            <template v-else>
-              <span
-                class="description-text"
-                :class="{ placeholder: !schedule.description }"
-                @click="startEditDescription(schedule)"
-              >
-                {{ schedule.description || "Add description..." }}
-              </span>
-              <button
-                class="btn-icon-inline"
-                title="Edit description"
-                @click="startEditDescription(schedule)"
-              >
-                <i class="fa-solid fa-pen"></i>
-              </button>
-            </template>
-          </div>
-          <div class="col-type">
-            <i :class="scheduleIcon(schedule)" class="type-icon" />
-            {{ formatScheduleType(schedule) }}
-          </div>
-          <div class="col-last">
-            {{ schedule.last_triggered_at ? formatDate(schedule.last_triggered_at) : "Never" }}
-          </div>
-          <div class="col-actions" @click.stop>
-            <el-tooltip
-              v-if="isScheduleRunning(schedule)"
-              content="Cancel run"
-              placement="top"
-              :show-after="400"
-            >
-              <el-button
-                size="small"
-                type="warning"
-                text
-                @click="handleCancelScheduleRun(schedule)"
-              >
-                <i class="fa-solid fa-stop" />
-              </el-button>
-            </el-tooltip>
-            <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
-              <el-button
-                size="small"
-                type="success"
-                text
-                :disabled="isFlowRunning"
-                @click="handleRunNow(schedule.id)"
-              >
-                <i class="fa-solid fa-play" />
-              </el-button>
-            </el-tooltip>
-            <el-switch
-              :model-value="schedule.enabled"
-              size="small"
-              @change="(val: boolean) => handleToggleSchedule(schedule.id, val)"
-            />
-            <el-button size="small" type="danger" text @click="handleDeleteSchedule(schedule.id)">
-              <i class="fa-solid fa-trash" />
-            </el-button>
-          </div>
-        </div>
-      </div>
+      <EmptyState
+        v-if="catalogStore.flowSchedules.length === 0"
+        icon="fa-solid fa-calendar-xmark"
+        description="No schedules configured"
+      />
+      <ScheduleTable
+        v-else
+        :schedules="catalogStore.flowSchedules"
+        :show-flow-column="false"
+        :disable-run-now="isFlowRunning"
+        :is-running-fn="isScheduleRunning"
+        :save-description="onSaveDescription"
+        @select-schedule="$emit('selectSchedule', $event)"
+        @run-now="handleRunNow"
+        @cancel-schedule-run="handleCancelScheduleRun"
+        @toggle-schedule="handleToggleSchedule"
+        @delete-schedule="handleDeleteSchedule"
+      />
     </div>
     <!-- Data Lineage -->
     <div
@@ -375,20 +284,18 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): now ~750 LOC after ScheduleTable extraction. Remaining target:
+//   - DataLineageSection.vue: lineage block (~lines 281+)
+//   - ArtifactsSection.vue: artifacts table (~lines 336+)
 import { computed, nextTick, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
-import {
-  formatDate,
-  formatScheduleType,
-  formatSize,
-  formatType,
-  getScheduleDisplayName,
-  scheduleIcon,
-} from "./catalog-formatters";
+import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
+import { EmptyState } from "../../components/common";
+import ScheduleTable from "./components/ScheduleTable.vue";
 
 const catalogStore = useCatalogStore();
 
@@ -426,9 +333,6 @@ const latestSnapshotRunId = computed((): number | null => {
 const isEditing = ref(false);
 const editName = ref("");
 const editInput = ref<HTMLInputElement | null>(null);
-const editingScheduleId = ref<number | null>(null);
-const editDescription = ref("");
-const descriptionInput = ref<HTMLInputElement | null>(null);
 
 function startRename() {
   editName.value = props.flow.name;
@@ -491,32 +395,9 @@ const statusText = computed(() => {
   return props.flow.last_run_success ? "Success" : "Failed";
 });
 
-function startEditDescription(schedule: FlowSchedule) {
-  editingScheduleId.value = schedule.id;
-  editDescription.value = schedule.description ?? "";
-  nextTick(() => {
-    descriptionInput.value?.focus();
-  });
-}
-
-function cancelEditDescription() {
-  editingScheduleId.value = null;
-}
-
-async function saveDescription(scheduleId: number) {
-  if (editingScheduleId.value !== scheduleId) return;
-  const trimmed = editDescription.value.trim();
-  const schedule = catalogStore.flowSchedules.find((s) => s.id === scheduleId);
-  const oldDescription = schedule?.description ?? "";
-  editingScheduleId.value = null;
-  if (trimmed !== oldDescription) {
-    try {
-      await CatalogApi.updateSchedule(scheduleId, { description: trimmed || null });
-      await catalogStore.loadFlowSchedules(props.flow.id);
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
-    }
-  }
+async function onSaveDescription(scheduleId: number, description: string | null) {
+  await CatalogApi.updateSchedule(scheduleId, { description });
+  await catalogStore.loadFlowSchedules(props.flow.id);
 }
 
 async function handleRunNow(scheduleId: number) {
@@ -647,19 +528,6 @@ async function handleDeleteSchedule(id: number) {
 }
 .btn-danger-outline:hover {
   background: var(--color-danger-light);
-}
-
-/* ========== Grid column templates ========== */
-.schedules-grid .table-header,
-.schedules-grid .table-row {
-  grid-template-columns: 100px 1fr minmax(120px, 1fr) 150px 130px 120px;
-}
-
-.col-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .action-btn-primary:hover {

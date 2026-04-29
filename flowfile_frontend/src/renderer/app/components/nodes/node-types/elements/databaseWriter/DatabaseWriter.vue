@@ -152,6 +152,9 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~516 LOC, paired with DatabaseReader (~655 LOC).
+//   See DatabaseReader.vue header for the shared extraction plan
+//   (DatabaseConnectionPicker + databaseConnectionFormatters).
 import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted, watch } from "vue";
 import {

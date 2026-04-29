@@ -446,6 +446,9 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~990 LOC. Plan to extract:
+//   - MetricFilterBuilder.vue: filter rows (~lines 239-363)
+//   - SortBuilder.vue: sort rows (~lines 366-441)
 import { CodeLoader } from "vue-content-loader";
 import { computed, ref } from "vue";
 import { ElMessage, ElOption, ElOptionGroup, ElSelect } from "element-plus";
