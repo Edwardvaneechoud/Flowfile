@@ -98,14 +98,42 @@ const edgeTypes = {
   default: rawDeletableEdge as EdgeComponent,
 };
 const hoveredEdgeId = ref<string | null>(null);
+// Short delay before clearing on edge-leave so the cursor can cross the SVG→HTML
+// boundary onto the delete button (rendered via EdgeLabelRenderer/Teleport)
+// without the button hiding from under it. Also lets a same-frame enter on a
+// neighbouring edge cancel the clear, killing a race where mouseleave on the
+// previous edge would wipe state set by mouseenter on the next one.
+let leaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const cancelEdgeLeave = () => {
+  if (leaveTimeout) {
+    clearTimeout(leaveTimeout);
+    leaveTimeout = null;
+  }
+};
+
+const scheduleEdgeLeave = (edgeId: string) => {
+  cancelEdgeLeave();
+  leaveTimeout = setTimeout(() => {
+    if (hoveredEdgeId.value === edgeId) {
+      hoveredEdgeId.value = null;
+    }
+    leaveTimeout = null;
+  }, 150);
+};
+
 provide("hoveredEdgeId", hoveredEdgeId);
+provide("cancelEdgeLeave", cancelEdgeLeave);
+provide("scheduleEdgeLeave", scheduleEdgeLeave);
 
 function onEdgeMouseEnter({ edge }: { edge: { id: string } }) {
+  cancelEdgeLeave();
   hoveredEdgeId.value = edge.id;
 }
 
-function onEdgeMouseLeave() {
-  hoveredEdgeId.value = null;
+function onEdgeMouseLeave({ edge }: { edge: { id: string } }) {
+  if (hoveredEdgeId.value !== edge.id) return;
+  scheduleEdgeLeave(edge.id);
 }
 
 /**

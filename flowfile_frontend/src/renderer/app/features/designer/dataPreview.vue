@@ -68,6 +68,8 @@
         :row-data="rowData"
         :style="{ width: '100%', height: gridHeightComputed }"
         :overlay-no-rows-template="overlayNoRowsTemplate"
+        row-selection="multiple"
+        :rows-multi-select-with-click="true"
         @grid-ready="onGridReady"
       />
 
@@ -290,6 +292,24 @@ const defaultColDef = {
   resizable: true,
 };
 
+const serializeCell = (v: unknown): string => {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+};
+
+const buildTsvFromRows = (rows: Record<string, any>[]): string => {
+  const cols = (columnDefs.value as Array<{ field?: string; headerName?: string }>).filter(
+    (c) => c && c.field,
+  );
+  if (!cols.length || !rows.length) return "";
+  const headerLine = cols.map((c) => c.headerName ?? c.field ?? "").join("\t");
+  const dataLines = rows.map((row) =>
+    cols.map((c) => serializeCell(row[c.field as string])).join("\t"),
+  );
+  return [headerLine, ...dataLines].join("\n");
+};
+
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
 
@@ -421,13 +441,56 @@ function removeData() {
   currentNodeId.value = null;
 }
 
+const windowKeyHandler = async (e: KeyboardEvent) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod) return;
+
+  const key = e.key.toLowerCase();
+  if (key !== "c" && key !== "a") return;
+
+  const target = e.target as HTMLElement | null;
+  // Don't fight the browser when the user is in a text input or editor.
+  if (
+    target &&
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  // Only act when focus is inside this grid.
+  if (!target?.closest(".ag-theme-balham")) return;
+
+  if (key === "a") {
+    gridApi.value?.selectAll();
+    e.preventDefault();
+    return;
+  }
+
+  // Cmd/Ctrl+C → copy selected rows as TSV.
+  const selected = gridApi.value?.getSelectedRows() ?? [];
+  if (!selected.length) return;
+
+  const tsv = buildTsvFromRows(selected);
+  if (!tsv) return;
+
+  try {
+    await navigator.clipboard.writeText(tsv);
+    e.preventDefault();
+  } catch {
+    // Clipboard write rejected (permissions, insecure context); leave default behavior.
+  }
+};
+
 onMounted(() => {
   calculateGridHeight();
   window.addEventListener("resize", calculateGridHeight);
+  window.addEventListener("keydown", windowKeyHandler);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", calculateGridHeight);
+  window.removeEventListener("keydown", windowKeyHandler);
 });
 
 defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
