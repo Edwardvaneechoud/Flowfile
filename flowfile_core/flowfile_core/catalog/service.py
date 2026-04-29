@@ -72,6 +72,7 @@ from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
+from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.serializers import (
     VizEnrichment,
     artifact_to_out,
@@ -87,8 +88,6 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import (
     format_full_name,
     reject_dot_in_name,
-    validate_schedule_create,
-    validate_schedule_update,
     validate_thumbnail,
     validate_viz_source,
 )
@@ -181,6 +180,7 @@ class CatalogService:
         self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo)
         self._engagement = FlowEngagementService(repo, self._flows)
+        self._schedules = ScheduleService(repo, self._runs, self._namespaces)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -1088,71 +1088,12 @@ class CatalogService:
 
         table = self.repo.update_table(table)
 
-        try:
-            self._fire_table_trigger_schedules(table.id, table.updated_at)
-        except Exception:
-            logger.exception("Failed to fire push triggers for table %s", table.id)
+        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
 
         return self._table_to_out(table)
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
-        """Fire enabled table_trigger schedules watching *table_id* (push path).
-
-        This is the **push path** of the dual trigger mechanism for
-        ``table_trigger`` schedules.  It runs synchronously inside
-        ``overwrite_table_data`` — i.e. immediately when a catalog table's
-        data is replaced — so the downstream flow starts without waiting
-        for the next scheduler poll tick.
-
-        A parallel **poll path** exists in
-        ``FlowScheduler._process_table_trigger_schedules`` (engine.py).
-        The poll path runs every ~30 s and compares
-        ``CatalogTable.updated_at`` against
-        ``FlowSchedule.last_trigger_table_updated_at``.  It acts as a
-        **safety net**: if the push path fails (exception, process crash,
-        etc.) the poll path will still detect the table change on its next
-        tick and launch the flow.
-
-        Double-firing is prevented by two guards:
-
-        1. ``has_active_run`` — if the push path already spawned a
-           subprocess, the poll path (and any concurrent push) sees an
-           active run and skips the schedule.
-        2. ``last_trigger_table_updated_at`` — the push path commits
-           this timestamp (equal to the table's ``updated_at``) via
-           ``repo.update_schedule`` *before* returning.  When the poll
-           path later compares ``table.updated_at`` against this value
-           it finds them equal and skips the schedule.
-
-        There is a small race window (~poll interval) where the poll path
-        could run *after* the table update but *before* the push path
-        commits the timestamp.  In that scenario ``has_active_run`` is the
-        final safeguard — the subprocess spawned by the push path will
-        already have created a ``FlowRun`` record.
-
-        Returns the number of flows launched.
-        """
-        schedules = self.repo.list_table_trigger_schedules_for_table(table_id)
-        launched = 0
-        for schedule in schedules:
-            flow = self.repo.get_flow(schedule.registration_id)
-            if flow is None:
-                logger.warning("Schedule %s references missing flow %s", schedule.id, schedule.registration_id)
-                continue
-
-            if self.repo.has_active_run(schedule.registration_id):
-                logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
-                continue
-
-            schedule.last_triggered_at = datetime.now(timezone.utc)
-            schedule.last_trigger_table_updated_at = table_updated_at
-            self.repo.update_schedule(schedule)
-
-            run = self._spawn_flow_run(flow, user_id=schedule.owner_id, run_type="scheduled", schedule_id=schedule.id)
-            if run.pid is not None:
-                launched += 1
-
-        return launched
+        return self._schedules.fire_table_trigger_schedules(table_id, table_updated_at)
 
     def _create_table_record_from_metadata(
         self,
@@ -1447,10 +1388,7 @@ class CatalogService:
 
         table = self.repo.update_table(table)
 
-        try:
-            self._fire_table_trigger_schedules(table.id, table.updated_at)
-        except Exception:
-            logger.exception("Failed to fire push triggers for virtual table %s", table.id)
+        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
 
         return self._table_to_out(table)
 
@@ -1570,10 +1508,7 @@ class CatalogService:
 
         table = self.repo.update_table(table)
 
-        try:
-            self._fire_table_trigger_schedules(table.id, table.updated_at)
-        except Exception:
-            logger.exception("Failed to fire push triggers for query virtual table %s", table.id)
+        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
 
         return self._table_to_out(table)
 
@@ -1933,58 +1868,7 @@ class CatalogService:
         return self._bulk_enrich_tables(tables, user_id)
 
     def _schedule_to_out(self, schedule: FlowSchedule) -> FlowScheduleOut:
-        """Convert a FlowSchedule ORM instance to its Pydantic output schema, populating trigger table info."""
-        # Resolve single table trigger
-        trigger_table_name: str | None = None
-        trigger_namespace_id: int | None = None
-        trigger_namespace_name: str | None = None
-        trigger_full_table_name: str | None = None
-        if schedule.trigger_table_id is not None:
-            table = self.repo.get_table(schedule.trigger_table_id)
-            if table is not None:
-                trigger_table_name = table.name
-                trigger_namespace_id = table.namespace_id
-                trigger_namespace_name = self._resolve_namespace_name(table.namespace_id)
-                trigger_full_table_name = self._format_full_name(trigger_namespace_name, table.name)
-
-        # Resolve table set trigger IDs and names
-        trigger_table_ids: list[int] = []
-        trigger_table_names: list[str] = []
-        trigger_full_table_names: list[str] = []
-        if schedule.schedule_type == "table_set_trigger":
-            trigger_table_ids = self.repo.get_trigger_table_ids(schedule.id)
-            for tid in trigger_table_ids:
-                table = self.repo.get_table(tid)
-                if table is None:
-                    trigger_table_names.append(f"#{tid}")
-                    trigger_full_table_names.append(f"#{tid}")
-                    continue
-                trigger_table_names.append(table.name)
-                ns_name = self._resolve_namespace_name(table.namespace_id)
-                trigger_full_table_names.append(self._format_full_name(ns_name, table.name))
-
-        return FlowScheduleOut(
-            id=schedule.id,
-            registration_id=schedule.registration_id,
-            owner_id=schedule.owner_id,
-            enabled=schedule.enabled,
-            name=schedule.name,
-            description=schedule.description,
-            schedule_type=schedule.schedule_type,
-            interval_seconds=schedule.interval_seconds,
-            trigger_table_id=schedule.trigger_table_id,
-            trigger_table_name=trigger_table_name,
-            trigger_namespace_id=trigger_namespace_id,
-            trigger_namespace_name=trigger_namespace_name,
-            trigger_full_table_name=trigger_full_table_name,
-            trigger_table_ids=trigger_table_ids,
-            trigger_table_names=trigger_table_names,
-            trigger_full_table_names=trigger_full_table_names,
-            last_triggered_at=schedule.last_triggered_at,
-            last_trigger_table_updated_at=schedule.last_trigger_table_updated_at,
-            created_at=schedule.created_at,
-            updated_at=schedule.updated_at,
-        )
+        return self._schedules._schedule_to_out(schedule)
 
     def create_schedule(
         self,
@@ -1998,45 +1882,17 @@ class CatalogService:
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
-        """Create a new schedule for a registered flow.
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        ValueError
-            If validation fails (bad type, interval too short, missing trigger table).
-        TableNotFoundError
-            If the trigger table doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-
-        validate_schedule_create(
-            schedule_type=schedule_type,
-            interval_seconds=interval_seconds,
-            trigger_table_id=trigger_table_id,
-            trigger_table_ids=trigger_table_ids,
-            table_exists=lambda table_id: self.repo.get_table(table_id) is not None,
+        return self._schedules.create_schedule(
+            registration_id,
+            owner_id,
+            schedule_type,
+            interval_seconds,
+            trigger_table_id,
+            trigger_table_ids,
+            enabled,
+            name,
+            description,
         )
-
-        schedule = FlowSchedule(
-            registration_id=registration_id,
-            owner_id=owner_id,
-            enabled=enabled,
-            name=name,
-            description=description,
-            schedule_type=schedule_type,
-            interval_seconds=interval_seconds,
-            trigger_table_id=trigger_table_id,
-        )
-        schedule = self.repo.create_schedule(schedule)
-
-        if schedule_type == "table_set_trigger" and trigger_table_ids:
-            self.repo.set_trigger_table_ids(schedule.id, trigger_table_ids)
-
-        return self._schedule_to_out(schedule)
 
     def update_schedule(
         self,
@@ -2046,61 +1902,16 @@ class CatalogService:
         name: str | None = None,
         description: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule.
-
-        Raises
-        ------
-        ScheduleNotFoundError
-            If the schedule doesn't exist.
-        """
-        schedule = self.repo.get_schedule(schedule_id)
-        if schedule is None:
-            raise ScheduleNotFoundError(schedule_id=schedule_id)
-        if enabled is not None:
-            schedule.enabled = enabled
-        if interval_seconds is not None:
-            validate_schedule_update(interval_seconds)
-            schedule.interval_seconds = interval_seconds
-        if name is not None:
-            schedule.name = name
-        if description is not None:
-            schedule.description = description
-        schedule = self.repo.update_schedule(schedule)
-        return self._schedule_to_out(schedule)
+        return self._schedules.update_schedule(schedule_id, enabled, interval_seconds, name, description)
 
     def delete_schedule(self, schedule_id: int) -> None:
-        """Delete a schedule and its associated trigger table links.
-
-        Raises
-        ------
-        ScheduleNotFoundError
-            If the schedule doesn't exist.
-        """
-        schedule = self.repo.get_schedule(schedule_id)
-        if schedule is None:
-            raise ScheduleNotFoundError(schedule_id=schedule_id)
-        self.repo.delete_schedule(schedule_id)  # Also cleans up ScheduleTriggerTable rows
+        self._schedules.delete_schedule(schedule_id)
 
     def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
-        """Get a schedule by ID.
+        return self._schedules.get_schedule(schedule_id)
 
-        Raises
-        ------
-        ScheduleNotFoundError
-            If the schedule doesn't exist.
-        """
-        schedule = self.repo.get_schedule(schedule_id)
-        if schedule is None:
-            raise ScheduleNotFoundError(schedule_id=schedule_id)
-        return self._schedule_to_out(schedule)
-
-    def list_schedules(
-        self,
-        registration_id: int | None = None,
-    ) -> list[FlowScheduleOut]:
-        """List schedules, optionally filtered by flow."""
-        schedules = self.repo.list_schedules(registration_id=registration_id)
-        return [self._schedule_to_out(s) for s in schedules]
+    def list_schedules(self, registration_id: int | None = None) -> list[FlowScheduleOut]:
+        return self._schedules.list_schedules(registration_id)
 
     # ------------------------------------------------------------------ #
     # Trigger schedule now
@@ -2122,31 +1933,7 @@ class CatalogService:
         return self._runs.run_flow_now(registration_id, user_id)
 
     def trigger_schedule_now(self, schedule_id: int, user_id: int) -> FlowRunOut:
-        """Manually trigger a scheduled flow immediately.
-
-        Raises
-        ------
-        ScheduleNotFoundError
-            If the schedule doesn't exist.
-        FlowNotFoundError
-            If the associated flow doesn't exist.
-        FlowAlreadyRunningError
-            If the flow already has an active (unfinished) run.
-        """
-        schedule = self.repo.get_schedule(schedule_id)
-        if schedule is None:
-            raise ScheduleNotFoundError(schedule_id=schedule_id)
-
-        flow = self.repo.get_flow(schedule.registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=schedule.registration_id)
-
-        # Check for active runs
-        if self.repo.has_active_run(schedule.registration_id):
-            raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
-
-        run = self._spawn_flow_run(flow, user_id=user_id, run_type="on_demand", schedule_id=schedule.id)
-        return self._run_to_out(run)
+        return self._schedules.trigger_schedule_now(schedule_id, user_id)
 
     # ------------------------------------------------------------------ #
     # Active runs + cancel
