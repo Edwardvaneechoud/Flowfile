@@ -68,6 +68,7 @@ from flowfile_core.catalog.exceptions import (
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.runs import FlowRunService
@@ -179,6 +180,7 @@ class CatalogService:
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo)
+        self._engagement = FlowEngagementService(repo, self._flows)
 
     # ------------------------------------------------------------------ #
     # Private helpers
@@ -656,94 +658,22 @@ class CatalogService:
     # ------------------------------------------------------------------ #
 
     def add_favorite(self, user_id: int, registration_id: int) -> FlowFavorite:
-        """Add a flow to user's favourites (idempotent).
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-        existing = self.repo.get_favorite(user_id, registration_id)
-        if existing is not None:
-            return existing
-        fav = FlowFavorite(user_id=user_id, registration_id=registration_id)
-        return self.repo.add_favorite(fav)
+        return self._engagement.add_favorite(user_id, registration_id)
 
     def remove_favorite(self, user_id: int, registration_id: int) -> None:
-        """Remove a flow from user's favourites.
-
-        Raises
-        ------
-        FavoriteNotFoundError
-            If the favourite doesn't exist.
-        """
-        existing = self.repo.get_favorite(user_id, registration_id)
-        if existing is None:
-            raise FavoriteNotFoundError(user_id=user_id, registration_id=registration_id)
-        self.repo.remove_favorite(user_id, registration_id)
+        self._engagement.remove_favorite(user_id, registration_id)
 
     def list_favorites(self, user_id: int) -> list[FlowRegistrationOut]:
-        """List all flows the user has favourited, enriched.
-
-        Uses bulk enrichment to avoid N+1 queries.
-        """
-        favs = self.repo.list_favorites(user_id)
-        flows: list[FlowRegistration] = []
-        for fav in favs:
-            flow = self.repo.get_flow(fav.registration_id)
-            if flow is not None:
-                flows.append(flow)
-        return self._bulk_enrich_flows(flows, user_id)
-
-    # ------------------------------------------------------------------ #
-    # Follows
-    # ------------------------------------------------------------------ #
+        return self._engagement.list_favorites(user_id)
 
     def add_follow(self, user_id: int, registration_id: int) -> FlowFollow:
-        """Follow a flow (idempotent).
-
-        Raises
-        ------
-        FlowNotFoundError
-            If the flow doesn't exist.
-        """
-        flow = self.repo.get_flow(registration_id)
-        if flow is None:
-            raise FlowNotFoundError(registration_id=registration_id)
-        existing = self.repo.get_follow(user_id, registration_id)
-        if existing is not None:
-            return existing
-        follow = FlowFollow(user_id=user_id, registration_id=registration_id)
-        return self.repo.add_follow(follow)
+        return self._engagement.add_follow(user_id, registration_id)
 
     def remove_follow(self, user_id: int, registration_id: int) -> None:
-        """Unfollow a flow.
-
-        Raises
-        ------
-        FollowNotFoundError
-            If the follow record doesn't exist.
-        """
-        existing = self.repo.get_follow(user_id, registration_id)
-        if existing is None:
-            raise FollowNotFoundError(user_id=user_id, registration_id=registration_id)
-        self.repo.remove_follow(user_id, registration_id)
+        self._engagement.remove_follow(user_id, registration_id)
 
     def list_following(self, user_id: int) -> list[FlowRegistrationOut]:
-        """List all flows the user is following, enriched.
-
-        Uses bulk enrichment to avoid N+1 queries.
-        """
-        follows = self.repo.list_follows(user_id)
-        flows: list[FlowRegistration] = []
-        for follow in follows:
-            flow = self.repo.get_flow(follow.registration_id)
-            if flow is not None:
-                flows.append(flow)
-        return self._bulk_enrich_flows(flows, user_id)
+        return self._engagement.list_following(user_id)
 
     # ------------------------------------------------------------------ #
     # Catalog table operations
