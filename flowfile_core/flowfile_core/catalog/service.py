@@ -13,9 +13,7 @@ import io
 import json
 import logging
 import os
-import re
 import signal
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,6 +70,12 @@ from flowfile_core.catalog.exceptions import (
     VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.text_utils import (
+    hash_source_versions as _hash_source_versions,
+    is_table_reference as _is_table_reference,
+    parse_delta_history as _parse_delta_history,
+    rewrite_qualified_references as _rewrite_qualified_references,
+)
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import (
     CatalogDashboard,
@@ -111,7 +115,6 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardOut,
     DashboardUpdate,
     DeltaTableHistory,
-    DeltaVersionCommit,
     FlowRegistrationOut,
     FlowRunDetail,
     FlowRunOut,
@@ -129,7 +132,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
-from shared.delta_utils import format_delta_timestamp, make_json_safe, validate_catalog_path
+from shared.delta_utils import make_json_safe, validate_catalog_path
 from shared.storage_config import storage
 from shared.subprocess_utils import spawn_flow_subprocess
 
@@ -144,65 +147,8 @@ def _should_offload() -> bool:
     return OFFLOAD_TO_WORKER.value
 
 
-_TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
-
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
-
-
-def _rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> str:
-    """Rewrite ``ns.table`` / ``"ns"."table"`` / mixed variants to ``"ns.table"``.
-
-    Only rewrites occurrences matching a known registered qualified name, so column
-    qualifiers like ``t.col`` on unrelated aliases are untouched.
-    """
-    for qname in sorted(qualified_names, key=len, reverse=True):
-        if "." not in qname:
-            continue
-        ns, _, table = qname.partition(".")
-        ns_esc, table_esc = re.escape(ns), re.escape(table)
-        ns_part = rf'(?:(?<![\w"]){ns_esc}|"{ns_esc}")'
-        table_part = rf'(?:{table_esc}(?![\w"])|"{table_esc}")'
-        pattern = re.compile(rf"{ns_part}\s*\.\s*{table_part}")
-        query = pattern.sub(f'"{qname}"', query)
-    return query
-
-
-def _is_table_reference(name: str, query: str) -> bool:
-    """Return True iff ``name`` appears as an actual table reference in ``query``.
-
-    Matches after a table-introducing keyword (``FROM``/``JOIN``/``INTO``/``UPDATE``)
-    or a comma (continuation of a ``FROM`` list). Accepts both the bare identifier
-    and its double-quoted form; rejects lookalikes that continue into a longer
-    identifier (e.g. ``t`` should not match inside ``test-table``). This avoids
-    false positives from column aliases (``SELECT x AS t``) and substrings.
-    """
-    escaped = re.escape(name)
-    pattern = re.compile(
-        rf'(?:{_TABLE_INTRODUCERS})\s+(?:"{escaped}"|{escaped}(?![\w"-]))',
-        re.IGNORECASE,
-    )
-    return bool(pattern.search(query))
-
-
-def _parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
-    """Convert raw deltalake history dicts into typed ``DeltaVersionCommit`` models."""
-    return [
-        DeltaVersionCommit(
-            version=h.get("version"),
-            timestamp=format_delta_timestamp(h.get("timestamp")),
-            operation=h.get("operation"),
-            parameters=h.get("operationParameters"),
-        )
-        for h in raw_history
-    ]
-
-
-def _hash_source_versions(versions_json: str | None) -> str:
-    """Stable cache key for a virtual table's source-version state."""
-    if not versions_json:
-        return "noversions"
-    return hashlib.sha256(versions_json.encode()).hexdigest()
 
 
 def _format_pyarrow_preview(pa_table, total_rows: int | None = None) -> CatalogTablePreview:
