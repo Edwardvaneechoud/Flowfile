@@ -136,49 +136,54 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Sits inside the page header alongside HeaderButtons. Matches the same
+   .action-btn--icon-only visual language so undo/redo read as part of the
+   same toolbar group. */
 .undo-redo-controls {
-  position: absolute;
-  top: 12px;
-  left: 192px; /* Position after the node list panel */
-  display: flex;
-  gap: 4px;
-  z-index: 1000;
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-lg);
-  padding: 4px;
-  box-shadow: var(--shadow-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-left: var(--spacing-2);
+  font-family: var(--font-family-base);
 }
 
 .control-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  border: none;
-  border-radius: var(--border-radius-md);
+  width: 34px;
+  height: 34px;
+  padding: var(--spacing-2);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   transition: all var(--transition-fast);
+  box-shadow: var(--shadow-xs);
 }
 
 .control-btn:hover:not(:disabled) {
-  background: var(--color-background-tertiary);
-  color: var(--color-text-primary);
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
 }
 
 .control-btn:active:not(:disabled) {
-  transform: scale(0.95);
+  transform: translateY(1px);
+  box-shadow: none;
 }
 
 .control-btn:disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .control-btn .material-icons {
-  font-size: 20px;
+  font-size: 18px;
+  color: var(--color-text-secondary);
+}
+
+.control-btn:hover:not(:disabled) .material-icons {
+  color: var(--color-text-primary);
 }
 </style>

@@ -1,6 +1,43 @@
 // stateStore.ts
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import { Z_INDEX } from "./zIndex";
+
+// Bump when the localStorage shape or coordinate system changes — old keys are
+// purged on next load. Last bump: panels moved inside <main>, so saved
+// positions from the viewport-anchored era are off by the header's height.
+const STORAGE_VERSION = 2;
+const itemStorageKey = (id: string) => `overlayPositionAndSize.v${STORAGE_VERSION}_${id}`;
+const groupsStorageKey = `overlayGroups.v${STORAGE_VERSION}`;
+
+const purgeLegacyKeys = () => {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("overlayPositionAndSize_") && !key.includes(`.v${STORAGE_VERSION}_`)) {
+        localStorage.removeItem(key);
+      }
+    }
+    if (localStorage.getItem("overlayGroups") !== null) {
+      localStorage.removeItem("overlayGroups");
+    }
+  } catch {
+    // localStorage can throw in private mode / quota exhaustion — ignore.
+  }
+};
+
+// Looks up the canvas <main> element so fullscreen panels fill the canvas
+// region (not the viewport, which would overlap the page header).
+const getCanvasBounds = (): { width: number; height: number } => {
+  if (typeof document === "undefined") {
+    return { width: 0, height: 0 };
+  }
+  const main = document.querySelector("main");
+  if (main) {
+    const rect = main.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
+  return { width: window.innerWidth, height: window.innerHeight };
+};
 
 export interface ItemLayout {
   width: number;
@@ -34,6 +71,9 @@ export interface ItemInitialState {
 }
 
 export const useItemStore = defineStore("itemStore", () => {
+  // Run-once cleanup of pre-v2 localStorage keys on first store instantiation.
+  purgeLegacyKeys();
+
   const items = ref<Record<string, ItemLayout>>({});
   const initialItemStates = ref<Record<string, ItemInitialState>>({});
   const groups = ref<Record<string, string[]>>({});
@@ -41,10 +81,30 @@ export const useItemStore = defineStore("itemStore", () => {
   const idItemClicked = ref<string | null>(null);
   const idItemVisible = ref<string | null>(null);
 
-  // Z-index constants to prevent unbounded growth
-  const BASE_Z_INDEX = 100;
-  const MAX_Z_INDEX = 200;
-  const FULLSCREEN_Z_INDEX = 250;
+  // Z-index constants (see zIndex.ts for the full hierarchy).
+  const BASE_Z_INDEX = Z_INDEX.PANEL_BASE;
+  const MAX_Z_INDEX = Z_INDEX.PANEL_MAX;
+  const FULLSCREEN_Z_INDEX = Z_INDEX.FULLSCREEN;
+
+  // Per-id debounce timers for localStorage writes. Drag/resize fires at every
+  // mousemove (~60 Hz), so without throttling we'd hammer localStorage with
+  // hundreds of writes per gesture. 250 ms trailing-edge is invisible to the
+  // user and survives reload because stop handlers flush immediately.
+  const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const SAVE_DEBOUNCE_MS = 250;
+
+  const persistItem = (id: string) => {
+    const state = items.value[id];
+    if (!state) return;
+    try {
+      localStorage.setItem(itemStorageKey(id), JSON.stringify(state));
+      if (state.group) {
+        localStorage.setItem(groupsStorageKey, JSON.stringify({ groups: groups.value }));
+      }
+    } catch {
+      // Ignore quota / private-mode failures.
+    }
+  };
 
   const layoutPresets = {
     sidePanel: { width: 400, height: "100%" },
@@ -214,63 +274,53 @@ export const useItemStore = defineStore("itemStore", () => {
     }
   };
 
-  const preventOverlap = (id: string) => {
-    const item = items.value[id];
-    if (!item || item.stickynessPosition !== "free") return;
-
-    const threshold = 50;
-    let adjusted = false;
-
-    Object.entries(items.value).forEach(([otherId, otherItem]) => {
-      if (otherId === id || otherItem.fullScreen) return;
-
-      const horizontalOverlap =
-        item.left < otherItem.left + otherItem.width && item.left + item.width > otherItem.left;
-
-      const verticalOverlap =
-        item.top < otherItem.top + otherItem.height && item.top + item.height > otherItem.top;
-
-      if (horizontalOverlap && verticalOverlap) {
-        item.left = otherItem.left + otherItem.width + threshold;
-
-        if (item.left + item.width > window.innerWidth) {
-          item.left = 100;
-          item.top = otherItem.top + otherItem.height + threshold;
-        }
-        adjusted = true;
-      }
-    });
-
-    if (adjusted) {
-      saveItemState(id);
-    }
+  const saveItemState = (id: string) => {
+    const existing = writeTimers.get(id);
+    if (existing) clearTimeout(existing);
+    writeTimers.set(
+      id,
+      setTimeout(() => {
+        writeTimers.delete(id);
+        persistItem(id);
+      }, SAVE_DEBOUNCE_MS),
+    );
   };
 
-  const saveItemState = (id: string) => {
-    const itemState = items.value[id];
-    localStorage.setItem(`overlayPositionAndSize_${id}`, JSON.stringify(itemState));
-
-    if (itemState.group) {
-      const groupData = { groups: groups.value };
-      localStorage.setItem("overlayGroups", JSON.stringify(groupData));
+  // Flush a pending write immediately. Call from drag-stop / resize-stop so
+  // the final state is durable even if the user closes the tab in <250 ms.
+  const flushItemState = (id: string) => {
+    const existing = writeTimers.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      writeTimers.delete(id);
     }
+    persistItem(id);
   };
 
   const loadItemState = (id: string) => {
-    const savedState = localStorage.getItem(`overlayPositionAndSize_${id}`);
+    const savedState = localStorage.getItem(itemStorageKey(id));
     if (savedState) {
-      const state = JSON.parse(savedState);
-      // Clamp restored z-index to prevent inflated values from localStorage
-      if (state.zIndex !== undefined && state.zIndex > MAX_Z_INDEX) {
-        state.zIndex = BASE_Z_INDEX;
+      try {
+        const state = JSON.parse(savedState);
+        // Clamp restored z-index to prevent inflated values from localStorage.
+        if (state.zIndex !== undefined && state.zIndex > MAX_Z_INDEX) {
+          state.zIndex = BASE_Z_INDEX;
+        }
+        setItemState(id, state);
+      } catch {
+        // Corrupted entry — drop it so next save overwrites cleanly.
+        localStorage.removeItem(itemStorageKey(id));
       }
-      setItemState(id, state);
     }
 
-    const savedGroups = localStorage.getItem("overlayGroups");
+    const savedGroups = localStorage.getItem(groupsStorageKey);
     if (savedGroups) {
-      const groupData = JSON.parse(savedGroups);
-      groups.value = groupData.groups || {};
+      try {
+        const groupData = JSON.parse(savedGroups);
+        groups.value = groupData.groups || {};
+      } catch {
+        localStorage.removeItem(groupsStorageKey);
+      }
     }
   };
 
@@ -320,8 +370,11 @@ export const useItemStore = defineStore("itemStore", () => {
         items.value[id].prevLeft = items.value[id].left;
         items.value[id].prevTop = items.value[id].top;
 
-        items.value[id].width = window.innerWidth;
-        items.value[id].height = window.innerHeight;
+        // Fill the canvas region (main element), not the viewport — panels
+        // are positioned inside <main> so width/height are container-relative.
+        const bounds = getCanvasBounds();
+        items.value[id].width = bounds.width;
+        items.value[id].height = bounds.height;
         items.value[id].left = 0;
         items.value[id].top = 0;
         items.value[id].zIndex = FULLSCREEN_Z_INDEX;
@@ -338,19 +391,23 @@ export const useItemStore = defineStore("itemStore", () => {
         });
       }
 
-      saveItemState(id);
+      flushItemState(id);
       clickOnItem(id);
     }
   };
 
   const resetLayout = () => {
-    // Clear all current states from localStorage
+    // Cancel any pending debounced writes — we're about to overwrite state.
+    writeTimers.forEach((timer) => clearTimeout(timer));
+    writeTimers.clear();
+
+    // Clear all current states from localStorage (v2 keys).
     Object.keys(items.value).forEach((id) => {
-      localStorage.removeItem(`overlayPositionAndSize_${id}`);
+      localStorage.removeItem(itemStorageKey(id));
     });
 
     // Clear groups from localStorage
-    localStorage.removeItem("overlayGroups");
+    localStorage.removeItem(groupsStorageKey);
 
     // Reset groups
     groups.value = {};
@@ -408,8 +465,14 @@ export const useItemStore = defineStore("itemStore", () => {
       return;
     }
 
+    const pending = writeTimers.get(id);
+    if (pending) {
+      clearTimeout(pending);
+      writeTimers.delete(id);
+    }
+
     // Remove from localStorage
-    localStorage.removeItem(`overlayPositionAndSize_${id}`);
+    localStorage.removeItem(itemStorageKey(id));
 
     // Reset to initial state
     const resetState: ItemLayout = {
@@ -469,6 +532,14 @@ export const useItemStore = defineStore("itemStore", () => {
     observer.observe(itemElement);
   };
 
+  const hasSavedState = (id: string): boolean => {
+    try {
+      return localStorage.getItem(itemStorageKey(id)) !== null;
+    } catch {
+      return false;
+    }
+  };
+
   return {
     inResizing,
     items,
@@ -478,7 +549,9 @@ export const useItemStore = defineStore("itemStore", () => {
     registerInitialState,
     setItemState,
     saveItemState,
+    flushItemState,
     loadItemState,
+    hasSavedState,
     setResizing,
     getResizing,
     clickOnItem,
@@ -487,7 +560,6 @@ export const useItemStore = defineStore("itemStore", () => {
     toggleFullScreen,
     setFullScreen,
     arrangeItems,
-    preventOverlap,
     syncGroupDimensions,
     applyPreset,
     getGroupItems,

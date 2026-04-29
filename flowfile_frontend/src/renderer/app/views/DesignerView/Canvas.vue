@@ -6,6 +6,7 @@
 //   - keyboard shortcuts (~lines 729-778) → useFlowHotkeys composable
 import {
   ref,
+  computed,
   markRaw,
   onMounted,
   onUnmounted,
@@ -58,7 +59,6 @@ import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
-import UndoRedoControls from "./UndoRedoControls.vue";
 import {
   NodeCopyInput,
   NodeCopyValue,
@@ -80,7 +80,10 @@ interface FlowNodeData {
 }
 
 const itemStore = useItemStore();
-const availableHeight = ref(0);
+// Tracks the live height of the canvas <main> element. Driven by ResizeObserver
+// in onMounted so derived heights (table preview, node settings) stay in sync
+// with the actual canvas region instead of a stale window.innerHeight snapshot.
+const availableHeight = ref(window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
@@ -167,8 +170,11 @@ const {
   insertNodeOnEdge,
 } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
-const tablePreviewHeight = ref(0);
-const nodeSettingsHeight = ref(0);
+// 25 / 75 split of the canvas height between the bottom table preview and the
+// right-side node settings drawer. Initial-only — DraggableItem reads these
+// once on mount and the user manages further sizing via resize handles.
+const tablePreviewHeight = computed(() => Math.max(120, Math.floor(availableHeight.value * 0.25)));
+const nodeSettingsHeight = computed(() => Math.max(200, Math.floor(availableHeight.value * 0.75)));
 const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
@@ -223,6 +229,29 @@ const handleCanvasClick = (event: any | PointerEvent) => {
     y: event.y,
   };
   // Clear any browser text selection when clicking on canvas
+  window.getSelection()?.removeAllRanges();
+};
+
+// VueFlow only emits @pane-click — there's no @pane-dblclick. We listen for
+// native dblclick on <main> instead, then ignore double-clicks that landed on
+// a node, edge, handle, or any floating panel. What's left is the empty pane.
+const handleMainDblClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (
+    target.closest(".overlay") ||
+    target.closest(".vue-flow__node") ||
+    target.closest(".vue-flow__edge") ||
+    target.closest(".vue-flow__handle") ||
+    target.closest(".vue-flow__minimap") ||
+    target.closest(".layout-widget-wrapper")
+  ) {
+    return;
+  }
+  // Hide every floating overlay (right-side + bottom). Left palette stays.
+  editorStore.hideAllPanels();
+  showTablePreview.value = false;
+  nodeStore.nodeId = -1;
   window.getSelection()?.removeAllRanges();
 };
 
@@ -832,10 +861,19 @@ const handleMoveEnd = () => {
   saveViewportToSession();
 };
 
+let mainResizeObserver: ResizeObserver | null = null;
+
 onMounted(async () => {
-  availableHeight.value = window.innerHeight - 50;
-  tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
-  nodeSettingsHeight.value = availableHeight.value * 0.75; // 70% of the available height
+  if (mainContainerRef.value) {
+    availableHeight.value = mainContainerRef.value.clientHeight;
+    mainResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        availableHeight.value = entry.contentRect.height;
+      }
+    });
+    mainResizeObserver.observe(mainContainerRef.value);
+  }
   window.addEventListener("keydown", handleKeyDown);
 
   nodeStore.setVueFlowInstance(instance);
@@ -874,6 +912,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
+  mainResizeObserver?.disconnect();
+  mainResizeObserver = null;
 });
 
 defineExpose({
@@ -885,7 +925,12 @@ defineExpose({
 
 <template>
   <div class="container">
-    <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
+    <main
+      ref="mainContainerRef"
+      @drop="handleDrop"
+      @dragover="onDragOver"
+      @dblclick="handleMainDblClick"
+    >
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"
@@ -897,6 +942,7 @@ defineExpose({
         :connection-radius="60"
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
+        :zoom-on-double-click="false"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"
@@ -927,104 +973,97 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
-      <UndoRedoControls @refresh-flow="loadFlow" />
+      <draggable-item
+        id="dataActions"
+        :show-left="true"
+        :initial-width="230"
+        initial-position="left"
+        title="Data actions"
+        :allow-free-move="true"
+      >
+        <NodeList @dragstart="onDragStart" />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.isShowingLogViewer"
+        id="logViewer"
+        :show-bottom="true"
+        title="Log overview"
+        :allow-full-screen="true"
+        initial-position="bottom"
+        :initial-left="180"
+        :on-minize="hideLogViewer"
+        group="bottomPanels"
+        :sync-dimensions="true"
+      >
+        <LogViewer />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.showFlowResult"
+        id="flowresults"
+        :show-right="true"
+        title="flow results"
+        initial-position="right"
+        :initial-width="400"
+        :allow-full-screen="true"
+        group="rightPanels"
+      >
+        <FlowResults :on-click="selectNodeExternally" />
+      </draggable-item>
+      <draggable-item
+        v-if="showTablePreview"
+        id="tablePreview"
+        :show-bottom="true"
+        :allow-full-screen="true"
+        title="Table Preview"
+        initial-position="bottom"
+        :on-minize="toggleShowTablePreview"
+        :initial-height="tablePreviewHeight"
+        :initial-left="180"
+        group="bottomPanels"
+        :sync-dimensions="true"
+      >
+        <data-preview ref="dataPreview"> text </data-preview>
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.isDrawerOpen"
+        id="nodeSettings"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="600"
+        :initial-height="nodeSettingsHeight"
+        title="Node Settings"
+        :on-minize="handleNodeSettingsClose"
+        :allow-full-screen="true"
+      >
+        <NodeSettingsDrawer />
+      </draggable-item>
+      <draggable-item
+        v-if="nodeStore.showCodeGenerator"
+        id="generatedCode"
+        :show-left="true"
+        :initial-width="800"
+        initial-position="right"
+        :allow-free-move="true"
+        :allow-full-screen="true"
+        :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
+      >
+        <CodeGenerator />
+      </draggable-item>
+      <draggable-item
+        v-if="editorStore.showParametersPanel"
+        id="flowParameters"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="520"
+        title="Flow Parameters"
+        :on-minize="() => editorStore.setParametersPanelVisibility(false)"
+        :allow-full-screen="true"
+        group="rightPanels"
+      >
+        <FlowParametersPanel />
+      </draggable-item>
+      <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
-    <draggable-item
-      id="dataActions"
-      :show-left="true"
-      :initial-width="230"
-      initial-position="left"
-      title="Data actions"
-      :allow-free-move="true"
-      :prevent-overlap="false"
-    >
-      <NodeList @dragstart="onDragStart" />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.isShowingLogViewer"
-      id="logViewer"
-      :show-bottom="true"
-      title="Log overview"
-      :allow-full-screen="true"
-      initial-position="bottom"
-      :initial-left="180"
-      :on-minize="hideLogViewer"
-      group="bottomPanels"
-      :sync-dimensions="true"
-      :prevent-overlap="false"
-    >
-      <LogViewer />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.showFlowResult"
-      id="flowresults"
-      :show-right="true"
-      title="flow results"
-      initial-position="right"
-      :initial-width="400"
-      group="rightPanels"
-      :prevent-overlap="false"
-    >
-      <FlowResults :on-click="selectNodeExternally" />
-    </draggable-item>
-    <draggable-item
-      v-if="showTablePreview"
-      id="tablePreview"
-      :show-bottom="true"
-      :allow-full-screen="true"
-      title="Table Preview"
-      initial-position="bottom"
-      :on-minize="toggleShowTablePreview"
-      :initial-height="tablePreviewHeight"
-      :initial-left="180"
-      group="bottomPanels"
-      :sync-dimensions="true"
-      :prevent-overlap="false"
-    >
-      <data-preview ref="dataPreview"> text </data-preview>
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.isDrawerOpen"
-      id="nodeSettings"
-      :show-right="true"
-      initial-position="right"
-      :initial-width="600"
-      :initial-height="nodeSettingsHeight"
-      title="Node Settings"
-      :on-minize="handleNodeSettingsClose"
-      :allow-full-screen="true"
-      :prevent-overlap="false"
-    >
-      <NodeSettingsDrawer />
-    </draggable-item>
-    <draggable-item
-      v-if="nodeStore.showCodeGenerator"
-      id="generatedCode"
-      :show-left="true"
-      :initial-width="800"
-      initial-position="right"
-      :allow-free-move="true"
-      :allow-full-screen="true"
-      :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
-      :prevent-overlap="false"
-    >
-      <CodeGenerator />
-    </draggable-item>
-    <draggable-item
-      v-if="editorStore.showParametersPanel"
-      id="flowParameters"
-      :show-right="true"
-      initial-position="right"
-      :initial-width="520"
-      title="Flow Parameters"
-      :on-minize="() => editorStore.setParametersPanelVisibility(false)"
-      :allow-full-screen="true"
-      :prevent-overlap="false"
-      group="rightPanels"
-    >
-      <FlowParametersPanel />
-    </draggable-item>
-    <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>
 </template>
 
@@ -1166,11 +1205,13 @@ body,
 
 .container {
   display: flex;
-  height: 100vh;
+  height: 100%;
+  position: relative;
 }
 
 main {
   flex-grow: 1;
   position: relative;
+  overflow: hidden;
 }
 </style>

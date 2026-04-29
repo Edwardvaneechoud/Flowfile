@@ -9,6 +9,7 @@
             @refresh-flow="refreshFlow"
             @flow-saved="handleFlowSaved"
           />
+          <undo-redo-controls v-if="hasOpenFlow" @refresh-flow="refreshFlow" />
         </div>
       </div>
       <div class="header-bottom">
@@ -66,12 +67,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { ref, computed, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import Status from "../../features/designer/editor/status.vue";
 import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
+import UndoRedoControls from "./UndoRedoControls.vue";
 import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
@@ -93,6 +95,9 @@ const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
+
+// Hide undo/redo when no flow is loaded — same gating as the Save button.
+const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
 
 const fetchActiveFlows = async () => {
   try {
