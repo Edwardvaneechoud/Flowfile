@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <div v-if="dataLoaded">
+  <div class="select-dynamic-root">
+    <div v-if="dataLoaded" class="select-dynamic-content">
       <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
         <UnavailableField tooltip-text="Field not available click for removing them for memory" />
         <span>Remove Missing Fields</span>
@@ -10,7 +10,7 @@
         {{ props.title }}
       </div>
 
-      <div class="listbox-wrapper">
+      <div class="listbox-wrapper select-dynamic-listbox">
         <div class="table-wrapper">
           <table class="styled-table">
             <thead>
@@ -93,6 +93,7 @@
 
     <div
       v-if="showContextMenu"
+      ref="contextMenuRef"
       class="context-menu"
       :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
     >
@@ -161,6 +162,7 @@ const contextMenuPosition = ref({ x: 0, y: 0 });
 const showContextMenu = ref(false);
 const draggingIndex = ref<number>(-1);
 const dragOverIndex = ref<number>(-1);
+const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeStore = useNodeStore();
 const dataTypes = nodeStore.getDataTypes();
 
@@ -246,6 +248,8 @@ const selectAllSelected = () => {
       column.keep = true;
     }
   });
+  showContextMenu.value = false;
+  selectedColumns.value = [];
 };
 
 const deselectAllSelected = () => {
@@ -254,6 +258,8 @@ const deselectAllSelected = () => {
       column.keep = false;
     }
   });
+  showContextMenu.value = false;
+  selectedColumns.value = [];
 };
 
 // Check for Missing Fields
@@ -263,10 +269,20 @@ const hasMissingFields = computed(() =>
 
 // Click Outside Handler for Context Menu
 const handleClickOutside = (event: MouseEvent) => {
+  const target = event.target as Node;
   const container = document.getElementById("selectable-container");
-  if (container && !container.contains(event.target as Node)) {
-    selectedColumns.value = [];
+
+  // Always close the context menu when clicking anywhere outside it. The menu
+  // floats over the table now that the table-wrapper flex-fills the pane, so
+  // tying close-behavior to "clicked outside the tbody" no longer works — the
+  // user has nowhere outside the tbody to click.
+  if (showContextMenu.value && contextMenuRef.value && !contextMenuRef.value.contains(target)) {
     showContextMenu.value = false;
+  }
+
+  // Deselect rows when the click also lands outside the table.
+  if (container && !container.contains(target)) {
+    selectedColumns.value = [];
   }
 };
 
