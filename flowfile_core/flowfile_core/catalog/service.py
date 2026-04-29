@@ -8,65 +8,22 @@ raises ``HTTPException`` — only domain-specific exceptions from
 
 from __future__ import annotations
 
-import hashlib
-import io
-import json
 import logging
-import os
-import signal
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
 
 import polars as pl
-from deltalake import DeltaTable
-from pyarrow import dataset as ds
-from sqlalchemy.exc import IntegrityError
 
 from flowfile_core.catalog.constants import (
     DEFAULT_PREVIEW_LIMIT,
     DEFAULT_SQL_MAX_ROWS,
-    DEFAULT_VISUALIZATION_ROWS,
-    MAX_PREVIEW_LIMIT,
-    MAX_VISUALIZATION_ROWS,
-    QUERY_VIRTUAL_TABLE_RECURSION_LIMIT,
-    SAVED_FLOW_NODE_X,
-    SAVED_FLOW_NODE_Y_STEP,
-    SAVED_FLOW_SQL_NODE_X,
-    SAVED_FLOW_SQL_NODE_Y,
-)
-from flowfile_core.catalog.delta_utils import (
-    check_source_versions_current,
-    delete_table_storage,
-    get_delta_table_size_bytes,
-    is_delta_table,
-    read_delta_preview,
-    table_exists,
-)
-from flowfile_core.catalog.exceptions import (
-    AmbiguousTableError,
-    DashboardNotFoundError,
-    FavoriteNotFoundError,
-    FlowAlreadyRunningError,
-    FlowHasArtifactsError,
-    FlowNotFoundError,
-    FollowNotFoundError,
-    NamespaceExistsError,
-    NamespaceNotEmptyError,
-    NamespaceNotFoundError,
-    NestingLimitError,
-    NoSnapshotError,
-    RunNotFoundError,
-    ScheduleNotFoundError,
-    TableExistsError,
-    TableFavoriteNotFoundError,
-    TableNotFoundError,
-    VisualizationComputeError,
-    VisualizationExistsError,
-    VisualizationNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.serializers import (
+    VizEnrichment,
+    format_pyarrow_preview,
+)
 from flowfile_core.catalog.services.engagement import FlowEngagementService
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import NamespaceService
@@ -78,27 +35,21 @@ from flowfile_core.catalog.services.stats import StatsService
 from flowfile_core.catalog.services.tables import CatalogMaterializationResult, TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
-from flowfile_core.catalog.serializers import (
-    VizEnrichment,
-    artifact_to_out,
-    format_pyarrow_preview,
-    run_to_out,
-)
-from flowfile_core.catalog.text_utils import (
-    hash_source_versions as _hash_source_versions,
-    is_table_reference as _is_table_reference,
-    parse_delta_history as _parse_delta_history,
-    rewrite_qualified_references as _rewrite_qualified_references,
-)
+
+# Re-exports preserved so external callers / tests that still reach for the
+# underscore-prefixed names continue to work.
+from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
+from flowfile_core.catalog.text_utils import is_table_reference as _is_table_reference  # noqa: F401
+from flowfile_core.catalog.text_utils import parse_delta_history as _parse_delta_history  # noqa: F401
+from flowfile_core.catalog.text_utils import rewrite_qualified_references as _rewrite_qualified_references  # noqa: F401
 from flowfile_core.catalog.validators import (
     format_full_name,
     reject_dot_in_name,
     validate_thumbnail,
     validate_viz_source,
 )
-from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
+from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.database.models import (
-    CatalogDashboard,
     CatalogNamespace,
     CatalogTable,
     CatalogVisualization,
@@ -110,11 +61,13 @@ from flowfile_core.database.models import (
     RunType,
     TableFavorite,
 )
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+
+# Worker-trigger re-imports kept here because sub-services do
+# ``from flowfile_core.catalog import service as _service_module`` and call
+# ``_service_module.trigger_*`` so test monkeypatches against this module's
+# attributes flow through to the sub-services.
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (  # noqa: F401
     trigger_catalog_materialize,
-    trigger_delta_history,
-    trigger_delta_version_preview,
-    trigger_read_table_metadata,
     trigger_resolve_virtual_table,
     trigger_sql_query,
     trigger_visualize_column_stats,
@@ -126,11 +79,8 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogStats,
     CatalogTableOut,
     CatalogTablePreview,
-    CatalogTableSummary,
-    ColumnSchema,
     ColumnStatsResponse,
     DashboardCreate,
-    DashboardLayout,
     DashboardOut,
     DashboardUpdate,
     DeltaTableHistory,
@@ -138,7 +88,6 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunDetail,
     FlowRunOut,
     FlowScheduleOut,
-    FlowSummary,
     GlobalArtifactOut,
     NamespaceTree,
     PaginatedFlowRuns,
@@ -150,10 +99,6 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
     VizSourceDescriptor,
 )
-from flowfile_core.utils.arrow_reader import read_top_n
-from shared.delta_utils import validate_catalog_path
-from shared.storage_config import storage
-from shared.subprocess_utils import spawn_flow_subprocess
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -195,9 +140,7 @@ class CatalogService:
         # uses VirtualTableService for resolution, and VirtualTableService.create_query_virtual_table
         # uses SqlService to derive the schema. Late-bind to break the cycle.
         self._sql = SqlService(repo, self._flows)
-        self._virtual_tables = VirtualTableService(
-            repo, self._namespaces, self._tables, self._schedules
-        )
+        self._virtual_tables = VirtualTableService(repo, self._namespaces, self._tables, self._schedules)
         self._sql.bind(virtual_tables=self._virtual_tables)
         self._virtual_tables.bind(sql=self._sql)
 
@@ -278,96 +221,12 @@ class CatalogService:
         return self._namespaces.list_namespaces(parent_id)
 
     def get_namespace_tree(self, user_id: int) -> list[NamespaceTree]:
-        """Build the full catalog tree with flows nested under schemas.
-
-        Uses bulk enrichment to avoid N+1 queries when there are many flows.
-        """
-        catalogs = self.repo.list_root_namespaces()
-
-        # Collect all flows first, then bulk-enrich them
-        all_flows: list[FlowRegistration] = []
-        namespace_flow_map: dict[int, list[FlowRegistration]] = {}
-        namespace_artifact_map: dict[int, list[GlobalArtifactOut]] = {}
-        namespace_table_map: dict[int, list[CatalogTableOut]] = {}
-
-        # Visualizations are surfaced as a peer of flows / tables / artifacts in
-        # whatever namespace they were saved into (their own ``namespace_id``,
-        # not the parent table's). Resolve once and bucket by namespace.
-        viz_by_namespace: dict[int, list[VisualizationOut]] = {}
-        for v in self.list_visualization_library(user_id=user_id):
-            if v.namespace_id is None:
-                continue
-            viz_by_namespace.setdefault(v.namespace_id, []).append(v)
-
-        for cat in catalogs:
-            cat_flows = self.repo.list_flows(namespace_id=cat.id)
-            namespace_flow_map[cat.id] = cat_flows
-            all_flows.extend(cat_flows)
-            namespace_artifact_map[cat.id] = [
-                artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(cat.id)
-            ]
-            namespace_table_map[cat.id] = self._bulk_enrich_tables(self.repo.list_tables_for_namespace(cat.id), user_id)
-
-            for schema in self.repo.list_child_namespaces(cat.id):
-                schema_flows = self.repo.list_flows(namespace_id=schema.id)
-                namespace_flow_map[schema.id] = schema_flows
-                all_flows.extend(schema_flows)
-                namespace_artifact_map[schema.id] = [
-                    artifact_to_out(a) for a in self.repo.list_artifacts_for_namespace(schema.id)
-                ]
-                namespace_table_map[schema.id] = self._bulk_enrich_tables(
-                    self.repo.list_tables_for_namespace(schema.id), user_id
-                )
-
-        # Bulk enrich all flows at once
-        enriched = self._bulk_enrich_flows(all_flows, user_id)
-        enriched_map = {e.id: e for e in enriched}
-
-        # Build tree structure
-        result: list[NamespaceTree] = []
-        for cat in catalogs:
-            schemas = self.repo.list_child_namespaces(cat.id)
-            children: list[NamespaceTree] = []
-            for schema in schemas:
-                schema_flows = namespace_flow_map.get(schema.id, [])
-                flow_outs = [enriched_map[f.id] for f in schema_flows if f.id in enriched_map]
-                children.append(
-                    NamespaceTree(
-                        id=schema.id,
-                        name=schema.name,
-                        parent_id=schema.parent_id,
-                        level=schema.level,
-                        description=schema.description,
-                        owner_id=schema.owner_id,
-                        created_at=schema.created_at,
-                        updated_at=schema.updated_at,
-                        children=[],
-                        flows=flow_outs,
-                        artifacts=namespace_artifact_map.get(schema.id, []),
-                        tables=namespace_table_map.get(schema.id, []),
-                        visualizations=viz_by_namespace.get(schema.id, []),
-                    )
-                )
-            cat_flows = namespace_flow_map.get(cat.id, [])
-            root_flow_outs = [enriched_map[f.id] for f in cat_flows if f.id in enriched_map]
-            result.append(
-                NamespaceTree(
-                    id=cat.id,
-                    name=cat.name,
-                    parent_id=cat.parent_id,
-                    level=cat.level,
-                    description=cat.description,
-                    owner_id=cat.owner_id,
-                    created_at=cat.created_at,
-                    updated_at=cat.updated_at,
-                    children=children,
-                    flows=root_flow_outs,
-                    artifacts=namespace_artifact_map.get(cat.id, []),
-                    tables=namespace_table_map.get(cat.id, []),
-                    visualizations=viz_by_namespace.get(cat.id, []),
-                )
-            )
-        return result
+        return self._namespaces.get_namespace_tree(
+            user_id,
+            list_visualizations=lambda uid: self._visualizations.list_visualization_library(uid),
+            bulk_enrich_tables=self._tables.bulk_enrich_tables,
+            bulk_enrich_flows=self._flows.bulk_enrich_flows,
+        )
 
     def get_default_namespace_id(self) -> int | None:
         return self._namespaces.get_default_namespace_id()
@@ -394,9 +253,7 @@ class CatalogService:
         description: str | None = None,
         namespace_id: int | None = None,
     ) -> FlowRegistrationOut:
-        return self._flows.update_flow(
-            registration_id, requesting_user_id, name, description, namespace_id
-        )
+        return self._flows.update_flow(registration_id, requesting_user_id, name, description, namespace_id)
 
     def delete_flow(self, registration_id: int) -> None:
         self._flows.delete_flow(registration_id)
@@ -778,9 +635,7 @@ class CatalogService:
         namespace_id: int | None = None,
         description: str | None = None,
     ) -> CatalogTableOut:
-        return self._virtual_tables.create_query_virtual_table(
-            name, owner_id, sql_query, namespace_id, description
-        )
+        return self._virtual_tables.create_query_virtual_table(name, owner_id, sql_query, namespace_id, description)
 
     def update_query_virtual_table(
         self,
@@ -790,9 +645,7 @@ class CatalogService:
         namespace_id: int | None = None,
         sql_query: str | None = None,
     ) -> CatalogTableOut:
-        return self._virtual_tables.update_query_virtual_table(
-            table_id, name, description, namespace_id, sql_query
-        )
+        return self._virtual_tables.update_query_virtual_table(table_id, name, description, namespace_id, sql_query)
 
     def resolve_query_virtual_table(
         self,
@@ -967,9 +820,7 @@ class CatalogService:
 
     # ================== Visualizations =====================================
 
-    def list_visualizations_for_table(
-        self, table_id: int, user_id: int | None = None
-    ) -> list[VisualizationOut]:
+    def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         return self._visualizations.list_visualizations_for_table(table_id, user_id)
 
     def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
@@ -984,9 +835,7 @@ class CatalogService:
     def create_visualization(self, payload: VisualizationCreate, user_id: int) -> VisualizationOut:
         return self._visualizations.create_visualization(payload, user_id)
 
-    def update_visualization(
-        self, viz_id: int, payload: VisualizationUpdate, user_id: int
-    ) -> VisualizationOut:
+    def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         return self._visualizations.update_visualization(viz_id, payload, user_id)
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
@@ -1003,9 +852,7 @@ class CatalogService:
     def create_dashboard(self, payload: DashboardCreate, user_id: int) -> DashboardOut:
         return self._visualizations.create_dashboard(payload, user_id)
 
-    def update_dashboard(
-        self, dashboard_id: int, payload: DashboardUpdate, user_id: int
-    ) -> DashboardOut:
+    def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         return self._visualizations.update_dashboard(dashboard_id, payload, user_id)
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
@@ -1022,9 +869,7 @@ class CatalogService:
     ) -> VisualizationComputeResponse:
         return self._visualizations.compute_saved_visualization_rows(viz_id, max_rows, user_id, payload)
 
-    def get_visualization_fields_for_viz(
-        self, viz_id: int, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields_for_viz(self, viz_id: int, user_id: int) -> VisualizationFieldsResponse:
         return self._visualizations.get_visualization_fields_for_viz(viz_id, user_id)
 
     def compute_ad_hoc_visualization(
@@ -1036,9 +881,7 @@ class CatalogService:
     ) -> VisualizationComputeResponse:
         return self._visualizations.compute_ad_hoc_visualization(source, payload, max_rows, user_id)
 
-    def get_visualization_fields(
-        self, source: VizSourceDescriptor, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields(self, source: VizSourceDescriptor, user_id: int) -> VisualizationFieldsResponse:
         return self._visualizations.get_visualization_fields(source, user_id)
 
     def get_table_column_stats(

@@ -187,9 +187,7 @@ class ScheduleService:
         if self.repo.has_active_run(schedule.registration_id):
             raise FlowAlreadyRunningError(registration_id=schedule.registration_id)
 
-        run = self._runs.spawn_flow_run(
-            flow, user_id=user_id, run_type="on_demand", schedule_id=schedule.id
-        )
+        run = self._runs.spawn_flow_run(flow, user_id=user_id, run_type="on_demand", schedule_id=schedule.id)
         return self._runs.run_to_out(run)
 
     def fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -228,15 +226,11 @@ class ScheduleService:
         for schedule in schedules:
             flow = self.repo.get_flow(schedule.registration_id)
             if flow is None:
-                logger.warning(
-                    "Schedule %s references missing flow %s", schedule.id, schedule.registration_id
-                )
+                logger.warning("Schedule %s references missing flow %s", schedule.id, schedule.registration_id)
                 continue
 
             if self.repo.has_active_run(schedule.registration_id):
-                logger.info(
-                    "Skipping push trigger for flow %s — active run exists", schedule.registration_id
-                )
+                logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
                 continue
 
             schedule.last_triggered_at = datetime.now(timezone.utc)

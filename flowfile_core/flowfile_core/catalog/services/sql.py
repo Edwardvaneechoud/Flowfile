@@ -100,9 +100,7 @@ class SqlService:
     def _materialise_virtual_for_sql(self, virtual_id: int, user_id: int | None) -> str:
         """Resolve a virtual table to an IPC path for the SQL worker call."""
         virtual_tables = self._require_virtual_tables()
-        lazy_frame = virtual_tables.resolve_virtual_flow_table(
-            virtual_id, user_id=user_id, run_location="remote"
-        )
+        lazy_frame = virtual_tables.resolve_virtual_flow_table(virtual_id, user_id=user_id, run_location="remote")
         versions_hash = hash_source_versions(self.repo.get_table(virtual_id).source_table_versions)
         result = trigger_resolve_virtual_table(virtual_id, lazy_frame.serialize(), versions_hash)
         return result["ipc_path"]

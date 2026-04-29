@@ -85,9 +85,7 @@ class VisualizationService:
         ``CatalogService.resolve_virtual_flow_table`` flow through this service."""
         self._facade = facade
 
-    def _resolve_virtual_flow_table_via_facade(
-        self, table_id: int, *, user_id: int | None, run_location: str
-    ):
+    def _resolve_virtual_flow_table_via_facade(self, table_id: int, *, user_id: int | None, run_location: str):
         """Route resolution through the facade if present.
 
         Tests monkeypatch ``CatalogService.resolve_virtual_flow_table``;
@@ -95,18 +93,12 @@ class VisualizationService:
         underlying VirtualTableService implementation.
         """
         if self._facade is not None:
-            return self._facade.resolve_virtual_flow_table(
-                table_id, user_id=user_id, run_location=run_location
-            )
-        return self._virtual_tables.resolve_virtual_flow_table(
-            table_id, user_id=user_id, run_location=run_location
-        )
+            return self._facade.resolve_virtual_flow_table(table_id, user_id=user_id, run_location=run_location)
+        return self._virtual_tables.resolve_virtual_flow_table(table_id, user_id=user_id, run_location=run_location)
 
     # ---- Enrichment ------------------------------------------------------ #
 
-    def _resolve_viz_enrichment(
-        self, viz: CatalogVisualization, table: CatalogTable | None
-    ) -> VizEnrichment:
+    def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> VizEnrichment:
         table_name: str | None = None
         table_namespace_name: str | None = None
         table_full_name: str | None = None
@@ -169,9 +161,7 @@ class VisualizationService:
 
     # ---- Visualizations CRUD -------------------------------------------- #
 
-    def list_visualizations_for_table(
-        self, table_id: int, user_id: int | None = None
-    ) -> list[VisualizationOut]:
+    def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """Filtered listing — viz that reference a specific catalog table."""
         if self.repo.get_table(table_id) is None:
             raise TableNotFoundError(table_id=table_id)
@@ -256,9 +246,7 @@ class VisualizationService:
             raise VisualizationExistsError(payload.name, payload.catalog_table_id or 0) from exc
         return self._viz_to_out(created)
 
-    def update_visualization(
-        self, viz_id: int, payload: VisualizationUpdate, user_id: int
-    ) -> VisualizationOut:
+    def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
@@ -366,9 +354,7 @@ class VisualizationService:
         created = self.repo.create_dashboard(dashboard)
         return self._dashboard_to_out(created)
 
-    def update_dashboard(
-        self, dashboard_id: int, payload: DashboardUpdate, user_id: int
-    ) -> DashboardOut:
+    def update_dashboard(self, dashboard_id: int, payload: DashboardUpdate, user_id: int) -> DashboardOut:
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
@@ -413,9 +399,7 @@ class VisualizationService:
         ts = int(table.updated_at.timestamp()) if table.updated_at else 0
         return f"tbl:{table_id}:{ts}"
 
-    def _resolve_source_for_worker(
-        self, source: VizSourceDescriptor, user_id: int | None
-    ) -> dict:
+    def _resolve_source_for_worker(self, source: VizSourceDescriptor, user_id: int | None) -> dict:
         """Translate a frontend source descriptor into a worker source spec."""
         if source.source_type == "table":
             if source.table_id is None:
@@ -440,13 +424,9 @@ class VisualizationService:
 
             from flowfile_core.catalog import service as _service_module
 
-            lazy_frame = self._resolve_virtual_flow_table_via_facade(
-                table.id, user_id=user_id, run_location="remote"
-            )
+            lazy_frame = self._resolve_virtual_flow_table_via_facade(table.id, user_id=user_id, run_location="remote")
             versions_hash = hash_source_versions(table.source_table_versions)
-            result = _service_module.trigger_resolve_virtual_table(
-                table.id, lazy_frame.serialize(), versions_hash
-            )
+            result = _service_module.trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash)
             return {
                 "kind": "ipc_path",
                 "session_key": f"fvt:{table.id}:{int(result['mtime'])}",
@@ -501,19 +481,13 @@ class VisualizationService:
             "virtual_refs": virtual_refs or None,
         }
 
-    def _materialise_virtual_for_viz(
-        self, vname: str, virtual_map: dict[str, int], user_id: int | None
-    ) -> str:
+    def _materialise_virtual_for_viz(self, vname: str, virtual_map: dict[str, int], user_id: int | None) -> str:
         from flowfile_core.catalog import service as _service_module
 
         vid = virtual_map[vname]
-        lazy_frame = self._resolve_virtual_flow_table_via_facade(
-            vid, user_id=user_id, run_location="remote"
-        )
+        lazy_frame = self._resolve_virtual_flow_table_via_facade(vid, user_id=user_id, run_location="remote")
         versions_hash = hash_source_versions(self.repo.get_table(vid).source_table_versions)
-        result = _service_module.trigger_resolve_virtual_table(
-            vid, lazy_frame.serialize(), versions_hash
-        )
+        result = _service_module.trigger_resolve_virtual_table(vid, lazy_frame.serialize(), versions_hash)
         return result["ipc_path"]
 
     def _dispatch_visualize_query(
@@ -550,13 +524,9 @@ class VisualizationService:
             max_rows,
             payload is not None,
         )
-        return self._dispatch_visualize_query(
-            worker_source, effective_payload, self._clamp_max_rows(max_rows)
-        )
+        return self._dispatch_visualize_query(worker_source, effective_payload, self._clamp_max_rows(max_rows))
 
-    def get_visualization_fields_for_viz(
-        self, viz_id: int, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields_for_viz(self, viz_id: int, user_id: int) -> VisualizationFieldsResponse:
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
@@ -588,9 +558,7 @@ class VisualizationService:
         )
         return self._dispatch_visualize_query(worker_source, payload, self._clamp_max_rows(max_rows))
 
-    def get_visualization_fields(
-        self, source: VizSourceDescriptor, user_id: int
-    ) -> VisualizationFieldsResponse:
+    def get_visualization_fields(self, source: VizSourceDescriptor, user_id: int) -> VisualizationFieldsResponse:
         from flowfile_core.catalog import service as _service_module
 
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
@@ -629,9 +597,7 @@ class VisualizationService:
             clamped_limit,
         )
         try:
-            data = _service_module.trigger_visualize_column_stats(
-                worker_source, column, clamped_limit
-            )
+            data = _service_module.trigger_visualize_column_stats(worker_source, column, clamped_limit)
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc
         return ColumnStatsResponse(**data)

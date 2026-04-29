@@ -6,7 +6,7 @@ exception from ``catalog.exceptions`` (or ``ValueError``) on failure.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from flowfile_core.catalog.constants import (
     MAX_THUMBNAIL_BYTES,

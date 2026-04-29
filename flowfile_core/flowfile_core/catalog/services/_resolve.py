@@ -8,7 +8,8 @@ VisualizationService. Broad catch is intentional (see docstring).
 from __future__ import annotations
 
 import logging
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")

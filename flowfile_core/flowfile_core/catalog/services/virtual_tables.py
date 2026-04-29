@@ -293,16 +293,12 @@ class VirtualTableService:
                 alias_to_table[alias] = t
 
         rewritten_query = rewrite_qualified_references(table.sql_query, alias_to_table.keys())
-        referenced_ids = {
-            tbl.id for alias, tbl in alias_to_table.items() if is_table_reference(alias, rewritten_query)
-        }
+        referenced_ids = {tbl.id for alias, tbl in alias_to_table.items() if is_table_reference(alias, rewritten_query)}
 
         sql_context = pl.SQLContext()
         for tbl_id in referenced_ids:
             t = next(tbl for tbl in all_tables if tbl.id == tbl_id)
-            lazy_frame = self._resolve_table_for_sql_context(
-                t, user_id=user_id, visited=_visited, depth=_depth + 1
-            )
+            lazy_frame = self._resolve_table_for_sql_context(t, user_id=user_id, visited=_visited, depth=_depth + 1)
             if lazy_frame is None:
                 continue
             for alias in aliases_by_table[tbl_id]:
@@ -326,9 +322,7 @@ class VirtualTableService:
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
                 return resolve_or_log(
-                    lambda: self.resolve_query_virtual_table(
-                        t.id, user_id=user_id, _visited=visited, _depth=depth
-                    ),
+                    lambda: self.resolve_query_virtual_table(t.id, user_id=user_id, _visited=visited, _depth=depth),
                     kind="nested query virtual table",
                     identifier=t.name,
                 )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FlowHasArtifactsError,
@@ -70,14 +69,10 @@ class FlowRegistrationService:
             tables_produced=[
                 CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced_tables
             ],
-            tables_read=[
-                CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read_tables
-            ],
+            tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read_tables],
         )
 
-    def bulk_enrich_flows(
-        self, flows: list[FlowRegistration], user_id: int
-    ) -> list[FlowRegistrationOut]:
+    def bulk_enrich_flows(self, flows: list[FlowRegistration], user_id: int) -> list[FlowRegistrationOut]:
         """Enrich multiple flows with favourites, follows, and run stats in bulk.
 
         Uses 6 bulk queries instead of 6×N, dramatically improving performance
@@ -127,9 +122,7 @@ class FlowRegistrationService:
                     tables_produced=[
                         CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in produced
                     ],
-                    tables_read=[
-                        CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read
-                    ],
+                    tables_read=[CatalogTableSummary(id=t.id, name=t.name, namespace_id=t.namespace_id) for t in read],
                 )
             )
         return result
@@ -229,9 +222,7 @@ class FlowRegistrationService:
         return self.repo.create_namespace(namespace)
 
     def ensure_unnamed_flows_namespace(self) -> CatalogNamespace | None:
-        return self._ensure_general_child(
-            "Unnamed Flows", "Quick-created flows that have not yet been named"
-        )
+        return self._ensure_general_child("Unnamed Flows", "Quick-created flows that have not yet been named")
 
     def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
         return self._ensure_general_child("Local Flows", "Flows saved to disk at user-chosen paths")

@@ -168,9 +168,7 @@ class TablePreviewService:
             try:
                 return trigger_delta_version_preview(data_path.name, version, limit)
             except (RuntimeError, OSError):
-                logger.warning(
-                    "Worker delta version preview failed, falling back to local", exc_info=True
-                )
+                logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
         delta_table = DeltaTable(table_path, version=version)
         dataset = delta_table.to_pyarrow_dataset()
