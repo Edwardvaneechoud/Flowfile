@@ -169,6 +169,10 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~1080 LOC. Plan to extract:
+//   - TableEditor.vue: template lines 44-107 + the ~370 LOC of table CSS at ~706-1081
+//   - useTableCellNav composable: paste/arrow/tab handling ~lines 440-580
+//   - JSON editor (~110 LOC) and CSV paste area (~120 LOC) can each become children
 import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";

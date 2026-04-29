@@ -318,6 +318,8 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~905 LOC, but cohesive. Defer unless touched.
+//   If split: per-section sub-components (PreviewSection, SchemaSection, VersionHistorySection).
 import { ref, computed } from "vue";
 import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";

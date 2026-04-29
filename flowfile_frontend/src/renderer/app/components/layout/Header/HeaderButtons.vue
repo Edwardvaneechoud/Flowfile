@@ -223,6 +223,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~692 LOC. Plan to extract:
+//   - SettingsModal.vue: 4-section settings modal (~lines 90-209)
+//   - ExecutionSettings.vue (~lines 99-151), DisplaySettings.vue (~153-164),
+//     ParameterSettings.vue (~166-207) as children of SettingsModal
+//   - Parameter CRUD logic (~lines 431-448) goes with ParameterSettings
 import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 

@@ -345,6 +345,11 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): ~713 LOC. Plan to extract:
+//   - UserAddForm.vue (~lines 28-125), UsersTable.vue (~lines 155-232)
+//   - EditUserModal.vue (~lines 244-314), DeleteConfirmModal.vue (~lines 317-343)
+//   - usePasswordValidation composable (~lines 376-387)
+//   - useUserApi composable: CRUD calls (~lines 445-550)
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../../stores/auth-store";
 import userService, {

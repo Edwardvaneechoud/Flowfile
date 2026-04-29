@@ -11,6 +11,7 @@ Public interface:
 from .exceptions import (
     AmbiguousTableError,
     CatalogError,
+    DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
     FlowExistsError,
@@ -63,4 +64,5 @@ __all__ = [
     "VisualizationNotFoundError",
     "VisualizationExistsError",
     "VisualizationComputeError",
+    "DashboardNotFoundError",
 ]

@@ -361,6 +361,40 @@ def trigger_visualize_fields(worker_source: dict) -> dict:
     return data
 
 
+def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int) -> dict:
+    """Ask the worker for distinct values + min/max of a single column."""
+    session_key = worker_source.get("session_key")
+    logger.info(
+        "[viz] -> worker /catalog/visualize_column_stats session_key=%s kind=%s column=%s limit=%d",
+        session_key,
+        worker_source.get("kind"),
+        column,
+        limit,
+    )
+    body = {"source": worker_source, "column": column, "limit": limit}
+    response = requests.post(
+        f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS
+    )
+    if not response.ok:
+        logger.warning(
+            "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d body=%s",
+            session_key,
+            response.status_code,
+            response.text[:300],
+        )
+        raise RuntimeError(f"Worker visualize_column_stats failed: {response.text}")
+    data = response.json()
+    logger.info(
+        "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d cache_hit=%s value_count=%d truncated=%s",
+        session_key,
+        response.status_code,
+        data.get("cache_hit"),
+        len(data.get("values") or []),
+        data.get("truncated"),
+    )
+    return data
+
+
 def trigger_visualize_evict(session_key: str) -> None:
     """Ask the worker to drop a cached viz session (e.g. after a table update)."""
     logger.info("[viz] -> worker /catalog/visualize_evict session_key=%s", session_key)

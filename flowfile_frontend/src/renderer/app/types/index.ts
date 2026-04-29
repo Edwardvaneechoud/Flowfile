@@ -8,4 +8,5 @@ export * from "./file.types";
 export * from "./secrets.types";
 export * from "./kernel.types";
 export * from "./catalog.types";
+export * from "./dashboard.types";
 

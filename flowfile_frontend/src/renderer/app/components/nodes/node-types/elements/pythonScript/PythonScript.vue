@@ -235,6 +235,8 @@
 </template>
 
 <script lang="ts" setup>
+// TODO(refactor): ~995 LOC. Cohesive but long; defer unless touched.
+//   - Kernel control logic (~lines 570-700) is the obvious extraction target → useKernelControl composable
 import { ref, computed, watch, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
 

@@ -205,11 +205,12 @@
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
-          <div v-if="catalogStore.favorites.length === 0" class="empty-state">
-            <i class="fa-solid fa-star empty-icon"></i>
-            <h3>No favorites yet</h3>
-            <p>Star flows from the catalog tree to see them here.</p>
-          </div>
+          <EmptyState
+            v-if="catalogStore.favorites.length === 0"
+            icon="fa-solid fa-star"
+            title="No favorites yet"
+            description="Star flows from the catalog tree to see them here."
+          />
           <div v-else class="favorites-list">
             <FlowListItem
               v-for="flow in catalogStore.favorites"
@@ -226,9 +227,9 @@
           v-else-if="showSqlEditor || catalogStore.activeTab === 'sql'"
           :initial-query="sqlInitialQuery"
         />
-        <!-- Visualizations library -->
-        <VisualizationsLibraryPanel
-          v-else-if="catalogStore.activeTab === 'visualizations'"
+        <!-- Visuals (charts + dashboards) -->
+        <VisualsPanel
+          v-else-if="catalogStore.activeTab === 'visuals'"
           @view-table="selectTable($event)"
         />
         <!-- Stats overview -->
@@ -384,6 +385,10 @@
 </template>
 
 <script setup lang="ts">
+// TODO(refactor): God component (~1700 LOC). Plan to extract:
+//   - useModalState composable: 8 dialog refs at lines 472-490
+//   - 19 async handlers: move into catalog-store.ts as Pinia actions (~lines 657-927)
+//   - useRouteSync composable: applyRouteToStore (~lines 930-993)
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
@@ -391,6 +396,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
+import { EmptyState } from "../../components/common";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
@@ -408,7 +414,7 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import CreateSyncModal from "./CreateSyncModal.vue";
 import CreateVirtualTableModal from "./CreateVirtualTableModal.vue";
 import SqlEditorPanel from "./SqlEditorPanel.vue";
-import VisualizationsLibraryPanel from "./VisualizationsLibraryPanel.vue";
+import VisualsPanel from "./VisualsPanel.vue";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
@@ -457,9 +463,9 @@ const tabs = computed(() => [
     badge: null,
   },
   {
-    key: "visualizations" as CatalogTab,
-    label: "Visualizations",
-    icon: "fa-solid fa-chart-column",
+    key: "visuals" as CatalogTab,
+    label: "Visuals",
+    icon: "fa-solid fa-chart-pie",
     badge: null,
   },
 ]);

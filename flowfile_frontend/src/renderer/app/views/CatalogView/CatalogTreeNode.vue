@@ -63,176 +63,154 @@
         />
       </div>
 
-      <div v-if="showFlowsSection" class="tree-section">
-        <button class="section-header" @click.stop="toggleFlows">
+      <TreeSection
+        v-if="showFlowsSection"
+        ref="flowsSection"
+        title="Flows"
+        :count="visibleFlows.length"
+      >
+        <div
+          v-for="flow in visibleFlows"
+          :key="'f-' + flow.id"
+          class="tree-flow"
+          :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
+          @click.stop="$emit('selectFlow', flow.id)"
+        >
+          <i class="fa-solid fa-diagram-project flow-icon"></i>
+          <span class="flow-name">{{ flow.name }}</span>
           <i
-            :class="flowsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
-            class="section-chevron"
+            v-if="!flow.file_exists"
+            class="fa-solid fa-triangle-exclamation missing-icon"
+            title="Flow file not found on disk"
           ></i>
-          <span class="section-title">Flows</span>
-          <span class="section-count">{{ visibleFlows.length }}</span>
-        </button>
-        <div v-if="flowsExpanded" class="section-content">
-          <div
-            v-for="flow in visibleFlows"
-            :key="'f-' + flow.id"
-            class="tree-flow"
-            :class="{ selected: selectedFlowId === flow.id, 'file-missing': !flow.file_exists }"
-            @click.stop="$emit('selectFlow', flow.id)"
-          >
-            <i class="fa-solid fa-diagram-project flow-icon"></i>
-            <span class="flow-name">{{ flow.name }}</span>
-            <i
-              v-if="!flow.file_exists"
-              class="fa-solid fa-triangle-exclamation missing-icon"
-              title="Flow file not found on disk"
-            ></i>
-            <div class="flow-actions" @click.stop>
-              <button
-                class="action-btn star-btn"
-                :class="{ active: flow.is_favorite }"
-                :title="flow.is_favorite ? 'Unfavorite' : 'Favorite'"
-                @click="$emit('toggleFavorite', flow.id)"
-              >
-                <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
-              </button>
-              <button
-                class="action-btn delete-btn"
-                title="Delete flow"
-                @click="$emit('deleteFlow', flow.id)"
-              >
-                <i class="fa-solid fa-trash"></i>
-              </button>
-              <span
-                v-if="flow.last_run_success !== null"
-                class="run-indicator"
-                :class="flow.last_run_success ? 'success' : 'failure'"
-                :title="flow.last_run_success ? 'Last run succeeded' : 'Last run failed'"
-              ></span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="showModelsSection" class="tree-section">
-        <button class="section-header" @click.stop="toggleModels">
-          <i
-            :class="modelsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
-            class="section-chevron"
-          ></i>
-          <span class="section-title">Models</span>
-          <span class="section-count">{{ visibleArtifacts.length }}</span>
-        </button>
-        <div v-if="modelsExpanded" class="section-content">
-          <div
-            v-for="group in visibleArtifacts"
-            :key="'ag-' + group.name"
-            class="tree-artifact"
-            :class="{ selected: selectedArtifactId === group.latest.id }"
-            @click.stop="$emit('selectArtifact', group.latest.id)"
-          >
-            <i class="fa-solid fa-cube artifact-icon"></i>
-            <span class="artifact-name">{{ group.name }}</span>
-            <span v-if="group.versionCount > 1" class="artifact-versions-count"
-              >{{ group.versionCount }} versions</span
+          <div class="flow-actions" @click.stop>
+            <button
+              class="action-btn star-btn"
+              :class="{ active: flow.is_favorite }"
+              :title="flow.is_favorite ? 'Unfavorite' : 'Favorite'"
+              @click="$emit('toggleFavorite', flow.id)"
             >
-            <span class="artifact-version">v{{ group.latest.version }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="showTablesSection" class="tree-section">
-        <button class="section-header" @click.stop="toggleTables">
-          <i
-            :class="tablesExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"
-            class="section-chevron"
-          ></i>
-          <span class="section-title">Tables</span>
-          <span class="section-count">{{ visibleTables.length }}</span>
-        </button>
-        <div v-if="tablesExpanded" class="section-content">
-          <div
-            v-for="table in visibleTables"
-            :key="'t-' + table.id"
-            class="tree-table"
-            :class="{
-              selected: selectedTableId === table.id,
-              'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
-            }"
-            @click.stop="$emit('selectTable', table.id)"
-          >
-            <i
-              v-if="table.table_type === 'virtual'"
-              class="fa-solid fa-bolt table-icon virtual-icon"
-              title="Virtual Flow Table"
-            ></i>
-            <i v-else class="fa-solid fa-table table-icon"></i>
-            <span class="table-name">{{ table.name }}</span>
+              <i :class="flow.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+            </button>
+            <button
+              class="action-btn delete-btn"
+              title="Delete flow"
+              @click="$emit('deleteFlow', flow.id)"
+            >
+              <i class="fa-solid fa-trash"></i>
+            </button>
             <span
-              v-if="table.table_type === 'virtual'"
-              class="table-virtual-badge"
-              title="Virtual Flow Table"
-              >virtual</span
-            >
-            <i
-              v-if="table.table_type !== 'virtual' && table.file_exists === false"
-              class="fa-solid fa-triangle-exclamation missing-icon"
-              title="Table data file not found on disk"
-            ></i>
-            <div class="flow-actions" @click.stop>
-              <button
-                class="action-btn star-btn"
-                :class="{ active: table.is_favorite }"
-                :title="table.is_favorite ? 'Unfavorite' : 'Favorite'"
-                @click="$emit('toggleTableFavorite', table.id)"
-              >
-                <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
-              </button>
-              <button
-                class="action-btn delete-btn"
-                title="Delete table"
-                @click="$emit('deleteTable', table.id)"
-              >
-                <i class="fa-solid fa-trash"></i>
-              </button>
-            </div>
+              v-if="flow.last_run_success !== null"
+              class="run-indicator"
+              :class="flow.last_run_success ? 'success' : 'failure'"
+              :title="flow.last_run_success ? 'Last run succeeded' : 'Last run failed'"
+            ></span>
           </div>
         </div>
-      </div>
+      </TreeSection>
 
-      <div v-if="showVisualizationsSection" class="tree-section">
-        <button class="section-header" @click.stop="toggleVisualizations">
+      <TreeSection
+        v-if="showModelsSection"
+        ref="modelsSection"
+        title="Models"
+        :count="visibleArtifacts.length"
+      >
+        <div
+          v-for="group in visibleArtifacts"
+          :key="'ag-' + group.name"
+          class="tree-artifact"
+          :class="{ selected: selectedArtifactId === group.latest.id }"
+          @click.stop="$emit('selectArtifact', group.latest.id)"
+        >
+          <i class="fa-solid fa-cube artifact-icon"></i>
+          <span class="artifact-name">{{ group.name }}</span>
+          <span v-if="group.versionCount > 1" class="artifact-versions-count">
+            {{ group.versionCount }} versions
+          </span>
+          <span class="artifact-version">v{{ group.latest.version }}</span>
+        </div>
+      </TreeSection>
+
+      <TreeSection
+        v-if="showTablesSection"
+        ref="tablesSection"
+        title="Tables"
+        :count="visibleTables.length"
+      >
+        <div
+          v-for="table in visibleTables"
+          :key="'t-' + table.id"
+          class="tree-table"
+          :class="{
+            selected: selectedTableId === table.id,
+            'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
+          }"
+          @click.stop="$emit('selectTable', table.id)"
+        >
+          <i
+            v-if="table.table_type === 'virtual'"
+            class="fa-solid fa-bolt table-icon virtual-icon"
+            title="Virtual Flow Table"
+          ></i>
+          <i v-else class="fa-solid fa-table table-icon"></i>
+          <span class="table-name">{{ table.name }}</span>
+          <span
+            v-if="table.table_type === 'virtual'"
+            class="table-virtual-badge"
+            title="Virtual Flow Table"
+            >virtual</span
+          >
+          <i
+            v-if="table.table_type !== 'virtual' && table.file_exists === false"
+            class="fa-solid fa-triangle-exclamation missing-icon"
+            title="Table data file not found on disk"
+          ></i>
+          <div class="flow-actions" @click.stop>
+            <button
+              class="action-btn star-btn"
+              :class="{ active: table.is_favorite }"
+              :title="table.is_favorite ? 'Unfavorite' : 'Favorite'"
+              @click="$emit('toggleTableFavorite', table.id)"
+            >
+              <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
+            </button>
+            <button
+              class="action-btn delete-btn"
+              title="Delete table"
+              @click="$emit('deleteTable', table.id)"
+            >
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      </TreeSection>
+
+      <TreeSection
+        v-if="showVisualizationsSection"
+        ref="visualizationsSection"
+        title="Visualizations"
+        :count="visibleVisualizations.length"
+      >
+        <div
+          v-for="viz in visibleVisualizations"
+          :key="'v-' + viz.id"
+          class="tree-table"
+          @click.stop="$emit('selectVisualization', viz.id)"
+        >
           <i
             :class="
-              visualizationsExpanded ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'
+              viz.source_type === 'sql'
+                ? 'fa-solid fa-code table-icon viz-sql-icon'
+                : 'fa-solid fa-chart-column table-icon viz-icon'
             "
-            class="section-chevron"
+            :title="viz.source_type === 'sql' ? 'SQL-source visualization' : 'Visualization'"
           ></i>
-          <span class="section-title">Visualizations</span>
-          <span class="section-count">{{ visibleVisualizations.length }}</span>
-        </button>
-        <div v-if="visualizationsExpanded" class="section-content">
-          <div
-            v-for="viz in visibleVisualizations"
-            :key="'v-' + viz.id"
-            class="tree-table"
-            @click.stop="$emit('selectVisualization', viz.id)"
-          >
-            <i
-              :class="
-                viz.source_type === 'sql'
-                  ? 'fa-solid fa-code table-icon viz-sql-icon'
-                  : 'fa-solid fa-chart-column table-icon viz-icon'
-              "
-              :title="viz.source_type === 'sql' ? 'SQL-source visualization' : 'Visualization'"
-            ></i>
-            <span class="table-name">{{ viz.name }}</span>
-            <span v-if="viz.source_type === 'sql'" class="table-virtual-badge" title="SQL source"
-              >sql</span
-            >
-          </div>
+          <span class="table-name">{{ viz.name }}</span>
+          <span v-if="viz.source_type === 'sql'" class="table-virtual-badge" title="SQL source">
+            sql
+          </span>
         </div>
-      </div>
+      </TreeSection>
     </div>
   </div>
 </template>
@@ -240,6 +218,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
+import TreeSection from "./components/TreeSection.vue";
+
+type TreeSectionRef = InstanceType<typeof TreeSection> | null;
 
 interface ArtifactGroup {
   name: string;
@@ -349,10 +330,10 @@ const toggle = () => {
   expanded.value = !expanded.value;
 };
 
-const flowsExpanded = ref(false);
-const modelsExpanded = ref(false);
-const tablesExpanded = ref(false);
-const visualizationsExpanded = ref(false);
+const flowsSection = ref<TreeSectionRef>(null);
+const modelsSection = ref<TreeSectionRef>(null);
+const tablesSection = ref<TreeSectionRef>(null);
+const visualizationsSection = ref<TreeSectionRef>(null);
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
 const showModelsSection = computed(
@@ -363,25 +344,12 @@ const showVisualizationsSection = computed(
   () => props.node.level === 1 && visibleVisualizations.value.length > 0,
 );
 
-const toggleFlows = () => {
-  flowsExpanded.value = !flowsExpanded.value;
-};
-const toggleModels = () => {
-  modelsExpanded.value = !modelsExpanded.value;
-};
-const toggleTables = () => {
-  tablesExpanded.value = !tablesExpanded.value;
-};
-const toggleVisualizations = () => {
-  visualizationsExpanded.value = !visualizationsExpanded.value;
-};
-
 watch(
   () => props.selectedFlowId,
   (flowId) => {
     if (flowId !== null && containsFlow(props.node, flowId)) {
       expanded.value = true;
-      flowsExpanded.value = true;
+      flowsSection.value?.expand();
     }
   },
 );
@@ -391,7 +359,7 @@ watch(
   (artifactId) => {
     if (artifactId !== null && containsArtifact(props.node, artifactId)) {
       expanded.value = true;
-      modelsExpanded.value = true;
+      modelsSection.value?.expand();
     }
   },
 );
@@ -401,25 +369,25 @@ watch(
   (tableId) => {
     if (tableId !== null && containsTable(props.node, tableId)) {
       expanded.value = true;
-      tablesExpanded.value = true;
+      tablesSection.value?.expand();
     }
   },
 );
 
 watch(query, (value) => {
   if (!value) return;
-  if (visibleFlows.value.length > 0) flowsExpanded.value = true;
-  if (visibleArtifacts.value.length > 0) modelsExpanded.value = true;
-  if (visibleTables.value.length > 0) tablesExpanded.value = true;
-  if (visibleVisualizations.value.length > 0) visualizationsExpanded.value = true;
+  if (visibleFlows.value.length > 0) flowsSection.value?.expand();
+  if (visibleArtifacts.value.length > 0) modelsSection.value?.expand();
+  if (visibleTables.value.length > 0) tablesSection.value?.expand();
+  if (visibleVisualizations.value.length > 0) visualizationsSection.value?.expand();
 });
 
 watch(
   () => props.node.id,
   () => {
-    flowsExpanded.value = false;
-    modelsExpanded.value = false;
-    tablesExpanded.value = false;
+    flowsSection.value?.collapse();
+    modelsSection.value?.collapse();
+    tablesSection.value?.collapse();
   },
 );
 
@@ -513,58 +481,6 @@ const totalFlows = computed(() => {
   margin-top: var(--spacing-2);
   padding-top: var(--spacing-2);
   border-top: 1px solid var(--color-border-light);
-}
-
-.tree-section {
-  margin-top: var(--spacing-2);
-}
-
-.section-header {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-1) var(--spacing-2);
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.section-header:hover {
-  background: var(--color-background-hover);
-  color: var(--color-text-primary);
-}
-
-.section-chevron {
-  width: 12px;
-  font-size: 10px;
-  text-align: center;
-  color: var(--color-text-muted);
-}
-
-.section-title {
-  flex: 1;
-  text-align: left;
-}
-
-.section-count {
-  font-size: 10px;
-  color: var(--color-text-muted);
-  background: var(--color-background-primary);
-  padding: 0 6px;
-  border-radius: var(--border-radius-full);
-  line-height: 16px;
-}
-
-.section-content {
-  margin-top: var(--spacing-1);
-  padding-left: var(--spacing-2);
 }
 
 .tree-flow {

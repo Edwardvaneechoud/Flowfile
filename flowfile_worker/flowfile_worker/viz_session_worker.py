@@ -63,6 +63,58 @@ def _execute(lf: pl.LazyFrame, payload: dict, max_rows: int) -> dict:
     }
 
 
+_NUMERIC_DTYPES = (
+    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Float32, pl.Float64, pl.Decimal,
+)
+_TEMPORAL_DTYPES = (pl.Date, pl.Datetime, pl.Time, pl.Duration)
+
+
+def _column_stats(lf: pl.LazyFrame, column: str, limit: int) -> dict:
+    """Distinct values + min/max for a single column.
+
+    Fetches up to ``limit + 1`` distinct values to detect truncation, plus
+    a separate ``min``/``max`` aggregation for numeric / temporal columns
+    so the UI can pre-fill range inputs even when there are many distinct
+    values to enumerate.
+    """
+    schema = lf.collect_schema()
+    if column not in schema:
+        raise ValueError(f"column {column!r} not found in source schema")
+    dtype = schema[column]
+    is_numeric = isinstance(dtype, _NUMERIC_DTYPES)
+    is_temporal = isinstance(dtype, _TEMPORAL_DTYPES)
+
+    fetch = max(1, limit) + 1
+    distinct_df = (
+        lf.select(pl.col(column).drop_nulls().unique()).sort(column).head(fetch).collect()
+    )
+    raw_values = distinct_df[column].to_list()
+    truncated = len(raw_values) > limit
+    values = [make_json_safe(v) for v in raw_values[:limit]]
+    distinct_count = None if truncated else len(values)
+
+    min_v: object | None = None
+    max_v: object | None = None
+    if is_numeric or is_temporal:
+        agg = lf.select(
+            pl.col(column).min().alias("__min"),
+            pl.col(column).max().alias("__max"),
+        ).collect()
+        min_v = make_json_safe(agg["__min"][0]) if agg.height else None
+        max_v = make_json_safe(agg["__max"][0]) if agg.height else None
+
+    return {
+        "dtype": str(dtype),
+        "values": values,
+        "truncated": truncated,
+        "distinct_count": distinct_count,
+        "min": min_v,
+        "max": max_v,
+    }
+
+
 def viz_session_main(source: dict[str, Any], request_q, response_q) -> None:
     """Long-lived child loop. One instance per session_key.
 
@@ -109,6 +161,11 @@ def viz_session_main(source: dict[str, Any], request_q, response_q) -> None:
                 if fields_cache is None:
                     fields_cache = polars_gw.get_fields(lf)
                 result = {"fields": fields_cache}
+            elif op == "column_stats":
+                payload = msg.get("payload") or {}
+                result = _column_stats(
+                    lf, payload["column"], int(payload.get("limit") or 100)
+                )
             else:
                 raise ValueError(f"unknown op: {op!r}")
             response_q.put({"request_id": rid, "ok": True, "result": result})
