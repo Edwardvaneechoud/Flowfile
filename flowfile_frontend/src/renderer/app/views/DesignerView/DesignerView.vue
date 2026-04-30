@@ -62,6 +62,8 @@
       @save="headerButtons?.openSaveModal()"
       @run="headerButtons?.runFlow()"
       @new="headerButtons?.handleQuickCreate()"
+      @open="headerButtons?.openOpenDialog()"
+      @open-settings="headerButtons?.openSettings()"
     />
   </div>
 </template>

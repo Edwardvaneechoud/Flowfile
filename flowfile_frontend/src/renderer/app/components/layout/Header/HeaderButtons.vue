@@ -1,10 +1,36 @@
 <template>
   <div class="action-buttons">
     <div v-if="hasOpenFlow" class="action-btn-split" data-tutorial="save-btn">
-      <button class="action-btn action-btn--split-main" @click="openSaveModal">
-        <span class="material-icons btn-icon">save</span>
-        <span class="btn-text">Save</span>
-      </button>
+      <el-popover
+        placement="bottom"
+        :width="240"
+        trigger="hover"
+        :show-after="200"
+        popper-class="header-action-popover"
+        :show-arrow="true"
+      >
+        <template #reference>
+          <button class="action-btn action-btn--split-main" @click="openSaveModal">
+            <span class="material-icons btn-icon">save</span>
+            <span class="btn-text">Save</span>
+          </button>
+        </template>
+        <div class="header-action-popover-body">
+          <div class="header-action-popover-title">
+            <span class="material-icons header-action-popover-icon">save</span>
+            <span>Save</span>
+          </div>
+          <p class="header-action-popover-desc">Save changes to this flow.</p>
+          <p class="header-action-popover-shortcut-hint">
+            Tip: press
+            <span class="header-action-popover-shortcut">
+              <kbd>{{ MODIFIER_LABEL }}</kbd>
+              <kbd>S</kbd>
+            </span>
+            to save.
+          </p>
+        </div>
+      </el-popover>
       <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More save options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
@@ -19,15 +45,68 @@
         </template>
       </el-dropdown>
     </div>
-    <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
-      <span class="material-icons btn-icon">folder_open</span>
-      <span class="btn-text">Open</span>
-    </button>
+    <el-popover
+      placement="bottom"
+      :width="240"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
+    >
+      <template #reference>
+        <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
+          <span class="material-icons btn-icon">folder_open</span>
+          <span class="btn-text">Open</span>
+        </button>
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">folder_open</span>
+          <span>Open</span>
+        </div>
+        <p class="header-action-popover-desc">Open an existing flow.</p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>O</kbd>
+          </span>
+          to open the picker.
+        </p>
+      </div>
+    </el-popover>
     <div class="action-btn-split" data-tutorial="quick-create-btn">
-      <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
-        <span class="material-icons btn-icon">add_circle_outline</span>
-        <span class="btn-text">Create</span>
-      </button>
+      <el-popover
+        placement="bottom"
+        :width="240"
+        trigger="hover"
+        :show-after="200"
+        popper-class="header-action-popover"
+        :show-arrow="true"
+      >
+        <template #reference>
+          <button class="action-btn action-btn--split-main" @click="handleQuickCreate">
+            <span class="material-icons btn-icon">add_circle_outline</span>
+            <span class="btn-text">Create</span>
+          </button>
+        </template>
+        <div class="header-action-popover-body">
+          <div class="header-action-popover-title">
+            <span class="material-icons header-action-popover-icon">add_circle_outline</span>
+            <span>Create</span>
+          </div>
+          <p class="header-action-popover-desc">
+            Start a new flow at the default location. Use the chevron to pick a folder.
+          </p>
+          <p class="header-action-popover-shortcut-hint">
+            Tip: press
+            <span class="header-action-popover-shortcut">
+              <kbd>{{ MODIFIER_LABEL }}</kbd>
+              <kbd>N</kbd>
+            </span>
+            to create.
+          </p>
+        </div>
+      </el-popover>
       <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More create options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
@@ -42,42 +121,103 @@
         </template>
       </el-dropdown>
     </div>
-    <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
-      <span class="material-icons btn-icon">settings</span>
-      <span class="btn-text">Settings</span>
-    </button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
-    <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
-      <button class="action-btn view-btn" :class="{ active: anyViewPanelOpen }">
-        <span class="material-icons btn-icon">view_quilt</span>
-        <span class="btn-text">View</span>
-        <span class="material-icons btn-icon view-caret">arrow_drop_down</span>
-      </button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item data-tutorial="generate-code-btn" @click="toggleCodeGenerator">
-            <span class="material-icons view-item-icon">code</span>
-            <span class="view-item-label">Code Generator</span>
-            <span class="view-item-shortcut">Ctrl+G</span>
-            <span
-              class="material-icons view-item-check"
-              :class="{ visible: nodeStore.showCodeGenerator }"
-              >check</span
-            >
-          </el-dropdown-item>
-          <el-dropdown-item @click="editorStore.toggleParametersPanel()">
-            <span class="material-icons view-item-icon">tune</span>
-            <span class="view-item-label">Flow Parameters</span>
-            <span class="view-item-shortcut"></span>
-            <span
-              class="material-icons view-item-check"
-              :class="{ visible: editorStore.showParametersPanel }"
-              >check</span
-            >
-          </el-dropdown-item>
-        </el-dropdown-menu>
+    <el-popover
+      placement="bottom"
+      :width="260"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
+    >
+      <template #reference>
+        <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
+          <span class="material-icons btn-icon">settings</span>
+          <span class="btn-text">Settings</span>
+        </button>
       </template>
-    </el-dropdown>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">settings</span>
+          <span>Flow Settings</span>
+        </div>
+        <p class="header-action-popover-desc">
+          Configure execution mode, parallel workers, edge labels, and flow-level parameters for the
+          current flow.
+        </p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>,</kbd>
+          </span>
+          to open from anywhere.
+        </p>
+      </div>
+    </el-popover>
+    <el-popover
+      placement="bottom"
+      :width="220"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
+    >
+      <template #reference>
+        <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">play_arrow</span>
+          <span>Run</span>
+        </div>
+        <p class="header-action-popover-desc">Run with current settings.</p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>E</kbd>
+          </span>
+          to run.
+        </p>
+      </div>
+    </el-popover>
+    <el-popover
+      placement="bottom"
+      :width="240"
+      trigger="hover"
+      :show-after="200"
+      popper-class="header-action-popover"
+      :show-arrow="true"
+    >
+      <template #reference>
+        <button
+          class="action-btn"
+          data-tutorial="generate-code-btn"
+          :class="{ active: nodeStore.showCodeGenerator }"
+          :aria-label="nodeStore.showCodeGenerator ? 'Hide Code Generator' : 'Show Code Generator'"
+          :aria-pressed="nodeStore.showCodeGenerator"
+          @click="toggleCodeGenerator"
+        >
+          <span class="material-icons btn-icon">code</span>
+          <span class="btn-text">Code</span>
+        </button>
+      </template>
+      <div class="header-action-popover-body">
+        <div class="header-action-popover-title">
+          <span class="material-icons header-action-popover-icon">code</span>
+          <span>Code Generator</span>
+        </div>
+        <p class="header-action-popover-desc">
+          View the Python code generated from this flow. Useful for exporting or reviewing what each
+          node compiles to.
+        </p>
+        <p class="header-action-popover-shortcut-hint">
+          <span class="header-action-popover-shortcut">
+            <kbd>{{ MODIFIER_LABEL }}</kbd>
+            <kbd>G</kbd>
+          </span>
+          anywhere to toggle.
+        </p>
+      </div>
+    </el-popover>
   </div>
 
   <open-dialog
@@ -249,6 +389,7 @@ import {
   updateRunStatus,
 } from "../../nodes/nodeLogic";
 import type { FlowParameter } from "../../../types/flow.types";
+import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
@@ -262,13 +403,6 @@ const modalVisibleForSettings = ref(false);
 // Save is a no-op when no flow is loaded; hide the button entirely rather
 // than leaving a disabled control in the header.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
-
-// Light up the View button whenever any of its panels are visible — gives the
-// user a clue that toggles inside the menu are doing something even though
-// the menu itself is closed.
-const anyViewPanelOpen = computed(
-  () => !!nodeStore.showCodeGenerator || !!editorStore.showParametersPanel,
-);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
@@ -491,6 +625,7 @@ defineExpose({
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal,
   runFlow,
+  openSettings: openSettingsModal,
 });
 
 onMounted(async () => {
@@ -633,40 +768,6 @@ onMounted(async () => {
   vertical-align: middle;
 }
 
-/* View dropdown — chevron is part of the same button face, not a split caret. */
-.view-btn .view-caret {
-  font-size: 20px;
-  margin-left: var(--spacing-1);
-}
-
-/* Each item lays out: [icon] [label .....] [shortcut]  [check]
-   The checkmark column is reserved (visibility: hidden when off) so labels
-   stay aligned whether or not a panel is currently visible. */
-:deep(.el-dropdown-menu__item) .view-item-icon {
-  font-size: 16px;
-  margin-right: var(--spacing-2);
-  color: var(--color-text-secondary);
-}
-:deep(.el-dropdown-menu__item) .view-item-label {
-  flex: 1;
-}
-:deep(.el-dropdown-menu__item) .view-item-shortcut {
-  margin-left: var(--spacing-4);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  min-width: 40px;
-  text-align: right;
-}
-:deep(.el-dropdown-menu__item) .view-item-check {
-  margin-left: var(--spacing-2);
-  font-size: 16px;
-  color: var(--color-accent);
-  visibility: hidden;
-}
-:deep(.el-dropdown-menu__item) .view-item-check.visible {
-  visibility: visible;
-}
-
 .settings-modal-content {
   padding: var(--spacing-4);
   font-family: var(--font-family-base);
@@ -746,5 +847,70 @@ onMounted(async () => {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted, #999);
   font-style: italic;
+}
+</style>
+
+<!-- Unscoped: el-popover teleports its popper to <body>, outside this
+     component's scope, so scoped selectors wouldn't reach it. All header
+     action popovers share popper-class="header-action-popover" so this one
+     ruleset styles every popover (Save / Open / Settings / Run / Code). -->
+<style>
+.header-action-popover.el-popper {
+  padding: 0;
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, 0.12));
+}
+.header-action-popover .header-action-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3);
+  font-family: var(--font-family-base);
+}
+.header-action-popover .header-action-popover-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+}
+.header-action-popover .header-action-popover-icon {
+  font-size: 18px;
+  color: var(--color-accent);
+}
+.header-action-popover .header-action-popover-desc {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+.header-action-popover .header-action-popover-shortcut-hint {
+  margin: 0;
+  padding-top: var(--spacing-2);
+  border-top: 1px solid var(--color-border-light);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+.header-action-popover .header-action-popover-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 2px;
+  vertical-align: middle;
+}
+.header-action-popover .header-action-popover-shortcut kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+  color: var(--color-text-secondary);
+  background: var(--color-background-tertiary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-sm);
 }
 </style>

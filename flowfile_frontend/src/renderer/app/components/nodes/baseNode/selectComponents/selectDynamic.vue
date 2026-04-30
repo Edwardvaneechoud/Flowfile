@@ -31,7 +31,7 @@
                 <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
               </tr>
             </thead>
-            <tbody id="selectable-container">
+            <tbody ref="selectableContainerRef">
               <tr
                 v-for="(column, index) in localSelectInputs"
                 :key="column.old_name"
@@ -163,6 +163,9 @@ const showContextMenu = ref(false);
 const draggingIndex = ref<number>(-1);
 const dragOverIndex = ref<number>(-1);
 const contextMenuRef = ref<HTMLElement | null>(null);
+// Ref on the <tbody> instead of a global id — avoids collisions if more than
+// one selectDynamic instance is mounted at the same time.
+const selectableContainerRef = ref<HTMLElement | null>(null);
 const nodeStore = useNodeStore();
 const dataTypes = nodeStore.getDataTypes();
 
@@ -270,7 +273,7 @@ const hasMissingFields = computed(() =>
 // Click Outside Handler for Context Menu
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as Node;
-  const container = document.getElementById("selectable-container");
+  const container = selectableContainerRef.value;
 
   // Always close the context menu when clicking anywhere outside it. The menu
   // floats over the table now that the table-wrapper flex-fills the pane, so

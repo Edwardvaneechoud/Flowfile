@@ -52,7 +52,6 @@ import { FlowApi } from "../../api";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
 import { snapshotClipboard } from "../../utils/clipboardUtils";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
-import FlowParametersPanel from "../../components/layout/FlowParametersPanel/FlowParametersPanel.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
 import DataPreview from "../../features/designer/dataPreview.vue";
@@ -211,6 +210,8 @@ const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
   (e: "new"): void;
+  (e: "openSettings"): void;
+  (e: "open"): void;
 }>();
 
 interface NodeChange {
@@ -836,6 +837,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       nodeStore.toggleCodeGenerator();
     }
+  } else if (eventKeyClicked && key === ",") {
+    if (flowStore.flowId) {
+      event.preventDefault();
+      emit("openSettings");
+    }
+  } else if (eventKeyClicked && key === "o" && !isInputElement && !isInCodeMirror) {
+    // Open file picker — guarded against input/CodeMirror so users typing
+    // "o" with a stuck modifier (or rapid macro) don't open the dialog.
+    event.preventDefault();
+    emit("open");
   }
 };
 
@@ -942,6 +953,7 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
   mainResizeObserver?.disconnect();
   mainResizeObserver = null;
+  cancelEdgeLeave();
 });
 
 defineExpose({
@@ -1076,19 +1088,6 @@ defineExpose({
         :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
       >
         <CodeGenerator />
-      </draggable-item>
-      <draggable-item
-        v-if="editorStore.showParametersPanel"
-        id="flowParameters"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="520"
-        title="Flow Parameters"
-        :on-minize="() => editorStore.setParametersPanelVisibility(false)"
-        :allow-full-screen="true"
-        group="rightPanels"
-      >
-        <FlowParametersPanel />
       </draggable-item>
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>

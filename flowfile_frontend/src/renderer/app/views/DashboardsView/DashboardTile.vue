@@ -383,7 +383,7 @@ const headerTitle = computed(() => vizName.value);
   flex-direction: column;
 }
 .tile-viz-clickable {
-  cursor: zoom-in;
+  cursor: pointer;
   border-radius: 4px;
   transition: outline 0.12s ease;
 }

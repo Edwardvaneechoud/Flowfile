@@ -62,6 +62,7 @@
 
       <!-- AG Grid -->
       <ag-grid-vue
+        ref="gridComponentRef"
         :default-col-def="defaultColDef"
         :column-defs="columnDefs"
         class="ag-theme-balham"
@@ -190,6 +191,10 @@ const dataAvailable = ref(false);
 const dataLength = ref(0);
 const columnLength = ref(0);
 const gridApi = ref<GridApi | null>(null);
+// Component ref on <ag-grid-vue> — `.value.$el` gives us this grid's root DOM
+// node so the window-level Cmd+C/A handler can scope itself to *this* grid
+// instead of any element matching `.ag-theme-balham`.
+const gridComponentRef = ref<{ $el?: HTMLElement } | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
@@ -292,10 +297,17 @@ const defaultColDef = {
   resizable: true,
 };
 
+// Cells with tab/newline/carriage-return/quote chars need Excel-style quoting,
+// otherwise they corrupt the TSV (a tab inside a value becomes a column break,
+// a newline becomes a row break). Wrap in double-quotes and double any existing
+// quotes — matches what Excel and Google Sheets emit when copying.
 const serializeCell = (v: unknown): string => {
   if (v === null || v === undefined) return "";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
+  const raw = typeof v === "object" ? JSON.stringify(v) : String(v);
+  if (/[\t\n\r"]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
 };
 
 const buildTsvFromRows = (rows: Record<string, any>[]): string => {
@@ -303,7 +315,7 @@ const buildTsvFromRows = (rows: Record<string, any>[]): string => {
     (c) => c && c.field,
   );
   if (!cols.length || !rows.length) return "";
-  const headerLine = cols.map((c) => c.headerName ?? c.field ?? "").join("\t");
+  const headerLine = cols.map((c) => serializeCell(c.headerName ?? c.field ?? "")).join("\t");
   const dataLines = rows.map((row) =>
     cols.map((c) => serializeCell(row[c.field as string])).join("\t"),
   );
@@ -458,17 +470,22 @@ const windowKeyHandler = async (e: KeyboardEvent) => {
   ) {
     return;
   }
-  // Only act when focus is inside this grid.
-  if (!target?.closest(".ag-theme-balham")) return;
+  // Only act when focus is inside *this* grid — scope by component-rooted DOM
+  // node, not by theme class, so a second AG Grid mounted elsewhere doesn't
+  // co-fire. If the API isn't ready yet, the grid isn't usable; bail rather
+  // than swallow the user's keystroke.
+  if (!gridApi.value) return;
+  const gridRoot = gridComponentRef.value?.$el;
+  if (!gridRoot || !target || !gridRoot.contains(target)) return;
 
   if (key === "a") {
-    gridApi.value?.selectAll();
+    gridApi.value.selectAll();
     e.preventDefault();
     return;
   }
 
   // Cmd/Ctrl+C → copy selected rows as TSV.
-  const selected = gridApi.value?.getSelectedRows() ?? [];
+  const selected = gridApi.value.getSelectedRows();
   if (!selected.length) return;
 
   const tsv = buildTsvFromRows(selected);

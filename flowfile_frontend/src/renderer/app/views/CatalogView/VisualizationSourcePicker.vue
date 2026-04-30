@@ -75,28 +75,32 @@ const store = useCatalogStore();
 
 type Mode = "table" | "sql";
 const mode = ref<Mode>("table");
-const selectedTablePath = ref<(number | string)[] | null>(null);
+const selectedTablePath = ref<string[] | null>(null);
 const sql = ref("");
 
 interface CascadeOption {
-  value: number;
+  value: string;
   label: string;
   children?: CascadeOption[];
   disabled?: boolean;
 }
 
-// Namespaces use negative ids so they can never collide with positive table
-// ids — combined with checkStrictly:false the cascader only commits to a leaf
-// (i.e. an actual table).
+// Tag cascader values with `ns:` / `tbl:` prefixes so namespace and table ids
+// can never collide regardless of how the backend numbers them — and so a
+// theoretical id of 0 still parses correctly. Combined with checkStrictly:false
+// the cascader only commits to a leaf (an actual table).
+const NS_PREFIX = "ns:";
+const TBL_PREFIX = "tbl:";
+
 const toCascade = (node: NamespaceTree): CascadeOption => {
   const childNs = node.children.map(toCascade);
   const tableLeaves: CascadeOption[] = node.tables.map((t) => ({
-    value: t.id,
+    value: `${TBL_PREFIX}${t.id}`,
     label: t.name,
   }));
   const children = [...childNs, ...tableLeaves];
   return {
-    value: -node.id,
+    value: `${NS_PREFIX}${node.id}`,
     label: node.name,
     children: children.length ? children : undefined,
     disabled: !children.length,
@@ -131,19 +135,25 @@ watch(open, async (v) => {
   }
 });
 
+const parseTableLeaf = (path: string[] | null): number | null => {
+  const last = path?.[path.length - 1];
+  if (typeof last !== "string" || !last.startsWith(TBL_PREFIX)) return null;
+  const id = Number(last.slice(TBL_PREFIX.length));
+  return Number.isFinite(id) ? id : null;
+};
+
 const canContinue = computed(() => {
   if (mode.value === "table") {
-    const last = selectedTablePath.value?.[selectedTablePath.value.length - 1];
-    return typeof last === "number" && last > 0;
+    return parseTableLeaf(selectedTablePath.value) !== null;
   }
   return sql.value.trim().length > 0;
 });
 
 const onContinue = () => {
   if (mode.value === "table") {
-    const last = selectedTablePath.value?.[selectedTablePath.value.length - 1];
-    if (typeof last !== "number" || last <= 0) return;
-    emit("picked", { source_type: "table", table_id: last });
+    const tableId = parseTableLeaf(selectedTablePath.value);
+    if (tableId === null) return;
+    emit("picked", { source_type: "table", table_id: tableId });
   } else {
     const trimmed = sql.value.trim();
     if (!trimmed) return;

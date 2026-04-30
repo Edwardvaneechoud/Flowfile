@@ -245,21 +245,24 @@ const consumeEditVizQuery = async () => {
   const raw = route.query.editViz;
   const id = typeof raw === "string" ? Number(raw) : NaN;
   if (!Number.isFinite(id) || id <= 0) return;
+  // Snapshot route identity before any awaits — initialise() above may finish
+  // after the user has navigated, in which case route.* now points elsewhere.
+  // Also avoids the unsafe `as string` cast on route.name (which can be a
+  // symbol or undefined for catch-all routes).
+  const targetRouteName = route.name;
+  if (typeof targetRouteName !== "string") return;
+  const targetParams = { ...route.params };
+
   const tiles = store.current?.layout.tiles ?? [];
   const targetTile = tiles.find((t) => t.viz_id === id);
-  if (!targetTile) {
-    // Tile is gone — silently strip the param.
-    await router.replace({
-      name: route.name as string,
-      params: route.params,
-      query: {},
-    });
-    return;
+  if (targetTile) {
+    onEditViz(id);
   }
-  onEditViz(id);
+  // Strip the query whether or not the tile was found, so a reload or
+  // back-nav doesn't keep reopening (or chasing a missing) tile.
   await router.replace({
-    name: route.name as string,
-    params: route.params,
+    name: targetRouteName,
+    params: targetParams,
     query: {},
   });
 };
