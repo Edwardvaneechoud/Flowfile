@@ -174,9 +174,7 @@ class AmbiguousTableError(CatalogError):
     def __init__(self, name: str, candidates: list[dict]):
         self.name = name
         self.candidates = candidates
-        rendered = ", ".join(
-            f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates
-        )
+        rendered = ", ".join(f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates)
         super().__init__(f"Table name '{name}' is ambiguous; candidates: {rendered}")
 
 

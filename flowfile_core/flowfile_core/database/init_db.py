@@ -129,9 +129,7 @@ def create_default_catalog_namespace(db: Session):
         db.commit()
 
     # Dedicated schema for quick-created / unnamed flows so they don't clutter 'default'
-    unnamed_schema = (
-        db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
-    )
+    unnamed_schema = db.query(db_models.CatalogNamespace).filter_by(name="Unnamed Flows", parent_id=general.id).first()
     if not unnamed_schema:
         unnamed_schema = db_models.CatalogNamespace(
             name="Unnamed Flows",
@@ -145,9 +143,7 @@ def create_default_catalog_namespace(db: Session):
 
     # Dedicated schema for flows saved to arbitrary disk locations, distinct from
     # catalog-managed flows so users can tell disk-backed and catalog flows apart.
-    local_schema = (
-        db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
-    )
+    local_schema = db.query(db_models.CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first()
     if not local_schema:
         local_schema = db_models.CatalogNamespace(
             name="Local Flows",

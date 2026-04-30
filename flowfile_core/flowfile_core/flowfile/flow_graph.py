@@ -448,10 +448,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
             else:
-                reference = (
-                    node_catalog_reader.catalog_full_table_name
-                    or node_catalog_reader.catalog_table_name
-                )
+                reference = node_catalog_reader.catalog_full_table_name or node_catalog_reader.catalog_table_name
                 if reference:
                     try:
                         table_record = svc.resolve_table(
@@ -2141,9 +2138,7 @@ class FlowGraph:
             if not settings.feature_columns:
                 raise ValueError("Train Model requires at least one 'feature_columns' entry.")
             if settings.publish_to_catalog and not settings.model_name:
-                raise ValueError(
-                    "Train Model: 'model_name' is required when 'publish_to_catalog' is enabled."
-                )
+                raise ValueError("Train Model: 'model_name' is required when 'publish_to_catalog' is enabled.")
 
             # Validate model_type and hyperparameters early so the user gets
             # a clear error from core, not a worker-side stack trace.
@@ -2151,9 +2146,7 @@ class FlowGraph:
             try:
                 trainer.params_class(**settings.params)
             except Exception as e:
-                raise ValueError(
-                    f"Train Model: invalid params for model_type={settings.model_type!r}: {e}"
-                ) from e
+                raise ValueError(f"Train Model: invalid params for model_type={settings.model_type!r}: {e}") from e
 
             # Always write the model to a flow-scoped path keyed off this node's id;
             # downstream Apply Model nodes in this flow read from there, no catalog
@@ -2203,9 +2196,7 @@ class FlowGraph:
                     python_module="flowfile.ml",
                 )
                 with get_db_context() as db:
-                    prepared = ArtifactService(db, storage_backend).prepare_upload(
-                        prepare_request, owner_id=owner_id
-                    )
+                    prepared = ArtifactService(db, storage_backend).prepare_upload(prepare_request, owner_id=owner_id)
                 if prepared.method != "file":
                     # v1 only supports the shared-filesystem backend; S3 needs a
                     # presigned-URL path on the worker which we haven't wired yet.
@@ -2238,9 +2229,7 @@ class FlowGraph:
                 node._fetch_cached_df = fetcher
                 result = fetcher.get_result()
                 if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
-                    raise RuntimeError(
-                        f"Worker did not return expected sha256/size_bytes payload, got: {result!r}"
-                    )
+                    raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
 
                 if prepared is not None:
                     # The staging file is also our flow-scoped copy. Atomically
@@ -2268,9 +2257,7 @@ class FlowGraph:
                         try:
                             ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
                         except Exception:
-                            logger.exception(
-                                "Failed to roll back pending artifact %s", prepared.artifact_id
-                            )
+                            logger.exception("Failed to roll back pending artifact %s", prepared.artifact_id)
                     # Also roll back the flow_path copy if we wrote it; otherwise
                     # the next Apply Model run could quietly use the artifact
                     # whose catalog row we just deleted.
@@ -2289,9 +2276,7 @@ class FlowGraph:
                 )
                 artifact_name = f"{settings.model_name} v{prepared.version}"
             else:
-                self.flow_logger.info(
-                    f"Train Model: wrote {result['size_bytes']}B to flow path {flow_path}"
-                )
+                self.flow_logger.info(f"Train Model: wrote {result['size_bytes']}B to flow path {flow_path}")
                 artifact_name = f"{settings.model_type} (flow only)"
 
             # Surface the trained model in the node's Artifacts tab + canvas badge.
@@ -2315,11 +2300,7 @@ class FlowGraph:
             input_node: FlowNode = self.get_node(train_settings.node_id).node_inputs.main_inputs[0]
             return input_node.schema
 
-        depending_on_id = (
-            train_settings.depending_on_id
-            if hasattr(train_settings, "depending_on_id")
-            else None
-        )
+        depending_on_id = train_settings.depending_on_id if hasattr(train_settings, "depending_on_id") else None
         self.add_node_step(
             node_id=train_settings.node_id,
             function=_func,
@@ -2378,9 +2359,7 @@ class FlowGraph:
                 origin_label = f"upstream node {settings.upstream_node_id}"
             else:
                 if not settings.model_name:
-                    raise ValueError(
-                        "Apply Model: 'model_name' is required when source='catalog'."
-                    )
+                    raise ValueError("Apply Model: 'model_name' is required when source='catalog'.")
                 storage_backend = get_storage_backend()
                 with get_db_context() as db:
                     artifact = ArtifactService(db, storage_backend).get_artifact_by_name(
@@ -2408,9 +2387,7 @@ class FlowGraph:
             )
             node._fetch_cached_df = fetcher
             result_lf = fetcher.get_result()
-            self.flow_logger.info(
-                f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'"
-            )
+            self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
             return FlowDataEngine(result_lf)
 
         def schema_callback():
@@ -2436,11 +2413,7 @@ class FlowGraph:
                         pass
             return input_schema_cols + [FlowfileColumn.from_input(output_column, output_dtype)]
 
-        depending_on_id = (
-            apply_settings.depending_on_id
-            if hasattr(apply_settings, "depending_on_id")
-            else None
-        )
+        depending_on_id = apply_settings.depending_on_id if hasattr(apply_settings, "depending_on_id") else None
         self.add_node_step(
             node_id=apply_settings.node_id,
             function=_func,
@@ -2471,9 +2444,7 @@ class FlowGraph:
                 return s.task_type
             if s.upstream_train_node_id is not None:
                 upstream = self.get_node(s.upstream_train_node_id)
-                train_input = getattr(
-                    getattr(upstream, "setting_input", None), "train_input", None
-                )
+                train_input = getattr(getattr(upstream, "setting_input", None), "train_input", None)
                 model_type = getattr(train_input, "model_type", None)
                 if model_type:
                     try:
@@ -2501,8 +2472,7 @@ class FlowGraph:
                 task_type=task_type,
             )
             self.flow_logger.info(
-                f"Evaluate Model: {settings.predicted_column} vs {settings.actual_column} "
-                f"(task_type={task_type})"
+                f"Evaluate Model: {settings.predicted_column} vs {settings.actual_column} " f"(task_type={task_type})"
             )
             return FlowDataEngine(metrics_lf)
 
@@ -2512,11 +2482,7 @@ class FlowGraph:
                 FlowfileColumn.from_input(column_name="value", data_type="Float64"),
             ]
 
-        depending_on_id = (
-            evaluate_settings.depending_on_id
-            if hasattr(evaluate_settings, "depending_on_id")
-            else None
-        )
+        depending_on_id = evaluate_settings.depending_on_id if hasattr(evaluate_settings, "depending_on_id") else None
         self.add_node_step(
             node_id=evaluate_settings.node_id,
             function=_func,
@@ -3536,8 +3502,7 @@ class FlowGraph:
                 for f in ga_settings.filters
             ],
             order_bys=[
-                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending)
-                for ob in ga_settings.order_bys
+                WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending) for ob in ga_settings.order_bys
             ],
             flowfile_flow_id=node_ga_reader.flow_id,
             flowfile_node_id=node_ga_reader.node_id,
@@ -3547,9 +3512,7 @@ class FlowGraph:
         # nodes can introspect columns without ever invoking ``_func`` (which
         # would trigger a worker → Google round-trip). ``derive_schema`` is
         # pure-Python and runs against the chosen metrics/dimensions only.
-        predicted_columns = derive_schema(
-            metrics=ga_settings.metrics, dimensions=ga_settings.dimensions
-        )
+        predicted_columns = derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
         node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
 
         def _func() -> FlowDataEngine:
@@ -3568,9 +3531,7 @@ class FlowGraph:
             # re-walk the heuristic table. ``derive_schema`` is the fallback
             # for the (rare) case where ``fields`` got cleared.
             if node_ga_reader.fields:
-                return [
-                    FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields
-                ]
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields]
             return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
 
         node = self.get_node(node_ga_reader.node_id)

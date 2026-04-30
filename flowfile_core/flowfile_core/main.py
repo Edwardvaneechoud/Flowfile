@@ -318,8 +318,13 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
 
 def _complete_run(run_id: int, success: bool, nodes_completed: int, number_of_nodes: int = 0) -> None:
     """Report results back to a pre-created run record."""
-    _cli_logger.debug("Completing run %d: success=%s, nodes_completed=%d, number_of_nodes=%d",
-                      run_id, success, nodes_completed, number_of_nodes)
+    _cli_logger.debug(
+        "Completing run %d: success=%s, nodes_completed=%d, number_of_nodes=%d",
+        run_id,
+        success,
+        nodes_completed,
+        number_of_nodes,
+    )
     try:
         from shared.run_completion import complete_run
 

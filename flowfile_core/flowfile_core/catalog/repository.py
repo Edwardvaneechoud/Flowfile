@@ -675,9 +675,7 @@ class SQLAlchemyCatalogRepository:
             self._db.commit()
 
     def list_table_favorites(self, user_id: int) -> list[TableFavorite]:
-        return (
-            self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
-        )
+        return self._db.query(TableFavorite).filter_by(user_id=user_id).order_by(TableFavorite.created_at.desc()).all()
 
     def count_table_favorites(self, user_id: int) -> int:
         return self._db.query(TableFavorite).filter_by(user_id=user_id).count()
@@ -898,12 +896,7 @@ class SQLAlchemyCatalogRepository:
 
     def list_active_runs(self) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
-        return (
-            self._db.query(FlowRun)
-            .filter(FlowRun.ended_at.is_(None))
-            .order_by(FlowRun.started_at.desc())
-            .all()
-        )
+        return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""
@@ -945,9 +938,7 @@ class SQLAlchemyCatalogRepository:
     def get_trigger_table_ids(self, schedule_id: int) -> list[int]:
         """Return table IDs linked to a table_set_trigger schedule."""
         rows = (
-            self._db.query(ScheduleTriggerTable.table_id)
-            .filter(ScheduleTriggerTable.schedule_id == schedule_id)
-            .all()
+            self._db.query(ScheduleTriggerTable.table_id).filter(ScheduleTriggerTable.schedule_id == schedule_id).all()
         )
         return [r[0] for r in rows]
 
@@ -974,21 +965,13 @@ class SQLAlchemyCatalogRepository:
         )
 
     def list_all_visualizations(self) -> list[CatalogVisualization]:
-        return (
-            self._db.query(CatalogVisualization)
-            .order_by(CatalogVisualization.created_at.desc())
-            .all()
-        )
+        return self._db.query(CatalogVisualization).order_by(CatalogVisualization.created_at.desc()).all()
 
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None:
         return self._db.get(CatalogVisualization, viz_id)
 
     def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None:
-        return (
-            self._db.query(CatalogVisualization)
-            .filter_by(catalog_table_id=catalog_table_id, name=name)
-            .first()
-        )
+        return self._db.query(CatalogVisualization).filter_by(catalog_table_id=catalog_table_id, name=name).first()
 
     def create_visualization(self, viz: CatalogVisualization) -> CatalogVisualization:
         self._db.add(viz)
@@ -1010,11 +993,7 @@ class SQLAlchemyCatalogRepository:
     # -- Dashboards ----------------------------------------------------------
 
     def list_dashboards(self) -> list[CatalogDashboard]:
-        return (
-            self._db.query(CatalogDashboard)
-            .order_by(CatalogDashboard.updated_at.desc())
-            .all()
-        )
+        return self._db.query(CatalogDashboard).order_by(CatalogDashboard.updated_at.desc()).all()
 
     def get_dashboard(self, dashboard_id: int) -> CatalogDashboard | None:
         return self._db.get(CatalogDashboard, dashboard_id)

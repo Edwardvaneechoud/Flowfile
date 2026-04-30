@@ -4,6 +4,7 @@ Revision ID: 007
 Revises: 006
 Create Date: 2026-04-22 17:49:55.533772+00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -41,9 +42,7 @@ _TABLES_NEEDING_ID_INDEX: tuple[str, ...] = (
 
 # Named explicitly because batch mode (SQLite) requires a concrete constraint
 # name — autogenerate left it as None, which fails at apply time.
-_CATALOG_TABLES_PRODUCER_FK = (
-    "fk_catalog_tables_producer_registration_id_flow_registrations"
-)
+_CATALOG_TABLES_PRODUCER_FK = "fk_catalog_tables_producer_registration_id_flow_registrations"
 
 
 def upgrade() -> None:
@@ -69,9 +68,7 @@ def upgrade() -> None:
             ["connection_name"],
             unique=False,
         )
-        batch_op.create_index(
-            "ix_google_analytics_connections_id", ["id"], unique=False
-        )
+        batch_op.create_index("ix_google_analytics_connections_id", ["id"], unique=False)
 
     # --- Drift fix: add missing ix_<table>_id indexes --------------------
     for table_name in _TABLES_NEEDING_ID_INDEX:

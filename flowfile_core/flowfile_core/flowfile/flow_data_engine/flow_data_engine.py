@@ -54,7 +54,6 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.schema_callbacks import _ensure_all_columns_have_select
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
@@ -64,11 +63,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_unique_values,
 )
 from flowfile_core.flowfile.flow_data_engine.threaded_processes import write_threaded
-from flowfile_core.utils.arrow_reader import read as arrow_read
+from flowfile_core.flowfile.schema_callbacks import _ensure_all_columns_have_select
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
 from flowfile_core.schemas.schemas import ExecutionLocationsLiteral, get_global_execution_location
+from flowfile_core.utils.arrow_reader import read as arrow_read
 from flowfile_core.utils.utils import ensure_similarity_dicts
 from shared.cloud_storage import (
     get_lazy_frame_from_gcs_pyarrow_dataset,
@@ -1649,7 +1649,7 @@ class FlowDataEngine:
         self,
         splits: list[tuple[str, float]],
         seed: int | None = None,
-    ) -> "NamedOutputs":
+    ) -> NamedOutputs:
         """Randomly partition rows into N labeled groups.
 
         The shuffled frame is materialized once so that each output shares the
@@ -1867,9 +1867,7 @@ class FlowDataEngine:
         """Performs a standard SQL-style join with another DataFrame."""
         # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
-        _ensure_all_columns_have_select(
-            left_cols=self.columns, right_cols=other.columns, manager=join_manager
-        )
+        _ensure_all_columns_have_select(left_cols=self.columns, right_cols=other.columns, manager=join_manager)
         join_manager.set_join_keys()
         ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
         for jk in join_manager.join_mapping:
@@ -2337,9 +2335,7 @@ class FlowDataEngine:
             new = [first_row_values.get(name) for name in targets]
             for original, v in zip(targets, new, strict=True):
                 if v is None or (isinstance(v, str) and v.strip() == ""):
-                    raise ValueError(
-                        f"Dynamic rename (first_row) got a null/empty value for column '{original}'."
-                    )
+                    raise ValueError(f"Dynamic rename (first_row) got a null/empty value for column '{original}'.")
             return [str(v) for v in new]
         if mode == "formula":
             if not settings.formula.strip():
@@ -2418,9 +2414,7 @@ class FlowDataEngine:
             omitted, so the result is safe to pass directly to `pl.DataFrame.rename`.
         """
         targets = FlowDataEngine._select_rename_targets(columns, settings)
-        new_names = FlowDataEngine._compute_renamed_names(
-            targets, settings, first_row_values=first_row_values
-        )
+        new_names = FlowDataEngine._compute_renamed_names(targets, settings, first_row_values=first_row_values)
         rename_map = {old: new for old, new in zip(targets, new_names, strict=True) if old != new}
         FlowDataEngine._assert_rename_has_no_duplicates(rename_map, columns)
         return rename_map
@@ -2448,16 +2442,12 @@ class FlowDataEngine:
 
         if table is not None:
             if table.num_rows == 0:
-                raise ValueError(
-                    "Dynamic rename (first_row) requires at least one row in the input; got 0."
-                )
+                raise ValueError("Dynamic rename (first_row) requires at least one row in the input; got 0.")
             return {name: table.column(name)[0].as_py() for name in table.column_names}
 
         head = head_lf.collect()
         if head.height == 0:
-            raise ValueError(
-                "Dynamic rename (first_row) requires at least one row in the input; got 0."
-            )
+            raise ValueError("Dynamic rename (first_row) requires at least one row in the input; got 0.")
         return dict(zip(head.columns, head.row(0), strict=True))
 
     def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
@@ -2479,9 +2469,7 @@ class FlowDataEngine:
         first_row_values = None
         if settings.rename_mode == "first_row":
             first_row_values = self._peek_first_row_as_dict()
-        rename_map = self.resolve_dynamic_rename_map(
-            columns, settings, first_row_values=first_row_values
-        )
+        rename_map = self.resolve_dynamic_rename_map(columns, settings, first_row_values=first_row_values)
         new_df = self.data_frame.rename(rename_map) if rename_map else self.data_frame
         if settings.rename_mode == "first_row":
             new_df = new_df.slice(1)

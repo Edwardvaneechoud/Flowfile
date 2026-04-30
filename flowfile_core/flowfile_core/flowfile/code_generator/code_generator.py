@@ -796,7 +796,7 @@ class FlowGraphCodeConverter:
         except PolarsCodeGenError:
             can_convert_to_pl_code = False
         except Exception as e:
-            logger.debug(f'Unhandled conversion of the formula to polars expression falling back to expression {e}')
+            logger.debug(f"Unhandled conversion of the formula to polars expression falling back to expression {e}")
             can_convert_to_pl_code = False
 
         # TODO(FlowFrame): to_polars_code() generates pl.col/pl.lit expressions that require
@@ -815,7 +815,8 @@ class FlowGraphCodeConverter:
             self._add_code("")
         else:
             self.imports.add(
-                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr")
+                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
+            )
             self._add_code(f"{var_name} = {input_df}.with_columns([")
             self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
@@ -1313,9 +1314,7 @@ class FlowGraphCodeConverter:
         self._add_code(f"){suffix}")
         self._add_code("")
 
-    def _handle_catalog_sql_reader(
-        self, settings: input_schema.NodeCatalogReader, var_name: str
-    ) -> None:
+    def _handle_catalog_sql_reader(self, settings: input_schema.NodeCatalogReader, var_name: str) -> None:
         sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
         self._add_code("# SQL query against catalog tables")
         self._add_code(f'{var_name} = ff.read_catalog_sql("""')
@@ -1816,8 +1815,7 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
     ) -> None:
         """Catalog Reader is not supported for standalone Polars code. Use FlowFrame export."""
         msg = (
-            "Catalog SQL Reader requires FlowFrame code generation. "
-            "Please use FlowFrame code generation instead."
+            "Catalog SQL Reader requires FlowFrame code generation. " "Please use FlowFrame code generation instead."
             if settings.sql_query
             else "Catalog Reader requires a FlowFrame and is not supported by Polars code generation. "
             "Please use FlowFrame code generation instead."
