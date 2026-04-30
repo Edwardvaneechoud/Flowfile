@@ -1,6 +1,6 @@
 <template>
   <div class="designer-view">
-    <div v-if="!isLoading" class="header">
+    <div v-if="initialLoadComplete" class="header">
       <div class="header-top">
         <div class="left-section">
           <header-buttons
@@ -25,14 +25,15 @@
         </div>
       </div>
     </div>
-    <!-- Show loading state while fetching flows -->
-    <div v-if="isLoading" class="loading-state">
+    <!-- Initial-boot loading state: shown only until the first setup completes.
+         After that the canvas stays mounted across all flow switches. -->
+    <div v-if="!initialLoadComplete" class="loading-state">
       <div class="loading-state-content">
         <p>Loading flows...</p>
       </div>
     </div>
-    <!-- Show empty state only when loading is complete and no flows are found -->
-    <div v-else-if="!isLoading && flowsActive.length === 0" class="empty-state">
+    <!-- Empty state when initial load completed but no flows are active. -->
+    <div v-else-if="flowsActive.length === 0" class="empty-state">
       <div class="empty-state-content">
         <span class="material-icons empty-icon">account_tree</span>
         <h2>No Active Flows</h2>
@@ -55,16 +56,21 @@
         </el-button>
       </div>
     </div>
-    <canvas-flow
-      v-else
-      ref="canvasFlow"
-      class="canvas"
-      @save="headerButtons?.openSaveModal()"
-      @run="headerButtons?.runFlow()"
-      @new="headerButtons?.handleQuickCreate()"
-      @open="headerButtons?.openOpenDialog()"
-      @open-settings="headerButtons?.openSettings()"
-    />
+    <div v-else class="canvas-wrap">
+      <canvas-flow
+        ref="canvasFlow"
+        class="canvas"
+        @save="headerButtons?.openSaveModal()"
+        @run="headerButtons?.runFlow()"
+        @new="headerButtons?.handleQuickCreate()"
+        @open="headerButtons?.openOpenDialog()"
+        @open-settings="headerButtons?.openSettings()"
+      />
+      <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">
+        <span class="switch-spinner" />
+        <span>Loading flow…</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -89,7 +95,11 @@ const importSavedFlow = FlowApi.importFlow;
 const closeFlow = FlowApi.closeFlow;
 
 const flowsActive = ref<FlowSettings[]>([]);
+// isLoading gates only the initial app boot — once the first load completes,
+// the canvas stays mounted across flow changes. Use isSwitching for inline
+// indicators during subsequent flow operations.
 const isLoading = ref(true);
+const isSwitching = ref(false);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
 const flowSelector = ref<InstanceType<typeof FlowSelector>>();
@@ -100,6 +110,12 @@ const nodeStore = useNodeStore();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
+
+// Spinner stays visible across the whole switch sequence: from "user clicked"
+// (isSwitching) through the Canvas watcher's async loadFlow (isLoadingFlow).
+const showSwitchIndicator = computed(
+  () => isSwitching.value || canvasFlow.value?.isLoadingFlow === true,
+);
 
 const fetchActiveFlows = async () => {
   try {
@@ -122,7 +138,7 @@ const openFlow = (eventData: { message: string; flowPath: string }) => {
 };
 
 const reloadCanvas = async (flowPath: string) => {
-  isLoading.value = true;
+  isSwitching.value = true;
   try {
     console.log("reloadCanvas", flowPath);
     const flowId = await importSavedFlow(flowPath);
@@ -130,16 +146,14 @@ const reloadCanvas = async (flowPath: string) => {
       console.error("Failed to import flow from path:", flowPath);
       return;
     }
+    // setFlowId triggers the Canvas watcher which loads the flow.
     nodeStore.setFlowId(flowId);
-    if (canvasFlow.value) {
-      await canvasFlow.value.loadFlow();
-    }
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
     await fetchActiveFlows();
   } finally {
-    isLoading.value = false;
+    isSwitching.value = false;
   }
 };
 
@@ -156,7 +170,7 @@ const handleCloseFlow = async (flowId: number) => {
     // Clean up any flow-related data in the store
     nodeStore.clearFlowResults(flowId);
     nodeStore.clearFlowDescriptionCache(flowId);
-    isLoading.value = true;
+    isSwitching.value = true;
 
     // Refresh the flows list
     await fetchActiveFlows();
@@ -168,35 +182,35 @@ const handleCloseFlow = async (flowId: number) => {
         console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
       } else {
-        // No flows left, reset the nodeStore
+        // No flows left — Canvas's watcher clears the canvas on flowId<=0.
         nodeStore.setFlowId(-1);
       }
     }
   } catch (error) {
     console.error("Error closing flow:", error);
   } finally {
-    isLoading.value = false;
+    isSwitching.value = false;
   }
 };
 
 const handleFlowChange = async (flowId: number) => {
-  if (isLoading.value && flowId === nodeStore.flow_id) {
+  if (isSwitching.value && flowId === nodeStore.flow_id) {
     console.log("Already loading flow ID:", flowId);
     return;
   }
 
-  isLoading.value = true;
+  isSwitching.value = true;
   try {
     console.log("Handling flow change to:", flowId);
+    // setFlowId triggers the Canvas watcher which loads the flow. The watcher
+    // is the single source of truth for kicking off loadFlow — no explicit
+    // canvasFlow.value.loadFlow() call here.
     nodeStore.setFlowId(flowId);
-    if (canvasFlow.value) {
-      await canvasFlow.value.loadFlow();
-    }
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
   } finally {
-    isLoading.value = false;
+    isSwitching.value = false;
   }
 };
 
@@ -205,19 +219,20 @@ const handleFlowSaved = (flowId: number) => {
 };
 
 const refreshFlow = async () => {
-  isLoading.value = true;
+  isSwitching.value = true;
   try {
     console.log("refreshFlow");
     await fetchActiveFlows(); // Refresh flows list
+    // Same flowId — watcher won't fire, so trigger reload explicitly.
     if (canvasFlow.value && flowsActive.value.length > 0) {
-      await canvasFlow.value.loadFlow();
+      await canvasFlow.value.reloadCurrentFlow();
     }
     console.log("refreshFlow end");
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
   } finally {
-    isLoading.value = false;
+    isSwitching.value = false;
   }
 };
 
@@ -263,11 +278,13 @@ const initialSetup = async () => {
       console.log("Using existing flow ID:", nodeStore.flow_id);
     }
 
-    initialLoadComplete.value = true;
     console.log("Initial setup completed");
   } catch (error) {
     console.error("Error during initial setup:", error);
   } finally {
+    // Mark initial load complete even on error so the header still appears
+    // and the user can retry via the refresh button.
+    initialLoadComplete.value = true;
     isLoading.value = false;
     if (nodeStore.flow_id && nodeStore.flow_id > 0) {
       await nextTick();
@@ -289,8 +306,45 @@ onMounted(async () => {
   height: 100%;
 }
 
-.canvas {
+.canvas-wrap {
+  position: relative;
   height: calc(100vh - 100px);
+}
+
+.canvas {
+  height: 100%;
+}
+
+.switch-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background-color: var(--color-background-secondary, rgba(255, 255, 255, 0.95));
+  border: 1px solid var(--color-border-primary, #d4d7de);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.switch-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border-primary, #d4d7de);
+  border-top-color: var(--color-primary, #409eff);
+  border-radius: 50%;
+  animation: switch-spin 0.8s linear infinite;
+}
+
+@keyframes switch-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .header {
