@@ -1,8 +1,11 @@
 import Path from 'path';
 import { fileURLToPath } from 'url';
 import vuePlugin from '@vitejs/plugin-vue';
-import reactPlugin from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+// Note: no @vitejs/plugin-react. The project has no JSX/TSX files;
+// React is only used as a dynamic `import("react")` inside two Vue wrappers
+// (VueGraphicWalker, VueGraphicRenderer) for the @kanaries/graphic-walker
+// integration, which works natively via Vite's ESM handling.
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,8 +30,7 @@ export default defineConfig({
         minify: false,
     },
     plugins: [
-        vuePlugin(),
-        reactPlugin()
+        vuePlugin()
     ],
     resolve: {
         alias: {
