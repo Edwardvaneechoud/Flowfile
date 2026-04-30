@@ -266,7 +266,11 @@ def _render_module_assigns(tree: ast.Module) -> list[str]:
             name = stmt.target.id
             if not _is_public(name) and not name.startswith("__"):
                 continue
-            out.append(f"{name}: {_unparse(stmt.annotation)}")
+            annotation_src = _unparse(stmt.annotation)
+            if annotation_src == "TypeAlias" and stmt.value is not None:
+                out.append(f"{name}: TypeAlias = {_unparse(stmt.value)}")
+            else:
+                out.append(f"{name}: {annotation_src}")
         elif (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1

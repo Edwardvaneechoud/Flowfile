@@ -4,11 +4,14 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping
 from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefinition, SchemaDict
+
+if TYPE_CHECKING:
+    from flowfile_frame.catalog_reference import SchemaReference
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -354,9 +357,7 @@ class FlowFrame:
 
     def _create_child_frame(self, new_node_id, *, precomputed_result=None):
         """Helper method to create a new FlowFrame that's a child of this one"""
-        self._add_connection(
-            self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0")
-        )
+        self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
         # If a precomputed result was provided (e.g. serialization fallback),
         # inject it into the node AFTER the connection is added (which resets the node).
         if precomputed_result is not None:
@@ -1205,9 +1206,7 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
-    def _build_filter_expression_string(
-        self, predicates: tuple, constraints: dict
-    ) -> str:
+    def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
         """Collapse predicates and constraints into a single Polars expression
         string suitable for ``FilterInput.advanced_filter``. Mirrors the
         assembly logic in ``filter()`` but returns the bare conditions string
@@ -1325,9 +1324,7 @@ class FlowFrame:
         Returns a tuple of FlowFrames in the same order as ``splits``.
         """
         if isinstance(splits, Mapping):
-            split_groups = [
-                input_schema.RandomSplitGroup(name=n, percentage=p) for n, p in splits.items()
-            ]
+            split_groups = [input_schema.RandomSplitGroup(name=n, percentage=p) for n, p in splits.items()]
         else:
             split_groups = list(splits)
         new_node_id = generate_node_id()
@@ -1375,6 +1372,8 @@ class FlowFrame:
         catalog_description: str | None = None,
         catalog_tags: list[str] | None = None,
         description: str | None = None,
+        *,
+        schema: SchemaReference | None = None,
     ) -> FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
@@ -1398,6 +1397,11 @@ class FlowFrame:
             for the live list and per-algorithm hyperparameter specs.
         params:
             Algorithm-specific hyperparameters (e.g. ``{"l2_reg": 0.1}`` for ridge).
+        schema:
+            Target :class:`SchemaReference` for the catalog artifact. Preferred
+            over ``namespace_id``.
+        namespace_id:
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
         catalog_description / catalog_tags:
             Optional metadata stored alongside the artifact.
         description:
@@ -1409,12 +1413,16 @@ class FlowFrame:
             A new FlowFrame whose data is the input pass-through. The model
             is recorded in the catalog as a side effect.
         """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
         if features is None:
             features = [c for c in self.columns if c != target]
         if not features:
             raise ValueError("train_model: no feature columns inferred. Pass `features=[...]` explicitly.")
         if publish_to_catalog and not model_name:
             raise ValueError("train_model: 'model_name' is required when 'publish_to_catalog=True'.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
 
         new_node_id = generate_node_id()
         train_settings = input_schema.NodeTrainModel(
@@ -1427,7 +1435,7 @@ class FlowFrame:
                 params=params or {},
                 publish_to_catalog=publish_to_catalog,
                 model_name=model_name,
-                namespace_id=namespace_id,
+                namespace_id=resolved_namespace_id,
                 catalog_description=catalog_description,
                 catalog_tags=list(catalog_tags or []),
             ),
@@ -1477,9 +1485,7 @@ class FlowFrame:
             description=description or "Wait for dependency",
         )
         self.flow_graph.add_wait_for(wait_settings)
-        right_conn = _is.NodeConnection.create_from_simple_input(
-            dependency.node_id, new_node_id, input_type="right"
-        )
+        right_conn = _is.NodeConnection.create_from_simple_input(dependency.node_id, new_node_id, input_type="right")
         add_connection(self.flow_graph, right_conn)
         return self._create_child_frame(new_node_id)
 
@@ -1490,6 +1496,7 @@ class FlowFrame:
         model_name: str = "",
         output_column: str = "prediction",
         version: int | None = None,
+        schema: SchemaReference | None = None,
         namespace_id: int | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -1502,7 +1509,7 @@ class FlowFrame:
           ``train_model`` — the trained model is read from the flow's local
           cache, no catalog round-trip required. This is the natural way to
           chain Train Model → Apply Model in the same flow.
-        - Or pass *model_name* (and optionally *version* / *namespace_id*) to
+        - Or pass *model_name* (and optionally *version* / *schema*) to
           look the model up from the catalog.
 
         Parameters
@@ -1516,8 +1523,11 @@ class FlowFrame:
             Name of the new prediction column added to the output.
         version:
             Specific catalog version to apply. Defaults to the latest active version.
+        schema:
+            Catalog :class:`SchemaReference` to look the model up in. Preferred
+            over ``namespace_id``.
         namespace_id:
-            Optional catalog namespace.
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
         description:
             Optional node description shown in the visual designer.
 
@@ -1526,12 +1536,14 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with all input columns plus *output_column* (Float64).
         """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
         if upstream is None and not model_name:
-            raise ValueError(
-                "apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*."
-            )
+            raise ValueError("apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*.")
         if upstream is not None and model_name:
             raise ValueError("apply_model: pass either *upstream* or *model_name*, not both.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
 
         new_node_id = generate_node_id()
         if upstream is not None:
@@ -1546,7 +1558,7 @@ class FlowFrame:
                 source="catalog",
                 model_name=model_name,
                 model_version=version,
-                namespace_id=namespace_id,
+                namespace_id=resolved_namespace_id,
                 output_column=output_column,
             )
             default_desc = f"Apply '{model_name}' -> {output_column}"
@@ -2032,6 +2044,7 @@ class FlowFrame:
         self,
         table_name: str,
         *,
+        schema: SchemaReference | None = None,
         namespace_id: int | None = None,
         write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
         merge_keys: list[str] | None = None,
@@ -2041,13 +2054,17 @@ class FlowFrame:
 
         Args:
             table_name: Name of the catalog table to write to.
-            namespace_id: Optional namespace ID for the table.
+            schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+            namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
             write_mode: How to handle existing data.
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
         Returns:
             FlowFrame: A new child data frame representing the written data.
+
+        Raises:
+            ValueError: If both ``schema`` and ``namespace_id`` are provided.
         """
         from flowfile_frame.catalog import add_write_to_catalog
 
@@ -2055,6 +2072,7 @@ class FlowFrame:
             self.flow_graph,
             depends_on_node_id=self.node_id,
             table_name=table_name,
+            schema=schema,
             namespace_id=namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys,
@@ -2153,8 +2171,11 @@ class FlowFrame:
         return self.data
 
     def _with_flowfile_formula(
-        self, flowfile_formula: str, output_column_name: str, description: str = None,
-            output_column_datatype: str = "Auto"
+        self,
+        flowfile_formula: str,
+        output_column_name: str,
+        description: str = None,
+        output_column_datatype: str = "Auto",
     ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(

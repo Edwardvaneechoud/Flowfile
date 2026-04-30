@@ -526,12 +526,11 @@ def generate_improved_type_stub(
                     final_return_type = "str"
                 elif sig.return_annotation is not inspect.Signature.empty:
                     annotated_return = format_type_annotation(sig.return_annotation)
-                    # If FlowFrame specific methods like _create_child_frame are annotated with FlowFrame, use it
-                    if (
-                        class_name in annotated_return
-                        or f"'{class_name}'" in annotated_return
-                        or "FlowFrame" in annotated_return
-                    ):
+                    # Only collapse bare FlowFrame references (FlowFrame, 'FlowFrame',
+                    # flow_frame.FlowFrame). Compound types like tuple[FlowFrame, ...]
+                    # must be preserved verbatim.
+                    bare_refs = {class_name, f"'{class_name}'", f"flow_frame.{class_name}", "FlowFrame", "'FlowFrame'"}
+                    if annotated_return in bare_refs:
                         final_return_type = f"'{class_name}'"
                     else:
                         final_return_type = annotated_return
