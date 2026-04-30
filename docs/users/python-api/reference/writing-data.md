@@ -181,9 +181,12 @@ Write data to the Flowfile catalog as managed Delta tables. Available as both a 
 ```python
 import flowfile as ff
 
+# Resolve (or create) the target schema once
+schema = ff.CatalogReference("sales", auto_create=True).schema("staging", auto_create=True)
+
 ff.write_catalog_table(
     df, "output_table",
-    namespace_id=3,
+    schema=schema,
     write_mode="upsert",
     merge_keys=["id"],
 )
@@ -193,16 +196,24 @@ ff.write_catalog_table(
 
 - `df`: The `LazyFrame` to write
 - `table_name`: Name of the catalog table to write to (required)
-- `namespace_id`: Optional namespace ID for the table
+- `schema`: A [`SchemaReference`](catalog-references.md) identifying the target catalog/schema. Preferred over `namespace_id`.
 - `write_mode`: How to handle existing data (default: `"overwrite"`). See [Write Modes](#write-modes)
 - `merge_keys`: Column names for merge operations (required for `upsert`, `update`, `delete`)
 - `description`: Optional description for the table
 
+!!! info "Catalog handles vs raw IDs"
+    `schema=` accepts a [`SchemaReference`](catalog-references.md) — a validated, name-based handle that resolves to the underlying namespace id once. Construction fails fast if the catalog or schema doesn't exist (or creates it if `auto_create=True`). The legacy `namespace_id=<int>` keyword still works for back-compat, but you can't pass both.
+
 ### FlowFrame Method
 
 ```python
+# Convenience: write through the schema handle
+schema.write_table(df, "output_table", write_mode="overwrite")
+
+# Or as a method on the FlowFrame
 df.write_catalog_table(
     "output_table",
+    schema=schema,
     write_mode="overwrite",
 )
 ```

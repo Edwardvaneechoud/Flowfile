@@ -511,5 +511,3 @@ class DbInfo(Base):
     id = Column(Integer, primary_key=True, default=1)
     app_version = Column(String, nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
-
-

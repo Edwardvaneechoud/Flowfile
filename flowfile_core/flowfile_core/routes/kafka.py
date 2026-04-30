@@ -153,8 +153,6 @@ def infer_kafka_topic_schema(
         start_offset="earliest",
     )
 
-
-
     try:
         schema_pairs = infer_topic_schema(settings, sample_size=sample_size, decrypt_fn=decrypt_secret_value)
         return [{"name": name, "dtype": str(dtype)} for name, dtype in schema_pairs]
@@ -318,7 +316,6 @@ def create_kafka_sync(
         group_id=f"flowfile-schema-probe-{body.topic_name}",
         start_offset="earliest",
     )
-
 
     try:
         schema_pairs = infer_topic_schema(settings, sample_size=10, decrypt_fn=decrypt_secret_value)

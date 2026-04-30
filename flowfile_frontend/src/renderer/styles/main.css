@@ -12,6 +12,7 @@
 @import './components/_context-menu.css';
 @import './components/_status-badges.css';
 @import './components/_detail-panels.css';
+@import './components/_popovers.css';
 @import './utils/_spacing.css';
 @import './utils/_layout.css';
 
@@ -278,6 +279,42 @@ button {
 .el-dialog__footer {
   padding: var(--spacing-4) var(--spacing-5);
   border-top: 1px solid var(--color-border-light);
+}
+
+/* Visualization (graphic-walker) dialog — identified by the presence of
+   .viz-scroll-area inside. Element Plus's `custom-class` / `modal-class`
+   props don't propagate to .el-dialog / .el-overlay reliably in this version,
+   so we target the right elements by structure (:has) instead of by class.
+   Locks dialog to 92vh, suppresses the .el-overlay-dialog wrapper scroll
+   (EP default `overflow: auto`), and sets up a flex column inside the body
+   so the inner .viz-scroll-area is the only scroll surface. */
+.el-overlay:has(.viz-scroll-area) .el-overlay-dialog {
+  overflow: hidden;
+}
+.el-dialog:has(.viz-scroll-area) {
+  --el-dialog-margin-top: 4vh;
+  /* EP applies the dialog's `top` prop as inline `margin-top` (default 15vh).
+     Inline styles win over CSS, so the var above is a no-op without this
+     override. Without it: 15vh + 92vh = 107vh, and .el-overlay-dialog
+     (overflow: hidden) silently clips the bottom 7vh. */
+  margin-top: 4vh !important;
+  height: 92vh !important;
+  max-height: 92vh !important;
+  display: flex;
+  flex-direction: column;
+}
+.el-dialog:has(.viz-scroll-area) .el-dialog__header {
+  flex: 0 0 auto;
+}
+.el-dialog:has(.viz-scroll-area) .el-dialog__body {
+  flex: 1 1 auto;
+  /* min-height: 0 is required for `overflow: hidden` to actually clip a
+     flex child — without it, flex items refuse to shrink below content. */
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-3) var(--spacing-4);
 }
 
 /* ========== Element Plus Table ========== */

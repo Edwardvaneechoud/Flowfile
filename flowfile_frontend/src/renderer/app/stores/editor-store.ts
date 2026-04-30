@@ -34,9 +34,6 @@ export const useEditorStore = defineStore("editor", {
     showFlowResult: false,
     tableVisible: false,
 
-    // Parameters panel state
-    showParametersPanel: false,
-
     // Incremented whenever a graph-mutating action completes. Consumers (e.g.
     // the flow tab strip) watch this to refresh dirty state.
     graphVersion: 0,
@@ -173,22 +170,12 @@ export const useEditorStore = defineStore("editor", {
       this.graphVersion += 1;
     },
 
-    // ========== Parameters Panel ==========
-    toggleParametersPanel() {
-      this.showParametersPanel = !this.showParametersPanel;
-    },
-
-    setParametersPanelVisibility(visible: boolean) {
-      this.showParametersPanel = visible;
-    },
-
     // ========== Bulk panel control ==========
     // Closes every floating overlay (right-side and bottom). The left palette
     // (`dataActions`) is owned by the canvas component and stays visible.
     hideAllPanels() {
       this.showFlowResult = false;
       this.showCodeGenerator = false;
-      this.showParametersPanel = false;
       this.activeDrawerComponent = null;
       this.isDrawerOpen = false;
       this.isShowingLogViewer = false;

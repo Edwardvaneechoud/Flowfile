@@ -6,10 +6,13 @@ catalog, similar to how database/frame_helpers.py handles database operations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+
+from flowfile_frame.catalog_reference import WriteMode, _resolve_namespace_id
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
+    from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.flow_frame import FlowFrame
 
 
@@ -27,6 +30,7 @@ def add_write_to_catalog(
     depends_on_node_id: int,
     *,
     table_name: str,
+    schema: SchemaReference | None = None,
     namespace_id: int | None = None,
     write_mode: str = "overwrite",
     merge_keys: list[str] | None = None,
@@ -38,7 +42,8 @@ def add_write_to_catalog(
         flow_graph: The flow graph to add the node to.
         depends_on_node_id: The node ID that this writer depends on.
         table_name: Name of the catalog table to write to.
-        namespace_id: Optional namespace ID for the table.
+        schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+        namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
         write_mode: How to handle existing data.
         merge_keys: Column names for merge operations.
         description: Optional description for the node.
@@ -49,6 +54,7 @@ def add_write_to_catalog(
     from flowfile_core.schemas import input_schema
     from flowfile_frame.utils import generate_node_id
 
+    resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
     node_id = generate_node_id()
     flow_id = flow_graph.flow_id
 
@@ -60,7 +66,7 @@ def add_write_to_catalog(
         description=description,
         catalog_write_settings=input_schema.CatalogWriteSettings(
             table_name=table_name,
-            namespace_id=namespace_id,
+            namespace_id=resolved_namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys or [],
         ),
@@ -73,18 +79,20 @@ def add_write_to_catalog(
 def read_catalog_table(
     table_name: str,
     *,
+    schema: SchemaReference | None = None,
     namespace_id: int | None = None,
     delta_version: int | None = None,
-    flow_graph=None,
+    flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Read a table from the Flowfile catalog.
 
-    Resolves the table by name (and optionally namespace) via the catalog
+    Resolves the table by name (and optionally schema) via the catalog
     service, then creates a catalog reader node in the flow graph.
 
     Args:
         table_name: Name of the catalog table to read.
-        namespace_id: Optional namespace ID to scope the lookup.
+        schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+        namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
         delta_version: Optional Delta version to read (for time-travel queries).
         flow_graph: Optional existing FlowGraph to add the node to.
 
@@ -92,12 +100,14 @@ def read_catalog_table(
         FlowFrame: A FlowFrame backed by a catalog reader node.
 
     Raises:
-        ValueError: If the table cannot be found in the catalog.
+        ValueError: If both ``schema`` and ``namespace_id`` are provided, or
+            if the table cannot be found.
     """
     from flowfile_core.schemas import input_schema
     from flowfile_frame.flow_frame import FlowFrame
     from flowfile_frame.utils import create_flow_graph, generate_node_id
 
+    resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -109,7 +119,7 @@ def read_catalog_table(
         node_id=node_id,
         user_id=get_current_user_id(),
         catalog_table_name=table_name,
-        catalog_namespace_id=namespace_id,
+        catalog_namespace_id=resolved_namespace_id,
         delta_version=delta_version,
     )
     flow_graph.add_catalog_reader(settings)
@@ -123,7 +133,7 @@ def read_catalog_table(
 def read_catalog_sql(
     sql_query: str,
     *,
-    flow_graph=None,
+    flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Execute a SQL query against all catalog Delta tables.
 
@@ -168,8 +178,9 @@ def write_catalog_table(
     df: FlowFrame,
     table_name: str,
     *,
+    schema: SchemaReference | None = None,
     namespace_id: int | None = None,
-    write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+    write_mode: WriteMode = "overwrite",
     merge_keys: list[str] | None = None,
     description: str | None = None,
 ) -> None:
@@ -178,7 +189,8 @@ def write_catalog_table(
     Args:
         df: The FlowFrame to write.
         table_name: Name of the catalog table to write to.
-        namespace_id: Optional namespace ID for the table.
+        schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+        namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
         write_mode: How to handle existing data:
             - 'overwrite': Replace the entire table
             - 'error': Fail if the table already exists
@@ -190,10 +202,12 @@ def write_catalog_table(
         description: Optional description for the table.
 
     Raises:
-        ValueError: If merge_keys are required but not provided.
+        ValueError: If both ``schema`` and ``namespace_id`` are provided, or
+            if merge_keys are required but not provided.
     """
     df.write_catalog_table(
         table_name=table_name,
+        schema=schema,
         namespace_id=namespace_id,
         write_mode=write_mode,
         merge_keys=merge_keys,

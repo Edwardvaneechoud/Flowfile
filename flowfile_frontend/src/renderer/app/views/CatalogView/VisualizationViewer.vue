@@ -54,34 +54,38 @@
       </div>
     </div>
 
-    <pre v-if="sqlExpanded && viz?.source_type === 'sql' && viz.sql_query" class="viz-sql-block">{{
-      viz.sql_query
-    }}</pre>
+    <div class="viz-scroll-area">
+      <pre
+        v-if="sqlExpanded && viz?.source_type === 'sql' && viz.sql_query"
+        class="viz-sql-block"
+        >{{ viz.sql_query }}</pre
+      >
 
-    <div v-if="loadingMeta || loadingData" class="viz-viewer-state">
-      <el-skeleton :rows="6" animated />
+      <div v-if="loadingMeta || loadingData" class="viz-viewer-state">
+        <el-skeleton :rows="6" animated />
+      </div>
+
+      <div v-else-if="errorMessage" class="viz-viewer-state">
+        <el-alert :title="errorMessage" type="error" :closable="false" show-icon />
+      </div>
+
+      <template v-else>
+        <el-alert
+          v-if="computeError"
+          :title="computeError"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <VueGraphicWalker
+          ref="gwRef"
+          :computation="computeOnWorker"
+          :fields="plainFields"
+          :spec-list="plainSpecList"
+          :appearance="appearance"
+        />
+      </template>
     </div>
-
-    <div v-else-if="errorMessage" class="viz-viewer-state">
-      <el-alert :title="errorMessage" type="error" :closable="false" show-icon />
-    </div>
-
-    <template v-else>
-      <el-alert
-        v-if="computeError"
-        :title="computeError"
-        type="error"
-        :closable="false"
-        show-icon
-      />
-      <VueGraphicWalker
-        ref="gwRef"
-        :computation="computeOnWorker"
-        :fields="plainFields"
-        :spec-list="plainSpecList"
-        :appearance="appearance"
-      />
-    </template>
   </div>
 </template>
 
@@ -262,7 +266,21 @@ onMounted(load);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 75vh;
+  /* Fill the dialog body and clip — only .viz-scroll-area scrolls. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Constraint layer — see VisualizationEditor.vue for rationale. We clip
+   instead of scrolling so graphic-walker's own internal scroll handles the
+   chart's overflow. */
+.viz-scroll-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .viz-viewer-toolbar {
   display: flex;

@@ -5,17 +5,23 @@
         <h2>Visualizations</h2>
         <p class="viz-library-sub">Saved charts across the catalog. Click any chart to open it.</p>
       </div>
-      <el-input
-        v-model="search"
-        size="small"
-        placeholder="Filter by name or source"
-        class="viz-library-search"
-        clearable
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
+      <div class="viz-library-actions">
+        <el-input
+          v-model="search"
+          size="small"
+          placeholder="Filter by name or source"
+          class="viz-library-search"
+          clearable
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-button type="primary" size="small" @click="openSourcePicker">
+          <el-icon><Plus /></el-icon>
+          <span>New chart</span>
+        </el-button>
+      </div>
     </div>
 
     <div v-if="loading" class="viz-library-state">
@@ -24,8 +30,17 @@
 
     <div v-else-if="!filtered.length" class="viz-library-state">
       <el-empty
-        description="No saved visualizations yet. Open a table or run a SQL query to create one."
-      />
+        :description="
+          search
+            ? 'No charts match your filter.'
+            : 'No charts yet. Create one from a catalog table or an ad-hoc SQL query.'
+        "
+      >
+        <el-button v-if="!search" type="primary" @click="openSourcePicker">
+          <el-icon><Plus /></el-icon>
+          <span>New chart</span>
+        </el-button>
+      </el-empty>
     </div>
 
     <div v-else class="viz-library-grid">
@@ -103,18 +118,39 @@
         @deleted="onDeletedFromViewer"
       />
     </el-dialog>
+
+    <VisualizationSourcePicker v-model="sourcePickerOpen" @picked="onSourcePicked" />
+
+    <el-dialog
+      v-model="creatorOpen"
+      title="New chart"
+      width="92vw"
+      destroy-on-close
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <VisualizationEditor
+        v-if="creatorOpen && pendingSource"
+        :source="pendingSource"
+        :appearance="appearance"
+        @saved="onCreated"
+        @cancel="creatorOpen = false"
+      />
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Delete, Edit, FolderOpened, MoreFilled, Search } from "@element-plus/icons-vue";
+import { Delete, Edit, FolderOpened, MoreFilled, Plus, Search } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { formatDate } from "./catalog-formatters";
-import type { CatalogVisualization } from "../../types";
+import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 import VisualizationViewer from "./VisualizationViewer.vue";
+import VisualizationEditor from "./VisualizationEditor.vue";
+import VisualizationSourcePicker from "./VisualizationSourcePicker.vue";
 
 const emit = defineEmits<{
   (e: "viewTable", tableId: number): void;
@@ -126,6 +162,10 @@ const appearance = useGraphicWalkerAppearance();
 const search = ref("");
 const viewerOpen = ref(false);
 const active = ref<CatalogVisualization | null>(null);
+
+const sourcePickerOpen = ref(false);
+const creatorOpen = ref(false);
+const pendingSource = ref<VizSourceDescriptor | null>(null);
 
 const loading = computed(
   () => store.loadingVisualizationLibrary && !store.visualizationLibrary.length,
@@ -157,6 +197,25 @@ const filtered = computed<CatalogVisualization[]>(() => {
 
 function openViz(item: CatalogVisualization) {
   active.value = item;
+  viewerOpen.value = true;
+}
+
+function openSourcePicker() {
+  sourcePickerOpen.value = true;
+}
+
+function onSourcePicked(source: VizSourceDescriptor) {
+  pendingSource.value = source;
+  creatorOpen.value = true;
+}
+
+function onCreated(saved: CatalogVisualization) {
+  // store.createVisualization() already triggers loadVisualizationLibrary, so
+  // the grid auto-refreshes. Open the new chart in the viewer to close the
+  // loop on the "I just made this — let me see it" moment.
+  creatorOpen.value = false;
+  pendingSource.value = null;
+  active.value = saved;
   viewerOpen.value = true;
 }
 
@@ -205,8 +264,9 @@ onMounted(() => {
 .viz-library-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 16px;
+  flex-wrap: wrap;
 }
 .viz-library-header h2 {
   margin: 0 0 4px;
@@ -217,8 +277,13 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
+.viz-library-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .viz-library-search {
-  max-width: 320px;
+  width: 240px;
 }
 .viz-library-state {
   display: flex;

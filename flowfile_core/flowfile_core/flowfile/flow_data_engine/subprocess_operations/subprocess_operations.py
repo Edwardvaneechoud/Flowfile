@@ -210,9 +210,7 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
 
 def trigger_google_analytics_read(ga_read_settings) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
-    f = requests.post(
-        url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
-    )
+    f = requests.post(url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json())
     if not f.ok:
         raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
     return Status(**f.json())
@@ -309,9 +307,7 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
         max_rows,
     )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
-    response = requests.post(
-        f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS
-    )
+    response = requests.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
@@ -372,9 +368,7 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
         limit,
     )
     body = {"source": worker_source, "column": column, "limit": limit}
-    response = requests.post(
-        f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS
-    )
+    response = requests.post(f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_column_stats session_key=%s status=%d body=%s",
