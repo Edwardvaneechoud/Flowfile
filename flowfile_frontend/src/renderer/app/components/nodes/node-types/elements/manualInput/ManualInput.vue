@@ -708,33 +708,13 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Propagate height through the wrapper chain so the table can fill available space */
+/* The drawer + genericNodeSettings flex chain provides the height; this just
+   needs to be a flex column so .settings-section can flex-fill below. */
 .manual-input-root {
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.manual-input-root :deep(.settings-wrapper) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.manual-input-root :deep(.el-tabs) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.manual-input-root :deep(.el-tabs__content) {
-  flex: 1;
   min-height: 0;
-  overflow: auto;
-}
-
-.manual-input-root :deep(.el-tab-pane) {
-  height: 100%;
 }
 
 .settings-section {

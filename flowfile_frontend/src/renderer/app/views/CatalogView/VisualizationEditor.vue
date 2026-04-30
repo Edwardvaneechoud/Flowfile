@@ -25,30 +25,32 @@
       </div>
     </div>
 
-    <div v-if="loadingSample" class="viz-editor-state">
-      <el-skeleton :rows="6" animated />
-    </div>
+    <div class="viz-scroll-area">
+      <div v-if="loadingSample" class="viz-editor-state">
+        <el-skeleton :rows="6" animated />
+      </div>
 
-    <div v-else-if="loadError" class="viz-editor-state">
-      <el-alert :title="loadError" type="error" :closable="false" show-icon />
-    </div>
+      <div v-else-if="loadError" class="viz-editor-state">
+        <el-alert :title="loadError" type="error" :closable="false" show-icon />
+      </div>
 
-    <template v-else>
-      <el-alert
-        v-if="computeError"
-        :title="computeError"
-        type="error"
-        :closable="false"
-        show-icon
-      />
-      <VueGraphicWalker
-        ref="gwRef"
-        :computation="computeOnWorker"
-        :fields="plainFields"
-        :spec-list="plainInitialSpecList"
-        :appearance="appearance"
-      />
-    </template>
+      <template v-else>
+        <el-alert
+          v-if="computeError"
+          :title="computeError"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <VueGraphicWalker
+          ref="gwRef"
+          :computation="computeOnWorker"
+          :fields="plainFields"
+          :spec-list="plainInitialSpecList"
+          :appearance="appearance"
+        />
+      </template>
+    </div>
   </div>
 </template>
 
@@ -188,7 +190,24 @@ const save = async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 75vh;
+  /* Fill the dialog body and prevent any growth past it — only the inner
+     .viz-scroll-area should scroll. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Constraint layer for graphic-walker. We *clip* (not scroll) here so that
+   graphic-walker's own internal `.overflow-auto` chart pane handles the
+   chart's vertical scroll natively — that keeps the encoding controls
+   (X-Axis / Y-Axis bars) sticky above a scrolling chart instead of pushing
+   them off-screen. Takes whatever space is left after the toolbar. */
+.viz-scroll-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .viz-editor-toolbar {
   display: flex;

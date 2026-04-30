@@ -7,6 +7,8 @@ const props = defineProps<EdgeProps>();
 
 const { removeEdges } = useVueFlow();
 const hoveredEdgeId = inject<Ref<string | null>>("hoveredEdgeId");
+const cancelEdgeLeave = inject<() => void>("cancelEdgeLeave");
+const scheduleEdgeLeave = inject<(id: string) => void>("scheduleEdgeLeave");
 
 const pathData = computed(() =>
   getBezierPath({
@@ -27,6 +29,14 @@ const isHovered = computed(() => hoveredEdgeId?.value === props.id);
 
 function onDelete() {
   removeEdges([props.id]);
+}
+
+function onButtonEnter() {
+  cancelEdgeLeave?.();
+}
+
+function onButtonLeave() {
+  scheduleEdgeLeave?.(props.id);
 }
 </script>
 
@@ -55,6 +65,8 @@ function onDelete() {
       type="button"
       @click.stop="onDelete"
       @pointerdown.stop
+      @mouseenter="onButtonEnter"
+      @mouseleave="onButtonLeave"
     >
       &times;
     </button>

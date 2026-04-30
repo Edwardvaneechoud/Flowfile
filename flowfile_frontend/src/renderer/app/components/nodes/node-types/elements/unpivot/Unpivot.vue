@@ -1,11 +1,11 @@
 <template>
-  <div v-if="dataLoaded && nodeUnpivot" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeUnpivot" class="unpivot-node-root">
     <generic-node-settings
       v-model="nodeUnpivot"
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <div class="listbox-wrapper">
+      <div class="listbox-wrapper unpivot-columns-card">
         <ul class="listbox">
           <li
             v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
@@ -32,58 +32,54 @@
         @select="handleContextMenuSelect"
         @close="closeContextMenu"
       />
-      <div class="listbox-wrapper">
-        <SettingsSection
-          title="Index Keys"
-          :items="unpivotInput.index_columns"
-          droppable="true"
-          @remove-item="removeColumn('index', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('index')"
+
+      <SettingsSection
+        title="Index Keys"
+        :items="unpivotInput.index_columns"
+        droppable="true"
+        @remove-item="removeColumn('index', $event)"
+        @dragover.prevent
+        @drop="onDropInSection('index')"
+      />
+
+      <div class="switch-container">
+        <span>Value selector</span>
+        <el-switch
+          v-model="unpivotInput.data_type_selector_mode"
+          active-value="column"
+          inactive-value="data_type"
+          active-text="Column"
+          inactive-text="Data Type"
+          inline-prompt
         />
       </div>
-      <div class="listbox-wrapper">
-        <div class="switch-container">
-          <span>Value selector</span>
-          <el-switch
-            v-model="unpivotInput.data_type_selector_mode"
-            active-value="column"
-            inactive-value="data_type"
-            active-text="Column"
-            inactive-text="Data Type"
-            inline-prompt
-          />
-        </div>
 
-        <SettingsSection
-          v-if="unpivotInput.data_type_selector_mode === 'column'"
-          title="Columns to unpivot"
-          title-font-size="14px"
-          :items="unpivotInput.value_columns"
-          droppable="true"
-          @remove-item="removeColumn('value', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('value')"
-        />
-        <div v-else class="listbox-wrapper">
-          <div class="listbox-subtitle">Dynamic data type selector</div>
-          <div class="listbox-wrapper">
-            <el-select
-              v-model="unpivotInput.data_type_selector"
-              placeholder="Select"
-              size="small"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="item in dataTypeSelectorOptions"
-                :key="item"
-                :label="item"
-                :value="item"
-                style="width: 400px"
-              />
-            </el-select>
-          </div>
-        </div>
+      <SettingsSection
+        v-if="unpivotInput.data_type_selector_mode === 'column'"
+        title="Columns to unpivot"
+        title-font-size="14px"
+        :items="unpivotInput.value_columns"
+        droppable="true"
+        @remove-item="removeColumn('value', $event)"
+        @dragover.prevent
+        @drop="onDropInSection('value')"
+      />
+      <div v-else class="data-type-selector">
+        <div class="listbox-subtitle">Dynamic data type selector</div>
+        <el-select
+          v-model="unpivotInput.data_type_selector"
+          placeholder="Select"
+          size="small"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="item in dataTypeSelectorOptions"
+            :key="item"
+            :label="item"
+            :value="item"
+            style="width: 400px"
+          />
+        </el-select>
       </div>
     </generic-node-settings>
   </div>
@@ -288,6 +284,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.unpivot-node-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.unpivot-columns-card .listbox {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .context-menu {
   position: fixed;
   z-index: 1000;
@@ -316,10 +323,11 @@ onUnmounted(() => {
 .switch-container {
   display: flex;
   align-items: center;
-  margin: 12px;
+  gap: 10px;
+  padding: var(--spacing-2) var(--spacing-3);
 }
 
-.switch-container span {
-  margin-right: 10px;
+.data-type-selector {
+  padding: 0 var(--spacing-2);
 }
 </style>

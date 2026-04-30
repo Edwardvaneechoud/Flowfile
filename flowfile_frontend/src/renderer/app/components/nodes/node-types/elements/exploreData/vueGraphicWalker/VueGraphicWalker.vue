@@ -208,13 +208,53 @@ defineExpose({
 <style scoped>
 .gw-wrapper {
   width: 100%;
-  min-height: 500px;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* Was `min-height: 500px` — that floor pushed the wrapper past its
+     constraint container on tighter layouts (small dialogs, narrow viewports),
+     causing graphic-walker's internal flex-1 chart pane to mis-size and the
+     parent scroll layer to take the chart's overflow instead of GW's own
+     `.overflow-auto`. Dropping the floor lets GW lay out at the size we give
+     it, and its built-in scroll handles oversized charts internally. */
+  min-height: 0;
 }
 
 .gw-wrapper > div {
   width: 100%;
+  /* React mount must be a deterministic flex item, not `height: 100%`.
+     With `height: 100%`, GW's `flex-1` Tailwind root only resolves to a
+     definite height when the percentage chain propagates cleanly through
+     every ancestor — under .viz-scroll-area's flex layout that fails on
+     some renders, so GW root sizes to its content (encoding controls +
+     2900px canvas) and overflows past .gw-wrapper (default overflow:
+     visible) until it hits .viz-scroll-area's clip. With `flex: 1 1 0`
+     plus `overflow: hidden` here, GW's chart area is forced into a
+     definite box, engaging its native `.overflow-auto` for chart scroll. */
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* GW renders its React tree into a shadow root that lives TWO div levels
+   below our React mount (React-rendered intermediate wrapper, then the
+   shadow-host div). Those intermediates have no Vue data-v attribute and
+   no height/flex constraints, so without :deep() rules they size to GW's
+   natural content height (~1495px) instead of inheriting our React mount's
+   constrained box. That in turn leaves GW's `.App.h-full` inside the shadow
+   root resolving to an indefinite parent, so GW's own `flex-1 min-h-0`
+   chart pane never gets a definite height and its native `.overflow-auto`
+   never engages — the chart silently overflows and is clipped at the React
+   mount. Force both intermediates to inherit the height. */
+.gw-wrapper > div :deep(> div),
+.gw-wrapper > div :deep(> div > div) {
   height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 .loading,

@@ -63,6 +63,8 @@
         @save="headerButtons?.openSaveModal()"
         @run="headerButtons?.runFlow()"
         @new="headerButtons?.handleQuickCreate()"
+        @open="headerButtons?.openOpenDialog()"
+        @open-settings="headerButtons?.openSettings()"
       />
       <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">
         <span class="switch-spinner" />
