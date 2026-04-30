@@ -121,6 +121,7 @@ nav:
         - Overview: users/python-api/reference/index.md
         - Reading Data: users/python-api/reference/reading-data.md
         - Writing Data: users/python-api/reference/writing-data.md
+        - Catalog References: users/python-api/reference/catalog-references.md
         - Data Types: users/python-api/reference/data-types.md
         - DataFrame Operations: users/python-api/reference/flowframe-operations.md
         - Aggregations: users/python-api/reference/aggregations.md

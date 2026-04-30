@@ -18,6 +18,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 
 ### Flowfile-Specific Features
 
+- [**Catalog References**](catalog-references.md) - Typed catalog/schema handles for the Flowfile catalog
 - [**Cloud Storage**](cloud-connections.md) - S3 integration
 - [**visualize pipelines**](visual-ui.md) - Working with the visual editor
 
