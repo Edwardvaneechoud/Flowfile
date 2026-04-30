@@ -12,6 +12,7 @@
 @import './components/_context-menu.css';
 @import './components/_status-badges.css';
 @import './components/_detail-panels.css';
+@import './components/_popovers.css';
 @import './utils/_spacing.css';
 @import './utils/_layout.css';
 

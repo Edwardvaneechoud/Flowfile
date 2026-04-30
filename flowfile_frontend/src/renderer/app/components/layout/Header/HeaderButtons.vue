@@ -20,9 +20,10 @@
             <span class="material-icons header-action-popover-icon">save</span>
             <span>Save</span>
           </div>
-          <p class="header-action-popover-desc">Save changes to this flow.</p>
+          <p class="header-action-popover-desc">
+            Save changes to this flow. Use the ▼ for Save As…
+          </p>
           <p class="header-action-popover-shortcut-hint">
-            Tip: press
             <span class="header-action-popover-shortcut">
               <kbd>{{ MODIFIER_LABEL }}</kbd>
               <kbd>S</kbd>
@@ -95,10 +96,9 @@
             <span>Create</span>
           </div>
           <p class="header-action-popover-desc">
-            Start a new flow at the default location. Use the chevron to pick a folder.
+            Start a new flow at the default location. Use the ▼ to pick a folder.
           </p>
           <p class="header-action-popover-shortcut-hint">
-            Tip: press
             <span class="header-action-popover-shortcut">
               <kbd>{{ MODIFIER_LABEL }}</kbd>
               <kbd>N</kbd>
@@ -847,70 +847,5 @@ onMounted(async () => {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted, #999);
   font-style: italic;
-}
-</style>
-
-<!-- Unscoped: el-popover teleports its popper to <body>, outside this
-     component's scope, so scoped selectors wouldn't reach it. All header
-     action popovers share popper-class="header-action-popover" so this one
-     ruleset styles every popover (Save / Open / Settings / Run / Code). -->
-<style>
-.header-action-popover.el-popper {
-  padding: 0;
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, 0.12));
-}
-.header-action-popover .header-action-popover-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  font-family: var(--font-family-base);
-}
-.header-action-popover .header-action-popover-title {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold, 600);
-  color: var(--color-text-primary);
-}
-.header-action-popover .header-action-popover-icon {
-  font-size: 18px;
-  color: var(--color-accent);
-}
-.header-action-popover .header-action-popover-desc {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  line-height: 1.5;
-  color: var(--color-text-secondary);
-}
-.header-action-popover .header-action-popover-shortcut-hint {
-  margin: 0;
-  padding-top: var(--spacing-2);
-  border-top: 1px solid var(--color-border-light);
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-.header-action-popover .header-action-popover-shortcut {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin: 0 2px;
-  vertical-align: middle;
-}
-.header-action-popover .header-action-popover-shortcut kbd {
-  display: inline-block;
-  min-width: 20px;
-  padding: 1px 6px;
-  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 10.5px;
-  font-weight: var(--font-weight-medium);
-  text-align: center;
-  color: var(--color-text-secondary);
-  background: var(--color-background-tertiary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-sm);
 }
 </style>
