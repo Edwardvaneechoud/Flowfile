@@ -4,11 +4,14 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping
 from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefinition, SchemaDict
+
+if TYPE_CHECKING:
+    from flowfile_frame.catalog_reference import SchemaReference
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -354,9 +357,7 @@ class FlowFrame:
 
     def _create_child_frame(self, new_node_id, *, precomputed_result=None):
         """Helper method to create a new FlowFrame that's a child of this one"""
-        self._add_connection(
-            self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0")
-        )
+        self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
         # If a precomputed result was provided (e.g. serialization fallback),
         # inject it into the node AFTER the connection is added (which resets the node).
         if precomputed_result is not None:
@@ -1205,9 +1206,7 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
-    def _build_filter_expression_string(
-        self, predicates: tuple, constraints: dict
-    ) -> str:
+    def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
         """Collapse predicates and constraints into a single Polars expression
         string suitable for ``FilterInput.advanced_filter``. Mirrors the
         assembly logic in ``filter()`` but returns the bare conditions string
@@ -1308,6 +1307,59 @@ class FlowFrame:
         )
         return pass_frame, fail_frame
 
+    def random_split(
+        self,
+        splits: Mapping[str, float] | list[input_schema.RandomSplitGroup],
+        seed: int | None = None,
+        description: str | None = None,
+    ) -> tuple[FlowFrame, ...]:
+        """Randomly partition rows into N labeled FlowFrames.
+
+        ``splits`` is either an ordered mapping of split name to percentage
+        (e.g. ``{"train": 80, "test": 20}``) or a list of
+        :class:`flowfile_core.schemas.input_schema.RandomSplitGroup` for the
+        fully-typed form. Percentages must sum to 100; order determines output
+        handles. ``seed`` is the optional shuffle seed.
+
+        Returns a tuple of FlowFrames in the same order as ``splits``.
+        """
+        if isinstance(splits, Mapping):
+            split_groups = [input_schema.RandomSplitGroup(name=n, percentage=p) for n, p in splits.items()]
+        else:
+            split_groups = list(splits)
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeRandomSplit(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            splits=split_groups,
+            seed=seed,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_random_split(settings)
+        self._add_connection(
+            self.node_id,
+            new_node_id,
+            output_handle=getattr(self, "output_handle", "output-0"),
+        )
+        node = self.flow_graph.get_node(new_node_id)
+        frames: list[FlowFrame] = []
+        for i in range(len(settings.splits)):
+            engine = node.get_output(f"output-{i}") if node is not None else None
+            frames.append(
+                FlowFrame(
+                    data=engine.data_frame if engine is not None else None,
+                    flow_graph=self.flow_graph,
+                    node_id=new_node_id,
+                    parent_node_id=self.node_id,
+                    output_handle=f"output-{i}",
+                )
+            )
+        return tuple(frames)
+
     def train_model(
         self,
         target: str,
@@ -1320,6 +1372,8 @@ class FlowFrame:
         catalog_description: str | None = None,
         catalog_tags: list[str] | None = None,
         description: str | None = None,
+        *,
+        schema: SchemaReference | None = None,
     ) -> FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
@@ -1343,6 +1397,11 @@ class FlowFrame:
             for the live list and per-algorithm hyperparameter specs.
         params:
             Algorithm-specific hyperparameters (e.g. ``{"l2_reg": 0.1}`` for ridge).
+        schema:
+            Target :class:`SchemaReference` for the catalog artifact. Preferred
+            over ``namespace_id``.
+        namespace_id:
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
         catalog_description / catalog_tags:
             Optional metadata stored alongside the artifact.
         description:
@@ -1354,12 +1413,16 @@ class FlowFrame:
             A new FlowFrame whose data is the input pass-through. The model
             is recorded in the catalog as a side effect.
         """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
         if features is None:
             features = [c for c in self.columns if c != target]
         if not features:
             raise ValueError("train_model: no feature columns inferred. Pass `features=[...]` explicitly.")
         if publish_to_catalog and not model_name:
             raise ValueError("train_model: 'model_name' is required when 'publish_to_catalog=True'.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
 
         new_node_id = generate_node_id()
         train_settings = input_schema.NodeTrainModel(
@@ -1372,7 +1435,7 @@ class FlowFrame:
                 params=params or {},
                 publish_to_catalog=publish_to_catalog,
                 model_name=model_name,
-                namespace_id=namespace_id,
+                namespace_id=resolved_namespace_id,
                 catalog_description=catalog_description,
                 catalog_tags=list(catalog_tags or []),
             ),
@@ -1422,9 +1485,7 @@ class FlowFrame:
             description=description or "Wait for dependency",
         )
         self.flow_graph.add_wait_for(wait_settings)
-        right_conn = _is.NodeConnection.create_from_simple_input(
-            dependency.node_id, new_node_id, input_type="right"
-        )
+        right_conn = _is.NodeConnection.create_from_simple_input(dependency.node_id, new_node_id, input_type="right")
         add_connection(self.flow_graph, right_conn)
         return self._create_child_frame(new_node_id)
 
@@ -1435,6 +1496,7 @@ class FlowFrame:
         model_name: str = "",
         output_column: str = "prediction",
         version: int | None = None,
+        schema: SchemaReference | None = None,
         namespace_id: int | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -1447,7 +1509,7 @@ class FlowFrame:
           ``train_model`` — the trained model is read from the flow's local
           cache, no catalog round-trip required. This is the natural way to
           chain Train Model → Apply Model in the same flow.
-        - Or pass *model_name* (and optionally *version* / *namespace_id*) to
+        - Or pass *model_name* (and optionally *version* / *schema*) to
           look the model up from the catalog.
 
         Parameters
@@ -1461,8 +1523,11 @@ class FlowFrame:
             Name of the new prediction column added to the output.
         version:
             Specific catalog version to apply. Defaults to the latest active version.
+        schema:
+            Catalog :class:`SchemaReference` to look the model up in. Preferred
+            over ``namespace_id``.
         namespace_id:
-            Optional catalog namespace.
+            Legacy. Raw namespace id; mutually exclusive with ``schema``.
         description:
             Optional node description shown in the visual designer.
 
@@ -1471,12 +1536,14 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with all input columns plus *output_column* (Float64).
         """
+        from flowfile_frame.catalog_reference import _resolve_namespace_id
+
         if upstream is None and not model_name:
-            raise ValueError(
-                "apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*."
-            )
+            raise ValueError("apply_model: pass either *upstream* (FlowFrame from train_model) or *model_name*.")
         if upstream is not None and model_name:
             raise ValueError("apply_model: pass either *upstream* or *model_name*, not both.")
+
+        resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
 
         new_node_id = generate_node_id()
         if upstream is not None:
@@ -1491,7 +1558,7 @@ class FlowFrame:
                 source="catalog",
                 model_name=model_name,
                 model_version=version,
-                namespace_id=namespace_id,
+                namespace_id=resolved_namespace_id,
                 output_column=output_column,
             )
             default_desc = f"Apply '{model_name}' -> {output_column}"
@@ -1507,6 +1574,78 @@ class FlowFrame:
             description=description or default_desc,
         )
         self.flow_graph.add_apply_model(apply_settings)
+        return self._create_child_frame(new_node_id)
+
+    def evaluate_model(
+        self,
+        actual_column: str,
+        *,
+        predicted_column: str = "prediction",
+        task_type: Literal["auto", "regression", "classification"] = "auto",
+        upstream: FlowFrame | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Compute model-quality metrics by comparing an actual column with a prediction column.
+
+        Returns a long-form ``(metric, value)`` frame. Reusable on training,
+        test, or hold-out splits — there's no built-in coupling to a specific
+        Train/Apply pair. Pass *upstream* (a FlowFrame returned by
+        :meth:`train_model`) so ``task_type="auto"`` can read the trainer's
+        task type; otherwise pass *task_type* explicitly. When neither is set,
+        regression metrics are computed.
+
+        Parameters
+        ----------
+        actual_column:
+            Column on the input frame holding the true values.
+        predicted_column:
+            Column on the input frame holding the predicted values. Defaults
+            to ``"prediction"``, matching :meth:`apply_model`'s default
+            *output_column*.
+        task_type:
+            Metric set to compute. ``"auto"`` resolves the task type from
+            *upstream*'s trainer when provided; otherwise falls back to
+            ``"regression"``.
+        upstream:
+            Optional :class:`FlowFrame` returned by :meth:`train_model`. When
+            given, ``task_type="auto"`` reads the trainer's task type from
+            this node.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with two columns: ``metric`` (String) and
+            ``value`` (Float64).
+        """
+        if actual_column not in self.columns:
+            raise ValueError(f"evaluate_model: actual_column '{actual_column}' not in input columns {self.columns}.")
+        if predicted_column not in self.columns:
+            raise ValueError(
+                f"evaluate_model: predicted_column '{predicted_column}' not in input columns {self.columns}."
+            )
+        if upstream is not None and upstream.flow_graph is not self.flow_graph:
+            raise ValueError("evaluate_model: 'upstream' must belong to the same flow as this frame.")
+
+        new_node_id = generate_node_id()
+        evaluate_settings = input_schema.NodeEvaluateModel(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            evaluate_input=input_schema.EvaluateModelSettings(
+                actual_column=actual_column,
+                predicted_column=predicted_column,
+                task_type=task_type,
+                upstream_train_node_id=upstream.node_id if upstream is not None else None,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description or f"Evaluate {predicted_column} vs {actual_column}",
+        )
+        self.flow_graph.add_evaluate_model(evaluate_settings)
         return self._create_child_frame(new_node_id)
 
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
@@ -1905,6 +2044,7 @@ class FlowFrame:
         self,
         table_name: str,
         *,
+        schema: SchemaReference | None = None,
         namespace_id: int | None = None,
         write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
         merge_keys: list[str] | None = None,
@@ -1914,13 +2054,17 @@ class FlowFrame:
 
         Args:
             table_name: Name of the catalog table to write to.
-            namespace_id: Optional namespace ID for the table.
+            schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
+            namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
             write_mode: How to handle existing data.
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
         Returns:
             FlowFrame: A new child data frame representing the written data.
+
+        Raises:
+            ValueError: If both ``schema`` and ``namespace_id`` are provided.
         """
         from flowfile_frame.catalog import add_write_to_catalog
 
@@ -1928,6 +2072,7 @@ class FlowFrame:
             self.flow_graph,
             depends_on_node_id=self.node_id,
             table_name=table_name,
+            schema=schema,
             namespace_id=namespace_id,
             write_mode=write_mode,
             merge_keys=merge_keys,
@@ -2026,8 +2171,11 @@ class FlowFrame:
         return self.data
 
     def _with_flowfile_formula(
-        self, flowfile_formula: str, output_column_name: str, description: str = None,
-            output_column_datatype: str = "Auto"
+        self,
+        flowfile_formula: str,
+        output_column_name: str,
+        description: str = None,
+        output_column_datatype: str = "Auto",
     ) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(
@@ -2079,6 +2227,111 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_graph_solver(graph_solver_settings)
+        return self._create_child_frame(new_node_id)
+
+    def dynamic_rename(
+        self,
+        mode: Literal["prefix", "suffix", "formula", "first_row"] = "prefix",
+        *,
+        prefix: str = "",
+        suffix: str = "",
+        formula: str = "",
+        columns: list[str] | None = None,
+        data_type: Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """
+        Rename many columns at once via a single rule.
+
+        One node, four modes — useful when you need a uniform transformation
+        across columns (e.g. prefixing every numeric column with ``"num_"``)
+        or want to promote the first row of a CSV to headers.
+
+        Parameters
+        ----------
+        mode:
+            How to compute new column names.
+
+            - ``"prefix"`` — prepend *prefix* to each selected column's name.
+            - ``"suffix"`` — append *suffix* to each selected column's name.
+            - ``"formula"`` — evaluate a Flowfile formula with
+              ``[column_name]`` bound to each column's current name
+              (e.g. ``"uppercase([column_name])"``).
+            - ``"first_row"`` — promote the first row of data to column
+              headers and drop that row from the output.
+        prefix:
+            Required and only valid when ``mode="prefix"``.
+        suffix:
+            Required and only valid when ``mode="suffix"``.
+        formula:
+            Required and only valid when ``mode="formula"``.
+        columns:
+            When given, apply the rule only to these columns. Mutually
+            exclusive with *data_type*.
+        data_type:
+            When given, apply the rule only to columns of this data-type
+            group. Mutually exclusive with *columns*.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with renamed columns. In ``"first_row"`` mode,
+            the first row is dropped from the output regardless of which
+            columns were selected for renaming.
+        """
+        if mode == "prefix":
+            if not prefix:
+                raise ValueError("dynamic_rename: 'prefix' is required when mode='prefix'.")
+            if suffix or formula:
+                raise ValueError("dynamic_rename: only 'prefix' may be set when mode='prefix'.")
+        elif mode == "suffix":
+            if not suffix:
+                raise ValueError("dynamic_rename: 'suffix' is required when mode='suffix'.")
+            if prefix or formula:
+                raise ValueError("dynamic_rename: only 'suffix' may be set when mode='suffix'.")
+        elif mode == "formula":
+            if not formula.strip():
+                raise ValueError("dynamic_rename: 'formula' is required when mode='formula'.")
+            if prefix or suffix:
+                raise ValueError("dynamic_rename: only 'formula' may be set when mode='formula'.")
+        elif mode == "first_row":
+            if prefix or suffix or formula:
+                raise ValueError(
+                    "dynamic_rename: 'prefix', 'suffix' and 'formula' must be empty when mode='first_row'."
+                )
+
+        if columns is not None and data_type is not None:
+            raise ValueError("dynamic_rename: pass at most one of 'columns' or 'data_type'.")
+
+        if columns is not None:
+            selection_mode = "list"
+        elif data_type is not None:
+            selection_mode = "data_type"
+        else:
+            selection_mode = "all"
+
+        new_node_id = generate_node_id()
+        rename_settings = input_schema.NodeDynamicRename(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode=mode,
+                prefix=prefix,
+                suffix=suffix,
+                formula=formula,
+                selection_mode=selection_mode,
+                selected_columns=list(columns or []),
+                selected_data_type=data_type,
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_dynamic_rename(rename_settings)
         return self._create_child_frame(new_node_id)
 
     def cache(self) -> FlowFrame:

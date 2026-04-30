@@ -27,9 +27,7 @@ def decrypt_secret_value(encrypted: str) -> str:
     return decrypt_secret(encrypted).get_secret_value()
 
 
-def _upsert_secret(
-    db: Session, existing_secret_id: int | None, name: str, secret_value, user_id: int
-) -> int:
+def _upsert_secret(db: Session, existing_secret_id: int | None, name: str, secret_value, user_id: int) -> int:
     """Update an existing secret or create a new one. Returns the secret ID."""
     plain = secret_value.get_secret_value()
     if not plain:
@@ -206,9 +204,7 @@ def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -
         extra = json.loads(db_conn.extra_config)
         blocked_prefixes = ("sasl.", "ssl.", "security.protocol")
         blocked_exact = {"bootstrap.servers", "group.id", "enable.auto.commit", "enable.partition.eof"}
-        extra = {
-            k: v for k, v in extra.items() if not k.startswith(blocked_prefixes) and k not in blocked_exact
-        }
+        extra = {k: v for k, v in extra.items() if not k.startswith(blocked_prefixes) and k not in blocked_exact}
         config.update(extra)
     return config
 
@@ -280,9 +276,7 @@ def list_topics(db: Session, connection_id: int, user_id: int) -> list[KafkaTopi
 # ---------------------------------------------------------------------------
 
 
-def reset_consumer_group(
-    db: Session, group_id: str, connection_id: int, user_id: int, topic: str
-) -> None:
+def reset_consumer_group(db: Session, group_id: str, connection_id: int, user_id: int, topic: str) -> None:
     """Reset a consumer group's offsets to the beginning of a topic.
 
     Sets committed offsets to 0 for every partition of *topic*, so the next
@@ -312,31 +306,30 @@ def reset_consumer_group(
     # Set committed offsets to 0 (beginning) for every partition
     tps = [TopicPartition(topic, p, 0) for p in range(partition_count)]
     admin = AdminClient(config)
-    futures = admin.alter_consumer_group_offsets(
-        [ConsumerGroupTopicPartitions(group_id, tps)]
-    )
+    futures = admin.alter_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id, tps)])
     for gid, future in futures.items():
         try:
             future.result()
             logger.info(
                 "Reset consumer group %s to beginning of topic %s (%d partitions)",
-                gid, topic, partition_count,
+                gid,
+                topic,
+                partition_count,
             )
         except KafkaException as e:
             # GROUP_ID_NOT_FOUND is not an error — the group doesn't exist yet
             kafka_err = e.args[0] if e.args else None
             if hasattr(kafka_err, "code") and kafka_err.code() == KafkaError.GROUP_ID_NOT_FOUND:
                 logger.debug(
-                    "Consumer group %s does not exist yet (will be created on first run)", gid,
+                    "Consumer group %s does not exist yet (will be created on first run)",
+                    gid,
                 )
                 continue
             logger.warning("Could not reset consumer group %s: %s", gid, e)
             raise ValueError(f"Could not reset consumer group '{gid}': {e}") from e
 
 
-def get_consumer_group_offsets(
-    db: Session, group_id: str, connection_id: int, user_id: int
-) -> dict[int, int]:
+def get_consumer_group_offsets(db: Session, group_id: str, connection_id: int, user_id: int) -> dict[int, int]:
     """Query committed offsets for a consumer group from the broker.
 
     Returns {partition: offset} dict, or empty dict if the group has no commits.

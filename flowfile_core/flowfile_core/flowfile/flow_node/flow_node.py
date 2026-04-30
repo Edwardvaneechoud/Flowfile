@@ -802,7 +802,9 @@ class FlowNode:
             The FlowDataEngine from the appropriate output handle.
         """
         handle = self._input_output_handles.get(input_node.node_id, DEFAULT_OUTPUT_HANDLE)
-        if handle != DEFAULT_OUTPUT_HANDLE and input_node._named_outputs:
+        if handle != DEFAULT_OUTPUT_HANDLE:
+            # get_output triggers execution first, then routes by handle. Required
+            # for the first-call case where _named_outputs is still empty.
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
@@ -909,9 +911,7 @@ class FlowNode:
         try:
             fl = self._function(
                 *[
-                    v.get_predicted_resulting_data(
-                        self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE)
-                    )
+                    v.get_predicted_resulting_data(self._input_output_handles.get(v.node_id, DEFAULT_OUTPUT_HANDLE))
                     for v in self.all_inputs
                 ]
             )
@@ -1669,9 +1669,7 @@ class FlowNode:
         output_names = getattr(self.setting_input, "output_names", None)
         node_reference = getattr(self.setting_input, "node_reference", None)
         template_fields = {**self.node_template.__dict__}
-        template_fields["output_names"] = (
-            output_names if output_names and len(output_names) > 1 else None
-        )
+        template_fields["output_names"] = output_names if output_names and len(output_names) > 1 else None
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,

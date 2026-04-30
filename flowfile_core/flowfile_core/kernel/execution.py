@@ -107,9 +107,7 @@ def write_inputs_to_parquet(
                 kwargs={"output_path": local_path},
             )
             if fetcher.has_error:
-                raise RuntimeError(
-                    f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}"
-                )
+                raise RuntimeError(f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}")
         kernel_path = manager.to_kernel_path(local_path)
         result.setdefault(name, []).append(kernel_path)
         all_paths.append(kernel_path)

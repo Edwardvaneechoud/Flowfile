@@ -57,6 +57,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableUpdate,
+    ColumnStatsResponse,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -91,7 +92,6 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationComputeResponse,
     VisualizationCreate,
     VisualizationFieldsRequest,
-    ColumnStatsResponse,
     VisualizationFieldsResponse,
     VisualizationOut,
     VisualizationSavedComputeRequest,
@@ -614,9 +614,7 @@ def get_table_column_stats(
     Used by the dashboard filter UI to pre-populate categorical option
     lists and pre-fill numeric / date range inputs.
     """
-    return service.get_table_column_stats(
-        table_id, column_name, limit=limit, user_id=current_user.id
-    )
+    return service.get_table_column_stats(table_id, column_name, limit=limit, user_id=current_user.id)
 
 
 @router.get("/tables/{table_id}/history", response_model=DeltaTableHistory)

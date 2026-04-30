@@ -184,8 +184,12 @@ import flowfile as ff
 # Read a catalog table (physical or virtual)
 df = ff.read_catalog_table("my_table")
 
-# Read from a specific namespace
-df = ff.read_catalog_table("my_table", namespace_id=3)
+# Scope to a specific schema using a typed reference
+schema = ff.CatalogReference("sales").schema("raw")
+df = ff.read_catalog_table("my_table", schema=schema)
+
+# Or call read_table directly on the schema handle
+df = schema.read_table("my_table")
 
 # Time travel to a specific Delta version (physical tables only)
 df = ff.read_catalog_table("my_table", delta_version=5)
@@ -194,10 +198,13 @@ df = ff.read_catalog_table("my_table", delta_version=5)
 **Parameters:**
 
 - `table_name`: Name of the catalog table to read (required)
-- `namespace_id`: Optional namespace ID to scope the lookup
+- `schema`: A [`SchemaReference`](catalog-references.md) identifying the catalog/schema to read from. Preferred over `namespace_id`.
 - `delta_version`: Optional Delta version for time-travel queries (physical tables only)
 
 Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
+
+!!! info "Looking up tables by name"
+    See [Catalog References](catalog-references.md) for the `CatalogReference` / `SchemaReference` API. The legacy `namespace_id=<int>` keyword is still accepted but discouraged — passing both `schema=` and `namespace_id=` raises `ValueError`.
 
 !!! info "Virtual table resolution"
     When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.

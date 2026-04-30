@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 500
 
 
-
 def _get_base_dir() -> Path:
     """Resolve the base directory for alembic files.
 
@@ -239,7 +238,6 @@ def migrate_data_from_legacy_db() -> None:
     finally:
         old_engine.dispose()
         new_engine.dispose()
-
 
 
 def run_startup_migration() -> None:

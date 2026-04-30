@@ -24,8 +24,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(
-        "UPDATE flow_runs SET run_type = 'in_designer_run' "
-        "WHERE run_type IN ('full_run', 'fetch_one', 'init')"
+        "UPDATE flow_runs SET run_type = 'in_designer_run' " "WHERE run_type IN ('full_run', 'fetch_one', 'init')"
     )
 
 

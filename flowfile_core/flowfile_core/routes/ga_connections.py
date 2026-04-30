@@ -256,9 +256,7 @@ def oauth_callback(
         description=state_payload.get("description"),
         default_property_id=state_payload.get("default_property_id"),
     )
-    return HTMLResponse(
-        _callback_html("ok", f"Connected as {oauth_user_email or 'Google user'}")
-    )
+    return HTMLResponse(_callback_html("ok", f"Connected as {oauth_user_email or 'Google user'}"))
 
 
 @router.put("/ga_connection", tags=["ga_connections"])
@@ -329,9 +327,7 @@ def test_ga_connection(
     try:
         refresh_token = decrypt_secret(encrypted).get_secret_value()
     except Exception as e:
-        return GoogleAnalyticsConnectionTestResponse(
-            success=False, message=f"Could not decrypt stored credential: {e}"
-        )
+        return GoogleAnalyticsConnectionTestResponse(success=False, message=f"Could not decrypt stored credential: {e}")
 
     try:
         from google.auth.transport.requests import Request
@@ -353,13 +349,9 @@ def test_ga_connection(
         )
         creds.refresh(Request())
     except Exception as e:
-        return GoogleAnalyticsConnectionTestResponse(
-            success=False, message=f"Could not refresh token: {e}"
-        )
+        return GoogleAnalyticsConnectionTestResponse(success=False, message=f"Could not refresh token: {e}")
 
-    return GoogleAnalyticsConnectionTestResponse(
-        success=True, message="Refresh token is valid"
-    )
+    return GoogleAnalyticsConnectionTestResponse(success=True, message="Refresh token is valid")
 
 
 @router.get("/oauth/client_config", response_model=GoogleOAuthClientView, tags=["ga_connections"])

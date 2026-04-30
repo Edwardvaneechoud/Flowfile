@@ -86,4 +86,14 @@ open_graph_in_editor(aggregated_df.flow_graph)
 
 - **Inspect Data Flow**: See exactly how your data is transformed step by step
 - **Debugging**: Identify issues in your data pipeline visually
-- **Documentation**: Share your data transformation logic with teammates 
+- **Documentation**: Share your data transformation logic with teammates
+
+## Type Stubs
+
+This package ships type information via `.pyi` stub files plus a `py.typed` marker (PEP 561). The stubs are auto-generated from the Python source; the source is the source of truth. After adding or changing a public method on `FlowFrame`, `Expr`, or any submodule (`selectors`, `flow_frame_methods`, etc.), regenerate with:
+
+```bash
+make stubs
+```
+
+CI runs `make check_stubs` to fail the build if stubs are out of sync. The three generators live in `flowfile_frame/`: `expr_stub_generator.py`, `flow_frame_stub_generator.py`, and `submodule_stub_generator.py`. The package-level `__init__.pyi` is hand-maintained — keep it in sync with `__init__.py` when adding/removing exports. 

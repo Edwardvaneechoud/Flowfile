@@ -248,6 +248,9 @@ def generate_improved_type_stub(
         output_file = os.path.join(default_dir, "flow_frame.pyi")
 
     content = [
+        "# This file was auto-generated to provide type information for FlowFrame",
+        "# DO NOT MODIFY THIS FILE MANUALLY",
+        "# Run `python flowfile_frame/flow_frame_stub_generator.py` to regenerate",
         "# Standard library imports",
         "import collections",
         "import inspect",
@@ -266,15 +269,20 @@ def generate_improved_type_stub(
         "from polars._typing import *",
         "from polars._typing import ParquetMetadata, PlanStage",
         "from polars._utils.async_ import _GeventDataFrameResult",
-        "from polars.dependencies import polars_cloud as pc",
+        # `polars._dependencies` (note the leading underscore). Polars never
+        # exposed a public `polars.dependencies`, despite Polars docstrings
+        # occasionally referring to it that way.
+        "from polars._dependencies import polars_cloud as pc",
         "from polars.io.cloud import CredentialProviderFunction",
         "from polars.lazyframe.frame import LazyGroupBy",
-        "from polars import LazyFrame, DataFrame, QueryOptFlags",
-        "from polars.io.parquet import ParquetFieldOverwrites",
+        "from polars import LazyFrame, DataFrame, QueryOptFlags, Schema, CompatLevel",
         "from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS",
-        "from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, "
-        "RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, "
-        "ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)",
+        # `polars.type_aliases` was deprecated in polars 1.0 — the type aliases
+        # moved to the private `polars._typing` module. Most names live there
+        # now; `Schema` / `CompatLevel` are exposed at the top-level above.
+        "from polars._typing import (IntoExpr, ClosedInterval, Label, StartBy, "
+        "IpcCompression, SyncOnCloseMethod, ExplainFormat, EngineType, "
+        "SerializationFormat, AsofJoinStrategy)",
         "",
         "# Local application/library specific imports",
         "import flowfile_frame",
@@ -300,21 +308,41 @@ def generate_improved_type_stub(
     ]
 
     if include_module_functions:
-        content.extend(
-            [
-                "# Module-level functions (example from your input)",
-                "def can_be_expr(param: inspect.Parameter) -> bool: ...",
-                "def generate_node_id() -> int: ...",
-                "def get_method_name_from_code(code: str) -> str | None: ...",
-                "def _contains_lambda_pattern(text: str) -> bool: ...",
-                "def _to_string_val(v) -> str: ...",
-                "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
-                "def _check_ok_for_serialization("
-                "method_name: str = None, polars_expr: pl.Expr | None = None, "
-                "group_expr: pl.Expr | None = None) -> None: ...",
-                "",
-            ]
-        )
+        content.append("# Module-level functions (auto-discovered from the source module)")
+        flowframe_module = sys.modules.get(flowframe_class.__module__)
+        module_function_lines: list[str] = []
+        if flowframe_module is not None:
+            for fn_name, fn_obj in inspect.getmembers(flowframe_module, inspect.isfunction):
+                if fn_name.startswith("__"):
+                    continue
+                if getattr(fn_obj, "__module__", None) != flowframe_module.__name__:
+                    continue
+                try:
+                    sig = inspect.signature(fn_obj)
+                except (ValueError, TypeError):
+                    module_function_lines.append(f"def {fn_name}(*args, **kwargs) -> Any: ...")
+                    continue
+                params: list[str] = []
+                for p in sig.parameters.values():
+                    if p.kind == inspect.Parameter.VAR_KEYWORD:
+                        params.append(f"**{p.name}")
+                        continue
+                    if p.kind == inspect.Parameter.VAR_POSITIONAL:
+                        params.append(f"*{p.name}")
+                        continue
+                    text = p.name
+                    if p.annotation is not inspect.Parameter.empty:
+                        text = f"{p.name}: {format_type_annotation(p.annotation)}"
+                    if p.default is not inspect.Parameter.empty:
+                        default_repr = format_default_value(p) or "..."
+                        text = f"{text} = {default_repr}"
+                    params.append(text)
+                rt = "Any"
+                if sig.return_annotation is not inspect.Parameter.empty:
+                    rt = format_type_annotation(sig.return_annotation)
+                module_function_lines.append(f"def {fn_name}({', '.join(params)}) -> {rt}: ...")
+        content.extend(module_function_lines)
+        content.append("")
 
     class_name = flowframe_class.__name__
     content.append(f"class {class_name}:")
@@ -498,12 +526,11 @@ def generate_improved_type_stub(
                     final_return_type = "str"
                 elif sig.return_annotation is not inspect.Signature.empty:
                     annotated_return = format_type_annotation(sig.return_annotation)
-                    # If FlowFrame specific methods like _create_child_frame are annotated with FlowFrame, use it
-                    if (
-                        class_name in annotated_return
-                        or f"'{class_name}'" in annotated_return
-                        or "FlowFrame" in annotated_return
-                    ):
+                    # Only collapse bare FlowFrame references (FlowFrame, 'FlowFrame',
+                    # flow_frame.FlowFrame). Compound types like tuple[FlowFrame, ...]
+                    # must be preserved verbatim.
+                    bare_refs = {class_name, f"'{class_name}'", f"flow_frame.{class_name}", "FlowFrame", "'FlowFrame'"}
+                    if annotated_return in bare_refs:
                         final_return_type = f"'{class_name}'"
                     else:
                         final_return_type = annotated_return
@@ -671,7 +698,58 @@ def generate_improved_type_stub(
     with open(output_file, "w") as f:
         f.write("\n".join(content))
 
+    _validate_emitted_imports(content)
     return output_file
+
+
+def _validate_emitted_imports(content: list[str]) -> None:
+    """Fail loudly if any emitted ``from X import Y`` doesn't resolve.
+
+    The header carries hardcoded polars import paths. When polars renames or
+    moves a symbol upstream, the stub silently emits an unresolvable import —
+    type checkers then treat the imported name as ``Any`` and the staleness
+    is invisible until someone hovers in their IDE. Running this check at
+    generation time turns those into a build error instead.
+    """
+    import importlib
+
+    failures: list[str] = []
+    for line in content:
+        if not isinstance(line, str):
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("from ") or " import " not in stripped:
+            continue
+        # Skip TYPE_CHECKING-gated imports inside `if TYPE_CHECKING:` blocks.
+        if line.startswith("    "):
+            continue
+        try:
+            head, _, tail = stripped.partition(" import ")
+            module_path = head[len("from ") :].strip()
+            names_part = tail.split("#", 1)[0].strip().rstrip(")")
+            names_part = names_part.lstrip("(")
+            module = importlib.import_module(module_path)
+            for raw in names_part.split(","):
+                name = raw.strip()
+                if not name or name == "*":
+                    continue
+                # Strip `as alias`
+                if " as " in name:
+                    name = name.split(" as ", 1)[0].strip()
+                if not hasattr(module, name):
+                    failures.append(f"{module_path}.{name} (in: {stripped})")
+        except ImportError as e:
+            failures.append(f"cannot import {module_path}: {e}")
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"could not validate {stripped!r}: {type(e).__name__}: {e}")
+
+    if failures:
+        msg = "\n  - ".join(failures)
+        raise RuntimeError(
+            f"flow_frame_stub_generator emitted imports that don't resolve at runtime — "
+            f"likely a polars upgrade renamed or removed a symbol. Update the hardcoded "
+            f"import block in this generator. Broken imports:\n  - {msg}"
+        )
 
 
 if __name__ == "__main__":

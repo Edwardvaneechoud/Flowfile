@@ -17,7 +17,9 @@ packages = [
 ]
 include = [
     { path = "flowfile/flowfile/web/static/**/*", format = "sdist" },
-    { path = "flowfile/flowfile/web/static/**/*", format = "wheel" }
+    { path = "flowfile/flowfile/web/static/**/*", format = "wheel" },
+    { path = "flowfile/flowfile/py.typed", format = "sdist" },
+    { path = "flowfile/flowfile/py.typed", format = "wheel" }
 ]
 
 [tool.poetry.dependencies]

@@ -1,0 +1,13 @@
+# Auto-generated stub for flowfile_frame.database.frame_helpers — do not edit.
+# Run `make stubs` to regenerate from the Python source.
+from __future__ import annotations
+
+from typing import Literal
+import polars as pl
+from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_frame.flow_frame import FlowFrame
+
+def add_read_from_database(flow_graph: FlowGraph, *, connection_name: str, table_name: str | None=None, schema_name: str | None=None, query: str | None=None, description: str | None=None) -> int: ...
+def add_write_to_database(flow_graph: FlowGraph, depends_on_node_id: int, *, connection_name: str, table_name: str, schema_name: str | None=None, if_exists: Literal['append', 'replace', 'fail']='append', description: str | None=None) -> int: ...
+def read_database(connection_name: str, *, table_name: str | None=None, schema_name: str | None=None, query: str | None=None, flow_graph: FlowGraph | None=None) -> FlowFrame: ...
+def write_database(df: pl.LazyFrame, connection_name: str, table_name: str, *, schema_name: str | None=None, if_exists: Literal['append', 'replace', 'fail']='append') -> None: ...
