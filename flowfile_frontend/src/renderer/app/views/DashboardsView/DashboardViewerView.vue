@@ -38,6 +38,7 @@
         mode="view"
         :appearance="appearance"
         :tile-datasource="tileDatasource"
+        @edit-viz="onEditVizFromTile"
       />
     </template>
   </div>
@@ -101,6 +102,15 @@ const onBack = () => {
 
 const onEdit = () => {
   router.push({ name: "dashboard-edit", params: { id: dashboardId.value } });
+};
+
+const onEditVizFromTile = (vizId: number | null) => {
+  if (vizId == null) return;
+  router.push({
+    name: "dashboard-edit",
+    params: { id: dashboardId.value },
+    query: { editViz: String(vizId) },
+  });
 };
 </script>
 

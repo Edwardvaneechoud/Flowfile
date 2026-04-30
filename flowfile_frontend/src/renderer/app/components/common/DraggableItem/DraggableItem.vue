@@ -1021,10 +1021,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .content {
-  flex-grow: 1;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 10px;
-  max-height: calc(100% - 50px);
   box-sizing: border-box;
 }
 .draggable-line {

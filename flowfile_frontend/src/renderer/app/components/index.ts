@@ -2,7 +2,7 @@
 
 // Common components
 export { default as FileBrowser } from "./common/FileBrowser/fileBrowser.vue";
-export { default as DraggableItem } from "./common/DraggableItem/ .vue";
+export { default as DraggableItem } from "./common/DraggableItem/DraggableItem.vue";
 export { default as LayoutControls } from "./common/DraggableItem/layoutControls.vue";
 
 // Node components

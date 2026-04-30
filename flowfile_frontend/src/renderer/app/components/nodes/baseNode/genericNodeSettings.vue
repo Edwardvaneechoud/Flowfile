@@ -473,13 +473,45 @@ const loadFieldsFromSchema = async () => {
 <style scoped>
 .settings-wrapper {
   width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
+.settings-wrapper :deep(.el-tabs) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-wrapper :deep(.el-tabs__header) {
+  flex-shrink: 0;
+}
+
+.settings-wrapper :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-wrapper :deep(.el-tab-pane) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* Tab panes that hold a single .settings-section render a form whose natural
+   height is shorter than the pane — keep the section pinned to the top
+   instead of stretching it. */
 .settings-section {
   background-color: var(--el-bg-color-page);
   border-radius: 8px;
   padding: 1.25rem;
   margin-top: 1rem;
+  flex-shrink: 0;
 }
 
 .setting-group {

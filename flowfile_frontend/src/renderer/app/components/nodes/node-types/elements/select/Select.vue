@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded" class="select-node-root">
     <generic-node-settings
       v-model="nodeSelect"
       @update:model-value="handleGenericSettingsUpdate"
@@ -106,3 +106,38 @@ defineExpose({
   saveSettings,
 });
 </script>
+
+<style scoped>
+.select-node-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Make the select-dynamic chain fill the tab pane so the table can flex
+   to the available height instead of using its default 700px cap, which
+   leaves an awkward dead zone at the bottom of the panel. We deliberately
+   leave the listbox card's padding / box-shadow / border-radius alone so
+   the inner table keeps its existing visual style. */
+.select-node-root :deep(.select-dynamic-root),
+.select-node-root :deep(.select-dynamic-content) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-node-root :deep(.select-dynamic-listbox) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-node-root :deep(.select-dynamic-listbox .table-wrapper) {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+</style>
