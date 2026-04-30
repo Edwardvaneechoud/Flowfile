@@ -77,6 +77,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
+import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import Status from "../../features/designer/editor/status.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -86,6 +87,9 @@ import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
+
+const notifyError = (title: string, message: string) =>
+  ElNotification({ title, message, type: "error", position: "top-left" });
 
 const router = useRouter();
 
@@ -140,10 +144,12 @@ const openFlow = (eventData: { message: string; flowPath: string }) => {
 const reloadCanvas = async (flowPath: string) => {
   isSwitching.value = true;
   try {
-    console.log("reloadCanvas", flowPath);
     const flowId = await importSavedFlow(flowPath);
     if (flowId === undefined) {
-      console.error("Failed to import flow from path:", flowPath);
+      notifyError(
+        "Couldn't open flow",
+        `Server returned no flow id for ${flowPath}. The file may be missing or unreadable.`,
+      );
       return;
     }
     // setFlowId triggers the Canvas watcher which loads the flow.
@@ -152,6 +158,9 @@ const reloadCanvas = async (flowPath: string) => {
       await headerButtons.value.loadFlowSettings();
     }
     await fetchActiveFlows();
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail ?? error?.message ?? String(error);
+    notifyError("Couldn't open flow", `Failed to open ${flowPath}: ${detail}`);
   } finally {
     isSwitching.value = false;
   }

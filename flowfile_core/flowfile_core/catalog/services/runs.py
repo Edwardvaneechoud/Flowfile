@@ -44,9 +44,26 @@ class FlowRunService:
             return str(log_file)
         return None
 
-    def run_to_out(self, run: FlowRun) -> FlowRunOut:
+    def _display_names_for(self, runs: list[FlowRun]) -> dict[int, str]:
+        """Bulk-resolve ``registration_id -> current registration name``.
+
+        Used to override the run's snapshot ``flow_name`` (which after a save is
+        the prefixed file stem like ``9_house_price``) with the catalog's
+        user-typed name, so renames are reflected retroactively in run history.
+        """
+        ids = {r.registration_id for r in runs if r.registration_id is not None}
+        if not ids:
+            return {}
+        return {reg.id: reg.name for reg in self.repo.list_flows_by_ids(list(ids)) if reg.name}
+
+    def run_to_out(self, run: FlowRun, name_overrides: dict[int, str] | None = None) -> FlowRunOut:
         """Convert a FlowRun ORM row to FlowRunOut, computing has_log via FS."""
-        return run_to_out(run, has_log=self._resolve_log_path(run.id, run.run_type) is not None)
+        override = (name_overrides or {}).get(run.registration_id) if run.registration_id else None
+        return run_to_out(
+            run,
+            has_log=self._resolve_log_path(run.id, run.run_type) is not None,
+            display_name=override,
+        )
 
     def list_runs(
         self,
@@ -67,8 +84,9 @@ class FlowRunService:
         counts = self.repo.count_runs_by_status(
             registration_id=registration_id, schedule_id=schedule_id, run_type=run_type
         )
+        name_overrides = self._display_names_for(runs)
         return PaginatedFlowRuns(
-            items=[self.run_to_out(r) for r in runs],
+            items=[self.run_to_out(r, name_overrides) for r in runs],
             total=counts["total"],
             total_success=counts["success"],
             total_failed=counts["failed"],
@@ -80,10 +98,16 @@ class FlowRunService:
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
+        display_name = None
+        if run.registration_id is not None:
+            reg = self.repo.get_flow(run.registration_id)
+            if reg is not None and reg.name:
+                display_name = reg.name
         return FlowRunDetail(
             id=run.id,
             registration_id=run.registration_id,
-            flow_name=run.flow_name,
+            flow_uuid=run.flow_uuid,
+            flow_name=display_name or run.flow_name,
             flow_path=run.flow_path,
             user_id=run.user_id,
             started_at=run.started_at,
@@ -116,10 +140,20 @@ class FlowRunService:
         number_of_nodes: int,
         run_type: RunType,
         flow_snapshot: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRun:
-        """Record a new flow run start."""
+        """Record a new flow run start.
+
+        ``flow_uuid``, if not supplied, is resolved from the registration so the
+        run row stays attributable after a registration delete+recreate.
+        """
+        if flow_uuid is None and registration_id is not None:
+            reg = self.repo.get_flow(registration_id)
+            if reg is not None:
+                flow_uuid = reg.flow_uuid
         run = FlowRun(
             registration_id=registration_id,
+            flow_uuid=flow_uuid,
             flow_name=flow_name,
             flow_path=flow_path,
             user_id=user_id,
@@ -172,13 +206,19 @@ class FlowRunService:
         run_type: RunType,
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
         duration = None
         if started_at and ended_at:
             duration = (ended_at - started_at).total_seconds()
+        if flow_uuid is None and registration_id is not None:
+            reg = self.repo.get_flow(registration_id)
+            if reg is not None:
+                flow_uuid = reg.flow_uuid
         run = FlowRun(
             registration_id=registration_id,
+            flow_uuid=flow_uuid,
             flow_name=flow_name,
             flow_path=flow_path,
             user_id=user_id,
@@ -225,6 +265,7 @@ class FlowRunService:
         now = datetime.now(timezone.utc)
         run = FlowRun(
             registration_id=flow.id,
+            flow_uuid=flow.flow_uuid,
             flow_name=flow.name,
             flow_path=flow.flow_path,
             user_id=user_id,

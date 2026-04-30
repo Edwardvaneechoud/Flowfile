@@ -233,9 +233,11 @@ const props = withDefaults(defineProps<Props>(), {
   flowId: undefined,
 });
 
-// Use the flow execution composable with persistent polling for node fetches
+// Use the flow execution composable with persistent polling for node fetches.
+// Getter form so Save As re-keying nodeStore.flow_id doesn't leave us polling
+// the old (template) id.
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  props.flowId || nodeStore.flow_id,
+  () => props.flowId || nodeStore.flow_id,
   { interval: 2000, enabled: true },
   {
     persistPolling: true, // Keep polling even when component unmounts
@@ -464,9 +466,7 @@ const windowKeyHandler = async (e: KeyboardEvent) => {
   // Don't fight the browser when the user is in a text input or editor.
   if (
     target &&
-    (target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.isContentEditable)
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
   ) {
     return;
   }

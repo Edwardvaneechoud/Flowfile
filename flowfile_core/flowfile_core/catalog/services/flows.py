@@ -22,6 +22,27 @@ from flowfile_core.schemas.catalog_schema import (
 
 logger = logging.getLogger(__name__)
 
+# Process-local memo of (registration_id, flow_path) tuples we've already
+# warned about. The first sighting of a missing file is genuinely useful (it
+# can flag a misconfigured volume mount), but every subsequent /catalog/flows
+# request would re-log the same line. Keeping it in-memory means the warning
+# resurfaces after a restart, which is the right cadence for an operator.
+_warned_missing_paths: set[tuple[int, str]] = set()
+
+
+def _warn_missing_file_once(flow: FlowRegistration) -> None:
+    """Log the missing-file warning at most once per (id, path) per process."""
+    key = (flow.id, flow.flow_path or "")
+    if key in _warned_missing_paths:
+        return
+    _warned_missing_paths.add(key)
+    logger.warning(
+        "Registered flow %s (id=%d) references missing file: %s",
+        flow.name,
+        flow.id,
+        flow.flow_path,
+    )
+
 
 class FlowRegistrationService:
     """Owns flow registration CRUD, enrichment and auto-registration."""
@@ -44,12 +65,7 @@ class FlowRegistrationService:
         read_tables = self.repo.list_read_tables_for_flow(flow.id)
         file_exists = os.path.exists(flow.flow_path) if flow.flow_path else False
         if not file_exists:
-            logger.warning(
-                "Registered flow %s (id=%d) references missing file: %s",
-                flow.name,
-                flow.id,
-                flow.flow_path,
-            )
+            _warn_missing_file_once(flow)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -96,12 +112,7 @@ class FlowRegistrationService:
             read = read_tables_by_flow.get(flow.id, [])
             file_exists = os.path.exists(flow.flow_path) if flow.flow_path else False
             if not file_exists:
-                logger.warning(
-                    "Registered flow %s (id=%d) references missing file: %s",
-                    flow.name,
-                    flow.id,
-                    flow.flow_path,
-                )
+                _warn_missing_file_once(flow)
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,

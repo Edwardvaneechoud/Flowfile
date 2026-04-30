@@ -33,7 +33,9 @@ const props = defineProps({
   },
 });
 
-// Use the composable
+// Pass a getter so the composable always reads the *current* prop value.
+// Without this, Save As re-keys nodeStore.flow_id but the run button keeps
+// firing /flow/run/ and getFlowSettings against the old (template) id.
 const {
   runFlow: executeFlow,
   cancelFlow,
@@ -41,7 +43,7 @@ const {
   startPolling,
   stopPolling,
   checkRunStatus,
-} = useFlowExecution(props.flowId, props.pollingConfig, {
+} = useFlowExecution(() => props.flowId, props.pollingConfig, {
   persistPolling: props.persistPolling,
   pollingKey: `run_button_${props.flowId}`,
 });
