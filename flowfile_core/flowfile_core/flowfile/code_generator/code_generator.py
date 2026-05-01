@@ -144,22 +144,16 @@ class FlowGraphCodeConverter:
 
         if node.node_inputs.main_inputs:
             if len(node.node_inputs.main_inputs) == 1:
-                input_vars["main"] = self._resolve_upstream_var(
-                    node, node.node_inputs.main_inputs[0].node_id, "df"
-                )
+                input_vars["main"] = self._resolve_upstream_var(node, node.node_inputs.main_inputs[0].node_id, "df")
             else:
                 for i, input_node in enumerate(node.node_inputs.main_inputs):
                     input_vars[f"main_{i}"] = self._resolve_upstream_var(node, input_node.node_id, f"df_{i}")
 
         if node.node_inputs.left_input:
-            input_vars["left"] = self._resolve_upstream_var(
-                node, node.node_inputs.left_input.node_id, "df_left"
-            )
+            input_vars["left"] = self._resolve_upstream_var(node, node.node_inputs.left_input.node_id, "df_left")
 
         if node.node_inputs.right_input:
-            input_vars["right"] = self._resolve_upstream_var(
-                node, node.node_inputs.right_input.node_id, "df_right"
-            )
+            input_vars["right"] = self._resolve_upstream_var(node, node.node_inputs.right_input.node_id, "df_right")
 
         return input_vars
 
@@ -1794,9 +1788,7 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
                     ").lazy()"
                 )
             else:
-                self._add_code(
-                    f"_split_{node_id}_len = int(round(_split_{node_id}_total * {s.percentage} / 100.0))"
-                )
+                self._add_code(f"_split_{node_id}_len = int(round(_split_{node_id}_total * {s.percentage} / 100.0))")
                 self._add_code(
                     f"{split_var} = _split_{node_id}_shuffled.slice("
                     f"_split_{node_id}_off, max(0, _split_{node_id}_len)"
@@ -1890,9 +1882,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         split_vars = [f"{var_name}_{s.name}" for s in settings.splits]
         splits_arg = ", ".join(f'"{s.name}": {s.percentage}' for s in settings.splits)
         seed_arg = "" if settings.seed is None else f", seed={settings.seed}"
-        self._add_code(
-            f"{', '.join(split_vars)} = {input_df}.random_split({{{splits_arg}}}{seed_arg})"
-        )
+        self._add_code(f"{', '.join(split_vars)} = {input_df}.random_split({{{splits_arg}}}{seed_arg})")
         for i, sv in enumerate(split_vars):
             self.node_handle_var_mapping[(node_id, f"output-{i}")] = sv
         self.node_var_mapping[node_id] = split_vars[0]
@@ -1928,7 +1918,29 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if cs.file_format == "delta" and cs.delta_version is not None:
             self._add_code(f"    delta_version={cs.delta_version},")
         self._add_code(")")
+        self._emit_output_validation(settings, var_name)
         self._add_code("")
+
+    def _emit_output_validation(self, settings: input_schema.NodeBase, var_name: str) -> None:
+        """Emit a chained ``var_name = var_name.with_output_validation(...)`` line if applicable."""
+        cfg = getattr(settings, "output_field_config", None)
+        if cfg is None or not cfg.enabled or not cfg.fields:
+            return
+        fields_repr = (
+            "["
+            + ", ".join(
+                f'{{"name": "{f.name}", "data_type": "{f.data_type}"}}'
+                if f.default_value is None
+                else f'{{"name": "{f.name}", "data_type": "{f.data_type}", "default_value": {f.default_value!r}}}'
+                for f in cfg.fields
+            )
+            + "]"
+        )
+        self._add_code(f"{var_name} = {var_name}.with_output_validation(")
+        self._add_code(f"    fields={fields_repr},")
+        self._add_code(f'    validation_mode_behavior="{cfg.validation_mode_behavior}",')
+        self._add_code(f"    validate_data_types={cfg.validate_data_types},")
+        self._add_code(")")
 
     def _handle_cloud_storage_writer(
         self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: dict[str, str]
@@ -1982,7 +1994,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         fail_var = f"{var_name}_fail"
         if settings.filter_input.is_advanced():
             self._add_code(
-                f'{pass_var}, {fail_var} = {input_df}.filter_split('
+                f"{pass_var}, {fail_var} = {input_df}.filter_split("
                 f'flowfile_formula="{settings.filter_input.advanced_filter}")'
             )
         else:
@@ -1992,9 +2004,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                 self._add_code(f"{pass_var}, {fail_var} = {input_df}.filter_split({filter_expr})")
             else:
                 # No predicate -> mirror polars-variant fallback (pass keeps all, fail empty).
-                self._add_code(
-                    f'{pass_var}, {fail_var} = {input_df}.filter_split(flowfile_formula="True")'
-                )
+                self._add_code(f'{pass_var}, {fail_var} = {input_df}.filter_split(flowfile_formula="True")')
         self.node_handle_var_mapping[(node_id, "output-0")] = pass_var
         self.node_handle_var_mapping[(node_id, "output-1")] = fail_var
         self.node_var_mapping[node_id] = pass_var
@@ -2325,9 +2335,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code(f"{var_name} = {input_df}.evaluate_model({', '.join(args)})")
         self._add_code("")
 
-    def _handle_wait_for(
-        self, settings: input_schema.NodeWaitFor, var_name: str, input_vars: dict[str, str]
-    ) -> None:
+    def _handle_wait_for(self, settings: input_schema.NodeWaitFor, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle Wait For nodes — emit ``df.wait_for(dependency)``."""
         main_df = input_vars.get("main", "df")
         dep_df = input_vars.get("right")

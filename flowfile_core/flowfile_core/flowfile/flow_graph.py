@@ -655,7 +655,8 @@ def _handle_virtual_table_write(
     if not reg_id:
         raise ValueError(
             "Cannot create a virtual table: this flow is not linked to a catalog registration. "
-            "Open the flow from the catalog, or register it first."
+            'Call df.save_to_catalog("my_flow_name") (or '
+            'save_flow_to_catalog(flow, "my_flow_name")) first, or open the flow from the catalog.'
         )
 
     serialized_lf: bytes | None = None

@@ -47,7 +47,13 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
-from flowfile_frame.catalog import read_catalog_sql, read_catalog_table, write_catalog_table  # noqa: F401
+from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo  # noqa: F401
+from flowfile_frame.catalog import (  # noqa: F401
+    read_catalog_sql,
+    read_catalog_table,
+    save_flow_to_catalog,
+    write_catalog_table,
+)
 from flowfile_frame.catalog_reference import (  # noqa: F401
     CatalogReference,
     SchemaReference,

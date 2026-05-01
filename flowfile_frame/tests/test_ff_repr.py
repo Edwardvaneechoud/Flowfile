@@ -444,11 +444,20 @@ class TestWithColumnsFormulaConversion:
         assert _is_formula_node(node), "Expected NodeFormula for simple column alias"
         assert _get_formula(node) == "[x]"
 
-    def test_flowfile_formulas_kwarg_still_works(self, sample_ff):
-        """The existing flowfile_formulas kwarg should still work."""
+    def test_flowfile_formulas_kwarg_translates_to_polars_code(self, sample_ff):
+        """``flowfile_formulas`` translatable to polars code now produces a polars_code node."""
         result = sample_ff.with_columns(
             flowfile_formulas=["[x] + [y]"],
             output_column_names=["sum_xy"],
+        )
+        node = result.get_node_settings()
+        assert _is_polars_code_node(node)
+
+    def test_flowfile_formulas_kwarg_falls_back_for_unsupported(self, sample_ff):
+        """``flowfile_formulas`` that can't be translated falls back to a formula node."""
+        result = sample_ff.with_columns(
+            flowfile_formulas=['string_similarity([name], "Alice")'],
+            output_column_names=["sim"],
         )
         node = result.get_node_settings()
         assert _is_formula_node(node)

@@ -6,6 +6,9 @@ catalog, similar to how database/frame_helpers.py handles database operations.
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from flowfile_frame.catalog_reference import WriteMode, _resolve_namespace_id
@@ -14,6 +17,9 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.flow_frame import FlowFrame
+
+
+_MANAGED_FLOW_STEM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 def get_current_user_id() -> int:
@@ -198,6 +204,9 @@ def write_catalog_table(
             - 'upsert': Insert new rows or update existing by merge_keys
             - 'update': Update only existing rows by merge_keys
             - 'delete': Delete rows matching merge_keys
+            - 'virtual': Register the flow as a virtual table without materializing.
+              Requires the flow to be catalog-registered first; call
+              :func:`save_flow_to_catalog` (or :meth:`FlowFrame.save_to_catalog`).
         merge_keys: Column names to use as merge keys (required for upsert/update/delete).
         description: Optional description for the table.
 
@@ -213,3 +222,116 @@ def write_catalog_table(
         merge_keys=merge_keys,
         description=description,
     )
+
+
+def _resolve_python_flows_schema_id() -> int:
+    """Resolve (and create if needed) the ``General > Python Flows`` namespace id."""
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        ns = service.ensure_python_flows_namespace()
+        if ns is None:
+            raise RuntimeError(
+                "Could not resolve or create the 'General > Python Flows' namespace. "
+                "Pass an explicit schema= argument."
+            )
+        return ns.id
+
+
+def save_flow_to_catalog(
+    flow_or_frame: FlowFrame | FlowGraph,
+    name: str,
+    *,
+    schema: SchemaReference | None = None,
+    description: str | None = None,
+) -> int:
+    """Save a flow to disk and register it in the catalog.
+
+    This is the Python equivalent of the canvas "Save to Catalog" action: it
+    writes the flow YAML to the managed flows directory and creates a
+    ``FlowRegistration`` row, stamping ``source_registration_id`` onto the
+    in-memory flow settings. After this call, ``write_catalog_table(...,
+    write_mode="virtual")`` works against the same flow.
+
+    Args:
+        flow_or_frame: A :class:`FlowFrame` or :class:`FlowGraph` to register.
+        name: Display name and filename stem (alphanumeric, underscores, and
+            hyphens only). The on-disk filename is ``{flow_id}_{name}.yaml``.
+        schema: Target :class:`SchemaReference`. Defaults to
+            ``General > Python Flows`` (auto-created on first use).
+        description: Unused for now; reserved for future catalog metadata.
+
+    Returns:
+        int: The ``source_registration_id`` of the registered flow.
+
+    Raises:
+        ValueError: If ``name`` contains invalid characters or the registered
+            target collides with another flow.
+
+    Note:
+        Virtual writes serialize the flow's LazyFrame to bytes. User code
+        containing un-picklable closures (e.g. ``map_batches(lambda …)``)
+        falls back to non-optimized virtual mode.
+    """
+    from flowfile_core.flowfile.catalog_helpers import (
+        FlowNameNamespaceCollision,
+        FlowPathNamespaceCollision,
+        find_registration_by_name,
+        find_registration_by_path,
+        register_flow_in_namespace,
+        resolve_source_registration_id,
+    )
+    from flowfile_frame.flow_frame import FlowFrame
+    from shared.storage_config import storage
+
+    flow_graph = flow_or_frame.flow_graph if isinstance(flow_or_frame, FlowFrame) else flow_or_frame
+
+    stem = name.strip() if name else ""
+    if not stem:
+        raise ValueError("name must not be empty")
+    if "/" in stem or "\\" in stem or ".." in stem:
+        raise ValueError(f"invalid flow name: {name!r}")
+    if not _MANAGED_FLOW_STEM_RE.fullmatch(stem):
+        raise ValueError(f"invalid flow name: {name!r}. Only letters, digits, underscores, and hyphens are allowed.")
+
+    schema_id = schema.id if schema is not None else _resolve_python_flows_schema_id()
+
+    flows_dir = Path(storage.flows_directory)
+    flows_dir.mkdir(parents=True, exist_ok=True)
+    base_path = os.path.normpath(str(flows_dir.resolve()))
+    target = os.path.normpath(os.path.join(base_path, f"{flow_graph.flow_id}_{stem}.yaml"))
+    if not target.startswith(base_path + os.sep):
+        raise ValueError(f"resolved flow path escapes flows directory: {target}")
+
+    user_id = get_current_user_id()
+    source_registration_id = getattr(flow_graph._flow_settings, "source_registration_id", None)
+
+    name_clash = find_registration_by_name(stem, schema_id)
+    if name_clash is not None and name_clash.id != source_registration_id:
+        raise ValueError(
+            f"A flow named {stem!r} already exists in this namespace. "
+            "Choose a different name, or open the existing flow from the catalog."
+        )
+
+    existing_reg = find_registration_by_path(target)
+    if existing_reg is not None and existing_reg.id != source_registration_id:
+        raise ValueError(f"target file {target} is already registered to another flow")
+    if existing_reg is None and os.path.exists(target):
+        raise ValueError(f"target file {target} exists but is not catalog-registered; refusing to overwrite")
+
+    flow_graph.save_flow(target)
+    try:
+        register_flow_in_namespace(target, stem, user_id, schema_id)
+    except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:
+        raise ValueError(str(err)) from err
+    resolve_source_registration_id(flow_graph)
+
+    reg_id = getattr(flow_graph._flow_settings, "source_registration_id", None)
+    if reg_id is None:
+        raise RuntimeError(
+            f"flow saved to {target} but registration could not be resolved. "
+            "This usually indicates a database error; check logs."
+        )
+    return reg_id

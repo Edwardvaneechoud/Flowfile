@@ -2046,7 +2046,7 @@ class FlowFrame:
         *,
         schema: SchemaReference | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -2056,7 +2056,10 @@ class FlowFrame:
             table_name: Name of the catalog table to write to.
             schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
             namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
-            write_mode: How to handle existing data.
+            write_mode: How to handle existing data. ``"virtual"`` registers the
+                flow as a virtual table without materializing data — requires the
+                flow to be catalog-registered first (call
+                :meth:`save_to_catalog` or open the flow from the catalog).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 
@@ -2164,11 +2167,79 @@ class FlowFrame:
             self.flow_graph.apply_layout()
         self.flow_graph.save_flow(file_path)
 
+    def save_to_catalog(
+        self,
+        name: str,
+        *,
+        schema: SchemaReference | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Save this flow to disk and register it in the catalog.
+
+        Equivalent to the canvas "Save to Catalog" action. After this call,
+        :meth:`write_catalog_table` with ``write_mode="virtual"`` can be used
+        against the same flow.
+
+        Args:
+            name: Display name and filename stem (alphanumeric, ``_``, ``-`` only).
+            schema: Target :class:`SchemaReference`. Defaults to
+                ``General > Python Flows`` (auto-created on first use).
+            description: Reserved for future metadata.
+
+        Returns:
+            FlowFrame: ``self``, for chaining.
+        """
+        from flowfile_frame.catalog import save_flow_to_catalog
+
+        save_flow_to_catalog(self, name, schema=schema, description=description)
+        return self
+
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory."""
         if hasattr(self.data, "collect"):
             return self.data.collect(*args, **kwargs)
         return self.data
+
+    def with_output_validation(
+        self,
+        fields: list[input_schema.OutputFieldInfo | dict],
+        *,
+        validation_mode_behavior: Literal[
+            "add_missing", "add_missing_keep_extra", "raise_on_missing", "select_only"
+        ] = "select_only",
+        validate_data_types: bool = True,
+    ) -> FlowFrame:
+        """Attach an output-field validator to the most recently added node.
+
+        This stamps an ``OutputFieldConfig`` (with ``enabled=True``) onto the
+        current node — equivalent to filling in the canvas "Output Fields"
+        panel for that step. The field is on ``NodeBase``, so any node
+        (readers, transforms, etc.) accepts it.
+
+        Args:
+            fields: List of :class:`flowfile_core.schemas.input_schema.OutputFieldInfo`
+                (or dicts with ``name``, optional ``data_type`` / ``default_value``).
+            validation_mode_behavior: How to handle missing/extra columns.
+                Defaults to ``"select_only"`` (canvas default).
+            validate_data_types: Enable runtime data-type validation.
+
+        Returns:
+            FlowFrame: ``self``, for chaining.
+        """
+        coerced_fields = [
+            f if isinstance(f, input_schema.OutputFieldInfo) else input_schema.OutputFieldInfo(**f) for f in fields
+        ]
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior=validation_mode_behavior,
+            fields=coerced_fields,
+            validate_data_types=validate_data_types,
+        )
+        node = self.flow_graph.get_node(self.node_id)
+        if node is None or node.setting_input is None:
+            raise RuntimeError(f"Cannot attach output validation: node {self.node_id} has no settings.")
+        node.setting_input.output_field_config = config
+        return self
 
     def _with_flowfile_formula(
         self,
@@ -2901,6 +2972,13 @@ class FlowFrame:
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
 
             datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
+
+            translated = self._try_translate_formulas_to_polars(
+                flowfile_formulas, output_column_names, datatypes, description
+            )
+            if translated is not None:
+                return translated
+
             if len(flowfile_formulas) == 1:
                 return self._with_flowfile_formula(
                     flowfile_formulas[0], output_column_names[0], description, output_column_datatype=datatypes[0]
@@ -2915,6 +2993,64 @@ class FlowFrame:
             return ff
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
+
+    def _try_translate_formulas_to_polars(
+        self,
+        flowfile_formulas: list[str],
+        output_column_names: list[str],
+        datatypes: list[str],
+        description: str | None,
+    ) -> FlowFrame | None:
+        """Attempt to translate flowfile formulas into a single polars-code node.
+
+        Returns a new FlowFrame on success, or ``None`` if any formula can't be
+        converted (in which case the caller falls back to per-formula formula
+        nodes — all-or-nothing). Runtime polars-code execution uses the ``pl``
+        namespace, so we use ``to_polars_code`` (not ``to_flowframe_code``).
+        """
+        try:
+            from polars_expr_transformer import PolarsCodeGenError, to_polars_code
+        except ImportError:
+            return None
+        from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import (
+            convert_pl_type_to_string,
+        )
+        from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+
+        pl_codes: list[str] = []
+        for formula in flowfile_formulas:
+            try:
+                pl_code = to_polars_code(formula)
+            except PolarsCodeGenError:
+                return None
+            except Exception:
+                logger.debug("Unhandled error translating formula %r; falling back to formula node", formula)
+                return None
+            if not pl_code:
+                return None
+            pl_codes.append(pl_code)
+
+        expr_strs: list[str] = []
+        for pl_code, name, datatype in zip(pl_codes, output_column_names, datatypes, strict=False):
+            expr = f'({pl_code}).alias("{name}")'
+            if datatype not in (None, "Auto", transform_schema.AUTO_DATA_TYPE):
+                try:
+                    pl_type_str = convert_pl_type_to_string(cast_str_to_polars_type(datatype))
+                except Exception:
+                    return None
+                expr += f".cast(pl.{pl_type_str})"
+            expr_strs.append(expr)
+
+        new_node_id = generate_node_id()
+        operation_code = f"input_df.with_columns([{', '.join(expr_strs)}])"
+        precomputed = self._add_polars_code(
+            new_node_id,
+            operation_code,
+            description,
+            method_name="with_columns",
+            convertable_to_code=True,
+        )
+        return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
     def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
         """
