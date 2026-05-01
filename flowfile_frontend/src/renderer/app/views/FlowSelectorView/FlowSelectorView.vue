@@ -1,17 +1,19 @@
 <template>
-  <!-- TODO(ux): switch the dirty-dot color based on the active theme's
-       accent, and consider moving it so it sits adjacent to the close icon
-       on the right instead of inline with the tab name. -->
   <div class="flow-tabs-container">
     <div class="flow-tabs">
       <el-tooltip
         v-for="flow in flows"
         :key="flow.flow_id"
-        :content="flow.display_name || flow.name"
         placement="bottom"
         :show-after="400"
         :hide-after="0"
       >
+        <template #content>
+          <div>{{ flow.display_name || flow.name }}</div>
+          <div v-if="isDirty(flow.flow_id)" class="tooltip-dirty-line">
+            ● Unsaved changes
+          </div>
+        </template>
         <div
           class="flow-tab"
           :class="{ active: selectedFlowId === flow.flow_id, dirty: isDirty(flow.flow_id) }"
@@ -20,15 +22,19 @@
           <div class="tab-content">
             <span class="material-icons tab-icon">account_tree</span>
             <span class="tab-name">{{ flow.display_name || flow.name }}</span>
+          </div>
+          <span class="tab-indicator">
             <span
               v-if="isDirty(flow.flow_id)"
               class="dirty-dot"
               aria-label="Unsaved changes"
-              title="Unsaved changes"
             ></span>
-          </div>
-          <span class="material-icons close-icon" @click.stop="confirmCloseTab(flow.flow_id)">
-            close
+            <span
+              class="material-icons close-icon"
+              @click.stop="confirmCloseTab(flow.flow_id)"
+            >
+              close
+            </span>
           </span>
         </div>
       </el-tooltip>
@@ -344,7 +350,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
-  width: calc(100% - 20px);
+  width: calc(100% - 24px);
   overflow: hidden;
 }
 
@@ -367,13 +373,30 @@ defineExpose({
 /* TODO(ux): announce dirty-state changes via aria-live so screen readers
    are notified when a flow becomes dirty, instead of relying on the static
    aria-label alone. */
-.dirty-dot {
+.tab-indicator {
+  position: absolute;
+  right: var(--spacing-2);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
+}
+
+.tab-indicator > .dirty-dot,
+.tab-indicator > .close-icon {
+  grid-area: 1 / 1;
+}
+
+.dirty-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background-color: var(--color-accent, #1976d2);
-  margin-left: var(--spacing-1, 4px);
+  background-color: var(--color-primary, #1976d2);
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
 }
 
 .flow-tab.dirty .tab-name {
@@ -388,27 +411,39 @@ defineExpose({
   font-size: var(--font-size-lg);
   color: var(--color-text-muted);
   opacity: 0;
-  position: absolute;
-  right: var(--spacing-2);
   border-radius: var(--border-radius-full);
   padding: 2px;
-  transition: all var(--transition-fast);
+  cursor: pointer;
   transform: scale(0.9);
+  transition: opacity var(--transition-fast),
+              background-color var(--transition-fast),
+              color var(--transition-fast),
+              transform var(--transition-fast);
 }
 
 .flow-tab:hover .close-icon {
   opacity: 1;
+  transform: scale(1);
+}
+
+.flow-tab.dirty:hover .dirty-dot {
+  opacity: 0;
 }
 
 .close-icon:hover {
   background-color: var(--color-background-tertiary);
   color: var(--color-text-secondary);
-  transform: scale(1);
 }
 
 .active .close-icon:hover {
   background-color: var(--color-background-hover);
   color: var(--color-primary);
+}
+
+.tooltip-dirty-line {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.9;
 }
 
 /* New flow tab styling */

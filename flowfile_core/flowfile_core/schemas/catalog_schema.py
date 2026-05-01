@@ -102,6 +102,7 @@ class CatalogTableSummary(BaseModel):
 class FlowRunOut(BaseModel):
     id: int
     registration_id: int | None = None
+    flow_uuid: str | None = None
     flow_name: str
     flow_path: str | None = None
     user_id: int

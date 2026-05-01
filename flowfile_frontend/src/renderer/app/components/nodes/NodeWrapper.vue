@@ -187,9 +187,11 @@ const flowStore = useFlowStore();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-// Use the flow execution composable with persistent polling
+// Use the flow execution composable with persistent polling.
+// Getter form (not a snapshot number) so Save As doesn't leave the node
+// polling against the old flow id.
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
-  flowStore.flowId,
+  () => flowStore.flowId,
   { interval: 2000, enabled: true },
   {
     persistPolling: true,

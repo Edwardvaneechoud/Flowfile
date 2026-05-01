@@ -90,7 +90,12 @@ const updateRunStatus = async (
 };
 
 export function useFlowExecution(
-  flowId: Ref<number> | number,
+  // Accept a getter (`() => number`) or a Ref so the composable always reads
+  // the *current* flow_id. Passing a raw number freezes the value at setup
+  // time — fine only for components whose flow id is fixed for their entire
+  // lifetime. After Save As re-keys to a new id, callers that captured the
+  // old number keep polling stale endpoints.
+  flowId: Ref<number> | number | (() => number),
   pollingConfig: PollingConfig = {
     interval: 2000,
     enabled: true,
@@ -110,6 +115,7 @@ export function useFlowExecution(
 
   // Get the actual flow ID value
   const getFlowId = () => {
+    if (typeof flowId === "function") return flowId();
     return typeof flowId === "number" ? flowId : flowId.value;
   };
 
@@ -292,13 +298,28 @@ export function useFlowExecution(
       });
       nodeStore.showLogViewer();
       startPolling(() => checkRunStatus());
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error starting run:", error);
       unFreezeFlow();
       editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
-      showNotification("Error", "Failed to start the flow", "error");
+      // 404 means the in-memory flow_id doesn't match the backend — typically
+      // a stale id after Save As or a backend restart. Tell the user
+      // specifically so they reopen instead of retrying blindly.
+      if (error?.response?.status === 404) {
+        const detail =
+          error?.response?.data?.detail ??
+          "The flow id this tab is using no longer exists on the server.";
+        showNotification("Flow id is stale", `${detail} Reopen the flow and try again.`, "error");
+      } else {
+        const detail = error?.response?.data?.detail ?? error?.message;
+        showNotification(
+          "Error",
+          detail ? `Failed to start the flow: ${detail}` : "Failed to start the flow",
+          "error",
+        );
+      }
     }
   };
 
