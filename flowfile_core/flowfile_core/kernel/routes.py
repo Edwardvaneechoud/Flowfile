@@ -19,6 +19,7 @@ from flowfile_core.kernel.models import (
     KernelImageStatus,
     KernelInfo,
     KernelMemoryInfo,
+    KernelUpdate,
     RecoveryStatus,
 )
 
@@ -115,6 +116,30 @@ async def get_kernel(kernel_id: str, current_user=Depends(get_current_active_use
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     return kernel
+
+
+@router.patch("/{kernel_id}", response_model=KernelInfo)
+async def update_kernel(
+    kernel_id: str,
+    update: KernelUpdate,
+    current_user=Depends(get_current_active_user),
+):
+    """Update a kernel's editable fields. Currently: ``packages``.
+
+    The kernel must be stopped (rebuild of the derived image happens here).
+    """
+    manager = _get_manager()
+    kernel = await manager.get_kernel(kernel_id)
+    if kernel is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
+    if manager.get_kernel_owner(kernel_id) != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
+    try:
+        return await manager.update_kernel(kernel_id, update.packages)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.delete("/{kernel_id}")

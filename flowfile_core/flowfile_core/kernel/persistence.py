@@ -12,9 +12,18 @@ import logging
 from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
-from flowfile_core.kernel.models import ImageFlavour, KernelConfig, KernelInfo
+from flowfile_core.kernel.models import (
+    ImageFlavour,
+    KernelConfig,
+    KernelInfo,
+    ResolvedPackage,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _resolved_packages_to_json(resolved: list[ResolvedPackage]) -> str:
+    return json.dumps([{"name": p.name, "version": p.version} for p in resolved])
 
 
 def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
@@ -23,6 +32,7 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
     if existing:
         existing.name = kernel.name
         existing.packages = json.dumps(kernel.packages)
+        existing.resolved_packages = _resolved_packages_to_json(kernel.resolved_packages)
         existing.cpu_cores = kernel.cpu_cores
         existing.memory_gb = kernel.memory_gb
         existing.gpu = kernel.gpu
@@ -35,6 +45,7 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
             name=kernel.name,
             user_id=user_id,
             packages=json.dumps(kernel.packages),
+            resolved_packages=_resolved_packages_to_json(kernel.resolved_packages),
             cpu_cores=kernel.cpu_cores,
             memory_gb=kernel.memory_gb,
             gpu=kernel.gpu,
@@ -57,15 +68,37 @@ def get_kernels_for_user(db: Session, user_id: int) -> list[KernelConfig]:
     return [_row_to_config(row) for row in rows]
 
 
-def get_all_kernels(db: Session) -> list[tuple[KernelConfig, int]]:
-    """Return all persisted kernels as (config, user_id) tuples."""
+def get_all_kernels(db: Session) -> list[tuple[KernelConfig, list[ResolvedPackage], int]]:
+    """Return all persisted kernels as ``(config, resolved_packages, user_id)`` tuples."""
     rows = db.query(db_models.Kernel).all()
-    return [(_row_to_config(row), row.user_id) for row in rows]
+    return [
+        (_row_to_config(row), _row_to_resolved(row), row.user_id) for row in rows
+    ]
+
+
+def _row_to_resolved(row: db_models.Kernel) -> list[ResolvedPackage]:
+    raw = getattr(row, "resolved_packages", None)
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(items, list):
+        return []
+    out: list[ResolvedPackage] = []
+    for item in items:
+        if isinstance(item, dict) and "name" in item and "version" in item:
+            out.append(ResolvedPackage(name=str(item["name"]), version=str(item["version"])))
+    return out
 
 
 def _row_to_config(row: db_models.Kernel) -> KernelConfig:
     packages = json.loads(row.packages) if row.packages else []
-    flavour_value = row.image_flavour or ImageFlavour.BASE.value
+    # Tolerate schema drift: getattr with a default lets us still restore a
+    # kernel if a column from a later migration is missing (e.g. an alembic
+    # stamp that rolled back without dropping the column).
+    flavour_value = getattr(row, "image_flavour", None) or ImageFlavour.BASE.value
     try:
         flavour = ImageFlavour(flavour_value)
     except ValueError:
@@ -78,5 +111,5 @@ def _row_to_config(row: db_models.Kernel) -> KernelConfig:
         memory_gb=row.memory_gb,
         gpu=row.gpu,
         image_flavour=flavour,
-        custom_image=row.custom_image,
+        custom_image=getattr(row, "custom_image", None),
     )

@@ -63,6 +63,11 @@ export interface DockerStatus {
   error: string | null;
 }
 
+export interface ResolvedPackage {
+  name: string;
+  version: string;
+}
+
 export interface KernelInfo {
   id: string;
   name: string;
@@ -70,6 +75,7 @@ export interface KernelInfo {
   container_id: string | null;
   port: number | null;
   packages: string[];
+  resolved_packages: ResolvedPackage[];
   memory_gb: number;
   cpu_cores: number;
   gpu: boolean;

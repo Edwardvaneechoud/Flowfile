@@ -28,6 +28,7 @@ from flowfile_core.kernel.models import (
     KernelMemoryInfo,
     KernelState,
     RecoveryStatus,
+    ResolvedPackage,
 )
 from shared.storage_config import storage
 
@@ -87,6 +88,19 @@ def _validate_packages(packages: list[str]) -> None:
                 f"Invalid package specifier {pkg!r}: only PyPI-safe characters "
                 "(alphanumerics, '.-_+[]<>=!~,') are allowed."
             )
+
+
+# Strip a pip spec like ``pandas[extra]>=2.3,<3`` down to its package name.
+_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+")
+
+
+def _spec_to_name(spec: str) -> str:
+    """Extract the canonical package name from a pip specifier."""
+    match = _PACKAGE_NAME_RE.match(spec.strip())
+    if not match:
+        return spec.strip().lower()
+    # PEP 503 normalisation: lowercase + collapse runs of -_. to '-'
+    return re.sub(r"[-_.]+", "-", match.group(0).lower())
 
 
 def _validate_custom_image(uri: str) -> None:
@@ -358,7 +372,7 @@ class KernelManager:
             from flowfile_core.kernel.persistence import get_all_kernels
 
             with get_db_context() as db:
-                for config, user_id in get_all_kernels(db):
+                for config, resolved_packages, user_id in get_all_kernels(db):
                     if config.id in self._kernels:
                         continue
                     kernel = KernelInfo(
@@ -366,6 +380,7 @@ class KernelManager:
                         name=config.name,
                         state=KernelState.STOPPED,
                         packages=config.packages,
+                        resolved_packages=resolved_packages,
                         memory_gb=config.memory_gb,
                         cpu_cores=config.cpu_cores,
                         gpu=config.gpu,
@@ -375,8 +390,11 @@ class KernelManager:
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
                     logger.info("Restored kernel '%s' for user %d from database", config.id, user_id)
-        except Exception as exc:
-            logger.warning("Could not restore kernels from database: %s", exc)
+        except Exception:
+            # Log with full traceback so a silently-swallowed schema-drift bug
+            # can't lurk again (a missing column here used to disappear into a
+            # one-line warning).
+            logger.exception("Could not restore kernels from database")
 
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
         """Save a kernel record to the database."""
@@ -536,6 +554,65 @@ class KernelManager:
                 ) from exc
         return derived_tag
 
+    def _resolve_installed_versions(
+        self, image_tag: str, package_specs: list[str]
+    ) -> list[ResolvedPackage]:
+        """Run ``pip list`` inside the derived image and return the resolved
+        version for each user-requested package.
+
+        Best-effort: returns an empty list if the inspection fails so a single
+        flaky read doesn't break kernel creation.
+        """
+        if not package_specs:
+            return []
+        wanted = {_spec_to_name(s): s for s in package_specs}
+        try:
+            output = self._docker.containers.run(
+                image_tag,
+                entrypoint=["pip"],
+                command=["list", "--format=json", "--disable-pip-version-check"],
+                remove=True,
+                stdout=True,
+                stderr=False,
+            )
+        except (docker.errors.ContainerError, docker.errors.APIError, docker.errors.DockerException) as exc:
+            logger.warning("Could not inspect '%s' for resolved versions: %s", image_tag, exc)
+            return []
+
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        try:
+            installed = json.loads(output)
+        except (TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Could not parse pip list output from '%s': %s", image_tag, exc)
+            return []
+
+        installed_by_name = {
+            re.sub(r"[-_.]+", "-", str(p.get("name", "")).lower()): str(p.get("version", ""))
+            for p in installed
+            if isinstance(p, dict)
+        }
+
+        # Preserve the order the user specified.
+        resolved: list[ResolvedPackage] = []
+        for spec in package_specs:
+            name = _spec_to_name(spec)
+            version = installed_by_name.get(name)
+            if version:
+                # Use the package's canonical name as reported by pip if we have it,
+                # otherwise fall back to whatever the user typed before any specifier.
+                display_name = next(
+                    (
+                        str(p["name"])
+                        for p in installed
+                        if isinstance(p, dict)
+                        and re.sub(r"[-_.]+", "-", str(p.get("name", "")).lower()) == name
+                    ),
+                    wanted[name].split("[", 1)[0],
+                )
+                resolved.append(ResolvedPackage(name=display_name, version=version))
+        return resolved
+
     def _remove_derived_image(self, kernel_id: str) -> None:
         """Best-effort removal of the per-kernel derived image."""
         tag = _derived_image_tag(kernel_id)
@@ -633,9 +710,13 @@ class KernelManager:
         # event loop responsive — image builds can take 30–60 s.
         if config.packages:
             try:
-                await asyncio.to_thread(self._build_derived_image, kernel)
+                derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
             except (RuntimeError, ValueError) as exc:
                 raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
+
+            kernel.resolved_packages = await asyncio.to_thread(
+                self._resolve_installed_versions, derived_tag, config.packages
+            )
 
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
@@ -768,6 +849,68 @@ class KernelManager:
         kernel.state = KernelState.STOPPED
         kernel.container_id = None
         logger.info("Stopped kernel '%s'", kernel_id)
+
+    async def update_kernel(self, kernel_id: str, packages: list[str]) -> KernelInfo:
+        """Update a kernel's package list (the only field we currently allow editing).
+
+        The kernel must be stopped — package edits trigger a rebuild of the
+        derived image and we don't want to surprise users with a hot restart.
+        """
+        kernel = self._get_kernel_or_raise(kernel_id)
+
+        if kernel.state in (
+            KernelState.IDLE,
+            KernelState.EXECUTING,
+            KernelState.STARTING,
+        ):
+            raise RuntimeError(
+                f"Cannot edit kernel '{kernel_id}' while it is {kernel.state.value}. "
+                "Stop the kernel first."
+            )
+
+        _validate_packages(packages)
+
+        old_packages = list(kernel.packages)
+        old_resolved = list(kernel.resolved_packages)
+        if packages == old_packages:
+            return kernel
+
+        kernel.packages = packages
+        kernel.resolved_packages = []
+
+        # Old derived image (if any) is now stale.
+        if old_packages:
+            self._remove_derived_image(kernel_id)
+
+        # Build the new derived image; on failure, roll back the package list
+        # so the persisted state matches what's actually on disk.
+        if packages:
+            try:
+                derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
+            except (RuntimeError, ValueError) as exc:
+                kernel.packages = old_packages
+                kernel.resolved_packages = old_resolved
+                # Rebuild the previous derived image so the kernel is startable.
+                if old_packages:
+                    try:
+                        await asyncio.to_thread(self._build_derived_image, kernel)
+                    except Exception as restore_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Could not restore previous derived image for '%s': %s",
+                            kernel_id,
+                            restore_exc,
+                        )
+                raise ValueError(f"Failed to update kernel image: {exc}") from exc
+
+            kernel.resolved_packages = await asyncio.to_thread(
+                self._resolve_installed_versions, derived_tag, packages
+            )
+
+        user_id = self._kernel_owners.get(kernel_id)
+        if user_id is not None:
+            self._persist_kernel(kernel, user_id)
+        logger.info("Updated kernel '%s' packages → %s", kernel_id, packages)
+        return kernel
 
     async def delete_kernel(self, kernel_id: str) -> None:
         kernel = self._get_kernel_or_raise(kernel_id)

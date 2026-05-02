@@ -47,6 +47,20 @@ export class KernelApi {
     }
   }
 
+  static async update(kernelId: string, update: { packages: string[] }): Promise<KernelInfo> {
+    try {
+      const response = await axios.patch<KernelInfo>(
+        `${API_BASE_URL}/${encodeURIComponent(kernelId)}`,
+        update,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to update kernel:", error);
+      const errorMsg = (error as any).response?.data?.detail || "Failed to update kernel";
+      throw new Error(errorMsg);
+    }
+  }
+
   static async delete(kernelId: string): Promise<void> {
     try {
       await axios.delete(`${API_BASE_URL}/${encodeURIComponent(kernelId)}`);

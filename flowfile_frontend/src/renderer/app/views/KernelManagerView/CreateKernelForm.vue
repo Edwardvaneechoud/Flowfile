@@ -10,7 +10,22 @@
         style="color: var(--color-text-muted)"
       ></i>
     </div>
-    <div v-if="isExpanded" class="card-content">
+    <div v-if="isExpanded" class="card-content card-content--relative">
+      <!-- In-progress overlay: covers the form while the backend builds the
+           derived image (~30 s for the bake step), so the user gets a clear
+           "we're working" signal instead of a frozen-looking form. -->
+      <div v-if="isSubmitting" class="creating-overlay">
+        <div class="creating-overlay__spinner"></div>
+        <p class="creating-overlay__title">{{ submitLabel }}</p>
+        <p class="creating-overlay__hint">
+          {{
+            packagesInput.trim()
+              ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s."
+              : "Provisioning kernel…"
+          }}
+        </p>
+      </div>
+
       <form class="form" @submit.prevent="handleSubmit">
         <div class="form-grid">
           <div class="form-field">
@@ -164,7 +179,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed } from "vue";
 import {
   KERNEL_FLAVOURS,
   type FlavourInfo,
@@ -172,9 +187,11 @@ import {
   type ImageFlavour,
   type KernelConfig,
 } from "../../types";
-import { KernelApi } from "../../api/kernel.api";
 
-const emit = defineEmits(["create"]);
+const props = defineProps<{
+  flavourInfo: Map<ImageFlavour, FlavourInfo>;
+  onCreate: (config: KernelConfig) => Promise<void>;
+}>();
 
 const isExpanded = ref(false);
 const isSubmitting = ref(false);
@@ -190,25 +207,16 @@ const form = ref({
   custom_image: "" as string,
 });
 
-// Locked package versions per flavour, fetched from the backend (which reads
-// kernel_runtime/poetry.lock). Falls back to an empty list if the call fails.
-const flavourInfo = ref<Map<ImageFlavour, FlavourInfo>>(new Map());
-
-onMounted(async () => {
-  const list = await KernelApi.listFlavours();
-  flavourInfo.value = new Map(list.map((f) => [f.flavour, f]));
-});
-
 const activeFlavour = computed(
   () => KERNEL_FLAVOURS.find((f) => f.value === form.value.image_flavour) ?? KERNEL_FLAVOURS[0],
 );
 
 const activeImage = computed<string | null>(
-  () => flavourInfo.value.get(form.value.image_flavour)?.image ?? null,
+  () => props.flavourInfo.get(form.value.image_flavour)?.image ?? null,
 );
 
 const activePackages = computed<FlavourPackage[]>(
-  () => flavourInfo.value.get(form.value.image_flavour)?.packages ?? [],
+  () => props.flavourInfo.get(form.value.image_flavour)?.packages ?? [],
 );
 
 const extraPackagesPlaceholder = computed(() => {
@@ -264,20 +272,21 @@ const parsePackages = (): string[] => {
 const handleSubmit = async () => {
   if (!isValid.value || isSubmitting.value) return;
 
+  const config: KernelConfig = {
+    id: form.value.id.trim(),
+    name: form.value.name.trim(),
+    packages: parsePackages(),
+    memory_gb: form.value.memory_gb,
+    cpu_cores: form.value.cpu_cores,
+    gpu: form.value.gpu,
+    image_flavour: form.value.image_flavour,
+    custom_image: form.value.image_flavour === "custom" ? form.value.custom_image.trim() : null,
+  };
+
   isSubmitting.value = true;
   try {
-    const config: KernelConfig = {
-      id: form.value.id.trim(),
-      name: form.value.name.trim(),
-      packages: parsePackages(),
-      memory_gb: form.value.memory_gb,
-      cpu_cores: form.value.cpu_cores,
-      gpu: form.value.gpu,
-      image_flavour: form.value.image_flavour,
-      custom_image: form.value.image_flavour === "custom" ? form.value.custom_image.trim() : null,
-    };
-    emit("create", config);
-    // Reset form on emit (parent handles success/error)
+    await props.onCreate(config);
+    // Success: reset and collapse so the user can see their new kernel.
     form.value = {
       id: "",
       name: "",
@@ -289,6 +298,8 @@ const handleSubmit = async () => {
     };
     packagesInput.value = "";
     isExpanded.value = false;
+  } catch {
+    // Parent has already shown an error alert. Keep form populated for retry.
   } finally {
     isSubmitting.value = false;
   }
@@ -418,5 +429,57 @@ const handleSubmit = async () => {
 
 .form-input--error {
   border-color: var(--color-danger);
+}
+
+.card-content--relative {
+  position: relative;
+}
+
+.creating-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  z-index: 5;
+  border-radius: inherit;
+  text-align: center;
+  padding: var(--spacing-4);
+}
+
+[data-theme="dark"] .creating-overlay {
+  background-color: rgba(26, 26, 46, 0.92);
+}
+
+.creating-overlay__spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border-light);
+  border-top-color: var(--color-accent);
+  animation: creating-spin 0.9s linear infinite;
+}
+
+@keyframes creating-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.creating-overlay__title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.creating-overlay__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  max-width: 360px;
 }
 </style>

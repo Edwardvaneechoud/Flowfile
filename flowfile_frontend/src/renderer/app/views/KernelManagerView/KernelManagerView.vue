@@ -18,25 +18,23 @@
       </div>
     </div>
     <div
-      v-else-if="dockerStatus && dockerStatus.available && missingImages.length > 0"
+      v-else-if="dockerStatus && dockerStatus.available && visibleMissingImages.length > 0"
       class="status-banner status-banner--warning mb-3"
     >
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div class="missing-images">
         <strong>
           {{
-            missingImages.length === 1 ? "Kernel image not pulled." : "Kernel images not pulled."
+            visibleMissingImages.length === 1
+              ? "Kernel image not pulled."
+              : "Kernel images not pulled."
           }}
         </strong>
         <p class="missing-images__hint">
-          {{
-            missingImages.length === dockerStatus.images.length
-              ? "No kernel images are available locally yet. Pull at least one before creating a kernel:"
-              : "Some kernel flavours are not available locally. Run the matching pull command:"
-          }}
+          {{ missingHintText }}
         </p>
         <ul class="missing-images__list">
-          <li v-for="img in missingImages" :key="img.image">
+          <li v-for="img in visibleMissingImages" :key="img.image">
             <span class="missing-images__flavour">{{ flavourLabel(img.flavour) }}</span>
             <code class="missing-images__cmd">docker pull {{ img.image }}</code>
             <button
@@ -48,6 +46,15 @@
               <i
                 :class="copiedImage === img.image ? 'fa-solid fa-check' : 'fa-regular fa-copy'"
               ></i>
+            </button>
+            <button
+              v-if="img.flavour !== 'base' || baseAvailable"
+              type="button"
+              class="missing-images__dismiss"
+              title="Hide for this image tag"
+              @click="dismissImage(img.image)"
+            >
+              <i class="fa-solid fa-xmark"></i>
             </button>
           </li>
         </ul>
@@ -64,7 +71,7 @@
     </div>
 
     <!-- Create Kernel Form -->
-    <CreateKernelForm @create="handleCreate" />
+    <CreateKernelForm :flavour-info="flavourInfo" :on-create="handleCreate" />
 
     <!-- Kernel List -->
     <div class="card">
@@ -93,13 +100,24 @@
             :kernel="kernel"
             :busy="isActionInProgress(kernel.id)"
             :memory-info="memoryStats[kernel.id] ?? null"
+            :flavour-info="flavourInfo"
             @start="handleStart"
             @stop="handleStop"
+            @details="openDetails"
             @delete="confirmDelete"
           />
         </div>
       </div>
     </div>
+
+    <!-- Details Modal -->
+    <KernelDetailsModal
+      v-if="detailsKernel"
+      :kernel="detailsKernel"
+      :flavour-info="flavourInfo"
+      :on-save="handleSavePackages"
+      @close="closeDetails"
+    />
 
     <!-- Delete Confirmation Modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click="cancelDelete">
@@ -139,10 +157,12 @@ import {
   type ImageFlavour,
   type KernelConfig,
   type KernelImageStatus,
+  type KernelInfo,
 } from "../../types";
 import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
 import KernelCard from "./KernelCard.vue";
+import KernelDetailsModal from "./KernelDetailsModal.vue";
 
 const {
   kernels,
@@ -150,16 +170,91 @@ const {
   errorMessage,
   dockerStatus,
   memoryStats,
+  flavourInfo,
   createKernel,
+  updateKernel,
   startKernel,
   stopKernel,
   deleteKernel,
   isActionInProgress,
 } = useKernelManager();
 
+// Details modal state — keyed by kernel id, kept reactive against the polled list.
+const detailsKernelId = ref<string | null>(null);
+const detailsKernel = computed<KernelInfo | null>(
+  () => kernels.value.find((k) => k.id === detailsKernelId.value) ?? null,
+);
+
+const openDetails = (kernelId: string) => {
+  detailsKernelId.value = kernelId;
+};
+
+const closeDetails = () => {
+  detailsKernelId.value = null;
+};
+
+const handleSavePackages = async (kernelId: string, packages: string[]): Promise<void> => {
+  // Re-throws so the modal can surface the error inline; parent doesn't alert.
+  await updateKernel(kernelId, { packages });
+};
+
 const missingImages = computed<KernelImageStatus[]>(() => {
   const imgs = dockerStatus.value?.images ?? [];
   return imgs.filter((i) => !i.available);
+});
+
+// Persisted dismissals are keyed by the full image tag (e.g.
+// edwardvaneechoud/flowfile-kernel-ml:0.3.0) so that bumping the version
+// re-surfaces the banner — the new tag is a different key.
+const DISMISSED_KEY = "flowfile.kernel.dismissedMissingImages";
+
+const loadDismissed = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const dismissedImages = ref<Set<string>>(loadDismissed());
+
+const persistDismissed = () => {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissedImages.value]));
+  } catch (err) {
+    console.warn("Could not persist dismissed kernel image set:", err);
+  }
+};
+
+const dismissImage = (image: string) => {
+  // Reactive Set assignment — replace so Vue picks up the change.
+  const next = new Set(dismissedImages.value);
+  next.add(image);
+  dismissedImages.value = next;
+  persistDismissed();
+};
+
+const baseAvailable = computed<boolean>(() => {
+  const imgs = dockerStatus.value?.images ?? [];
+  return imgs.some((i) => i.flavour === "base" && i.available);
+});
+
+const visibleMissingImages = computed<KernelImageStatus[]>(() =>
+  missingImages.value.filter((i) => !dismissedImages.value.has(i.image)),
+);
+
+const missingHintText = computed<string>(() => {
+  const total = dockerStatus.value?.images.length ?? 0;
+  if (visibleMissingImages.value.length === total && total > 0) {
+    return "No kernel images are available locally yet. Pull at least one before creating a kernel:";
+  }
+  if (baseAvailable.value) {
+    return "Optional flavours aren't available locally. Pull what you plan to use, or dismiss what you don't:";
+  }
+  return "Some kernel flavours are not available locally. Run the matching pull command:";
 });
 
 const flavourLabel = (flavour: ImageFlavour): string =>
@@ -191,6 +286,7 @@ const handleCreate = async (config: KernelConfig) => {
   } catch (error: any) {
     const msg = error.message || "Failed to create kernel.";
     alert(`Error creating kernel: ${msg}`);
+    throw error; // Re-throw so the form keeps the user's input for retry.
   }
 };
 
@@ -336,7 +432,8 @@ const handleDelete = async () => {
   word-break: break-all;
 }
 
-.missing-images__copy {
+.missing-images__copy,
+.missing-images__dismiss {
   background: transparent;
   border: 1px solid var(--color-warning);
   color: var(--color-warning-dark);
@@ -347,7 +444,19 @@ const handleDelete = async () => {
   flex-shrink: 0;
 }
 
-.missing-images__copy:hover {
+.missing-images__copy:hover,
+.missing-images__dismiss:hover {
+  /* Banner bg is constant pale yellow in both themes, so a small dark tint
+     reads as a slightly darker yellow patch under either palette. */
   background-color: rgba(0, 0, 0, 0.05);
+}
+
+.missing-images__dismiss {
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.missing-images__dismiss:hover {
+  opacity: 1;
 }
 </style>

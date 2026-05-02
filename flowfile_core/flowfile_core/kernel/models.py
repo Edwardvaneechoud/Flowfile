@@ -24,6 +24,12 @@ class ImageFlavour(str, Enum):
     CUSTOM = "custom"
 
 
+class KernelUpdate(BaseModel):
+    """Mutable fields on an existing kernel (packages-only for now)."""
+
+    packages: list[str] = Field(default_factory=list)
+
+
 class KernelConfig(BaseModel):
     id: str
     name: str
@@ -40,6 +46,13 @@ class KernelConfig(BaseModel):
     recovery_mode: RecoveryMode = RecoveryMode.LAZY
 
 
+class ResolvedPackage(BaseModel):
+    """Actual version pip resolved for a user-requested package after bake."""
+
+    name: str
+    version: str
+
+
 class KernelInfo(BaseModel):
     id: str
     name: str
@@ -47,6 +60,8 @@ class KernelInfo(BaseModel):
     container_id: str | None = None
     port: int | None = None
     packages: list[str] = Field(default_factory=list)
+    # Populated after the derived image is built; one entry per requested package.
+    resolved_packages: list[ResolvedPackage] = Field(default_factory=list)
     memory_gb: float = 4.0
     cpu_cores: float = 2.0
     gpu: bool = False

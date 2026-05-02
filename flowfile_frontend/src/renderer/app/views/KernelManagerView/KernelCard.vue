@@ -92,6 +92,13 @@
         <i class="fa-solid fa-stop"></i> Stop
       </button>
       <button
+        class="btn btn-secondary btn-sm"
+        :disabled="busy"
+        @click="$emit('details', kernel.id)"
+      >
+        <i class="fa-solid fa-circle-info"></i> Details
+      </button>
+      <button
         class="btn btn-danger btn-sm"
         :disabled="busy || kernel.state === 'starting'"
         @click="$emit('delete', kernel.id, kernel.name)"
@@ -129,6 +136,7 @@ const flavourTitle = computed(() => {
 defineEmits<{
   (e: "start", id: string): void;
   (e: "stop", id: string): void;
+  (e: "details", id: string): void;
   (e: "delete", id: string, name: string): void;
 }>();
 
