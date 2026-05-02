@@ -2,6 +2,43 @@
 
 export type KernelState = "stopped" | "starting" | "idle" | "executing" | "error";
 
+export type ImageFlavour = "base" | "ml" | "custom";
+
+export interface KernelFlavourMeta {
+  value: ImageFlavour;
+  label: string;
+  description: string;
+}
+
+export const KERNEL_FLAVOURS: KernelFlavourMeta[] = [
+  {
+    value: "base",
+    label: "Base",
+    description: "Polars, PyArrow, NumPy. Best for plain data work.",
+  },
+  {
+    value: "ml",
+    label: "ML",
+    description: "Base + scikit-learn, XGBoost, LightGBM, statsmodels.",
+  },
+  {
+    value: "custom",
+    label: "Custom image",
+    description: "Use your own published Docker image URI.",
+  },
+];
+
+export interface FlavourPackage {
+  name: string;
+  version: string;
+}
+
+export interface FlavourInfo {
+  flavour: ImageFlavour;
+  image: string | null;
+  packages: FlavourPackage[];
+}
+
 export interface KernelConfig {
   id: string;
   name: string;
@@ -9,11 +46,20 @@ export interface KernelConfig {
   cpu_cores: number;
   memory_gb: number;
   gpu: boolean;
+  image_flavour: ImageFlavour;
+  custom_image: string | null;
+}
+
+export interface KernelImageStatus {
+  flavour: ImageFlavour;
+  image: string;
+  available: boolean;
 }
 
 export interface DockerStatus {
   available: boolean;
   image_available: boolean;
+  images: KernelImageStatus[];
   error: string | null;
 }
 
@@ -27,6 +73,9 @@ export interface KernelInfo {
   memory_gb: number;
   cpu_cores: number;
   gpu: boolean;
+  image_flavour: ImageFlavour;
+  custom_image: string | null;
+  image: string | null;
   created_at: string;
   error_message: string | null;
   kernel_version: string | null;

@@ -12,7 +12,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
-from flowfile_core.kernel.models import KernelConfig, KernelInfo
+from flowfile_core.kernel.models import ImageFlavour, KernelConfig, KernelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
         existing.cpu_cores = kernel.cpu_cores
         existing.memory_gb = kernel.memory_gb
         existing.gpu = kernel.gpu
+        existing.image_flavour = kernel.image_flavour.value
+        existing.custom_image = kernel.custom_image
         existing.user_id = user_id
     else:
         record = db_models.Kernel(
@@ -36,6 +38,8 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
             cpu_cores=kernel.cpu_cores,
             memory_gb=kernel.memory_gb,
             gpu=kernel.gpu,
+            image_flavour=kernel.image_flavour.value,
+            custom_image=kernel.custom_image,
         )
         db.add(record)
     db.commit()
@@ -61,6 +65,11 @@ def get_all_kernels(db: Session) -> list[tuple[KernelConfig, int]]:
 
 def _row_to_config(row: db_models.Kernel) -> KernelConfig:
     packages = json.loads(row.packages) if row.packages else []
+    flavour_value = row.image_flavour or ImageFlavour.BASE.value
+    try:
+        flavour = ImageFlavour(flavour_value)
+    except ValueError:
+        flavour = ImageFlavour.BASE
     return KernelConfig(
         id=row.id,
         name=row.name,
@@ -68,4 +77,6 @@ def _row_to_config(row: db_models.Kernel) -> KernelConfig:
         cpu_cores=row.cpu_cores,
         memory_gb=row.memory_gb,
         gpu=row.gpu,
+        image_flavour=flavour,
+        custom_image=row.custom_image,
     )

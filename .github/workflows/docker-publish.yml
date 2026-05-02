@@ -11,6 +11,7 @@ on:
       - 'flowfile_core/**'
       - 'flowfile_frontend/**'
       - 'flowfile_worker/**'
+      - 'kernel_runtime/**'
       - 'shared/**'
       - 'tools/**'
       - 'pyproject.toml'
@@ -22,10 +23,11 @@ on:
 
 jobs:
   prepare:
-    name: Extract Version
+    name: Extract Versions
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      kernel_version: ${{ steps.kernel_version.outputs.kernel_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,12 +42,20 @@ jobs:
           curl -sSL https://install.python-poetry.org | python -
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Extract version from Poetry
+      - name: Extract root version from Poetry
         id: version
         run: |
           VERSION=$(poetry version -s)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version extracted: $VERSION"
+          echo "Root version: $VERSION"
+
+      - name: Extract kernel version from Poetry
+        id: kernel_version
+        working-directory: kernel_runtime
+        run: |
+          VERSION=$(poetry version -s)
+          echo "kernel_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Kernel version: $VERSION"
 
   build:
     name: Build ${{ matrix.image }} for ${{ matrix.platform }}
@@ -56,32 +66,80 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # AMD64 builds
+          # AMD64 builds — application images
           - platform: linux/amd64
             runner: ubuntu-latest
             image: flowfile-core
             dockerfile: ./flowfile_core/Dockerfile
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
           - platform: linux/amd64
             runner: ubuntu-latest
             image: flowfile-frontend
             dockerfile: ./flowfile_frontend/Dockerfile
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
           - platform: linux/amd64
             runner: ubuntu-latest
             image: flowfile-worker
             dockerfile: ./flowfile_worker/Dockerfile
-          # ARM64 builds (native!)
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
+          # AMD64 builds — kernel images
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            image: flowfile-kernel-base
+            dockerfile: ./kernel_runtime/Dockerfile
+            context: ./kernel_runtime
+            extras: ""
+            version: ${{ needs.prepare.outputs.kernel_version }}
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            image: flowfile-kernel-ml
+            dockerfile: ./kernel_runtime/Dockerfile
+            context: ./kernel_runtime
+            extras: "ml"
+            version: ${{ needs.prepare.outputs.kernel_version }}
+          # ARM64 builds — application images (native!)
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             image: flowfile-core
             dockerfile: ./flowfile_core/Dockerfile
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             image: flowfile-frontend
             dockerfile: ./flowfile_frontend/Dockerfile
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             image: flowfile-worker
             dockerfile: ./flowfile_worker/Dockerfile
+            context: .
+            extras: ""
+            version: ${{ needs.prepare.outputs.version }}
+          # ARM64 builds — kernel images (native!)
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image: flowfile-kernel-base
+            dockerfile: ./kernel_runtime/Dockerfile
+            context: ./kernel_runtime
+            extras: ""
+            version: ${{ needs.prepare.outputs.kernel_version }}
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image: flowfile-kernel-ml
+            dockerfile: ./kernel_runtime/Dockerfile
+            context: ./kernel_runtime
+            extras: "ml"
+            version: ${{ needs.prepare.outputs.kernel_version }}
 
     steps:
       - name: Checkout repository
@@ -103,7 +161,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=${{ matrix.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
             type=sha,prefix=sha-
 
@@ -111,9 +169,11 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
+          build-args: |
+            EXTRAS=${{ matrix.extras }}
           outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
@@ -138,7 +198,17 @@ jobs:
     needs: [prepare, build]
     strategy:
       matrix:
-        image: [flowfile-core, flowfile-frontend, flowfile-worker]
+        include:
+          - image: flowfile-core
+            version: ${{ needs.prepare.outputs.version }}
+          - image: flowfile-frontend
+            version: ${{ needs.prepare.outputs.version }}
+          - image: flowfile-worker
+            version: ${{ needs.prepare.outputs.version }}
+          - image: flowfile-kernel-base
+            version: ${{ needs.prepare.outputs.kernel_version }}
+          - image: flowfile-kernel-ml
+            version: ${{ needs.prepare.outputs.kernel_version }}
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -163,7 +233,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=${{ matrix.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
             type=sha,prefix=sha-
 
@@ -185,22 +255,27 @@ jobs:
     steps:
       - name: Create summary
         run: |
-          echo "## Docker Images Published 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Version: **${{ needs.prepare.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Images:" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Platforms:" >> $GITHUB_STEP_SUMMARY
-          echo "- linux/amd64 (native)" >> $GITHUB_STEP_SUMMARY
-          echo "- linux/arm64 (native)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Built in parallel on native runners - no QEMU emulation! ⚡" >> $GITHUB_STEP_SUMMARY
+          APP_VERSION="${{ needs.prepare.outputs.version }}"
+          KERNEL_VERSION="${{ needs.prepare.outputs.kernel_version }}"
+          USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          {
+            echo "## Docker Images Published 🚀"
+            echo ""
+            echo "Application version: **$APP_VERSION**"
+            echo "Kernel version: **$KERNEL_VERSION**"
+            echo ""
+            echo "### Application images:"
+            echo "- \`$USER/flowfile-core:$APP_VERSION\`, \`$USER/flowfile-core:latest\`"
+            echo "- \`$USER/flowfile-frontend:$APP_VERSION\`, \`$USER/flowfile-frontend:latest\`"
+            echo "- \`$USER/flowfile-worker:$APP_VERSION\`, \`$USER/flowfile-worker:latest\`"
+            echo ""
+            echo "### Kernel images:"
+            echo "- \`$USER/flowfile-kernel-base:$KERNEL_VERSION\`, \`$USER/flowfile-kernel-base:latest\`"
+            echo "- \`$USER/flowfile-kernel-ml:$KERNEL_VERSION\`, \`$USER/flowfile-kernel-ml:latest\`"
+            echo ""
+            echo "### Platforms:"
+            echo "- linux/amd64 (native)"
+            echo "- linux/arm64 (native)"
+            echo ""
+            echo "Built in parallel on native runners — no QEMU emulation! ⚡"
+          } >> "$GITHUB_STEP_SUMMARY"

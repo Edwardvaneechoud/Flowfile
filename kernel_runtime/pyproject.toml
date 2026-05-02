@@ -1,24 +1,33 @@
-[project]
-name = "kernel_runtime"
-version = "0.2.2"
+[tool.poetry]
+name = "kernel-runtime"
+version = "0.3.0"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
-requires-python = ">=3.10"
-dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn>=0.32.0",
-    "polars>=1.0.0",
-    "pyarrow>=14.0.0",
-    "httpx>=0.24.0",
-    "cloudpickle>=3.0.0",
-    "joblib>=1.3.0",
-]
+authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
+readme = "README.md"
+packages = [{include = "kernel_runtime"}]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=7.0.0",
-    "httpx>=0.24.0",
-]
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+fastapi = "~0.115.2"
+uvicorn = "~0.32.0"
+polars = ">=1.8.2,<1.40"
+pyarrow = "^18.0.0"
+numpy = "1.26.4"
+httpx = "^0.28.1"
+cloudpickle = "^3.0.0"
+joblib = "^1.3.0"
+
+scikit-learn = {version = "^1.5.0", optional = true}
+xgboost = {version = "^2.0.0", optional = true}
+lightgbm = {version = "^4.0.0", optional = true}
+statsmodels = {version = "^0.14.0", optional = true}
+
+[tool.poetry.extras]
+ml = ["scikit-learn", "xgboost", "lightgbm", "statsmodels"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
 
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

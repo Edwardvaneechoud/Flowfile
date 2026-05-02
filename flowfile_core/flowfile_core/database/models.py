@@ -121,6 +121,8 @@ class Kernel(Base):
     cpu_cores = Column(Float, default=2.0)
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
+    image_flavour = Column(String, nullable=False, default="base")
+    custom_image = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 

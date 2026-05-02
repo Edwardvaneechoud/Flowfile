@@ -1,11 +1,16 @@
 import asyncio
+import json
 import logging
 import os
+import re
 import socket
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import docker
+import docker.errors
 import docker.types
 import httpx
 
@@ -17,6 +22,7 @@ from flowfile_core.kernel.models import (
     ClearNodeArtifactsResult,
     ExecuteRequest,
     ExecuteResult,
+    ImageFlavour,
     KernelConfig,
     KernelInfo,
     KernelMemoryInfo,
@@ -27,7 +33,87 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-_KERNEL_IMAGE = "flowfile-kernel"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.3.0"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.3.0"
+
+# FLOWFILE_KERNEL_IMAGE is the legacy override for the base image (kept for
+# backwards compatibility). FLOWFILE_KERNEL_IMAGE_BASE / _ML let an operator
+# pin each flavour to a specific tag (or their own registry).
+_KERNEL_IMAGE_BASE = os.environ.get(
+    "FLOWFILE_KERNEL_IMAGE_BASE",
+    os.environ.get("FLOWFILE_KERNEL_IMAGE", _KERNEL_IMAGE_BASE_DEFAULT),
+)
+_KERNEL_IMAGE_ML = os.environ.get("FLOWFILE_KERNEL_IMAGE_ML", _KERNEL_IMAGE_ML_DEFAULT)
+
+# Legacy alias: code outside this module (e.g. /docker-status route) imports
+# _KERNEL_IMAGE for the default base image. Keep it pointing at base.
+_KERNEL_IMAGE = _KERNEL_IMAGE_BASE
+
+_FLAVOUR_IMAGES: dict[ImageFlavour, str] = {
+    ImageFlavour.BASE: _KERNEL_IMAGE_BASE,
+    ImageFlavour.ML: _KERNEL_IMAGE_ML,
+}
+
+
+def _resolve_image(flavour: ImageFlavour, custom_image: str | None) -> str:
+    if flavour == ImageFlavour.CUSTOM:
+        if not custom_image:
+            raise ValueError(
+                "custom_image must be provided when image_flavour='custom'"
+            )
+        _validate_custom_image(custom_image)
+        return custom_image
+    return _FLAVOUR_IMAGES[flavour]
+
+
+# Pip package specifier (PEP 508-ish, conservative): rejects anything with
+# shell metacharacters so we can pass the list straight into a docker build.
+_VALID_PACKAGE_SPEC = re.compile(r"^[A-Za-z0-9_.\-+\[\]<>=!~,]+$")
+_KERNEL_ID_TAG_RE = re.compile(r"[^a-z0-9._-]")
+_VALID_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
+_DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
+
+
+def _derived_image_tag(kernel_id: str) -> str:
+    """Stable tag for the per-kernel derived image."""
+    safe = _KERNEL_ID_TAG_RE.sub("-", kernel_id.lower())
+    return f"flowfile-kernel-derived-{safe}:latest"
+
+
+def _validate_packages(packages: list[str]) -> None:
+    for pkg in packages:
+        if not _VALID_PACKAGE_SPEC.match(pkg):
+            raise ValueError(
+                f"Invalid package specifier {pkg!r}: only PyPI-safe characters "
+                "(alphanumerics, '.-_+[]<>=!~,') are allowed."
+            )
+
+
+def _validate_custom_image(uri: str) -> None:
+    """Custom image URIs must pin an explicit version (tag or @sha256 digest).
+
+    Untagged refs default to ``:latest`` on Docker and break reproducibility.
+    """
+    ref = (uri or "").strip()
+    if not ref:
+        raise ValueError("Custom image URI is empty.")
+    if _DIGEST_RE.search(ref):
+        return
+    last_slash = ref.rfind("/")
+    last_segment = ref[last_slash + 1 :] if last_slash >= 0 else ref
+    if ":" not in last_segment:
+        raise ValueError(
+            f"Custom image {ref!r} has no explicit tag. "
+            "Append a version, e.g. 'myorg/kernel:1.2.3' or use '@sha256:...'."
+        )
+    tag = last_segment.split(":", 1)[1]
+    if not tag or not _VALID_TAG_RE.match(tag):
+        raise ValueError(
+            f"Custom image {ref!r} has an invalid tag {tag!r}. "
+            "Tags must start with an alphanumeric and may include '.-_'."
+        )
+
+
 _BASE_PORT = 19000
 _PORT_RANGE = 1000  # 19000-19999
 _HEALTH_TIMEOUT = 120
@@ -283,6 +369,8 @@ class KernelManager:
                         memory_gb=config.memory_gb,
                         cpu_cores=config.cpu_cores,
                         gpu=config.gpu,
+                        image_flavour=config.image_flavour,
+                        custom_image=config.custom_image,
                     )
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
@@ -375,14 +463,99 @@ class KernelManager:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Derived image build (per-kernel, packages baked in)
+    # ------------------------------------------------------------------
+
+    def _build_derived_image(self, kernel: KernelInfo) -> str:
+        """Build a derived image with the kernel's extra packages baked in.
+
+        Reuses the existing image if it is already present locally. Returns the
+        derived image tag.
+        """
+        _validate_packages(kernel.packages)
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+        derived_tag = _derived_image_tag(kernel.id)
+
+        try:
+            self._docker.images.get(derived_tag)
+            logger.info("Reusing existing derived image '%s'", derived_tag)
+            return derived_tag
+        except docker.errors.ImageNotFound:
+            pass
+
+        # Make sure the FROM image is on the host before we start the build.
+        # docker build will otherwise reach for the registry and produce a
+        # confusing "manifest unknown" error when the image isn't pushed yet.
+        try:
+            self._docker.images.get(base_image)
+        except docker.errors.ImageNotFound:
+            raise RuntimeError(
+                f"Base image '{base_image}' is not available locally. "
+                f"Pull it first: docker pull {base_image} "
+                f"(or set FLOWFILE_KERNEL_IMAGE_{kernel.image_flavour.value.upper()} "
+                "to a tag you already have)."
+            ) from None
+
+        # JSON exec form keeps each package as a discrete argv item — no shell
+        # interpretation, no quoting bugs.
+        pip_args = (
+            ["pip", "install", "--no-cache-dir", "--constraint", "/opt/constraints.txt"]
+            + list(kernel.packages)
+        )
+        dockerfile = (
+            f"FROM {base_image}\n"
+            f"RUN {json.dumps(pip_args)}\n"
+        )
+
+        logger.info(
+            "Building derived image '%s' on top of '%s' (%d extra packages)",
+            derived_tag,
+            base_image,
+            len(kernel.packages),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "Dockerfile").write_text(dockerfile)
+            try:
+                self._docker.images.build(
+                    path=tmpdir,
+                    tag=derived_tag,
+                    rm=True,
+                    forcerm=True,
+                    pull=False,
+                )
+            except docker.errors.BuildError as exc:
+                # Surface the failing pip output so the user can see why
+                tail = "\n".join(
+                    line.get("stream", "").rstrip()
+                    for line in (exc.build_log or [])
+                    if isinstance(line, dict) and line.get("stream")
+                )[-2000:]
+                raise RuntimeError(
+                    f"Failed to bake packages into kernel image: {exc}\n{tail}"
+                ) from exc
+        return derived_tag
+
+    def _remove_derived_image(self, kernel_id: str) -> None:
+        """Best-effort removal of the per-kernel derived image."""
+        tag = _derived_image_tag(kernel_id)
+        try:
+            self._docker.images.remove(tag, force=True)
+            logger.info("Removed derived image '%s'", tag)
+        except docker.errors.ImageNotFound:
+            pass
+        except docker.errors.APIError as exc:
+            logger.warning("Could not remove derived image '%s': %s", tag, exc)
+
     def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.
 
         This centralizes all environment variables passed to kernel containers,
         including Core API connection, authentication, and persistence settings.
         """
-        packages_str = " ".join(kernel.packages)
-        env = {"KERNEL_PACKAGES": packages_str}
+        # Packages are pre-baked into the derived image when present, so the
+        # entrypoint's KERNEL_PACKAGES install loop must be a no-op.
+        env = {"KERNEL_PACKAGES": ""}
         # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
         # In Docker-in-Docker mode the kernel is on the same Docker network
         # as core, so it can reach core by service name.
@@ -431,6 +604,14 @@ class KernelManager:
         # In Docker-in-Docker mode we don't map host ports — kernels are
         # reached via container name on the shared Docker network.
         port = None if self._kernel_volume else self._allocate_port()
+        # Validate image flavour and packages up-front so we fail before
+        # persisting state or kicking off a long-running build.
+        try:
+            _resolve_image(config.image_flavour, config.custom_image)
+            _validate_packages(config.packages)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
         kernel = KernelInfo(
             id=config.id,
             name=config.name,
@@ -441,9 +622,21 @@ class KernelManager:
             cpu_cores=config.cpu_cores,
             gpu=config.gpu,
             health_timeout=config.health_timeout,
+            image_flavour=config.image_flavour,
+            custom_image=config.custom_image,
             persistence_enabled=config.persistence_enabled,
             recovery_mode=config.recovery_mode,
         )
+
+        # Pre-bake packages into a derived image so subsequent kernel starts
+        # don't re-run pip in the entrypoint. Run in a thread to keep the
+        # event loop responsive — image builds can take 30–60 s.
+        if config.packages:
+            try:
+                await asyncio.to_thread(self._build_derived_image, kernel)
+            except (RuntimeError, ValueError) as exc:
+                raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
+
         self._kernels[config.id] = kernel
         self._kernel_owners[config.id] = user_id
         self._persist_kernel(kernel, user_id)
@@ -455,16 +648,34 @@ class KernelManager:
         if kernel.state == KernelState.IDLE:
             return kernel
 
-        # Verify the kernel image exists before attempting to start
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+
+        # Verify the (base) kernel image exists before doing anything else.
         try:
-            self._docker.images.get(_KERNEL_IMAGE)
+            self._docker.images.get(base_image)
         except docker.errors.ImageNotFound:
             kernel.state = KernelState.ERROR
             kernel.error_message = (
-                f"Docker image '{_KERNEL_IMAGE}' not found. "
-                "Please build or pull the kernel image before starting a kernel."
+                f"Docker image '{base_image}' not found. "
+                f"Pull it with: docker pull {base_image} "
+                "(or pick a different image flavour)."
             )
             raise RuntimeError(kernel.error_message) from None
+
+        # If the kernel was created with extra packages, use the derived image
+        # (built once at create_kernel time). Rebuild on the fly if a previous
+        # core run was interrupted before the image landed.
+        if kernel.packages:
+            try:
+                image = await asyncio.to_thread(self._build_derived_image, kernel)
+            except (RuntimeError, ValueError) as exc:
+                kernel.state = KernelState.ERROR
+                kernel.error_message = str(exc)
+                raise RuntimeError(kernel.error_message) from exc
+        else:
+            image = base_image
+
+        kernel.image = image
 
         # Allocate a port if needed (local mode only, not needed for DinD)
         if kernel.port is None and not self._kernel_volume:
@@ -476,11 +687,11 @@ class KernelManager:
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
+            container = self._docker.containers.run(image, **run_kwargs)
             kernel.container_id = container.id
             await self._wait_for_healthy(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
-            logger.info("Kernel '%s' is idle (container %s)", kernel_id, container.short_id)
+            logger.info("Kernel '%s' is idle (container %s, image %s)", kernel_id, container.short_id, image)
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
@@ -496,19 +707,34 @@ class KernelManager:
         if kernel.state == KernelState.IDLE:
             return kernel
 
+        base_image = _resolve_image(kernel.image_flavour, kernel.custom_image)
+
         try:
-            self._docker.images.get(_KERNEL_IMAGE)
+            self._docker.images.get(base_image)
         except docker.errors.ImageNotFound:
             kernel.state = KernelState.ERROR
             kernel.error_message = (
-                f"Docker image '{_KERNEL_IMAGE}' not found. "
-                "Please build or pull the kernel image before starting a kernel."
+                f"Docker image '{base_image}' not found. "
+                f"Pull it with: docker pull {base_image} "
+                "(or pick a different image flavour)."
             )
-            flow_logger.error(
-                f"Docker image '{_KERNEL_IMAGE}' not found. "
-                "Please build or pull the kernel image before starting a kernel."
-            ) if flow_logger else None
+            if flow_logger:
+                flow_logger.error(kernel.error_message)
             raise RuntimeError(kernel.error_message) from None
+
+        if kernel.packages:
+            try:
+                image = self._build_derived_image(kernel)
+            except (RuntimeError, ValueError) as exc:
+                kernel.state = KernelState.ERROR
+                kernel.error_message = str(exc)
+                if flow_logger:
+                    flow_logger.error(kernel.error_message)
+                raise RuntimeError(kernel.error_message) from exc
+        else:
+            image = base_image
+
+        kernel.image = image
 
         if kernel.port is None and not self._kernel_volume:
             kernel.port = self._allocate_port()
@@ -519,18 +745,21 @@ class KernelManager:
         try:
             env = self._build_kernel_env(kernel_id, kernel)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            container = self._docker.containers.run(_KERNEL_IMAGE, **run_kwargs)
+            container = self._docker.containers.run(image, **run_kwargs)
             kernel.container_id = container.id
             self._wait_for_healthy_sync(kernel_id, timeout=kernel.health_timeout)
             kernel.state = KernelState.IDLE
-            flow_logger.info(f"Kernel  {kernel_id} is idle (container {container.short_id})") if flow_logger else None
+            if flow_logger:
+                flow_logger.info(
+                    f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})"
+                )
         except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
             self._cleanup_container(kernel_id)
             raise
-        flow_logger.info(f"Kernel  {kernel_id} started (container {container.short_id})") if flow_logger else None
+        flow_logger.info(f"Kernel {kernel_id} started (container {container.short_id})") if flow_logger else None
         return kernel
 
     async def stop_kernel(self, kernel_id: str) -> None:
@@ -544,9 +773,12 @@ class KernelManager:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state in (KernelState.IDLE, KernelState.EXECUTING):
             await self.stop_kernel(kernel_id)
+        had_packages = bool(kernel.packages)
         del self._kernels[kernel_id]
         self._kernel_owners.pop(kernel_id, None)
         self._remove_kernel_from_db(kernel_id)
+        if had_packages:
+            self._remove_derived_image(kernel_id)
         logger.info("Deleted kernel '%s'", kernel_id)
 
     def shutdown_all(self) -> None:

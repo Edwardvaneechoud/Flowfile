@@ -12,7 +12,11 @@ from flowfile_core.kernel.models import (
     DockerStatus,
     ExecuteRequest,
     ExecuteResult,
+    FlavourInfo,
+    FlavourPackage,
+    ImageFlavour,
     KernelConfig,
+    KernelImageStatus,
     KernelInfo,
     KernelMemoryInfo,
     RecoveryStatus,
@@ -50,9 +54,26 @@ async def create_kernel(config: KernelConfig, current_user=Depends(get_current_a
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/flavours", response_model=list[FlavourInfo])
+async def list_flavours():
+    """Return the locked package versions baked into each kernel image flavour."""
+    from flowfile_core.kernel.flavours import get_flavour_packages
+    from flowfile_core.kernel.manager import _FLAVOUR_IMAGES
+
+    packages_by_flavour = get_flavour_packages()
+    return [
+        FlavourInfo(
+            flavour=flavour,
+            image=_FLAVOUR_IMAGES.get(flavour),
+            packages=[FlavourPackage(name=n, version=v) for n, v in pkgs],
+        )
+        for flavour, pkgs in packages_by_flavour.items()
+    ]
+
+
 @router.get("/docker-status", response_model=DockerStatus)
 async def docker_status():
-    """Check if Docker is reachable and the kernel image is available."""
+    """Check if Docker is reachable and which kernel images are pulled."""
     import docker as _docker
 
     try:
@@ -61,17 +82,28 @@ async def docker_status():
     except Exception as exc:
         return DockerStatus(available=False, image_available=False, error=str(exc))
 
-    from flowfile_core.kernel.manager import _KERNEL_IMAGE
+    from flowfile_core.kernel.manager import _FLAVOUR_IMAGES
 
-    try:
-        client.images.get(_KERNEL_IMAGE)
-        image_available = True
-    except _docker.errors.ImageNotFound:
-        image_available = False
-    except Exception:
-        image_available = False
+    images: list[KernelImageStatus] = []
+    for flavour, image_tag in _FLAVOUR_IMAGES.items():
+        try:
+            client.images.get(image_tag)
+            available = True
+        except _docker.errors.ImageNotFound:
+            available = False
+        except Exception:
+            available = False
+        images.append(
+            KernelImageStatus(flavour=flavour, image=image_tag, available=available)
+        )
 
-    return DockerStatus(available=True, image_available=image_available)
+    base_available = any(i.available for i in images if i.flavour == ImageFlavour.BASE)
+
+    return DockerStatus(
+        available=True,
+        image_available=base_available,
+        images=images,
+    )
 
 
 @router.get("/{kernel_id}", response_model=KernelInfo)

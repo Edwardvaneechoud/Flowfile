@@ -4,6 +4,7 @@ import type {
   DockerStatus,
   ExecuteCellRequest,
   ExecuteResult,
+  FlavourInfo,
   KernelConfig,
   KernelInfo,
   KernelMemoryInfo,
@@ -89,13 +90,29 @@ export class KernelApi {
     }
   }
 
+  static async listFlavours(): Promise<FlavourInfo[]> {
+    try {
+      const response = await axios.get<FlavourInfo[]>(`${API_BASE_URL}/flavours`);
+      return response.data;
+    } catch (error) {
+      console.error("API Error: Failed to load kernel flavours:", error);
+      return [];
+    }
+  }
+
   static async getDockerStatus(): Promise<DockerStatus> {
     try {
       const response = await axios.get<DockerStatus>(`${API_BASE_URL}/docker-status`);
-      return response.data;
+      // Tolerate older backends that don't yet return `images`.
+      return { ...response.data, images: response.data.images ?? [] };
     } catch (error) {
       console.error("API Error: Failed to check Docker status:", error);
-      return { available: false, image_available: false, error: "Failed to reach server" };
+      return {
+        available: false,
+        image_available: false,
+        images: [],
+        error: "Failed to reach server",
+      };
     }
   }
 

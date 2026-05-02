@@ -18,14 +18,39 @@
       </div>
     </div>
     <div
-      v-else-if="dockerStatus && dockerStatus.available && !dockerStatus.image_available"
+      v-else-if="dockerStatus && dockerStatus.available && missingImages.length > 0"
       class="status-banner status-banner--warning mb-3"
     >
       <i class="fa-solid fa-triangle-exclamation"></i>
-      <div>
-        <strong>Kernel image not found.</strong>
-        The <code>flowfile-kernel</code> Docker image is not available. Build or pull the image
-        before starting kernels.
+      <div class="missing-images">
+        <strong>
+          {{
+            missingImages.length === 1 ? "Kernel image not pulled." : "Kernel images not pulled."
+          }}
+        </strong>
+        <p class="missing-images__hint">
+          {{
+            missingImages.length === dockerStatus.images.length
+              ? "No kernel images are available locally yet. Pull at least one before creating a kernel:"
+              : "Some kernel flavours are not available locally. Run the matching pull command:"
+          }}
+        </p>
+        <ul class="missing-images__list">
+          <li v-for="img in missingImages" :key="img.image">
+            <span class="missing-images__flavour">{{ flavourLabel(img.flavour) }}</span>
+            <code class="missing-images__cmd">docker pull {{ img.image }}</code>
+            <button
+              type="button"
+              class="missing-images__copy"
+              :title="copiedImage === img.image ? 'Copied!' : 'Copy command'"
+              @click="copyPullCommand(img.image)"
+            >
+              <i
+                :class="copiedImage === img.image ? 'fa-solid fa-check' : 'fa-regular fa-copy'"
+              ></i>
+            </button>
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -108,8 +133,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import type { KernelConfig } from "../../types";
+import { computed, ref } from "vue";
+import {
+  KERNEL_FLAVOURS,
+  type ImageFlavour,
+  type KernelConfig,
+  type KernelImageStatus,
+} from "../../types";
 import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
 import KernelCard from "./KernelCard.vue";
@@ -126,6 +156,28 @@ const {
   deleteKernel,
   isActionInProgress,
 } = useKernelManager();
+
+const missingImages = computed<KernelImageStatus[]>(() => {
+  const imgs = dockerStatus.value?.images ?? [];
+  return imgs.filter((i) => !i.available);
+});
+
+const flavourLabel = (flavour: ImageFlavour): string =>
+  KERNEL_FLAVOURS.find((f) => f.value === flavour)?.label ?? flavour;
+
+const copiedImage = ref<string | null>(null);
+const copyPullCommand = async (image: string) => {
+  const cmd = `docker pull ${image}`;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    copiedImage.value = image;
+    setTimeout(() => {
+      if (copiedImage.value === image) copiedImage.value = null;
+    }, 1800);
+  } catch (err) {
+    console.error("Clipboard copy failed", err);
+  }
+};
 
 // Delete confirmation state
 const showDeleteModal = ref(false);
@@ -232,5 +284,70 @@ const handleDelete = async () => {
   background-color: var(--color-warning-light);
   color: var(--color-warning-dark);
   border: 1px solid var(--color-warning);
+}
+
+.missing-images {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.missing-images__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.missing-images__list {
+  list-style: none;
+  margin: var(--spacing-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1-5);
+}
+
+.missing-images__list li {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+}
+
+.missing-images__flavour {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 var(--spacing-1);
+  border: 1px solid currentColor;
+  border-radius: var(--border-radius-sm);
+  flex-shrink: 0;
+}
+
+.missing-images__cmd {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  background-color: rgba(0, 0, 0, 0.06);
+  padding: var(--spacing-0-5) var(--spacing-1-5);
+  border-radius: var(--border-radius-sm);
+  flex-grow: 1;
+  user-select: all;
+  word-break: break-all;
+}
+
+.missing-images__copy {
+  background: transparent;
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning-dark);
+  border-radius: var(--border-radius-sm);
+  padding: var(--spacing-0-5) var(--spacing-1-5);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+.missing-images__copy:hover {
+  background-color: rgba(0, 0, 0, 0.05);
 }
 </style>

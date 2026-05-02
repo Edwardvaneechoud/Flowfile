@@ -8,6 +8,13 @@
       <div class="kernel-card__meta">
         <p class="kernel-card__id">{{ kernel.id }}</p>
         <span
+          class="kernel-card__flavour"
+          :class="`kernel-card__flavour--${kernel.image_flavour}`"
+          :title="flavourTitle"
+        >
+          {{ flavourLabel }}
+        </span>
+        <span
           v-if="kernel.kernel_version"
           class="kernel-card__version"
           title="Kernel runtime version"
@@ -97,7 +104,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { KernelInfo, KernelMemoryInfo } from "../../types";
+import { KERNEL_FLAVOURS, type KernelInfo, type KernelMemoryInfo } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
 
 const props = defineProps<{
@@ -105,6 +112,19 @@ const props = defineProps<{
   busy: boolean;
   memoryInfo: KernelMemoryInfo | null;
 }>();
+
+const flavourMeta = computed(
+  () => KERNEL_FLAVOURS.find((f) => f.value === props.kernel.image_flavour) ?? KERNEL_FLAVOURS[0],
+);
+
+const flavourLabel = computed(() => flavourMeta.value.label);
+
+const flavourTitle = computed(() => {
+  if (props.kernel.image_flavour === "custom") {
+    return props.kernel.custom_image ?? props.kernel.image ?? "Custom image";
+  }
+  return props.kernel.image ?? flavourMeta.value.description;
+});
 
 defineEmits<{
   (e: "start", id: string): void;
@@ -200,6 +220,28 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
   background-color: var(--color-accent-subtle);
   padding: 0 var(--spacing-1);
   border-radius: var(--border-radius-sm);
+}
+
+.kernel-card__flavour {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 var(--spacing-1);
+  border-radius: var(--border-radius-sm);
+  border: 1px solid currentColor;
+}
+
+.kernel-card__flavour--base {
+  color: var(--color-text-secondary);
+}
+
+.kernel-card__flavour--ml {
+  color: var(--color-success, #2ea66c);
+}
+
+.kernel-card__flavour--custom {
+  color: var(--color-warning-dark, #b8860b);
 }
 
 .kernel-card__body {

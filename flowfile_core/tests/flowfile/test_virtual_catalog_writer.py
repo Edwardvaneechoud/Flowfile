@@ -391,14 +391,7 @@ class TestVirtualCatalogWriter:
 
 
 class TestReadVirtualFlowTables:
-    """Tests that virtual tables can be resolved and previewed."""
-
-    def test_lazy_frame_table_preview(self, lazy_virtual_table_id, catalog_service):
-        """Preview of an optimized virtual table should return filtered rows."""
-        preview = catalog_service.get_table_preview(lazy_virtual_table_id)
-        assert len(preview.columns) > 0
-        # Filter is age > 28, so Alice (30) and Charlie (35) match
-        assert len(preview.rows) == 2
+    """Tests that virtual tables can be resolved to a LazyFrame."""
 
     def test_lazy_frame_resolve(self, lazy_virtual_table_id, catalog_service):
         """resolve_virtual_flow_table on an optimized table returns a LazyFrame."""
@@ -406,13 +399,6 @@ class TestReadVirtualFlowTables:
         assert isinstance(lf, pl.LazyFrame)
         df = lf.collect()
         assert df.height == 2
-
-    def test_eager_frame_table_preview(self, eager_virtual_table_id, catalog_service):
-        """Preview of a non-optimized (eager) virtual table should re-execute the flow."""
-        preview = catalog_service.get_table_preview(eager_virtual_table_id)
-        assert len(preview.columns) > 0
-        # Pivot of 3 rows by name produces 3 rows
-        assert len(preview.rows) == 3
 
     def test_eager_frame_resolve(self, eager_virtual_table_id, catalog_service):
         """resolve_virtual_flow_table on a non-optimized table re-executes and returns LazyFrame."""

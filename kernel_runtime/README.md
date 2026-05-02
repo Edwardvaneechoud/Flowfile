@@ -12,19 +12,47 @@ The kernel runtime provides:
 - Multi-flow support with artifact isolation
 - Automatic stdout/stderr capture
 
-## Building the Docker Image
+## Image Flavours
 
-### Standard Build
+Two images are published to Docker Hub under matching kernel-runtime versions:
+
+| Image                                          | Adds on top of base                                | When to use                                |
+|------------------------------------------------|----------------------------------------------------|--------------------------------------------|
+| `edwardvaneechoud/flowfile-kernel-base:<tag>`  | —                                                  | Plain data work — Polars, PyArrow, NumPy   |
+| `edwardvaneechoud/flowfile-kernel-ml:<tag>`    | scikit-learn, xgboost, lightgbm, statsmodels       | ML workflows without `KERNEL_PACKAGES`     |
+
+`<tag>` is the kernel's own version (see `pyproject.toml`), which evolves
+independently from the application version. Pull the flavour you need:
 
 ```bash
-cd kernel_runtime
-docker build -t kernel_runtime:latest .
+docker pull edwardvaneechoud/flowfile-kernel-base:0.3.0
+docker pull edwardvaneechoud/flowfile-kernel-ml:0.3.0
 ```
 
-### Build with Custom Tag
+Tell `flowfile_core` which image to use by setting `FLOWFILE_KERNEL_IMAGE`:
 
 ```bash
-docker build -t flowfile/kernel_runtime:v0.2.0 .
+export FLOWFILE_KERNEL_IMAGE=edwardvaneechoud/flowfile-kernel-ml:0.3.0
+```
+
+## Building the Docker Image Locally
+
+The Dockerfile is multi-stage (Poetry-locked builder → slim runtime) and
+accepts an `EXTRAS` build-arg to bake in the optional ml packages.
+
+```bash
+# Base flavour
+docker build -t flowfile-kernel-base:local kernel_runtime/
+
+# ML flavour (sklearn, xgboost, lightgbm, statsmodels)
+docker build --build-arg EXTRAS=ml -t flowfile-kernel-ml:local kernel_runtime/
+```
+
+The same builds are produced by docker-compose:
+
+```bash
+docker compose --profile kernel build flowfile-kernel
+docker compose --profile kernel build flowfile-kernel-ml
 ```
 
 ## Running the Container
@@ -32,34 +60,52 @@ docker build -t flowfile/kernel_runtime:v0.2.0 .
 ### Basic Run
 
 ```bash
-docker run -p 9999:9999 kernel_runtime:latest
+docker run -p 9999:9999 edwardvaneechoud/flowfile-kernel-base:0.3.0
 ```
 
 ### With Shared Volume for Data Exchange
 
 ```bash
-docker run -p 9999:9999 -v /path/to/data:/shared kernel_runtime:latest
+docker run -p 9999:9999 -v /path/to/data:/shared \
+  edwardvaneechoud/flowfile-kernel-base:0.3.0
 ```
 
 ### With Additional Python Packages
 
-The `KERNEL_PACKAGES` environment variable allows installing additional packages at container startup:
+There are two ways to add extra packages on top of a flavour:
 
-```bash
-docker run -p 9999:9999 \
-  -e KERNEL_PACKAGES="scikit-learn pandas matplotlib" \
-  kernel_runtime:latest
-```
+1. **From `flowfile-core` (recommended).** When you create a kernel from the
+   Flowfile UI / API and pass extra `packages`, core builds a per-kernel
+   derived image at creation time (`FROM <flavour> + RUN pip install`) using
+   `/opt/constraints.txt` to keep core libs pinned. Subsequent kernel starts
+   reuse that image and boot instantly. The derived image is cleaned up when
+   the kernel is deleted.
 
-### Full Example with All Options
+2. **Standalone container.** If you run the image directly (no core), the
+   legacy `KERNEL_PACKAGES` env var still installs at container startup,
+   pinned against the same constraints file:
+
+   ```bash
+   docker run -p 9999:9999 \
+     -e KERNEL_PACKAGES="matplotlib seaborn" \
+     edwardvaneechoud/flowfile-kernel-base:0.3.0
+   ```
+
+   Note: `flowfile-core` clears `KERNEL_PACKAGES` when it launches a kernel,
+   so the runtime install path is only used for ad-hoc / standalone runs.
+
+For ML workloads, prefer pulling the `kernel-ml` image — the heavy stack
+(sklearn, xgboost, lightgbm, statsmodels) is already baked in.
+
+### Full Example
 
 ```bash
 docker run -d \
   --name flowfile-kernel \
   -p 9999:9999 \
   -v /path/to/data:/shared \
-  -e KERNEL_PACKAGES="scikit-learn xgboost" \
-  kernel_runtime:latest
+  -e KERNEL_PACKAGES="seaborn" \
+  edwardvaneechoud/flowfile-kernel-ml:0.3.0
 ```
 
 ## API Endpoints
@@ -225,14 +271,25 @@ flowfile.publish_output(result)
 
 ## Pre-installed Packages
 
-The Docker image comes with these packages pre-installed:
+Exact versions are pinned in `poetry.lock`. The current ranges (see
+`pyproject.toml`) are aligned with the parent `flowfile_core` package so the
+kernel and core never disagree on Polars semantics:
 
-- `polars>=1.0.0` - Fast DataFrame library
-- `pyarrow>=14.0.0` - Columnar data format support
-- `numpy>=1.24.0` - Numerical computing
-- `fastapi>=0.115.0` - API framework
-- `uvicorn>=0.32.0` - ASGI server
-- `httpx>=0.24.0` - HTTP client
+**Base image:**
+- `polars` (range matches the root project)
+- `pyarrow ^18.0.0`
+- `numpy 1.26.4`
+- `fastapi ~0.115.2`
+- `uvicorn ~0.32.0`
+- `httpx ^0.28.1`
+- `cloudpickle ^3.0.0`
+- `joblib ^1.3.0`
+
+**ML image** (base + the `ml` extras group):
+- `scikit-learn ^1.5.0`
+- `xgboost ^2.0.0`
+- `lightgbm ^4.0.0`
+- `statsmodels ^0.14.0`
 
 ## Development
 
@@ -240,19 +297,20 @@ The Docker image comes with these packages pre-installed:
 
 ```bash
 cd kernel_runtime
-pip install -e ".[test]"
+poetry install              # base deps + dev tools
+poetry install --extras ml  # also install the ml flavour
 ```
 
 ### Running Tests
 
 ```bash
-pytest tests/ -v
+poetry run pytest tests/ -v
 ```
 
 ### Running Locally (without Docker)
 
 ```bash
-uvicorn kernel_runtime.main:app --host 0.0.0.0 --port 9999
+poetry run uvicorn kernel_runtime.main:app --host 0.0.0.0 --port 9999
 ```
 
 ## Architecture
@@ -281,9 +339,11 @@ kernel_runtime/
 
 ## Configuration
 
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| `KERNEL_PACKAGES` | Additional pip packages to install at startup | None |
+| Environment Variable        | Description                                                                       | Default                |
+|-----------------------------|-----------------------------------------------------------------------------------|------------------------|
+| `KERNEL_PACKAGES`           | Additional pip packages to install at startup (resolved against `/opt/constraints.txt`)             | None                   |
+| `KERNEL_CONSTRAINTS_FILE`   | Path inside the container to the pip constraints file used by `KERNEL_PACKAGES`                     | `/opt/constraints.txt` |
+| `FLOWFILE_KERNEL_IMAGE`     | Read by `flowfile_core`'s `KernelManager` to choose which image to launch (override flavour)         | `edwardvaneechoud/flowfile-kernel-base:0.3.0` |
 
 ## Health Check
 
