@@ -1,11 +1,16 @@
-"""Previews for physical and virtual tables, plus Delta history."""
+"""Previews for physical tables and Delta history.
+
+Virtual tables don't have a preview path: the catalog UI shows a
+"no data preview available" placeholder for them and never calls these
+endpoints, so ``get_table_preview`` returns an empty preview when handed
+a virtual table id.
+"""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-import polars as pl
 from deltalake import DeltaTable
 
 from flowfile_core.catalog.delta_utils import (
@@ -16,23 +21,18 @@ from flowfile_core.catalog.delta_utils import (
 from flowfile_core.catalog.exceptions import TableNotFoundError
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import format_pyarrow_preview
-from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
     trigger_delta_version_preview,
-    trigger_resolve_virtual_table,
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     DeltaTableHistory,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
-from shared.delta_utils import validate_catalog_path
-from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +45,15 @@ def _should_offload() -> bool:
 
 
 class TablePreviewService:
-    """Owns table preview fetching (physical, Delta-versioned, virtual) and Delta history."""
+    """Owns physical/Delta-versioned table preview fetching and Delta history."""
 
     def __init__(
         self,
         repo: CatalogRepository,
         tables: TableService,
-        virtual_tables: VirtualTableService,
     ) -> None:
         self.repo = repo
         self._tables = tables
-        self._virtual_tables = virtual_tables
 
     def get_table_preview(
         self,
@@ -64,78 +62,15 @@ class TablePreviewService:
         version: int | None = None,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Read the first N rows from a catalog table."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        """Read the first N rows from a catalog table.
 
-        if getattr(table, "table_type", "physical") == "virtual":
-            if getattr(table, "sql_query", None):
-                return self._get_query_virtual_table_preview(table, limit, user_id)
-            return self._get_virtual_table_preview(table, limit, user_id)
-
-        return self._get_physical_table_preview(table, limit, version)
-
-    def _format_virtual_preview(
-        self,
-        lazy_frame: pl.LazyFrame,
-        table: CatalogTable,
-        limit: int,
-    ) -> CatalogTablePreview:
-        """Materialise *lazy_frame* on the worker, read top-N rows back as PyArrow.
-
-        Honours the core-never-collects rule — the plan is shipped to the
-        worker, written as IPC, then read back via ``read_top_n``.
+        Virtual tables fall through to ``_get_physical_table_preview`` and
+        return an empty preview (no ``file_path``).
         """
-        result = trigger_resolve_virtual_table(table.id, lazy_frame.serialize())
-        ipc_path = validate_catalog_path(result["ipc_path"], storage.catalog_virtual_results_directory)
-        pa_table = read_top_n(str(ipc_path), n=limit)
-        return format_pyarrow_preview(pa_table, total_rows=result.get("row_count"))
-
-    def _get_query_virtual_table_preview(
-        self,
-        table: CatalogTable,
-        limit: int,
-        user_id: int | None,
-    ) -> CatalogTablePreview:
-        """Resolve a query-based virtual table and return a preview."""
-        lazy_frame = resolve_or_log(
-            lambda: self._virtual_tables.resolve_query_virtual_table(table.id, user_id=user_id),
-            kind="query virtual table for preview",
-            identifier=table.id,
-        )
-        if lazy_frame is None:
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
-        return self._format_virtual_preview(lazy_frame, table, limit)
-
-    def _get_virtual_table_preview(
-        self,
-        table: CatalogTable,
-        limit: int,
-        user_id: int | None,
-    ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview of the collected result."""
-        lazy_frame = resolve_or_log(
-            lambda: self._virtual_tables.resolve_virtual_flow_table(table.id, user_id=user_id),
-            kind="virtual flow table for preview",
-            identifier=table.id,
-        )
-        if lazy_frame is None:
-            return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
-        return self._format_virtual_preview(lazy_frame, table, limit)
-
-    def resolve_virtual_flow_table_preview(
-        self,
-        table_id: int,
-        limit: int,
-        user_id: int | None = None,
-    ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview (worker-backed)."""
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
-        lazy_frame = self._virtual_tables.resolve_virtual_flow_table(table_id, user_id=user_id)
-        return self._format_virtual_preview(lazy_frame, table, limit)
+        return self._get_physical_table_preview(table, limit, version)
 
     def _get_physical_table_preview(
         self,

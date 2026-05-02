@@ -147,7 +147,7 @@ class CatalogService:
         self._sql.bind(virtual_tables=self._virtual_tables)
         self._virtual_tables.bind(sql=self._sql)
 
-        self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
+        self._previews = TablePreviewService(repo, self._tables)
         self._visualizations = VisualizationService(
             repo, self._namespaces, self._tables, self._virtual_tables, self._sql
         )
@@ -733,15 +733,6 @@ class CatalogService:
     ) -> CatalogTablePreview:
         """Read the first N rows from a catalog table (physical, virtual or Delta-versioned)."""
         return self._previews.get_table_preview(table_id, limit, version, user_id)
-
-    def resolve_virtual_flow_table_preview(
-        self,
-        table_id: int,
-        limit: int,
-        user_id: int | None = None,
-    ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview (worker-backed)."""
-        return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
