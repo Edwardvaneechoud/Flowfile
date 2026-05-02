@@ -93,3 +93,5 @@ test-embed
 error-linux
 .claude/scheduled_tasks.lock
 
+
+.claude
