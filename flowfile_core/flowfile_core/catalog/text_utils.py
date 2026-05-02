@@ -7,7 +7,6 @@ import them directly.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Iterable
 
@@ -63,10 +62,3 @@ def parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:
         )
         for h in raw_history
     ]
-
-
-def hash_source_versions(versions_json: str | None) -> str:
-    """Stable cache key for a virtual table's source-version state."""
-    if not versions_json:
-        return "noversions"
-    return hashlib.sha256(versions_json.encode()).hexdigest()

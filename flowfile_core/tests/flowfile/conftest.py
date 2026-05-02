@@ -78,9 +78,9 @@ CATALOG_SAMPLE_DATA = [
 def catalog_cleanup():
     """Remove all catalog / flow-registration rows so tests start clean.
 
-    Also wipes the worker's catalog_virtual_results cache so a previous
-    test's ``fvt-{table_id}-{hash}.arrow`` file doesn't satisfy the next
-    test's resolve request when fixtures recycle the same table id.
+    Also wipes the worker's catalog_virtual_results directory so a previous
+    test's ``fvt-{table_id}.arrow`` file doesn't leak into the next test
+    when fixtures recycle the same table id.
     """
     from shared.storage_config import storage
 

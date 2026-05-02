@@ -32,10 +32,6 @@ def _validate_virtual_results_path(name: str) -> Path:
     return validate_catalog_path(name, storage.catalog_virtual_results_directory)
 
 
-def _row_count_ipc(p: Path) -> int:
-    return int(pl.scan_ipc(str(p)).select(pl.len()).collect().item())
-
-
 def _get_delta_size_bytes(delta_dir: Path) -> int:
     """Delegate to ``shared.delta_utils.get_delta_size_bytes``."""
     return get_delta_size_bytes(delta_dir)
@@ -939,16 +935,14 @@ def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Que
 
 
 def resolve_virtual_table(req: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
-    """Materialise a virtual flow table to disk; idempotent on (table_id, source_versions_hash)."""
+    """Materialise a virtual flow table to disk by collecting the supplied plan in a subprocess.
+
+    No caching: every call re-executes the plan and overwrites
+    ``fvt-{table_id}.arrow`` atomically.
+    """
     target_dir = storage.catalog_virtual_results_directory
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"fvt-{req.table_id}-{req.source_versions_hash[:16]}.arrow"
-    if target.exists():
-        return models.ResolveVirtualTableResponse(
-            ipc_path=target.name,
-            mtime=target.stat().st_mtime,
-            row_count=_row_count_ipc(target),
-        )
+    target = target_dir / f"fvt-{req.table_id}.arrow"
 
     queue: Queue = mp_context.Queue(maxsize=1)
     p = mp_context.Process(

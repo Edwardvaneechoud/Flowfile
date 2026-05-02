@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 import logging
 from pathlib import Path
@@ -11,7 +10,7 @@ from typing import TYPE_CHECKING, Literal
 import polars as pl
 
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
-from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
+from flowfile_core.catalog.delta_utils import is_delta_table
 from flowfile_core.catalog.exceptions import (
     FlowNotFoundError,
     TableNotFoundError,
@@ -77,11 +76,8 @@ class VirtualTableService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
-        polars_plan: str | None = None,
-        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Create a virtual flow table (non-materialized catalog entry)."""
         producer = self.repo.get_flow(producer_registration_id)
@@ -99,11 +95,8 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=producer_registration_id,
-            serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
-            polars_plan=polars_plan,
-            source_table_versions=source_table_versions,
         )
         table = self.repo.create_table(table)
         return self._tables.table_to_out(table)
@@ -115,11 +108,8 @@ class VirtualTableService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
-        polars_plan: str | None = None,
-        source_table_versions: str | None = None,
     ) -> CatalogTableOut:
         """Update a virtual flow table's metadata or producer."""
         table = self.repo.get_table(table_id)
@@ -137,16 +127,10 @@ class VirtualTableService:
             if producer is None:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
-        if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
             table.schema_json = schema_json
-        if polars_plan is not None:
-            table.polars_plan = polars_plan
-        if source_table_versions is not None:
-            table.source_table_versions = source_table_versions
 
         table = self.repo.update_table(table)
 
@@ -194,7 +178,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=None,
-            serialized_lazy_frame=None,
             is_optimized=False,
             sql_query=sql_query,
             schema_json=schema_json,
@@ -316,8 +299,8 @@ class VirtualTableService:
         """Return a LazyFrame for a single referenced table when resolving a SQL context.
 
         ``resolve_or_log`` covers the broad set of errors that can come out of
-        nested virtual-table resolution — corrupt serialized frames, missing
-        producer files, polars eval errors, recursion bugs.
+        nested virtual-table resolution — missing producer files, polars eval
+        errors, recursion bugs.
         """
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
@@ -326,8 +309,6 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if t.is_optimized and t.serialized_lazy_frame and check_source_versions_current(t.source_table_versions):
-                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
                     lambda: self.resolve_virtual_flow_table(t.id, user_id=user_id),
@@ -346,11 +327,9 @@ class VirtualTableService:
         run_location: Literal["remote", "local"] | None = None,
         node_logger: NodeLogger | None = None,
     ) -> pl.LazyFrame:
-        """Resolve a virtual flow table to a LazyFrame.
+        """Resolve a virtual flow table to a LazyFrame by re-executing its producer flow.
 
-        For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, triggers flow execution via the worker.
         """
         if run_location is None:
             run_location = "remote" if _should_offload() else "local"
@@ -363,13 +342,6 @@ class VirtualTableService:
             raise TableNotFoundError(table_id=table_id)
         if table.sql_query:
             return self.resolve_query_virtual_table(table_id, user_id=user_id)
-
-        if table.is_optimized and table.serialized_lazy_frame:
-            if check_source_versions_current(table.source_table_versions):
-                return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
-            logger.info(
-                "Source table versions changed for virtual table %r, falling back to flow execution", table.name
-            )
 
         if not table.producer_registration_id:
             raise ValueError(f"Virtual table {table.name} has no producer flow")

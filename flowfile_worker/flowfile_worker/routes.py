@@ -445,8 +445,7 @@ def create_table(
 def resolve_virtual_table(payload: models.ResolveVirtualTableRequest) -> models.ResolveVirtualTableResponse:
     """Materialise a flow-virtual table from a serialised polars plan.
 
-    Idempotent on ``(table_id, source_versions_hash)`` — repeated calls return
-    the same IPC file without re-executing the producer plan.
+    Every call re-executes the plan and overwrites the per-table IPC file.
     """
     try:
         return funcs.resolve_virtual_table(payload)

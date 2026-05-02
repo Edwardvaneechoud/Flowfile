@@ -31,7 +31,6 @@ from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.text_utils import (
-    hash_source_versions,
     is_table_reference,
     rewrite_qualified_references,
 )
@@ -425,8 +424,7 @@ class VisualizationService:
             from flowfile_core.catalog import service as _service_module
 
             lazy_frame = self._resolve_virtual_flow_table_via_facade(table.id, user_id=user_id, run_location="remote")
-            versions_hash = hash_source_versions(table.source_table_versions)
-            result = _service_module.trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash)
+            result = _service_module.trigger_resolve_virtual_table(table.id, lazy_frame.serialize())
             return {
                 "kind": "ipc_path",
                 "session_key": f"fvt:{table.id}:{int(result['mtime'])}",
@@ -486,8 +484,7 @@ class VisualizationService:
 
         vid = virtual_map[vname]
         lazy_frame = self._resolve_virtual_flow_table_via_facade(vid, user_id=user_id, run_location="remote")
-        versions_hash = hash_source_versions(self.repo.get_table(vid).source_table_versions)
-        result = _service_module.trigger_resolve_virtual_table(vid, lazy_frame.serialize(), versions_hash)
+        result = _service_module.trigger_resolve_virtual_table(vid, lazy_frame.serialize())
         return result["ipc_path"]
 
     def _dispatch_visualize_query(

@@ -19,7 +19,7 @@ from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
-from flowfile_core.catalog.text_utils import hash_source_versions, parse_delta_history
+from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
@@ -87,8 +87,7 @@ class TablePreviewService:
         Honours the core-never-collects rule — the plan is shipped to the
         worker, written as IPC, then read back via ``read_top_n``.
         """
-        versions_hash = hash_source_versions(table.source_table_versions)
-        result = trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash)
+        result = trigger_resolve_virtual_table(table.id, lazy_frame.serialize())
         ipc_path = validate_catalog_path(result["ipc_path"], storage.catalog_virtual_results_directory)
         pa_table = read_top_n(str(ipc_path), n=limit)
         return format_pyarrow_preview(pa_table, total_rows=result.get("row_count"))
