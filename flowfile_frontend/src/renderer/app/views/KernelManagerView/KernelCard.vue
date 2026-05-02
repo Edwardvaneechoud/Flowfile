@@ -237,11 +237,13 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
 }
 
 .kernel-card__flavour--ml {
-  color: var(--color-success, #2ea66c);
+  color: var(--color-success);
 }
 
 .kernel-card__flavour--custom {
-  color: var(--color-warning-dark, #b8860b);
+  /* warning-dark is brown — unreadable on dark page bg. Use the brighter
+     orange so the badge stays legible in both themes. */
+  color: var(--color-warning);
 }
 
 .kernel-card__body {

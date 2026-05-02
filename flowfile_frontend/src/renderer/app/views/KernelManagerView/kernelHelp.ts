@@ -57,7 +57,7 @@ export const kernelHelp: PageHelpContent = {
             "Each kernel is a running container. Stop unused kernels to free memory and CPU.",
         },
         {
-          type: "info",
+          type: "warning",
           title: "Pull the image first",
           description:
             "On first use, Docker pulls the chosen kernel image (~500 MB base, ~720 MB ML). Subsequent kernels start in seconds.",

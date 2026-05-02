@@ -343,12 +343,18 @@ const handleSubmit = async () => {
   align-items: flex-start;
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
-  background: var(--color-surface-muted, rgba(0, 128, 0, 0.04));
-  border-left: 2px solid var(--color-success, #2ea66c);
-  border-radius: var(--radius-sm, 4px);
+  /* Mode-agnostic palette mirrors .status-banner--warning: a constant
+     light/dark pair that reads on either theme background. */
+  background: var(--color-success-light);
+  border-left: 2px solid var(--color-success);
+  border-radius: var(--border-radius-sm);
   margin-bottom: var(--spacing-3);
   font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-success-hover);
+}
+
+.prebaked-hint > i {
+  color: var(--color-success-hover);
 }
 
 .prebaked-content {
@@ -359,8 +365,8 @@ const handleSubmit = async () => {
 }
 
 .prebaked-label {
-  font-weight: var(--font-weight-medium, 600);
-  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-success-hover);
 }
 
 .prebaked-list {
@@ -372,25 +378,26 @@ const handleSubmit = async () => {
 .prebaked-pkg {
   display: inline-flex;
   align-items: stretch;
-  font-family: var(--font-mono, monospace);
-  border: 1px solid var(--color-border-light, rgba(0, 0, 0, 0.1));
-  border-radius: var(--border-radius-sm, 4px);
+  font-family: var(--font-family-mono);
+  /* The hint banner has a constant pale-green bg, so stay neutral here. */
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: var(--border-radius-sm);
   overflow: hidden;
-  font-size: var(--font-size-2xs, 11px);
+  font-size: var(--font-size-2xs);
   line-height: 1.4;
 }
 
 .prebaked-pkg__name {
   padding: 1px 6px;
-  background: var(--color-background-tertiary, rgba(0, 0, 0, 0.04));
-  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--color-success-hover);
 }
 
 .prebaked-pkg__version {
   padding: 1px 6px;
-  background: var(--color-success, #2ea66c);
-  color: #fff;
-  font-weight: var(--font-weight-medium, 600);
+  background: var(--color-success);
+  color: #ffffff;
+  font-weight: var(--font-weight-medium);
 }
 
 .form-help-image {
@@ -405,11 +412,11 @@ const handleSubmit = async () => {
 
 .form-error {
   margin: var(--spacing-1) 0 0;
-  color: var(--color-danger, #d33);
+  color: var(--color-danger);
   font-size: var(--font-size-xs);
 }
 
 .form-input--error {
-  border-color: var(--color-danger, #d33);
+  border-color: var(--color-danger);
 }
 </style>

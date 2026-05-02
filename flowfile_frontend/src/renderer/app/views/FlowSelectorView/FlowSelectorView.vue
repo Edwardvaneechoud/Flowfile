@@ -10,9 +10,7 @@
       >
         <template #content>
           <div>{{ flow.display_name || flow.name }}</div>
-          <div v-if="isDirty(flow.flow_id)" class="tooltip-dirty-line">
-            ● Unsaved changes
-          </div>
+          <div v-if="isDirty(flow.flow_id)" class="tooltip-dirty-line">● Unsaved changes</div>
         </template>
         <div
           class="flow-tab"
@@ -29,10 +27,7 @@
               class="dirty-dot"
               aria-label="Unsaved changes"
             ></span>
-            <span
-              class="material-icons close-icon"
-              @click.stop="confirmCloseTab(flow.flow_id)"
-            >
+            <span class="material-icons close-icon" @click.stop="confirmCloseTab(flow.flow_id)">
               close
             </span>
           </span>
@@ -415,10 +410,11 @@ defineExpose({
   padding: 2px;
   cursor: pointer;
   transform: scale(0.9);
-  transition: opacity var(--transition-fast),
-              background-color var(--transition-fast),
-              color var(--transition-fast),
-              transform var(--transition-fast);
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .flow-tab:hover .close-icon {
