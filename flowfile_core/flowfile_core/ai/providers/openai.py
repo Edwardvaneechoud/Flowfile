@@ -23,4 +23,5 @@ class OpenAIProvider(LiteLLMProvider):
         "agent": "gpt-4.1",
         "agent_complex": "gpt-4.1",
         "docgen": "gpt-4.1",
+        "settings_autocomplete": "gpt-4.1-mini",
     }

@@ -58,6 +58,8 @@ import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
+import AiAssistant from "../../features/ai/AiAssistant.vue";
+import AiAssistantTrigger from "../../features/ai/AiAssistantTrigger.vue";
 import {
   NodeCopyInput,
   NodeCopyValue,
@@ -1153,6 +1155,20 @@ defineExpose({
       >
         <CodeGenerator />
       </draggable-item>
+      <draggable-item
+        v-if="editorStore.isAiOpen"
+        id="aiAssistant"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="440"
+        title="AI Assistant"
+        :allow-full-screen="true"
+        :on-minize="() => editorStore.closeAiDrawer()"
+        group="rightPanels"
+      >
+        <AiAssistant />
+      </draggable-item>
+      <AiAssistantTrigger />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
   </div>

@@ -14,6 +14,7 @@ import pytest
 AI_SUBMODULES = [
     "flowfile_core.ai",
     "flowfile_core.ai.routes",
+    "flowfile_core.ai.feature_flag",
     "flowfile_core.ai.streaming",
     "flowfile_core.ai.scheduler",
     "flowfile_core.ai.sessions",

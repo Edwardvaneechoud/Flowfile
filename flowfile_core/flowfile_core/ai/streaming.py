@@ -1,12 +1,275 @@
-"""SSE primitives for AI endpoints.
+"""SSE primitives for AI endpoints — keepalive, resumption tokens, checkpoint hook.
 
-Owned by W13. Will provide:
+Owned by W13. Consumes the W11 ``Provider.stream()`` contract
+(``AsyncIterator[StreamChunk]``) and serialises chunks into the SSE wire
+format with three §5.4 hardenings:
 
-* keepalive comments every ~10s to defeat proxy idle timeouts;
-* resumption tokens so a disconnected stream can pick up at the last
-  successfully validated tool boundary;
-* helpers for serialising provider chunks into the SSE wire format.
+* **Keepalive comments** every ``KEEPALIVE_INTERVAL_SECONDS`` (15s default) so
+  upstream proxies don't idle-time-out a slow generation.
+* **Resumption tokens** at every tool-call boundary — each ``tool_call`` event
+  carries an ``id:`` line, which EventSource clients echo back as
+  ``Last-Event-ID`` on reconnect. ``resumable_sse_stream`` does the
+  cursor-skip; the actual replay buffer is W42's job.
+* **Server-side checkpoint hook** (``on_checkpoint``) called once per complete
+  tool call so W42's session sidecar can persist state for crash-recovery.
 
-Until W13 lands, ``streaming`` exists only so other modules can declare typed
-imports; no symbols are exported.
+Public surface (re-imported by future ``/ai/chat/stream`` route, W22+):
+
+* :class:`SSEEvent` — frozen slots dataclass with a ``format()`` method.
+* :func:`format_sse_chunk` / :func:`format_sse_tool_call` /
+  :func:`format_sse_done` / :func:`format_sse_error` /
+  :func:`format_sse_keepalive` — sync wire helpers.
+* :func:`sse_stream` — the core async generator (StreamChunk → wire string).
+* :func:`resumable_sse_stream` — thin skip-cursor wrapper around ``sse_stream``.
+* :func:`make_streaming_response` — ``StreamingResponse`` with the
+  ``text/event-stream`` headers from ``routes/logs.py``.
+
+The litellm import stays out of this module by construction (tests verify).
 """
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+
+from fastapi.responses import StreamingResponse
+
+from flowfile_core.ai.providers.base import StreamChunk, ToolCall
+
+logger = logging.getLogger(__name__)
+
+KEEPALIVE_INTERVAL_SECONDS: float = 15.0
+"""Seconds between keepalive comments emitted to defeat proxy idle-timeouts.
+
+Plan §5.4 calls for 15s. Configurable per call via ``sse_stream(...,
+keepalive_interval=...)`` so tests can run in <1s.
+"""
+
+_TOOL_CALL_ID_LINE = re.compile(r"^id: (?P<id>[^\r\n]+)$", re.MULTILINE)
+
+
+@dataclass(slots=True, frozen=True)
+class SSEEvent:
+    """A single SSE wire event.
+
+    ``event=None`` produces a comment line (``": <data>\\n\\n"``) — used for
+    keepalives. Otherwise produces an optional ``id:`` line, an
+    ``event:`` line, and a ``data:`` line, terminated by a blank line.
+    """
+
+    event: str | None
+    data: str
+    id: str | None = None
+
+    def format(self) -> str:
+        if self.event is None:
+            return f": {self.data}\n\n"
+        parts: list[str] = []
+        if self.id is not None:
+            parts.append(f"id: {self.id}\n")
+        parts.append(f"event: {self.event}\n")
+        parts.append(f"data: {self.data}\n\n")
+        return "".join(parts)
+
+
+def format_sse_chunk(chunk: StreamChunk) -> str:
+    """Serialise a content-delta ``StreamChunk`` as an ``event: chunk`` event."""
+    payload = json.dumps({"content_delta": chunk.content_delta})
+    return SSEEvent(event="chunk", data=payload).format()
+
+
+def format_sse_tool_call(tool_call: ToolCall) -> str:
+    """Serialise a complete ``ToolCall`` as an ``event: tool_call`` event.
+
+    The ``id:`` line carries ``tool_call.id`` so the EventSource client can
+    echo it back as ``Last-Event-ID`` on reconnect — that's the resumption
+    token from §5.4.
+    """
+    payload = json.dumps(
+        {
+            "id": tool_call.id,
+            "name": tool_call.name,
+            "arguments": tool_call.arguments,
+        }
+    )
+    return SSEEvent(event="tool_call", data=payload, id=tool_call.id).format()
+
+
+def format_sse_done(finish_reason: str) -> str:
+    """Final marker — ``event: done`` with the provider's ``finish_reason``."""
+    payload = json.dumps({"finish_reason": finish_reason})
+    return SSEEvent(event="done", data=payload).format()
+
+
+def format_sse_error(message: str) -> str:
+    """Surface a generation-time error to the client before re-raising."""
+    payload = json.dumps({"message": message})
+    return SSEEvent(event="error", data=payload).format()
+
+
+def format_sse_keepalive() -> str:
+    """A comment line — EventSource clients ignore it; proxies see traffic."""
+    return SSEEvent(event=None, data="keepalive").format()
+
+
+async def sse_stream(
+    provider_stream: AsyncIterator[StreamChunk],
+    *,
+    keepalive_interval: float = KEEPALIVE_INTERVAL_SECONDS,
+    on_checkpoint: Callable[[ToolCall], Awaitable[None]] | None = None,
+) -> AsyncIterator[str]:
+    """Translate a ``Provider.stream()`` iterator into SSE wire strings.
+
+    Races the upstream iterator against a per-step timeout so we always
+    emit something at least every ``keepalive_interval`` seconds: either a
+    real chunk or a keepalive comment.
+
+    The pending ``__anext__()`` is wrapped in a task and shielded so a
+    timeout doesn't cancel the underlying async generator — cancelling the
+    raw awaitable would destroy the generator's state and we'd never see
+    the chunk that was about to arrive.
+
+    On a complete tool-call boundary (``StreamChunk.tool_call_delta``), invokes
+    ``on_checkpoint(tool_call)`` if provided — this is the W42 seam for
+    sidecar session persistence.
+
+    On exception, emits an ``event: error`` payload so the client sees the
+    failure, then re-raises so Starlette closes the response.
+    """
+    ait = provider_stream.__aiter__()
+    next_task: asyncio.Task[StreamChunk] | None = None
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.ensure_future(ait.__anext__())
+
+            try:
+                chunk = await asyncio.wait_for(asyncio.shield(next_task), timeout=keepalive_interval)
+            except asyncio.TimeoutError:
+                yield format_sse_keepalive()
+                continue
+            except StopAsyncIteration:
+                next_task = None
+                return
+
+            next_task = None
+
+            if chunk.content_delta is not None:
+                yield format_sse_chunk(chunk)
+
+            if chunk.tool_call_delta is not None:
+                yield format_sse_tool_call(chunk.tool_call_delta)
+                if on_checkpoint is not None:
+                    await on_checkpoint(chunk.tool_call_delta)
+
+            if chunk.finish_reason is not None:
+                yield format_sse_done(chunk.finish_reason)
+                return
+    except asyncio.CancelledError:
+        # Client disconnect — let it propagate so the generator unwinds cleanly.
+        raise
+    except Exception as exc:
+        logger.exception("sse_stream errored mid-generation")
+        yield format_sse_error(str(exc))
+        raise
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+            try:
+                await next_task
+            except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                # Drain whatever the cancelled task surfaces; we're already
+                # exiting so there's no client to deliver it to.
+                pass
+        aclose = getattr(ait, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.debug("provider stream aclose() raised; ignoring", exc_info=True)
+
+
+async def resumable_sse_stream(
+    provider_stream: AsyncIterator[StreamChunk],
+    *,
+    last_event_id: str | None = None,
+    keepalive_interval: float = KEEPALIVE_INTERVAL_SECONDS,
+    on_checkpoint: Callable[[ToolCall], Awaitable[None]] | None = None,
+) -> AsyncIterator[str]:
+    """Skip-cursor wrapper around :func:`sse_stream` for client reconnection.
+
+    When ``last_event_id`` is provided, suppresses every emitted block until a
+    ``tool_call`` event with ``id == last_event_id`` is seen; that block is
+    *also* dropped (the client already has it), and everything after is
+    forwarded.
+
+    If the cursor never matches (provider regenerates a different plan, or
+    the stream ends first), emits an ``event: error`` and stops — the client
+    should restart fresh. This is the cheapest correct behaviour at the W13
+    layer; W42's disk-buffer is what enables true replay.
+
+    With ``last_event_id=None`` the wrapper is identical to :func:`sse_stream`.
+    """
+    inner = sse_stream(
+        provider_stream,
+        keepalive_interval=keepalive_interval,
+        on_checkpoint=on_checkpoint,
+    )
+
+    if last_event_id is None:
+        async for line in inner:
+            yield line
+        return
+
+    found = False
+    async for line in inner:
+        if found:
+            yield line
+            continue
+        if _matches_tool_call_id(line, last_event_id):
+            found = True
+            # Drop this block — the client already has it.
+            continue
+        # Drop everything before the cursor. (Includes any keepalives or
+        # earlier tool calls — the client already saw them.)
+
+    if not found:
+        logger.warning(
+            "resumable_sse_stream: last_event_id %r never matched a tool_call boundary; "
+            "stream ended without resumption point",
+            last_event_id,
+        )
+        yield format_sse_error(f"resumption cursor {last_event_id!r} not found in stream; restart fresh")
+
+
+def _matches_tool_call_id(sse_block: str, target_id: str) -> bool:
+    """True iff ``sse_block`` is a ``tool_call`` event with the matching ``id:``."""
+    if "event: tool_call" not in sse_block:
+        return False
+    match = _TOOL_CALL_ID_LINE.search(sse_block)
+    return match is not None and match.group("id") == target_id
+
+
+def make_streaming_response(generator: AsyncIterator[str]) -> StreamingResponse:
+    """Wrap an SSE generator in a ``StreamingResponse`` with proxy-friendly headers.
+
+    Mirrors ``routes/logs.py`` — the existing in-tree SSE pattern — so any
+    reverse-proxy / Starlette config that already serves the logs endpoint
+    works for AI streaming too.
+    """
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            # nginx defaults to proxy_buffering on, which holds SSE chunks
+            # until the buffer fills — fatal for token-by-token streaming.
+            "X-Accel-Buffering": "no",
+        },
+    )

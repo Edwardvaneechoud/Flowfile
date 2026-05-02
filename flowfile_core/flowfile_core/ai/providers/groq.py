@@ -22,4 +22,5 @@ class GroqProvider(LiteLLMProvider):
         "agent": "llama-3.3-70b-versatile",
         "agent_complex": "llama-3.3-70b-versatile",
         "docgen": "llama-3.3-70b-versatile",
+        "settings_autocomplete": "llama-3.3-70b-versatile",
     }

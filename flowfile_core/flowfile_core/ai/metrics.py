@@ -12,15 +12,24 @@ Reads from ``ai_audit_events`` (W15) to compute the §13 success metrics:
 Time-to-first-byte and total round-trip aren't recorded yet — W11/W14 add
 those once the rate-limit scheduler is in place. Until then this module
 exposes only the metrics that the audit log can answer today.
+
+W34 adds :func:`record_autocomplete_call` — a lightweight non-DB telemetry
+helper for per-call settings-autocomplete observation. The audit-DB write
+path is too noisy for keystroke-frequency events; this helper emits a
+structured ``INFO`` log line instead, ready for downstream collection.
 """
 
 from __future__ import annotations
+
+import logging
 
 from sqlalchemy.orm import Session
 
 from flowfile_core.ai.audit import query_events
 from flowfile_core.database.connection import SessionLocal
 from flowfile_core.database.models import AiAuditEvent
+
+logger = logging.getLogger(__name__)
 
 
 def aggregate_pass_rate(
@@ -77,4 +86,31 @@ def aggregate_tokens(
     }
 
 
-__all__ = ["aggregate_pass_rate", "aggregate_tokens"]
+def record_autocomplete_call(
+    *,
+    surface: str,
+    provider: str,
+    latency_ms: int,
+    suggestion_count: int = 0,
+    degraded_reason: str | None = None,
+) -> None:
+    """Emit one telemetry line per autocomplete request (W34).
+
+    Deliberately bypasses the audit DB — autocomplete fires on keystrokes and
+    a per-keystroke insert would balloon the table. The structured ``INFO``
+    line under the ``flowfile_core.ai.metrics`` logger is enough for a
+    downstream log scraper / dashboard to slice by surface, provider, and
+    degraded reason. Acceptance-side accounting (which suggestion the user
+    actually picked) is W41's responsibility — that goes in the audit DB.
+    """
+    logger.info(
+        "ai_autocomplete surface=%s provider=%s latency_ms=%d suggestions=%d degraded=%s",
+        surface,
+        provider,
+        latency_ms,
+        suggestion_count,
+        degraded_reason or "-",
+    )
+
+
+__all__ = ["aggregate_pass_rate", "aggregate_tokens", "record_autocomplete_call"]

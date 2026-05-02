@@ -105,6 +105,7 @@ class Provider(Protocol):
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ChatResponse: ...
 
     def stream(

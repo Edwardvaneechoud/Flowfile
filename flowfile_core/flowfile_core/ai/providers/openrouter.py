@@ -23,4 +23,5 @@ class OpenRouterProvider(LiteLLMProvider):
         "agent": "anthropic/claude-sonnet-4.5",
         "agent_complex": "anthropic/claude-opus-4.5",
         "docgen": "anthropic/claude-sonnet-4.5",
+        "settings_autocomplete": "anthropic/claude-haiku-4.5",
     }

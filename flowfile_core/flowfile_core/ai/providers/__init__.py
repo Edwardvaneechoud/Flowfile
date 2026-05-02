@@ -1,9 +1,11 @@
 """Provider abstraction over LLM backends (litellm-backed).
 
-W11 implements the ``Provider`` Protocol and per-vendor adapters; W12 will
-plug BYOK keys via the existing Fernet pipeline (``flowfile_core.auth.secrets``).
-Public re-exports below are the single import surface for downstream
-workstreams (W12, W13, W14, W31, W40).
+W11 implements the ``Provider`` Protocol and per-vendor adapters; W12 plugs
+BYOK keys via the existing Fernet pipeline — see
+:mod:`flowfile_core.ai.byok` for the user-aware seam and
+:mod:`flowfile_core.ai.credentials` for the storage layer. Public re-exports
+below are the single import surface for downstream workstreams (W13, W14,
+W31, W40).
 """
 
 from flowfile_core.ai.providers._litellm_base import LiteLLMProvider

@@ -7,7 +7,7 @@ async def main() -> None:
     p = provider_factory(
         name="google",
         surface="cmd_k",
-        api_key="",
+        api_key="AIzaSyAcWXcvjJ-KdmweVTeYPk4vhVk9Ng9cUZ0",
     )
     print("model resolved:", p.default_model, "supports_tools:", p.supports_tools)
 

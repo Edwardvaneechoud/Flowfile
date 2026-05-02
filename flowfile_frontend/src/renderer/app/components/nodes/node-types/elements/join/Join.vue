@@ -19,6 +19,15 @@
           />
         </div>
         <div class="join-mapping-section">
+          <div class="suggest-keys-row">
+            <button class="suggest-keys-button" :disabled="aiSuggesting" @click="suggestJoinKeys">
+              <span v-if="aiSuggesting">Asking AI…</span>
+              <span v-else>✨ Suggest keys</span>
+            </button>
+            <span v-if="aiSuggestNotice" class="suggest-keys-notice">
+              {{ aiSuggestNotice }}
+            </span>
+          </div>
           <div class="table-wrapper">
             <div class="selectors-header">
               <div class="selectors-title">L</div>
@@ -97,6 +106,7 @@
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useAiAutocompleteStore } from "../../../../../stores/ai-autocomplete-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput } from "../../../baseNode/nodeInput";
@@ -117,8 +127,11 @@ const handleJoinTypeError = (error: string) => {
 
 const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
+const aiAutocompleteStore = useAiAutocompleteStore();
 const dataLoaded = ref(false);
 const nodeJoin = ref<NodeJoin | null>(null);
+const aiSuggesting = ref(false);
+const aiSuggestNotice = ref<string>("");
 
 // Use the standardized node settings composable
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -173,6 +186,68 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
+// W34 — ask the AI for likely (left_col, right_col) pairs based on the
+// upstream column overlap. Empty rows in `join_mapping` are populated;
+// rows the user has already filled are NEVER overwritten.
+const suggestJoinKeys = async () => {
+  aiSuggestNotice.value = "";
+  if (!nodeJoin.value || !result.value) return;
+  const flowId = nodeStore.flow_id;
+  const leftNodeId = result.value.main_input?.node_id;
+  const rightNodeId = result.value.right_input?.node_id;
+  if (flowId == null || leftNodeId == null || rightNodeId == null) {
+    aiSuggestNotice.value = "Connect both inputs first.";
+    return;
+  }
+
+  aiSuggesting.value = true;
+  try {
+    const response = await aiAutocompleteStore.getJoinKeySuggestions({
+      flowId: Number(flowId),
+      leftNodeId,
+      rightNodeId,
+      how: nodeJoin.value.join_input.how,
+    });
+    if (response === null) {
+      aiSuggestNotice.value = aiAutocompleteStore.aiDisabled
+        ? "AI is disabled — enable it in settings."
+        : "Couldn't reach the AI service.";
+      return;
+    }
+    if (response.degraded) {
+      aiSuggestNotice.value =
+        response.reason && response.reason.length > 0
+          ? `AI degraded: ${response.reason}`
+          : "AI couldn't ground against the upstream schemas — run the upstream nodes first.";
+      return;
+    }
+    const pairs = response.keyPairs;
+    if (pairs.length === 0) {
+      aiSuggestNotice.value = "No plausible key pairs found.";
+      return;
+    }
+
+    const mapping = nodeJoin.value.join_input.join_mapping;
+    let filled = 0;
+    for (const pair of pairs) {
+      // Find the next empty row, or append a new one.
+      const emptyIdx = mapping.findIndex(
+        (m) => (!m.left_col || m.left_col === "") && (!m.right_col || m.right_col === ""),
+      );
+      if (emptyIdx >= 0) {
+        mapping[emptyIdx].left_col = pair.leftCol;
+        mapping[emptyIdx].right_col = pair.rightCol;
+      } else {
+        mapping.push({ left_col: pair.leftCol, right_col: pair.rightCol });
+      }
+      filled += 1;
+    }
+    aiSuggestNotice.value = `Filled ${filled} pair${filled === 1 ? "" : "s"}.`;
+  } finally {
+    aiSuggesting.value = false;
+  }
+};
+
 defineExpose({
   loadNodeData,
   pushNodeData,
@@ -194,6 +269,38 @@ defineExpose({
   color: var(--color-text-primary);
   font-weight: 500;
   min-width: 70px;
+}
+
+/* W34 — Suggest keys button row */
+.suggest-keys-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 5px 5px 0 5px;
+}
+
+.suggest-keys-button {
+  background-color: var(--color-background-muted);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.suggest-keys-button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.suggest-keys-button:hover:not(:disabled) {
+  background-color: var(--color-background-secondary);
+}
+
+.suggest-keys-notice {
+  font-size: 11px;
+  color: var(--color-text-secondary);
 }
 
 /* Join Mapping Section */

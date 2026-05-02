@@ -23,4 +23,5 @@ class GoogleProvider(LiteLLMProvider):
         "agent": "gemini-2.5-pro",
         "agent_complex": "gemini-2.5-pro",
         "docgen": "gemini-2.5-flash",
+        "settings_autocomplete": "gemini-2.5-flash",
     }

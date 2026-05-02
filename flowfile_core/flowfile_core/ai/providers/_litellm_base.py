@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any, ClassVar, TypedDict
 
@@ -44,6 +45,7 @@ class LiteLLMKwargs(TypedDict, total=False):
     api_key: str
     api_base: str
     stream: bool
+    response_format: dict[str, Any]
 
 
 class LiteLLMProvider:
@@ -97,6 +99,7 @@ class LiteLLMProvider:
         max_tokens: int | None,
         *,
         stream: bool,
+        response_format: dict[str, Any] | None = None,
     ) -> LiteLLMKwargs:
         kwargs: LiteLLMKwargs = {
             "model": self.model,
@@ -112,6 +115,8 @@ class LiteLLMProvider:
             kwargs["api_base"] = self.api_base
         if stream:
             kwargs["stream"] = True
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         return kwargs
 
     async def chat(
@@ -119,9 +124,17 @@ class LiteLLMProvider:
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ChatResponse:
         import litellm  # lazy: keeps module import cheap
-        kwargs = self._build_kwargs(messages, tools, max_tokens, stream=False)
+
+        kwargs = self._build_kwargs(
+            messages,
+            tools,
+            max_tokens,
+            stream=False,
+            response_format=response_format,
+        )
         response = await litellm.acompletion(**kwargs)
         return _response_from_litellm(response, model=self.model)
 
@@ -132,7 +145,7 @@ class LiteLLMProvider:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         import litellm
-        breakpoint()
+
         kwargs = self._build_kwargs(messages, tools, max_tokens, stream=True)
         response = await litellm.acompletion(**kwargs)
 

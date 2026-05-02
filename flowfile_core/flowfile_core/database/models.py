@@ -552,3 +552,40 @@ class AiAuditEvent(Base):
     total_tokens = Column(Integer, nullable=False, default=0, server_default="0")
     diff_action = Column(String, nullable=True)  # "accepted" | "rejected" | None
     created_at = Column(DateTime, default=func.now(), nullable=False, index=True)
+
+
+# ==================== AI BYOK Credentials ====================
+
+
+class AiProviderCredential(Base):
+    """One row per (user, provider) BYOK credential (plan §6.5, §8).
+
+    Mirrors ``cloud_storage_connections``: plaintext metadata in the row,
+    encrypted ``api_key`` blob via FK to the ``secrets`` table. Deletion of a
+    referenced ``Secret`` row sets ``api_key_secret_id`` to NULL rather than
+    cascading — a safety net so an accidental secret-row delete doesn't lose
+    the user's BYOK metadata. ``delete_provider_credential`` deletes both
+    rows explicitly inside a transaction.
+    """
+
+    __tablename__ = "ai_provider_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)  # 'anthropic', 'openai', ...
+    api_key_secret_id = Column(
+        Integer,
+        ForeignKey("secrets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    api_base = Column(String, nullable=True)
+    default_model = Column(String, nullable=True)
+    last_tested_at = Column(DateTime, nullable=True)
+    last_test_status = Column(String, nullable=True)  # "ok" | "error"
+    last_test_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    api_key_secret = relationship("Secret", foreign_keys=[api_key_secret_id], lazy="joined")
+
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_ai_provider_per_user"),)

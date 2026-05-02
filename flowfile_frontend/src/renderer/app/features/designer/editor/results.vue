@@ -46,6 +46,17 @@
                 </span>
               </p>
               <p v-if="node.success === false" class="failure">Error: {{ node.error }}</p>
+              <el-button
+                v-if="node.success === false && node.error"
+                size="small"
+                type="primary"
+                class="fix-with-ai-btn"
+                :loading="aiStore.isStreaming"
+                @click.stop="onFixWithAi(node)"
+              >
+                <span class="ai-icon">✨</span>
+                Fix with AI
+              </el-button>
             </div>
           </el-card>
         </el-timeline-item>
@@ -58,6 +69,14 @@
 import { ref, computed, defineProps } from "vue";
 import { format } from "date-fns"; // Assuming date-fns is added for date formatting
 import { useNodeStore } from "../../../stores/column-store";
+import { useAiStore } from "../../../stores/ai-store";
+
+interface RunNode {
+  node_id: number;
+  node_name?: string;
+  error?: string;
+  success?: boolean;
+}
 
 const props = defineProps({
   tableViewer: {
@@ -72,8 +91,22 @@ const props = defineProps({
 });
 
 const nodeStore = useNodeStore();
+const aiStore = useAiStore();
 const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
+
+const onFixWithAi = (node: RunNode) => {
+  // W23 — open the AI drawer and stream a server-built explanation +
+  // suggested fix. The backend assembles the W22 schema-grounded prompt
+  // from ``flow_id`` + ``node_id`` so we don't have to ship the upstream
+  // schema across the wire ourselves.
+  void aiStore.explainRunFailure(
+    nodeStore.flow_id,
+    node.node_id,
+    node.error ?? "",
+    node.node_name ?? `node-${node.node_id}`,
+  );
+};
 
 const formatTimestamp = (timestamp: number) => {
   return format(new Date(timestamp * 1000), "yyyy-MM-dd HH:mm:ss");
@@ -154,6 +187,12 @@ const navigateToNode = (nodeId: string) => {
 }
 .failure {
   color: var(--color-danger);
+}
+.fix-with-ai-btn {
+  margin-top: 6px;
+}
+.ai-icon {
+  margin-right: 4px;
 }
 .running {
   animation: pulse 1.5s infinite;

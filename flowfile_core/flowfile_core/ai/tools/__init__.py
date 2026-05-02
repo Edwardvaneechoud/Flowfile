@@ -2,5 +2,70 @@
 
 W30 generates the catalog from ``NODE_TYPE_TO_SETTINGS_CLASS`` (use
 ``get_settings_class_for_node_type()`` so user-defined nodes come for free).
-W31 implements the executor with prospective schema validation.
+W31 implements the executor with prospective schema validation, the D011
+upstream-tier handler, and the D003 1-row kernel dry-run for code-bearing
+nodes. Public re-exports below are the single import surface for downstream
+workstreams (W32 ghost nodes, W33 Cmd+K palette, W35 inline-diff approval,
+W40 multi-turn planner, W41 GraphDiff staging).
 """
+
+from flowfile_core.ai.tools.classification import (
+    NodeClass,
+    classify_node_type,
+    is_predictable_via_mirror,
+)
+from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
+from flowfile_core.ai.tools.dry_run import DryRunCache
+from flowfile_core.ai.tools.executor import (
+    ExecutionMode,
+    InsertionContext,
+    ResultStatus,
+    ToolExecutionResult,
+    execute_tool_call,
+)
+from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
+from flowfile_core.ai.tools.meta_ops import CATEGORY_NAMES, META_OPS_TOOLS
+from flowfile_core.ai.tools.registry import (
+    CATEGORY_PRESETS,
+    JSON_SCHEMA_DIALECT,
+    MCP_TOOL_NAMESPACE,
+    SURFACE_PRESETS,
+    SurfaceLiteral,
+    ToolCategory,
+    build_tool_catalog,
+    mcp_tool_name,
+    pick_category,
+)
+from flowfile_core.ai.tools.schema_ops import SCHEMA_OPS_TOOLS
+
+__all__ = [
+    # main entry points
+    "build_tool_catalog",
+    "pick_category",
+    "execute_tool_call",
+    # executor types (W31)
+    "ToolExecutionResult",
+    "InsertionContext",
+    "ExecutionMode",
+    "ResultStatus",
+    "DryRunCache",
+    # classification (W31)
+    "NodeClass",
+    "classify_node_type",
+    "is_predictable_via_mirror",
+    # tool surface lists
+    "GRAPH_OPS_TOOLS",
+    "SCHEMA_OPS_TOOLS",
+    "CODEGEN_OPS_TOOLS",
+    "META_OPS_TOOLS",
+    # presets + naming
+    "SURFACE_PRESETS",
+    "CATEGORY_PRESETS",
+    "CATEGORY_NAMES",
+    "MCP_TOOL_NAMESPACE",
+    "JSON_SCHEMA_DIALECT",
+    "mcp_tool_name",
+    # type literals
+    "ToolCategory",
+    "SurfaceLiteral",
+]

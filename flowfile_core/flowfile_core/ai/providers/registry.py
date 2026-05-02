@@ -2,8 +2,9 @@
 
 Owned by W11. ``provider_factory(name, *, model, surface, api_key, api_base)``
 returns an instantiated ``Provider`` ready for ``chat()`` / ``stream()`` calls.
-W12 wraps this with the BYOK key-loading layer; today the caller passes
-``api_key`` explicitly (or relies on litellm's env-var fallback).
+The BYOK key-loading layer lives in :mod:`flowfile_core.ai.byok` (W12) — call
+``flowfile_core.ai.byok.get_configured_provider(db, user_id, provider, ...)``
+when you need a provider configured against a user's encrypted credentials.
 
 Surface→model resolution follows D010 placeholders: explicit ``model=`` wins,
 otherwise ``surface_models[surface]`` if recognised, otherwise the provider's
