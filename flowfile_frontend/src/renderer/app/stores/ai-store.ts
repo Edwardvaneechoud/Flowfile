@@ -18,8 +18,11 @@ import {
   fetchAiProviders,
   streamChat,
   streamGenerateDocumentation,
+  streamInlineAction,
+  streamLineageQuestion,
   streamRunFailureExplanation,
   type ChatMessageBody,
+  type InlineActionType,
 } from "../api/ai.api";
 import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
 import {
@@ -504,6 +507,205 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
+  const runInlineAction = async (
+    flowId: number,
+    nodeId: number,
+    action: InlineActionType,
+    nodeName?: string,
+  ): Promise<void> => {
+    // W21 — Inline ✨ menu entry point. Same shape as ``explainRunFailure``
+    // / ``generateDocumentation``: opens the drawer, drops a synthetic
+    // user/assistant pair into the chat, then streams the server-built
+    // response into the assistant placeholder. The wire-level user
+    // message is composed by the backend via W22's render_prompt_context
+    // (surface="explain") + the W21 ``## Action`` block; the chat-visible
+    // synthetic turn is purely cosmetic so the user has a visual anchor
+    // for what they just asked.
+    openAiDrawer();
+
+    if (streamingState.value === "streaming") {
+      // Don't trample an in-flight request.
+      return;
+    }
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const headline = nodeName ? `\`${nodeName}\`` : `node ${nodeId}`;
+    const userVisibleText = inlineActionUserPrompt(action, headline);
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      role: "user",
+      content: userVisibleText,
+    };
+    const assistantPlaceholder: ChatMessage = {
+      id: nextMessageId(),
+      role: "assistant",
+      content: "",
+      pending: true,
+    };
+    messages.value.push(userMessage, assistantPlaceholder);
+    const reactivePlaceholder = messages.value[messages.value.length - 1];
+
+    streamingState.value = "streaming";
+    streamError.value = null;
+
+    activeAbort = new AbortController();
+    try {
+      await streamInlineAction(
+        {
+          flow_id: flowId,
+          node_id: nodeId,
+          action,
+          provider: selectedProvider.value,
+          model: selectedModel.value,
+        },
+        {
+          onChunk: (delta) => {
+            reactivePlaceholder.content += delta;
+          },
+          onDone: () => {
+            reactivePlaceholder.pending = false;
+            streamingState.value = "idle";
+          },
+          onError: (message) => {
+            reactivePlaceholder.error = message;
+            reactivePlaceholder.pending = false;
+            streamingState.value = "error";
+            streamError.value = message;
+          },
+        },
+        activeAbort.signal,
+      );
+      reactivePlaceholder.pending = false;
+      if (streamingState.value === "streaming") {
+        streamingState.value = "idle";
+      }
+    } catch (err) {
+      reactivePlaceholder.pending = false;
+      const message =
+        err instanceof AiStreamHttpError
+          ? `HTTP ${err.status}: ${err.detail}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        streamingState.value = "idle";
+      } else {
+        reactivePlaceholder.error = message;
+        streamingState.value = "error";
+        streamError.value = message;
+      }
+    } finally {
+      activeAbort = null;
+    }
+  };
+
+  const askLineageQuestion = async (
+    flowId: number,
+    question: string,
+    focusNodeId?: number,
+  ): Promise<void> => {
+    // W51 — "Ask about lineage" entry point. Same shape as
+    // ``generateDocumentation`` / ``runInlineAction``: opens the drawer,
+    // drops a synthetic user/assistant pair into the chat, then streams
+    // the server-built lineage answer into the assistant placeholder.
+    // The wire-level user message is composed by the backend via W22's
+    // render_prompt_context (surface="lineage") + the W51 ``## Run
+    // history`` + ``## Question`` blocks; the chat-visible synthetic
+    // turn is purely cosmetic.
+    openAiDrawer();
+
+    if (streamingState.value === "streaming") {
+      return;
+    }
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion) {
+      streamError.value = "Type a lineage question first.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const userVisibleText = `[Lineage] ${trimmedQuestion}`;
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      role: "user",
+      content: userVisibleText,
+    };
+    const assistantPlaceholder: ChatMessage = {
+      id: nextMessageId(),
+      role: "assistant",
+      content: "",
+      pending: true,
+    };
+    messages.value.push(userMessage, assistantPlaceholder);
+    const reactivePlaceholder = messages.value[messages.value.length - 1];
+
+    streamingState.value = "streaming";
+    streamError.value = null;
+
+    activeAbort = new AbortController();
+    try {
+      await streamLineageQuestion(
+        {
+          flow_id: flowId,
+          question: trimmedQuestion,
+          provider: selectedProvider.value,
+          model: selectedModel.value,
+          focus_node_id: focusNodeId ?? null,
+        },
+        {
+          onChunk: (delta) => {
+            reactivePlaceholder.content += delta;
+          },
+          onDone: () => {
+            reactivePlaceholder.pending = false;
+            streamingState.value = "idle";
+          },
+          onError: (message) => {
+            reactivePlaceholder.error = message;
+            reactivePlaceholder.pending = false;
+            streamingState.value = "error";
+            streamError.value = message;
+          },
+        },
+        activeAbort.signal,
+      );
+      reactivePlaceholder.pending = false;
+      if (streamingState.value === "streaming") {
+        streamingState.value = "idle";
+      }
+    } catch (err) {
+      reactivePlaceholder.pending = false;
+      const message =
+        err instanceof AiStreamHttpError
+          ? `HTTP ${err.status}: ${err.detail}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        streamingState.value = "idle";
+      } else {
+        reactivePlaceholder.error = message;
+        streamingState.value = "error";
+        streamError.value = message;
+      }
+    } finally {
+      activeAbort = null;
+    }
+  };
+
   return {
     // state
     providers,
@@ -531,5 +733,25 @@ export const useAiStore = defineStore("ai", () => {
     sendMessage,
     explainRunFailure,
     generateDocumentation,
+    runInlineAction,
+    askLineageQuestion,
   };
 });
+
+const inlineActionUserPrompt = (action: InlineActionType, headline: string): string => {
+  // Cosmetic-only — the wire-level prompt is built server-side by W22.
+  // Keep these short and human-readable so the chat shows a clean trace
+  // of what the user clicked.
+  switch (action) {
+    case "explain":
+      return `Explain ${headline}.`;
+    case "optimise":
+      return `Suggest optimisations for ${headline}.`;
+    case "document":
+      return `Write a description for ${headline}.`;
+    case "regenerate_code":
+      return `Regenerate the code in ${headline}.`;
+    case "suggest_filters":
+      return `Suggest filters for ${headline}.`;
+  }
+};

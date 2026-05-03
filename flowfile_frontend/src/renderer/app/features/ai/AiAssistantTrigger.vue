@@ -1,13 +1,10 @@
 <script setup lang="ts">
-// Floating ✨ button that toggles the AI assistant drawer (W20).
+// Floating ✨ button that toggles the AI assistant drawer.
 //
-// Anchored to the bottom-right of the canvas <main> element via absolute
-// positioning, mirroring `layoutControls.vue` but stationary (no drag).
-// W20 doesn't need draggable placement — the user has the drawer's own
-// title-bar drag for relocation.
-//
-// Lives at zIndex.FLOATING_WIDGET. Sits one button-width to the left of
-// the layout-controls trigger so the two never collide.
+// Anchored to the top-right of the canvas <main> element. Top-right keeps
+// the trigger out of the bottom-right contention zone (MiniMap, layout
+// controls, and bottom/right-anchored draggable panels) and frames AI as a
+// primary app action rather than a corner utility.
 
 import { computed } from "vue";
 import { useEditorStore } from "../../stores/editor-store";
@@ -38,10 +35,8 @@ const handleClick = (event: MouseEvent): void => {
 <style scoped>
 .ai-trigger-btn {
   position: absolute;
-  /* Sit one button-width + a small gap to the left of the layoutControls
-     trigger (which itself anchors at right: 10px). */
-  right: 70px;
-  bottom: 10px;
+  top: 10px;
+  right: 10px;
   width: 45px;
   height: 45px;
   border-radius: 50%;

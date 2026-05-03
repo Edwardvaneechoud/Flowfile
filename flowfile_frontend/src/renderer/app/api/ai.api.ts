@@ -20,6 +20,8 @@ import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiProvidersView/ap
 import {
   streamChat,
   streamGenerateDocumentation,
+  streamInlineAction,
+  streamLineageQuestion,
   streamRunFailureExplanation,
 } from "../services/aiStreamClient";
 
@@ -29,9 +31,19 @@ export type {
   ChatStreamHandlers,
   ExplainRunFailureRequest,
   GenerateDocumentationRequest,
+  InlineActionRequest,
+  InlineActionType,
+  LineageQuestionRequest,
 } from "../services/aiStreamClient";
 export { AiStreamHttpError } from "../services/aiStreamClient";
-export { streamChat, streamGenerateDocumentation, streamRunFailureExplanation, fetchAiProviders };
+export {
+  streamChat,
+  streamGenerateDocumentation,
+  streamInlineAction,
+  streamLineageQuestion,
+  streamRunFailureExplanation,
+  fetchAiProviders,
+};
 export { AiDisabledError, AI_DISABLED_DETAIL };
 
 // --------------------------------------------------------------------------
@@ -191,6 +203,113 @@ export const fetchJoinKeySuggestions = async (
     );
     return {
       keyPairs: response.data.key_pairs.map(fromPyJoinKeyPair),
+      degraded: response.data.degraded,
+      reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// --------------------------------------------------------------------------
+// Edge ghost-node suggestions (W32) — non-streaming JSON wrapper around
+// /ai/suggest_next_node. Matches the autocomplete shape: a hover-fast
+// synchronous call with a degraded fallback when the LLM can't produce a
+// schema-grounded result.
+// --------------------------------------------------------------------------
+
+export interface SchemaColumn {
+  name: string;
+  dataType: string | null;
+  nullable: boolean | null;
+}
+
+export interface NextNodeSuggestion {
+  nodeType: string;
+  settings: Record<string, unknown>;
+  label: string;
+  description: string | null;
+  predictedOutputSchema: SchemaColumn[] | null;
+  rationale: string | null;
+}
+
+export interface NextNodeSuggestionsResponse {
+  suggestions: NextNodeSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+export interface SuggestNextNodeRequest {
+  flowId: number;
+  upstreamNodeId: number | string;
+  provider?: string;
+  model?: string | null;
+  intent?: string | null;
+  maxSuggestions?: number;
+  timeout?: number;
+}
+
+interface PySchemaColumn {
+  name: string;
+  data_type: string | null;
+  nullable: boolean | null;
+}
+
+interface PyNextNodeSuggestion {
+  node_type: string;
+  settings: Record<string, unknown>;
+  label: string;
+  description: string | null;
+  predicted_output_schema: PySchemaColumn[] | null;
+  rationale: string | null;
+}
+
+interface PyNextNodeSuggestionsResponse {
+  suggestions: PyNextNodeSuggestion[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+const fromPySchemaColumn = (raw: PySchemaColumn): SchemaColumn => ({
+  name: raw.name,
+  dataType: raw.data_type,
+  nullable: raw.nullable,
+});
+
+const fromPyNextNodeSuggestion = (raw: PyNextNodeSuggestion): NextNodeSuggestion => ({
+  nodeType: raw.node_type,
+  settings: raw.settings,
+  label: raw.label,
+  description: raw.description,
+  predictedOutputSchema: raw.predicted_output_schema
+    ? raw.predicted_output_schema.map(fromPySchemaColumn)
+    : null,
+  rationale: raw.rationale,
+});
+
+export const fetchNextNodeSuggestions = async (
+  body: SuggestNextNodeRequest,
+  signal?: AbortSignal,
+): Promise<NextNodeSuggestionsResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    upstream_node_id: body.upstreamNodeId,
+  };
+  if (body.provider !== undefined) payload.provider = body.provider;
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.intent !== undefined && body.intent !== null) payload.intent = body.intent;
+  if (body.maxSuggestions !== undefined) payload.max_suggestions = body.maxSuggestions;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyNextNodeSuggestionsResponse>(
+      "/ai/suggest_next_node",
+      payload,
+      { signal },
+    );
+    return {
+      suggestions: response.data.suggestions.map(fromPyNextNodeSuggestion),
       degraded: response.data.degraded,
       reason: response.data.reason,
     };

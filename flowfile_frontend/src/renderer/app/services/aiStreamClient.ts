@@ -150,6 +150,34 @@ export interface GenerateDocumentationRequest {
   max_tokens?: number | null;
 }
 
+export type InlineActionType =
+  | "explain"
+  | "optimise"
+  | "document"
+  | "regenerate_code"
+  | "suggest_filters";
+
+export interface InlineActionRequest {
+  flow_id: number;
+  node_id: number;
+  action: InlineActionType;
+  provider: string;
+  model?: string | null;
+  samples_mode?: "off" | "regex";
+  max_tokens?: number | null;
+}
+
+export interface LineageQuestionRequest {
+  flow_id: number;
+  question: string;
+  provider: string;
+  model?: string | null;
+  focus_node_id?: number | null;
+  history_limit?: number | null;
+  samples_mode?: "off" | "regex";
+  max_tokens?: number | null;
+}
+
 const _consumeSseResponse = async (
   response: Response,
   handlers: ChatStreamHandlers,
@@ -263,6 +291,32 @@ export const streamGenerateDocumentation = async (
   // and appends a markdown-shape contract; the client just consumes the same
   // SSE wire format the chat + run-failure routes use.
   await _postSseRequest("ai/generate_documentation", body, handlers, signal);
+};
+
+export const streamInlineAction = async (
+  body: InlineActionRequest,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // W21 — POSTs ``{flow_id, node_id, action, provider, ...}`` to
+  // ``/ai/inline_action``. The backend builds the schema-grounded W22 prompt
+  // and appends an action-specific instruction block; the client consumes
+  // the same SSE wire format as the chat / run-failure / docgen routes.
+  await _postSseRequest("ai/inline_action", body, handlers, signal);
+};
+
+export const streamLineageQuestion = async (
+  body: LineageQuestionRequest,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // W51 — POSTs ``{flow_id, question, provider, focus_node_id?, ...}`` to
+  // ``/ai/lineage_question``. The backend resolves the flow's catalog
+  // registration via ``flow.flow_settings.source_registration_id`` (or
+  // falls back to ``latest_run_info``), builds a per-node history block,
+  // and appends the user's question; the client consumes the same SSE
+  // wire format as the chat / run-failure / docgen / inline-action routes.
+  await _postSseRequest("ai/lineage_question", body, handlers, signal);
 };
 
 export const _internal = { parseEventBlock, dispatch };

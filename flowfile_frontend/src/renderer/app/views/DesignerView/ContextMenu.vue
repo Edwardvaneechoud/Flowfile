@@ -31,9 +31,11 @@ const emit = defineEmits(["action"]);
 const menuRef = ref<HTMLElement | null>(null);
 
 // Define menu actions based on the target type. Pane-only entries pick up
-// the new "Generate documentation" affordance (W50); the four pre-existing
-// canvas actions still render against node/edge targets — that's a known
-// pre-existing inconsistency, fixing it is out of scope for W50.
+// the "Generate documentation" affordance (W50) and the new "Ask about
+// lineage" affordance (W51); the per-node "Ask about this node's lineage"
+// joins the node-target entries. The four pre-existing canvas actions
+// still render against node/edge targets — that's a known pre-existing
+// inconsistency, fixing it is out of scope for W51.
 const getMenuActions = () => {
   const baseActions = [
     { id: "fit-view", label: "Fit View", icon: "🔍" },
@@ -46,6 +48,18 @@ const getMenuActions = () => {
       id: "generate-documentation",
       label: "Generate documentation",
       icon: "📝",
+    });
+    baseActions.push({
+      id: "ask-lineage",
+      label: "Ask about lineage…",
+      icon: "🔎",
+    });
+  }
+  if (props.targetType === "node") {
+    baseActions.push({
+      id: "ask-lineage-node",
+      label: "Ask about this node's lineage…",
+      icon: "🔎",
     });
   }
   return baseActions;

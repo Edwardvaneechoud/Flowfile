@@ -25,4 +25,5 @@ class OllamaProvider(LiteLLMProvider):
         "agent_complex": "llama3.1:70b",
         "docgen": "llama3.1:8b",
         "settings_autocomplete": "llama3.1:8b",
+        "lineage": "llama3.1:8b",
     }

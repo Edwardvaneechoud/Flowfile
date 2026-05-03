@@ -54,6 +54,7 @@ SurfaceLiteral = Literal[
     "agent_complex",
     "docgen",
     "settings_autocomplete",
+    "lineage",
 ]
 
 SamplesMode = Literal["off", "regex"]
@@ -72,6 +73,10 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     # module's per-call system prompt rather than living in a fourth level file
     # (D008 anchors level vocabulary to the three depth levels).
     "settings_autocomplete": "copilot",
+    # Lineage Q&A (W51) is a read-only Assist surface — same level mapping as
+    # ``docgen`` and ``explain``. The lineage-specific shape contract lives in
+    # the appended user-message block rather than a fourth level file.
+    "lineage": "assist",
 }
 
 

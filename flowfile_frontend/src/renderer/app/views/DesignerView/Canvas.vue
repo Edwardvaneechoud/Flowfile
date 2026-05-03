@@ -61,6 +61,8 @@ import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import AiAssistant from "../../features/ai/AiAssistant.vue";
 import AiAssistantTrigger from "../../features/ai/AiAssistantTrigger.vue";
+import AiGhostNode from "../../features/ai/AiGhostNode.vue";
+import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
 import {
   NodeCopyInput,
   NodeCopyValue,
@@ -72,7 +74,7 @@ import {
 import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import axios from "axios";
 
 /** Typed subset of VueFlow node data used for edge label computation. */
@@ -146,14 +148,31 @@ provide("hoveredEdgeId", hoveredEdgeId);
 provide("cancelEdgeLeave", cancelEdgeLeave);
 provide("scheduleEdgeLeave", scheduleEdgeLeave);
 
-function onEdgeMouseEnter({ edge }: { edge: { id: string } }) {
+// W32 — schema-grounded next-node suggestions on edge hover. The composable
+// owns its own debounce + AbortController so a hover-flick doesn't fire N
+// requests; clear is wired into handleCanvasClick below so a click anywhere
+// off the popover dismisses it.
+const ghostNode = useGhostNodeSuggestions();
+
+function onEdgeMouseEnter(payload: {
+  edge: { id: string; source: string; target: string };
+  event: unknown;
+}) {
   cancelEdgeLeave();
-  hoveredEdgeId.value = edge.id;
+  hoveredEdgeId.value = payload.edge.id;
+  // VueFlow's GraphEdge carries sourceX/Y/targetX/Y at runtime even though
+  // the public ``EdgeMouseEvent`` declares the narrower ``Edge`` shape; the
+  // composable defaults missing coords to 0 so this cast is safe.
+  ghostNode.onEdgeMouseEnter(
+    payload as Parameters<typeof ghostNode.onEdgeMouseEnter>[0],
+    flowStore.flowId,
+  );
 }
 
 function onEdgeMouseLeave({ edge }: { edge: { id: string } }) {
   if (hoveredEdgeId.value !== edge.id) return;
   scheduleEdgeLeave(edge.id);
+  ghostNode.onEdgeMouseLeave();
 }
 
 /**
@@ -275,6 +294,7 @@ const handleCanvasClick = (event: any | PointerEvent) => {
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
+  ghostNode.onViewportClick();
   clickedPosition.value = {
     x: event.x,
     y: event.y,
@@ -808,8 +828,33 @@ const handleCanvasPaste = async (x: number, y: number) => {
   }
 };
 
+const promptLineageQuestion = async (focusLabel: string): Promise<string | null> => {
+  // W51 — use Element Plus's imperative prompt (already in use elsewhere
+  // in the codebase, e.g. CatalogView) instead of a new dialog component.
+  // Returns the trimmed question on confirm, or ``null`` on cancel.
+  try {
+    const result = await ElMessageBox.prompt(
+      `Ask the AI a lineage question about ${focusLabel}. The AI will read recent run history alongside the current flow graph to answer.`,
+      "Ask about lineage",
+      {
+        confirmButtonText: "Ask",
+        cancelButtonText: "Cancel",
+        inputType: "textarea",
+        inputPlaceholder: "e.g. Why is column customer_id null since Tuesday?",
+        inputValidator: (value: string) =>
+          (value && value.trim().length > 0) || "Please type a question.",
+      },
+    );
+    const value = (result as { value?: string }).value;
+    return value?.trim() || null;
+  } catch {
+    // ElMessageBox throws on cancel/close.
+    return null;
+  }
+};
+
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
-  const { actionId, position } = actionData;
+  const { actionId, position, targetId } = actionData;
   if (actionId === "fit-view") {
     fitView();
   } else if (actionId === "zoom-in") {
@@ -826,6 +871,20 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     const settings = await FlowApi.getFlowSettings(flowStore.flowId);
     const name = settings?.name?.trim() || undefined;
     await aiStore.generateDocumentation(flowStore.flowId, name);
+  } else if (actionId === "ask-lineage") {
+    // W51 — whole-flow lineage Q&A.
+    if (flowStore.flowId === null) return;
+    const question = await promptLineageQuestion("this flow");
+    if (!question) return;
+    await aiStore.askLineageQuestion(flowStore.flowId, question);
+  } else if (actionId === "ask-lineage-node") {
+    // W51 — focused lineage Q&A on a single node id.
+    if (flowStore.flowId === null) return;
+    const focusNodeId = Number(targetId);
+    if (!Number.isFinite(focusNodeId)) return;
+    const question = await promptLineageQuestion(`node ${focusNodeId}`);
+    if (!question) return;
+    await aiStore.askLineageQuestion(flowStore.flowId, question, focusNodeId);
   }
 };
 
@@ -1079,6 +1138,7 @@ defineExpose({
         @move-end="handleMoveEnd"
       >
         <MiniMap />
+        <AiGhostNode :composable="ghostNode" />
       </VueFlow>
       <context-menu
         v-if="showContextMenu"

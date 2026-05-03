@@ -272,11 +272,7 @@ def _build_messages(
     # use literal ``{`` / ``}``, which would be interpreted as format
     # placeholders. Same posture as W34's autocomplete.
     allowed = ", ".join(sorted(_ALLOWED_NODE_TYPES))
-    system = (
-        _SYSTEM_PROMPT
-        .replace("{{ALLOWED_TYPES}}", allowed)
-        .replace("{{MAX_SUGGESTIONS}}", str(max_suggestions))
-    )
+    system = _SYSTEM_PROMPT.replace("{{ALLOWED_TYPES}}", allowed).replace("{{MAX_SUGGESTIONS}}", str(max_suggestions))
     return [
         Message(role="system", content=system),
         Message(role="user", content="\n".join(user_lines)),

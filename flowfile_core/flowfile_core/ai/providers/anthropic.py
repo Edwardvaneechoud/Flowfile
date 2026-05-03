@@ -28,4 +28,5 @@ class AnthropicProvider(LiteLLMProvider):
         "agent_complex": "claude-opus-4-7",
         "docgen": "claude-sonnet-4-6",
         "settings_autocomplete": "claude-haiku-4-5",
+        "lineage": "claude-sonnet-4-6",
     }

@@ -59,6 +59,10 @@ _SURFACE_BUDGETS: dict[str, SurfaceBudget] = {
     # and tiny response (≤5 short suggestions). Smaller than cmd_k to preserve
     # the sub-1s TTFB target on every keystroke.
     "settings_autocomplete": (2_000, 1_000),
+    # W51 lineage Q&A: input mirrors ``agent`` because the run-history block
+    # can be sizeable (10+ runs × per-node aggregates). Output stays modest
+    # because lineage answers are summary-shaped, not generative.
+    "lineage": (32_000, 4_000),
 }
 
 

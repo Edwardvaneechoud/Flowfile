@@ -62,6 +62,7 @@ SurfaceLiteral = Literal[
     "agent_complex",
     "docgen",
     "settings_autocomplete",
+    "lineage",
 ]
 
 # Regex that every emitted tool name must match (D004).
@@ -210,6 +211,11 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     # frozenset is intentional: ``build_tool_catalog(surface="settings_autocomplete")``
     # returns ``[]`` so callers can short-circuit cleanly.
     "settings_autocomplete": frozenset(),
+    # Lineage Q&A (W51) is a read-only Assist surface — same posture as
+    # ``docgen`` and ``explain``. The route passes ``tools=None`` to the
+    # provider; the empty frozenset keeps the surface lockstep happy
+    # without surfacing tools the LLM would never call.
+    "lineage": frozenset(),
 }
 
 
