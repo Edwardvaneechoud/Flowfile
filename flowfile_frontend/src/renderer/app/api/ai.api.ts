@@ -1,8 +1,10 @@
-// Frontend API surface for the AI subsystem (W20 + W23 + W34).
+// Frontend API surface for the AI subsystem (W20 + W23 + W34 + W50).
 //
-// Right now this is a re-export shim around four seams:
+// Right now this is a re-export shim around five seams:
 //   - `streamChat` for the read-only chat stream (W20).
 //   - `streamRunFailureExplanation` for "Fix with AI" on a failed node (W23).
+//   - `streamGenerateDocumentation` for the canvas-level "Generate
+//     documentation" action (W50).
 //   - `fetchFormulaSuggestions` / `fetchJoinKeySuggestions` for settings
 //     autocomplete (W34) — fast non-streaming JSON.
 //   - the W12 BYOK provider listing reused so the chat panel can pick a
@@ -15,16 +17,21 @@
 import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiProvidersView/api";
 import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiProvidersView/api";
-import { streamChat, streamRunFailureExplanation } from "../services/aiStreamClient";
+import {
+  streamChat,
+  streamGenerateDocumentation,
+  streamRunFailureExplanation,
+} from "../services/aiStreamClient";
 
 export type {
   ChatMessageBody,
   ChatStreamRequest,
   ChatStreamHandlers,
   ExplainRunFailureRequest,
+  GenerateDocumentationRequest,
 } from "../services/aiStreamClient";
 export { AiStreamHttpError } from "../services/aiStreamClient";
-export { streamChat, streamRunFailureExplanation, fetchAiProviders };
+export { streamChat, streamGenerateDocumentation, streamRunFailureExplanation, fetchAiProviders };
 export { AiDisabledError, AI_DISABLED_DETAIL };
 
 // --------------------------------------------------------------------------

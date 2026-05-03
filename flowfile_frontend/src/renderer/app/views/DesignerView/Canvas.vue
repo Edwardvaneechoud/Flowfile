@@ -37,6 +37,7 @@ import {
 } from "../../composables/useDragAndDrop";
 import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
+import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
@@ -89,6 +90,7 @@ const availableHeight = ref(window.innerHeight - 50);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
+const aiStore = useAiStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
@@ -816,6 +818,14 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
     handleCanvasPaste(position.x, position.y);
+  } else if (actionId === "generate-documentation") {
+    // W50 — pull the canonical flow name server-side so the doc title
+    // matches what the user sees in the title bar. Falsy → undefined so
+    // the store falls back to ``flow ${flowId}``.
+    if (flowStore.flowId === null) return;
+    const settings = await FlowApi.getFlowSettings(flowStore.flowId);
+    const name = settings?.name?.trim() || undefined;
+    await aiStore.generateDocumentation(flowStore.flowId, name);
   }
 };
 

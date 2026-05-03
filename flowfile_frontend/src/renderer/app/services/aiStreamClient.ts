@@ -142,6 +142,14 @@ export interface ExplainRunFailureRequest {
   max_tokens?: number | null;
 }
 
+export interface GenerateDocumentationRequest {
+  flow_id: number;
+  provider: string;
+  model?: string | null;
+  samples_mode?: "off" | "regex";
+  max_tokens?: number | null;
+}
+
 const _consumeSseResponse = async (
   response: Response,
   handlers: ChatStreamHandlers,
@@ -243,6 +251,18 @@ export const streamRunFailureExplanation = async (
   // off ``{flow_id, node_id, error_message?, ...}`` and consumes the same
   // SSE wire format ``streamChat`` uses.
   await _postSseRequest("ai/explain_run_failure", body, handlers, signal);
+};
+
+export const streamGenerateDocumentation = async (
+  body: GenerateDocumentationRequest,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // W50 — POSTs ``{flow_id, provider, ...}`` to ``/ai/generate_documentation``.
+  // The backend pins every node in the flow into W22's render_prompt_context
+  // and appends a markdown-shape contract; the client just consumes the same
+  // SSE wire format the chat + run-failure routes use.
+  await _postSseRequest("ai/generate_documentation", body, handlers, signal);
 };
 
 export const _internal = { parseEventBlock, dispatch };

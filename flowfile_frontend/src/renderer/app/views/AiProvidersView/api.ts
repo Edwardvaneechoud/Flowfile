@@ -4,6 +4,7 @@
 
 import axios from "../../services/axios.config";
 import type {
+  AiFeatureFlagState,
   AiProvider,
   AiProviderCredential,
   AiProviderCredentialInput,
@@ -12,6 +13,9 @@ import type {
 import { AI_DISABLED_DETAIL } from "./aiProviderTypes";
 
 const API_BASE_URL = "/ai/providers";
+// W18 — admin feature-flag endpoint lives outside the gated /ai/* router so
+// admins can flip the AI gate from the UI without first satisfying it.
+const ADMIN_FEATURE_FLAG_URL = "/system/feature_flags/ai";
 
 interface PyAiProviderCredential {
   provider: string;
@@ -142,6 +146,20 @@ export const testAiProvider = async (provider: string): Promise<AiProviderTestRe
     if (isAiDisabledError(error)) throw new AiDisabledError();
     console.error("API Error: Failed to test provider:", error);
     throw error;
+  }
+};
+
+// W18 — admin endpoint for flipping FEATURE_FLAG_AI on the running process.
+// Returns the new state on success. Backend reuses get_current_admin_user, so
+// non-admin callers see a 403 ("Admin privileges required").
+export const setAiFeatureFlag = async (enabled: boolean): Promise<AiFeatureFlagState> => {
+  try {
+    const response = await axios.post<AiFeatureFlagState>(ADMIN_FEATURE_FLAG_URL, { enabled });
+    return response.data;
+  } catch (error) {
+    console.error("API Error: Failed to toggle AI feature flag:", error);
+    const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+    throw new Error(detail || "Failed to toggle AI feature flag");
   }
 };
 

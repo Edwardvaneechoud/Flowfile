@@ -22,6 +22,21 @@ Cases:
 * ``test_lazy_litellm_import_for_chat_routes`` — importing
   ``flowfile_core.ai.chat_routes`` doesn't pull ``litellm`` into
   ``sys.modules``.
+
+W26 cases:
+
+* ``test_chat_stream_prepends_assist_prompt_for_surface_explain`` — when
+  ``surface="explain"``, the provider sees ``[system (W22 assist), user]``.
+* ``test_chat_stream_prepends_default_prompt_when_surface_missing`` — no
+  ``surface`` field → falls back to the default surface (``"explain"`` →
+  ``assist`` per W22's ``SURFACE_TO_LEVEL``).
+* ``test_chat_stream_falls_back_when_surface_unknown`` — ``surface="bogus"``
+  is silently coerced to the default (we don't 422 a chat call).
+* ``test_chat_stream_uses_copilot_prompt_for_surface_cmd_k`` — covers a
+  non-default surface so the surface→level dispatch is exercised.
+* ``test_chat_stream_server_prompt_precedes_client_system_message`` — when
+  the client supplies its own ``system`` message, the server prompt is
+  prepended in front of it (server first, client second, then user).
 """
 
 from __future__ import annotations
@@ -253,6 +268,146 @@ def test_chat_stream_no_tools_passed_to_provider(
     )
     assert response.status_code == 200
     assert patch_get_configured_provider.last_call_kwargs.get("tools") is None
+
+
+# ---------- 10. W26 — server-issued system prompt ----------
+
+
+def _provider_messages(fake: FakeProvider) -> list[Any]:
+    """Pull the message list the route handed to ``provider.stream(...)``."""
+    return list(fake.last_call_kwargs["messages"])
+
+
+def test_chat_stream_prepends_assist_prompt_for_surface_explain(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """``surface="explain"`` should land on W22's ``assist`` suffix.
+
+    Provider sees ``[system (base + assist), user]`` in that order; the
+    system content carries both the base contract ("Flowfile's AI
+    assistant") and the assist-mode marker.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "surface": "explain",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 200
+
+    messages = _provider_messages(patch_get_configured_provider)
+    assert len(messages) == 2
+    system_msg, user_msg = messages
+    assert system_msg.role == "system"
+    assert "Flowfile's AI assistant" in system_msg.content
+    assert "# Assist mode" in system_msg.content
+    assert user_msg.role == "user"
+    assert user_msg.content == "ping"
+
+
+def test_chat_stream_prepends_default_prompt_when_surface_missing(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """No ``surface`` → default (``"explain"`` → assist).
+
+    The drawer is general-purpose; we'd rather ground every call than
+    refuse one for missing metadata.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "messages": [{"role": "user", "content": "what is flowfile?"}],
+        },
+    )
+    assert response.status_code == 200
+
+    messages = _provider_messages(patch_get_configured_provider)
+    assert messages[0].role == "system"
+    assert "Flowfile's AI assistant" in messages[0].content
+    assert "# Assist mode" in messages[0].content
+
+
+def test_chat_stream_falls_back_when_surface_unknown(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """An unknown ``surface`` value silently falls back to the default.
+
+    Pydantic accepts any string for ``surface`` (``str | None``), so the
+    route owns the validation. Bogus surfaces shouldn't 422 — they should
+    quietly land on the assist-level default.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "surface": "definitely-not-a-surface",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 200
+
+    messages = _provider_messages(patch_get_configured_provider)
+    assert messages[0].role == "system"
+    assert "# Assist mode" in messages[0].content
+
+
+def test_chat_stream_uses_copilot_prompt_for_surface_cmd_k(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """``surface="cmd_k"`` resolves to W22's ``copilot`` suffix.
+
+    Covers the non-default surface→level path so a regression that wires
+    every surface to the same prompt is caught.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "surface": "cmd_k",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 200
+
+    messages = _provider_messages(patch_get_configured_provider)
+    assert messages[0].role == "system"
+    assert "# Co-pilot mode" in messages[0].content
+    assert "# Assist mode" not in messages[0].content
+
+
+def test_chat_stream_server_prompt_precedes_client_system_message(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """Client-supplied ``system`` messages survive but follow the server's.
+
+    Order matters: the server-issued prompt is the grounding contract and
+    must come first; whatever the client sends is layered on top.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "surface": "explain",
+            "messages": [
+                {"role": "system", "content": "respond only in haiku"},
+                {"role": "user", "content": "describe flowfile"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+
+    messages = _provider_messages(patch_get_configured_provider)
+    assert len(messages) == 3
+    server_sys, client_sys, user_msg = messages
+    assert server_sys.role == "system"
+    assert "Flowfile's AI assistant" in server_sys.content
+    assert client_sys.role == "system"
+    assert client_sys.content == "respond only in haiku"
+    assert user_msg.role == "user"
+    assert user_msg.content == "describe flowfile"
 
 
 # ---------- 9. lazy litellm import ----------

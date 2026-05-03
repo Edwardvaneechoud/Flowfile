@@ -9,14 +9,35 @@
 
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useAiStore } from "../../stores/ai-store";
+import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
 import AiMessage from "./AiMessage.vue";
+import AiMentionAutocomplete from "./AiMentionAutocomplete.vue";
+import { useMentionAutocomplete } from "./useMentionAutocomplete";
 
 const aiStore = useAiStore();
+const flowStore = useFlowStore();
 
 const composerText = ref("");
+const composerTextarea = ref<HTMLTextAreaElement | null>(null);
 const messageContainerRef = ref<HTMLElement | null>(null);
 const isDisabledByFlag = ref(false);
+
+// W24 — `@`-mention autocomplete. Source the candidate node list from
+// the live VueFlow graph (the chat drawer is mounted from Canvas.vue
+// per D005, so `vueFlowInstance` is populated whenever the drawer is
+// open). When the instance isn't ready yet, surface only the bare
+// kinds (`@flow`, `@selection`).
+const mention = useMentionAutocomplete(composerTextarea, composerText, () => {
+  const instance = flowStore.vueFlowInstance;
+  if (!instance) return [];
+  const liveNodes = instance.getNodes?.value ?? [];
+  type LiveNode = { id: string; data?: { id?: number | string; label?: string | null } };
+  return (liveNodes as LiveNode[]).map((node) => ({
+    id: node.data?.id ?? node.id,
+    name: node.data?.label ?? null,
+  }));
+});
 
 const placeholder = computed(() =>
   aiStore.hasConfiguredProvider
@@ -82,11 +103,31 @@ const handleClear = (): void => {
 };
 
 const handleComposerKeydown = (event: KeyboardEvent): void => {
+  // W24 — let the mention autocomplete intercept Up/Down/Enter/Tab/Escape
+  // before the composer's own Enter-to-send guard fires.
+  if (mention.onKeyDown(event)) return;
+
   // Enter sends, Shift+Enter inserts a newline. Mirrors most chat UIs.
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     void handleSend();
   }
+};
+
+const handleComposerInput = (): void => {
+  mention.onInput();
+};
+
+const handleMentionPick = (candidate: Parameters<typeof mention.pick>[0]): void => {
+  mention.pick(candidate);
+};
+
+const handleMentionDismiss = (): void => {
+  mention.close();
+};
+
+const handleMentionHover = (index: number): void => {
+  mention.setActiveIndex(index);
 };
 </script>
 
@@ -156,14 +197,28 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     </div>
 
     <footer v-if="!isDisabledByFlag" class="ai-assistant__composer">
-      <textarea
-        v-model="composerText"
-        class="ai-assistant__textarea"
-        rows="3"
-        :placeholder="placeholder"
-        :disabled="!aiStore.hasConfiguredProvider"
-        @keydown="handleComposerKeydown"
-      ></textarea>
+      <div class="ai-assistant__textarea-wrapper">
+        <textarea
+          ref="composerTextarea"
+          v-model="composerText"
+          class="ai-assistant__textarea"
+          rows="3"
+          :placeholder="placeholder"
+          :disabled="!aiStore.hasConfiguredProvider"
+          @keydown="handleComposerKeydown"
+          @input="handleComposerInput"
+          @click="handleComposerInput"
+          @keyup="handleComposerInput"
+        ></textarea>
+        <AiMentionAutocomplete
+          :candidates="mention.candidates.value"
+          :active-index="mention.activeIndex.value"
+          :position="mention.caretPosition.value"
+          @pick="handleMentionPick"
+          @dismiss="handleMentionDismiss"
+          @hover="handleMentionHover"
+        />
+      </div>
       <div class="ai-assistant__actions">
         <button
           v-if="aiStore.isStreaming"
@@ -281,9 +336,14 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
   border-top: 1px solid var(--color-border-primary, #e1e4e8);
 }
 
+.ai-assistant__textarea-wrapper {
+  position: relative;
+}
+
 .ai-assistant__textarea {
   resize: vertical;
   min-height: 60px;
+  width: 100%;
   padding: 8px;
   border-radius: 6px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
@@ -291,6 +351,7 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
   font-size: 13px;
   background-color: var(--color-background-primary, #ffffff);
   color: var(--color-text-primary, #24292e);
+  box-sizing: border-box;
 }
 
 .ai-assistant__textarea:disabled {

@@ -11,16 +11,22 @@
 //   - W31+: handle `tool_call` events and wire diff acceptance.
 
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import {
   AiStreamHttpError,
   fetchAiProviders,
   streamChat,
+  streamGenerateDocumentation,
   streamRunFailureExplanation,
   type ChatMessageBody,
 } from "../api/ai.api";
 import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
+import {
+  highestPersistedMessageId,
+  loadPersistedAiState,
+  persistAiState,
+} from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 
 export type ChatRole = "user" | "assistant";
@@ -43,6 +49,13 @@ const nextMessageId = (): number => {
   return _messageCounter;
 };
 
+// W27 — interim browser-side persistence. Throttled writes coalesce streaming
+// chunk deltas into ~4 saves/sec instead of one per token. Server-side
+// per-flow persistence (W42 / W43, sidecar at `{user_dir}/ai_sessions/{flow_id}/`
+// per D007) will obsolete this; keep the persistence path thin so it's easy
+// to delete or migrate when that lands.
+const PERSIST_THROTTLE_MS = 250;
+
 export const useAiStore = defineStore("ai", () => {
   const editorStore = useEditorStore();
 
@@ -61,6 +74,66 @@ export const useAiStore = defineStore("ai", () => {
   const streamingState = ref<StreamingState>("idle");
   const streamError = ref<string | null>(null);
   let activeAbort: AbortController | null = null;
+
+  // ----- W27 hydrate from sessionStorage -----
+  // Order matters: hydrate refs BEFORE wiring the watch so the initial
+  // assignment doesn't trigger a redundant write of what we just read.
+  const _hydrated = loadPersistedAiState();
+  if (_hydrated.messages.length > 0) {
+    messages.value = _hydrated.messages;
+    // Bump the module-scoped counter past any persisted ids so the next
+    // `nextMessageId()` call doesn't collide with a hydrated message.
+    const persistedMax = highestPersistedMessageId(_hydrated.messages);
+    if (persistedMax > _messageCounter) {
+      _messageCounter = persistedMax;
+    }
+  }
+  if (_hydrated.selectedProvider !== null) {
+    selectedProvider.value = _hydrated.selectedProvider;
+  }
+  if (_hydrated.selectedModel !== null) {
+    selectedModel.value = _hydrated.selectedModel;
+  }
+
+  // Throttled save. SessionStorage writes are sync + main-thread; coalescing
+  // streaming chunk deltas into ~4 writes/sec keeps the cost negligible
+  // during a long response. User-driven changes (Send, Clear, provider pick)
+  // get a 0 ms delay so the next tick captures them — durable for any
+  // refresh past one event-loop turn (~milliseconds).
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const queuePersist = (): void => {
+    const isStreaming = streamingState.value === "streaming";
+    if (saveTimer !== null) {
+      if (isStreaming) return;
+      // Stream just settled — cancel the long throttle and flush asap so
+      // the final state is durable on the next tick rather than ≤ 250 ms
+      // later.
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    saveTimer = setTimeout(
+      () => {
+        saveTimer = null;
+        persistAiState({
+          messages: messages.value,
+          selectedProvider: selectedProvider.value,
+          selectedModel: selectedModel.value,
+        });
+      },
+      isStreaming ? PERSIST_THROTTLE_MS : 0,
+    );
+  };
+
+  // `flush: "sync"` so each mutation is evaluated against the current
+  // `streamingState` value, not the post-flush value. This matters because
+  // sendMessage pushes the user message *and* flips streamingState in the
+  // same sync block: a deferred-flush watcher would see the post-flush
+  // "streaming" state and route the user-message push through the slow
+  // throttle path.
+  watch(messages, queuePersist, { deep: true, flush: "sync" });
+  watch(selectedProvider, queuePersist, { flush: "sync" });
+  watch(selectedModel, queuePersist, { flush: "sync" });
+  watch(streamingState, queuePersist, { flush: "sync" });
 
   // ----- derived -----
   const isAiOpen = computed<boolean>({
@@ -341,6 +414,96 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
+  const generateDocumentation = async (flowId: number, flowName?: string): Promise<void> => {
+    // W50 — "Generate documentation" entry point. Same shape as
+    // ``explainRunFailure``: opens the drawer, drops a synthetic
+    // user/assistant pair into the chat, then streams the server-built
+    // markdown doc into the assistant placeholder. The wire-level user
+    // message is composed by the backend via W22's render_prompt_context
+    // (surface="docgen") + the W50 ``## Documentation request`` block;
+    // the chat-visible synthetic turn is purely cosmetic.
+    openAiDrawer();
+
+    if (streamingState.value === "streaming") {
+      return;
+    }
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const trimmedName = flowName?.trim();
+    const headline = trimmedName ? `\`${trimmedName}\`` : `flow ${flowId}`;
+    const userVisibleText = `Generate documentation for ${headline}.`;
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      role: "user",
+      content: userVisibleText,
+    };
+    const assistantPlaceholder: ChatMessage = {
+      id: nextMessageId(),
+      role: "assistant",
+      content: "",
+      pending: true,
+    };
+    messages.value.push(userMessage, assistantPlaceholder);
+    const reactivePlaceholder = messages.value[messages.value.length - 1];
+
+    streamingState.value = "streaming";
+    streamError.value = null;
+
+    activeAbort = new AbortController();
+    try {
+      await streamGenerateDocumentation(
+        {
+          flow_id: flowId,
+          provider: selectedProvider.value,
+          model: selectedModel.value,
+        },
+        {
+          onChunk: (delta) => {
+            reactivePlaceholder.content += delta;
+          },
+          onDone: () => {
+            reactivePlaceholder.pending = false;
+            streamingState.value = "idle";
+          },
+          onError: (message) => {
+            reactivePlaceholder.error = message;
+            reactivePlaceholder.pending = false;
+            streamingState.value = "error";
+            streamError.value = message;
+          },
+        },
+        activeAbort.signal,
+      );
+      reactivePlaceholder.pending = false;
+      if (streamingState.value === "streaming") {
+        streamingState.value = "idle";
+      }
+    } catch (err) {
+      reactivePlaceholder.pending = false;
+      const message =
+        err instanceof AiStreamHttpError
+          ? `HTTP ${err.status}: ${err.detail}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        streamingState.value = "idle";
+      } else {
+        reactivePlaceholder.error = message;
+        streamingState.value = "error";
+        streamError.value = message;
+      }
+    } finally {
+      activeAbort = null;
+    }
+  };
+
   return {
     // state
     providers,
@@ -367,5 +530,6 @@ export const useAiStore = defineStore("ai", () => {
     abortStream,
     sendMessage,
     explainRunFailure,
+    generateDocumentation,
   };
 });

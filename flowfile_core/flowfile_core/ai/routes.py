@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends
 from flowfile_core.ai.autocomplete_routes import router as autocomplete_router
 from flowfile_core.ai.byok_routes import router as byok_router
 from flowfile_core.ai.chat_routes import router as chat_router
+from flowfile_core.ai.diff_routes import router as diff_router
+from flowfile_core.ai.docgen_routes import router as docgen_router
 from flowfile_core.ai.feature_flag import require_ai_enabled
 from flowfile_core.ai.run_failure_routes import router as run_failure_router
 
@@ -28,6 +30,8 @@ router.include_router(byok_router)
 router.include_router(chat_router)
 router.include_router(run_failure_router)
 router.include_router(autocomplete_router)
+router.include_router(docgen_router)
+router.include_router(diff_router)
 
 
 @router.get("/health")

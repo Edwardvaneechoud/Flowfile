@@ -56,3 +56,14 @@ export interface AiProviderTestResult {
 // Mirrors flowfile_core.ai.feature_flag.DISABLED_DETAIL byte-for-byte; bumping
 // this string is a contract change shared with the backend.
 export const AI_DISABLED_DETAIL = "AI features are disabled. Set FEATURE_FLAG_AI=true to enable.";
+
+// W18 — admin AI feature-flag toggle.
+//
+// Mirrors flowfile_core.ai.admin_routes.FeatureFlagState. `persisted` is
+// always false in the W18 contract: the toggle lives in process memory.
+// Cross-restart persistence requires the user to set FEATURE_FLAG_AI in
+// their .env (which the UI surfaces as a hint).
+export interface AiFeatureFlagState {
+  enabled: boolean;
+  persisted: boolean;
+}

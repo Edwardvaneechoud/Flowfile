@@ -39,7 +39,6 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_us
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings as core_settings
 
-
 # ---------- shared fixtures ----------
 
 

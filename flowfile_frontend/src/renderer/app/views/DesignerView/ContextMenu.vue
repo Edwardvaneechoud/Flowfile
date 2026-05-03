@@ -30,14 +30,25 @@ const emit = defineEmits(["action"]);
 
 const menuRef = ref<HTMLElement | null>(null);
 
-// Define menu actions based on the target type
+// Define menu actions based on the target type. Pane-only entries pick up
+// the new "Generate documentation" affordance (W50); the four pre-existing
+// canvas actions still render against node/edge targets — that's a known
+// pre-existing inconsistency, fixing it is out of scope for W50.
 const getMenuActions = () => {
-  return [
+  const baseActions = [
     { id: "fit-view", label: "Fit View", icon: "🔍" },
     { id: "zoom-in", label: "Zoom In", icon: "🔍+" },
     { id: "zoom-out", label: "Zoom Out", icon: "🔍-" },
     { id: "paste-node", label: "Paste Node", icon: "📋" },
   ];
+  if (props.targetType === "pane") {
+    baseActions.push({
+      id: "generate-documentation",
+      label: "Generate documentation",
+      icon: "📝",
+    });
+  }
+  return baseActions;
 };
 
 const handleAction = (actionId: string): void => {

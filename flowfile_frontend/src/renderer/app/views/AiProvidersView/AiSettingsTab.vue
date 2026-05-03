@@ -8,20 +8,41 @@
       </p>
     </div>
 
-    <!-- Disabled-state: matches W17's 503 contract -->
+    <!-- Disabled-state: matches W17's 503 contract.
+         W18 replaces the env-var hint with an in-app admin button so non-technical
+         users don't need to touch .env. The hint about FEATURE_FLAG_AI in .env stays
+         (admin-only, below the button) because process-memory toggles don't survive
+         a restart. -->
     <div v-if="isDisabled" class="card mb-3">
       <div class="card-content">
         <div class="info-box">
           <i class="fa-solid fa-circle-info"></i>
-          <div>
+          <div class="info-body">
             <p><strong>AI features are off</strong></p>
             <p>{{ AI_DISABLED_DETAIL }}</p>
-            <p class="hint-text">
-              AI ships off by default during the Phase 0 rollout. To enable: add
-              <code>FEATURE_FLAG_AI=true</code> to your <code>.env</code> file (Flowfile project
-              root for local dev, or your container env for Docker), then restart
-              <code>flowfile_core</code>.
-            </p>
+
+            <template v-if="isAdmin">
+              <div class="info-actions">
+                <el-button
+                  type="primary"
+                  :loading="isEnablingFlag"
+                  :disabled="isEnablingFlag"
+                  @click="handleEnableFlag"
+                >
+                  <i class="fa-solid fa-wand-magic-sparkles"></i>
+                  <span>Enable AI features</span>
+                </el-button>
+              </div>
+              <p class="hint-text">
+                This enables AI for the running process. To persist across restarts, add
+                <code>FEATURE_FLAG_AI=true</code> to your <code>.env</code> file.
+              </p>
+            </template>
+            <template v-else>
+              <p class="hint-text">
+                Ask your administrator to enable AI features for this Flowfile install.
+              </p>
+            </template>
           </div>
         </div>
       </div>
@@ -218,19 +239,25 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElButton, ElDialog, ElMessage } from "element-plus";
+import { useAuthStore } from "../../stores/auth-store";
 import {
   AiDisabledError,
   AI_DISABLED_DETAIL,
   deleteAiProvider,
   fetchAiProviders,
+  setAiFeatureFlag,
   testAiProvider,
   upsertAiProvider,
 } from "./api";
 import type { AiProvider, AiProviderCredentialInput, AiProviderStatus } from "./aiProviderTypes";
 
+const authStore = useAuthStore();
+const isAdmin = computed(() => authStore.isAdmin);
+
 const providers = ref<AiProvider[]>([]);
 const isLoading = ref(true);
 const isDisabled = ref(false);
+const isEnablingFlag = ref(false);
 const busyProvider = ref<string | null>(null);
 
 // Edit dialog
@@ -374,6 +401,26 @@ const handleTest = async (provider: AiProvider) => {
   }
 };
 
+const handleEnableFlag = async () => {
+  // W18 — admin-only path. Backend rejects with 403 for non-admin, 401 for
+  // unauth — the UI gates on isAdmin first so we never make those calls.
+  isEnablingFlag.value = true;
+  try {
+    const state = await setAiFeatureFlag(true);
+    if (state.enabled) {
+      ElMessage.success("AI features enabled for this process");
+      // Reload providers — the previous attempt 503'd; this one should populate.
+      await loadProviders();
+    } else {
+      ElMessage.error("Failed to enable AI features");
+    }
+  } catch (error) {
+    ElMessage.error((error as Error).message || "Failed to enable AI features");
+  } finally {
+    isEnablingFlag.value = false;
+  }
+};
+
 const handleCloseDialog = (done: () => void) => {
   if (isSubmitting.value) return;
   done();
@@ -506,19 +553,27 @@ onMounted(loadProviders);
   margin-top: var(--spacing-1);
 }
 
-.info-box p {
+.info-body {
+  flex: 1;
+}
+
+.info-body p {
   margin: 0;
   margin-bottom: var(--spacing-2);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
-.info-box p:last-child {
+.info-body p:last-child {
   margin-bottom: 0;
 }
 
 .info-box strong {
   color: var(--color-text-primary);
+}
+
+.info-actions {
+  margin: var(--spacing-3) 0;
 }
 
 .hint-text {

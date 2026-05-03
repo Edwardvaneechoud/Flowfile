@@ -12,11 +12,16 @@ Provider resolution flows through :func:`flowfile_core.ai.byok.get_configured_pr
 so BYOK rows + env-var fallback + surface-keyed model defaults are honoured
 identically to the BYOK test ping in W12.
 
+W26 wires :func:`flowfile_core.ai.context.assemble_system_prompt` in: every
+request prepends a server-issued ``system`` message built from
+``body.surface`` (defaulting to ``"explain"`` → the ``assist`` level per
+W22's ``SURFACE_TO_LEVEL``) so the LLM is always grounded in Flowfile's
+contract before it sees the client's first turn. Client-supplied ``system``
+messages remain accepted and follow the server prompt in order.
+
 The SSE wire format mirrors W13 exactly — ``event: chunk`` deltas,
-``event: done`` finish, keepalive comments every 15s. A future W22 will
-extend the request shape with an optional ``context`` block (system prompt
-+ subgraph schema), and W42 will add ``Last-Event-ID`` resumption — neither
-changes today's contract.
+``event: done`` finish, keepalive comments every 15s. W42 will add
+``Last-Event-ID`` resumption — that won't change today's contract.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
+from flowfile_core.ai.context import SURFACE_TO_LEVEL, assemble_system_prompt
 from flowfile_core.ai.providers import (
     PROVIDERS,
     Message,
@@ -42,6 +48,12 @@ router = APIRouter()
 
 
 _ALLOWED_ROLES: tuple[str, ...] = ("system", "user", "assistant")
+
+# Vanilla chat has no inherent "surface" of its own — it's the general-purpose
+# drawer. Default to ``"explain"`` so we land on W22's ``assist``-level suffix
+# (concise, read-only, no graph-mutation talk), which matches what the chat
+# drawer can actually do today.
+_DEFAULT_SURFACE: str = "explain"
 
 
 class ChatMessageInput(BaseModel):
@@ -81,11 +93,23 @@ def _to_provider_messages(payload: list[ChatMessageInput]) -> list[Message]:
 
     The route doesn't accept ``tool_calls`` or ``tool_call_id`` from the
     client — those only flow back from the provider in non-streaming
-    responses, and W20 is read-only anyway. Keeping the adapter explicit
-    means W22 can layer an upstream-side ``system`` message without
-    touching this function.
+    responses, and W20 is read-only anyway.
     """
     return [Message(role=msg.role, content=msg.content) for msg in payload]
+
+
+def _resolve_prompt_surface(requested: str | None) -> str:
+    """Pick the surface used for system-prompt assembly.
+
+    A request may set ``surface`` to anything for model selection (W12 /
+    D010), but only known surfaces participate in the W22 layered prompt.
+    Unknown or missing values silently fall back to :data:`_DEFAULT_SURFACE`
+    rather than 422 — the chat drawer is general-purpose and we'd rather
+    ground every call than reject one.
+    """
+    if requested and requested in SURFACE_TO_LEVEL:
+        return requested
+    return _DEFAULT_SURFACE
 
 
 @router.post("/chat/stream", tags=["ai"])
@@ -131,7 +155,12 @@ async def chat_stream(
         # PROVIDERS-side mapping, but provider_factory has its own check.
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    messages = _to_provider_messages(body.messages)
+    prompt_surface = _resolve_prompt_surface(body.surface)
+    system_prompt = assemble_system_prompt(prompt_surface)
+    messages = [
+        Message(role="system", content=system_prompt),
+        *_to_provider_messages(body.messages),
+    ]
 
     provider_stream = provider.stream(
         messages=messages,
