@@ -318,3 +318,270 @@ export const fetchNextNodeSuggestions = async (
     throw error;
   }
 };
+
+// --------------------------------------------------------------------------
+// Cmd+K command palette (W33) — non-streaming JSON wrapper around
+// /ai/command_palette. Returns the staged GraphDiff in the same shape
+// W35's `useAiDiffStore.setCurrentDiff(...)` expects, so the frontend
+// composes the existing diff panel without a follow-up GET.
+// --------------------------------------------------------------------------
+
+import type { GraphDiffPayload } from "../features/ai/aiDiffTypes";
+
+export interface CommandPaletteInsertionContext {
+  upstreamNodeIds: number[];
+  rightInputNodeId?: number | null;
+  posX?: number;
+  posY?: number;
+}
+
+export interface CommandPaletteRequest {
+  flowId: number;
+  prompt: string;
+  provider: string;
+  model?: string | null;
+  selectedNodeIds?: number[];
+  insertionContext?: CommandPaletteInsertionContext | null;
+  maxTokens?: number;
+  sessionId?: string;
+  timeout?: number;
+}
+
+export interface CommandPaletteRefusal {
+  toolName: string;
+  refusalReason: string | null;
+  refusalDetail: string | null;
+  warnings: string[];
+}
+
+export type CommandPaletteDegradedReason =
+  | "timeout"
+  | "no_tool_calls"
+  | "provider_error"
+  | "all_refused"
+  | "empty_catalog";
+
+export interface CommandPaletteResponse {
+  diffId: string | null;
+  opCount: number;
+  rationale: string | null;
+  degraded: boolean;
+  reason: CommandPaletteDegradedReason | null;
+  diff: GraphDiffPayload | null;
+  refused: CommandPaletteRefusal[];
+}
+
+interface PyCommandPaletteRefusal {
+  tool_name: string;
+  refusal_reason: string | null;
+  refusal_detail: string | null;
+  warnings: string[];
+}
+
+interface PyCommandPaletteResponse {
+  diff_id: string | null;
+  op_count: number;
+  rationale: string | null;
+  degraded: boolean;
+  reason: CommandPaletteDegradedReason | null;
+  diff: GraphDiffPayload | null;
+  refused: PyCommandPaletteRefusal[];
+}
+
+const fromPyRefusal = (raw: PyCommandPaletteRefusal): CommandPaletteRefusal => ({
+  toolName: raw.tool_name,
+  refusalReason: raw.refusal_reason,
+  refusalDetail: raw.refusal_detail,
+  warnings: raw.warnings ?? [],
+});
+
+export const submitCommandPalette = async (
+  body: CommandPaletteRequest,
+  signal?: AbortSignal,
+): Promise<CommandPaletteResponse> => {
+  const payload: Record<string, unknown> = {
+    flow_id: body.flowId,
+    prompt: body.prompt,
+    provider: body.provider,
+  };
+  if (body.model !== undefined && body.model !== null) payload.model = body.model;
+  if (body.selectedNodeIds !== undefined) payload.selected_node_ids = body.selectedNodeIds;
+  if (body.insertionContext !== undefined && body.insertionContext !== null) {
+    payload.insertion_context = {
+      upstream_node_ids: body.insertionContext.upstreamNodeIds,
+      right_input_node_id: body.insertionContext.rightInputNodeId ?? null,
+      pos_x: body.insertionContext.posX ?? 0.0,
+      pos_y: body.insertionContext.posY ?? 0.0,
+    };
+  }
+  if (body.maxTokens !== undefined) payload.max_tokens = body.maxTokens;
+  if (body.sessionId !== undefined) payload.session_id = body.sessionId;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<PyCommandPaletteResponse>("/ai/command_palette", payload, {
+      signal,
+    });
+    const data = response.data;
+    return {
+      diffId: data.diff_id,
+      opCount: data.op_count,
+      rationale: data.rationale,
+      degraded: data.degraded,
+      reason: data.reason,
+      diff: data.diff,
+      refused: (data.refused ?? []).map(fromPyRefusal),
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// --------------------------------------------------------------------------
+// Multi-turn planner agent (W40) — non-streaming sibling endpoints. The SSE
+// start + resume-continue paths live in services/aiStreamClient.ts; this file
+// owns the JSON-only abort / discard-resume / status-snapshot fetches.
+// --------------------------------------------------------------------------
+
+export interface AgentDriftDetail {
+  missingNodeIds: number[];
+  mutatedNodeIds: number[];
+  schemaChangedNodeIds: number[];
+}
+
+export interface AgentSessionState {
+  sessionId: string;
+  flowId: number;
+  status:
+    | "running"
+    | "paused_drift"
+    | "awaiting_user"
+    | "completed"
+    | "aborted"
+    | "failed";
+  surface: "agent" | "agent_complex";
+  samplesMode: "off" | "regex";
+  stepCount: number;
+  maxSteps: number;
+  stagedCount: number;
+  diffId: string | null;
+  rationale: string | null;
+  pauseReason: string | null;
+  driftDetail: AgentDriftDetail | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentAbortResponse {
+  status: "aborted";
+  sessionId: string;
+  partialDiffId: string | null;
+}
+
+export interface AgentDiscardResponse {
+  status: "discarded";
+  sessionId: string;
+}
+
+interface PyAgentDriftDetail {
+  missing_node_ids: number[];
+  mutated_node_ids: number[];
+  schema_changed_node_ids: number[];
+}
+
+interface PyAgentSessionState {
+  session_id: string;
+  flow_id: number;
+  status: AgentSessionState["status"];
+  surface: AgentSessionState["surface"];
+  samples_mode: AgentSessionState["samplesMode"];
+  step_count: number;
+  max_steps: number;
+  staged_count: number;
+  diff_id: string | null;
+  rationale: string | null;
+  pause_reason: string | null;
+  drift_detail: PyAgentDriftDetail | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const fromPyDriftDetail = (raw: PyAgentDriftDetail): AgentDriftDetail => ({
+  missingNodeIds: raw.missing_node_ids,
+  mutatedNodeIds: raw.mutated_node_ids,
+  schemaChangedNodeIds: raw.schema_changed_node_ids,
+});
+
+export const getAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentSessionState> => {
+  try {
+    const response = await axios.get<PyAgentSessionState>(
+      `/ai/agent/${encodeURIComponent(sessionId)}`,
+      { signal },
+    );
+    const data = response.data;
+    return {
+      sessionId: data.session_id,
+      flowId: data.flow_id,
+      status: data.status,
+      surface: data.surface,
+      samplesMode: data.samples_mode,
+      stepCount: data.step_count,
+      maxSteps: data.max_steps,
+      stagedCount: data.staged_count,
+      diffId: data.diff_id,
+      rationale: data.rationale,
+      pauseReason: data.pause_reason,
+      driftDetail: data.drift_detail ? fromPyDriftDetail(data.drift_detail) : null,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const abortAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentAbortResponse> => {
+  try {
+    const response = await axios.post<{
+      status: "aborted";
+      session_id: string;
+      partial_diff_id: string | null;
+    }>(`/ai/agent/${encodeURIComponent(sessionId)}/abort`, {}, { signal });
+    return {
+      status: response.data.status,
+      sessionId: response.data.session_id,
+      partialDiffId: response.data.partial_diff_id,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const discardAgentSession = async (
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentDiscardResponse> => {
+  try {
+    const response = await axios.post<{ status: "discarded"; session_id: string }>(
+      `/ai/agent/${encodeURIComponent(sessionId)}/resume`,
+      { action: "discard" },
+      { signal },
+    );
+    return {
+      status: response.data.status,
+      sessionId: response.data.session_id,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};

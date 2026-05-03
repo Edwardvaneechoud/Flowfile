@@ -13,6 +13,9 @@ export interface AiProviderCredential {
   hasKey: boolean;
   apiBase: string | null;
   defaultModel: string | null;
+  // W29 — curated model list. null or [] both mean "no curated list, use
+  // defaultModel only". Order is preserved from the backend.
+  models: string[] | null;
   lastTestedAt: string | null;
   lastTestStatus: AiProviderTestStatus | null;
   lastTestError: string | null;
@@ -37,11 +40,17 @@ export interface AiProvider {
 // - apiKey="sk-..." → store/rotate in place
 // - clearApiKey     → drop secret (mutually exclusive with apiKey, 422 if both)
 // - apiBase / defaultModel: null leaves the field as-is, otherwise overwrites.
+// - models=null     → keep the existing curated list untouched (W29).
+// - models=[a, b]   → replace the curated list verbatim, in order (W29).
+// - models=[]       → clear the curated list (collapses with clearModels) (W29).
+// - clearModels     → null the curated list (mutually exclusive with non-empty models, 422).
 export interface AiProviderCredentialInput {
   apiKey: string | null;
   clearApiKey: boolean;
   apiBase: string | null;
   defaultModel: string | null;
+  models: string[] | null;
+  clearModels: boolean;
 }
 
 export interface AiProviderTestResult {

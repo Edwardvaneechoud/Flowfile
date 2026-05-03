@@ -130,84 +130,27 @@ def _resolve_flow(flow_id: int):
 
 
 def _bin_staged_results(staged: list[StagedToolResult]) -> diff.GraphDiff:
-    """Sort staged results into the four :class:`GraphDiff` buckets.
+    """Bin staged results into the four :class:`GraphDiff` buckets.
 
-    Tool-name prefix is the discriminator. Anything outside the
-    ``flowfile.graph.*`` namespace (or unsupported within it) is a 422 —
-    W41 doesn't speak schema/codegen/meta payloads at this surface.
+    Thin route-layer adapter around :func:`flowfile_core.ai.diff.bundle_staged_results`:
+    converts the ``StagedToolResult`` route models into the public
+    :class:`flowfile_core.ai.diff.StagedToolEntry` shape and maps any
+    ``ValueError`` from the bundler to ``HTTPException(422)``. The bundler
+    itself is shared with W40's planner (which builds diffs without going
+    through the HTTP route).
     """
-    additions: list[diff.StagedAddition] = []
-    connections_added: list[diff.StagedConnection] = []
-    deletions: list[diff.StagedDeletion] = []
-    connections_removed: list[diff.StagedConnection] = []
-
-    for entry in staged:
-        tool_name = entry.tool_name
-        payload = entry.staged_node_payload
-
-        if tool_name.startswith(_ADD_PREFIX):
-            node_type = tool_name[len(_ADD_PREFIX) :]
-            try:
-                additions.append(
-                    diff.StagedAddition(
-                        node_type=payload.get("node_type", node_type),
-                        settings=payload.get("settings", {}),
-                        insertion_context=diff.StagedInsertionContext(**payload.get("insertion_context", {})),
-                        predicted_output_schema=payload.get("predicted_output_schema"),
-                        audit_id=entry.audit_id,
-                    )
-                )
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"invalid add payload for {tool_name!r}: {exc}",
-                ) from exc
-        elif tool_name == _CONNECT_NAME:
-            connections_added.append(
-                diff.StagedConnection(
-                    connection=payload.get("connection", {}),
-                    audit_id=entry.audit_id,
-                )
-            )
-        elif tool_name == _DELETE_NODE_NAME:
-            node_id = payload.get("delete_node_id")
-            if not isinstance(node_id, int):
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"delete_node payload missing integer delete_node_id: {payload!r}",
-                )
-            deletions.append(
-                diff.StagedDeletion(
-                    delete_node_id=node_id,
-                    audit_id=entry.audit_id,
-                )
-            )
-        elif tool_name == _DELETE_CONNECTION_NAME:
-            connections_removed.append(
-                diff.StagedConnection(
-                    connection=payload.get("delete_connection", {}),
-                    audit_id=entry.audit_id,
-                )
-            )
-        elif tool_name.startswith(_GRAPH_PREFIX):
-            raise HTTPException(
-                status_code=422,
-                detail=f"unsupported graph op for diff staging: {tool_name!r}",
-            )
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail=f"diff staging only accepts flowfile.graph.* tools; got {tool_name!r}",
-            )
-
-    return diff.GraphDiff(
-        session_id="",  # filled by caller
-        flow_id=0,  # filled by caller
-        additions=additions,
-        connections_added=connections_added,
-        deletions=deletions,
-        connections_removed=connections_removed,
-    )
+    entries = [
+        diff.StagedToolEntry(
+            tool_name=entry.tool_name,
+            audit_id=entry.audit_id,
+            staged_node_payload=entry.staged_node_payload,
+        )
+        for entry in staged
+    ]
+    try:
+        return diff.bundle_staged_results(entries)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _flip_audit_actions(audit_ids: list[int], action: audit.DiffAction) -> list[int]:

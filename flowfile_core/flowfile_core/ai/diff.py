@@ -195,6 +195,106 @@ def clear_for_tests() -> None:
 # --------------------------------------------------------------------------- #
 
 
+_GRAPH_PREFIX = "flowfile.graph."
+_ADD_PREFIX = "flowfile.graph.add_"
+_CONNECT_NAME = "flowfile.graph.connect"
+_DELETE_NODE_NAME = "flowfile.graph.delete_node"
+_DELETE_CONNECTION_NAME = "flowfile.graph.delete_connection"
+
+
+class StagedToolEntry(BaseModel):
+    """One staged tool call from a prior ``execute_tool_call(mode="stage")``.
+
+    The shape :func:`bundle_staged_results` accepts. Mirrors the subset of
+    :class:`flowfile_core.ai.tools.executor.ToolExecutionResult` the diff
+    bundler needs: tool name (for dispatch), audit id (for accept/reject
+    flip), and the per-op ``staged_node_payload`` shape W31 emits. Lives in
+    :mod:`diff` rather than :mod:`diff_routes` so W40's planner can build a
+    ``GraphDiff`` directly without crossing the HTTP boundary.
+    """
+
+    tool_name: str = Field(min_length=1)
+    audit_id: int | None = None
+    staged_node_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def bundle_staged_results(staged: list[StagedToolEntry]) -> GraphDiff:
+    """Sort staged results into the four :class:`GraphDiff` buckets.
+
+    Tool-name prefix is the discriminator. Anything outside the
+    ``flowfile.graph.*`` namespace (or unsupported within it) raises
+    ``ValueError`` — the route layer maps that to 422; W40 surfaces it as
+    a planner-loop error.
+
+    The returned :class:`GraphDiff` has ``session_id=""`` and ``flow_id=0``;
+    callers fill those in alongside ``rationale`` before calling
+    :func:`register_diff`. This split keeps the binner pure (no caller
+    metadata leaking through the dispatch).
+    """
+    additions: list[StagedAddition] = []
+    connections_added: list[StagedConnection] = []
+    deletions: list[StagedDeletion] = []
+    connections_removed: list[StagedConnection] = []
+
+    for entry in staged:
+        tool_name = entry.tool_name
+        payload = entry.staged_node_payload
+
+        if tool_name.startswith(_ADD_PREFIX):
+            node_type = tool_name[len(_ADD_PREFIX) :]
+            try:
+                additions.append(
+                    StagedAddition(
+                        node_type=payload.get("node_type", node_type),
+                        settings=payload.get("settings", {}),
+                        insertion_context=StagedInsertionContext(**payload.get("insertion_context", {})),
+                        predicted_output_schema=payload.get("predicted_output_schema"),
+                        audit_id=entry.audit_id,
+                    )
+                )
+            except Exception as exc:
+                raise ValueError(f"invalid add payload for {tool_name!r}: {exc}") from exc
+        elif tool_name == _CONNECT_NAME:
+            connections_added.append(
+                StagedConnection(
+                    connection=payload.get("connection", {}),
+                    audit_id=entry.audit_id,
+                )
+            )
+        elif tool_name == _DELETE_NODE_NAME:
+            node_id = payload.get("delete_node_id")
+            if not isinstance(node_id, int):
+                raise ValueError(
+                    f"delete_node payload missing integer delete_node_id: {payload!r}",
+                )
+            deletions.append(
+                StagedDeletion(
+                    delete_node_id=node_id,
+                    audit_id=entry.audit_id,
+                )
+            )
+        elif tool_name == _DELETE_CONNECTION_NAME:
+            connections_removed.append(
+                StagedConnection(
+                    connection=payload.get("delete_connection", {}),
+                    audit_id=entry.audit_id,
+                )
+            )
+        elif tool_name.startswith(_GRAPH_PREFIX):
+            raise ValueError(f"unsupported graph op for diff staging: {tool_name!r}")
+        else:
+            raise ValueError(f"diff staging only accepts flowfile.graph.* tools; got {tool_name!r}")
+
+    return GraphDiff(
+        session_id="",
+        flow_id=0,
+        additions=additions,
+        connections_added=connections_added,
+        deletions=deletions,
+        connections_removed=connections_removed,
+    )
+
+
 def collect_audit_ids(diff: GraphDiff) -> list[int]:
     """Walk every op in op-order, returning the ``audit_id`` for those that have one.
 
@@ -356,7 +456,9 @@ __all__ = [
     "StagedDeletion",
     "StagedInsertionContext",
     "StagedSchemaColumn",
+    "StagedToolEntry",
     "apply_diff",
+    "bundle_staged_results",
     "clear_for_tests",
     "collect_audit_ids",
     "get_diff",

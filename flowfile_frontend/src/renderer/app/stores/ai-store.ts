@@ -31,6 +31,7 @@ import {
   persistAiState,
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
+import { useFlowStore } from "./flow-store";
 
 export type ChatRole = "user" | "assistant";
 
@@ -255,17 +256,33 @@ export const useAiStore = defineStore("ai", () => {
     streamingState.value = "streaming";
     streamError.value = null;
 
+    // Filter out:
+    //   - pending placeholders (stream still open)
+    //   - empty-content messages (an assistant placeholder that failed
+    //     mid-stream / aborted before any chunks arrived stays in history
+    //     with content="" and pending=false; sending it triggers the
+    //     backend's `min_length=1` validator and 422s the whole request).
+    // Empty-content user messages can't happen (the composer trims + early
+    // returns) but the same filter catches them defensively.
     const wireMessages: ChatMessageBody[] = messages.value
-      .filter((m) => !m.pending)
+      .filter((m) => !m.pending && m.content.trim().length > 0)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // W28 — pass the active flow_id so the backend can build a rich
+    // PromptContext via W22 (subgraph + schemas). Omitted when no flow is
+    // loaded yet → backend falls back to the W26 identity-only prompt.
+    const flowStore = useFlowStore();
+    const activeFlowId = flowStore.flowId ?? null;
+
     activeAbort = new AbortController();
+    let sawErrorEvent = false;
     try {
       await streamChat(
         {
           provider: selectedProvider.value,
           model: selectedModel.value,
           messages: wireMessages,
+          flow_id: activeFlowId,
         },
         {
           onChunk: (delta) => {
@@ -276,6 +293,7 @@ export const useAiStore = defineStore("ai", () => {
             streamingState.value = "idle";
           },
           onError: (message) => {
+            sawErrorEvent = true;
             reactivePlaceholder.error = message;
             reactivePlaceholder.pending = false;
             streamingState.value = "error";
@@ -304,7 +322,11 @@ export const useAiStore = defineStore("ai", () => {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         streamingState.value = "idle";
-      } else {
+      } else if (!sawErrorEvent) {
+        // If the server already delivered a structured `event: error` payload,
+        // keep that message — a follow-up fetch reader failure (e.g. an
+        // abrupt connection close after the error frame) would otherwise
+        // clobber it with a generic "network error".
         reactivePlaceholder.error = message;
         streamingState.value = "error";
         streamError.value = message;
@@ -366,6 +388,7 @@ export const useAiStore = defineStore("ai", () => {
     streamError.value = null;
 
     activeAbort = new AbortController();
+    let sawErrorEvent = false;
     try {
       await streamRunFailureExplanation(
         {
@@ -384,6 +407,7 @@ export const useAiStore = defineStore("ai", () => {
             streamingState.value = "idle";
           },
           onError: (message) => {
+            sawErrorEvent = true;
             reactivePlaceholder.error = message;
             reactivePlaceholder.pending = false;
             streamingState.value = "error";
@@ -407,7 +431,7 @@ export const useAiStore = defineStore("ai", () => {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         streamingState.value = "idle";
-      } else {
+      } else if (!sawErrorEvent) {
         reactivePlaceholder.error = message;
         streamingState.value = "error";
         streamError.value = message;
@@ -458,6 +482,7 @@ export const useAiStore = defineStore("ai", () => {
     streamError.value = null;
 
     activeAbort = new AbortController();
+    let sawErrorEvent = false;
     try {
       await streamGenerateDocumentation(
         {
@@ -474,6 +499,7 @@ export const useAiStore = defineStore("ai", () => {
             streamingState.value = "idle";
           },
           onError: (message) => {
+            sawErrorEvent = true;
             reactivePlaceholder.error = message;
             reactivePlaceholder.pending = false;
             streamingState.value = "error";
@@ -497,7 +523,7 @@ export const useAiStore = defineStore("ai", () => {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         streamingState.value = "idle";
-      } else {
+      } else if (!sawErrorEvent) {
         reactivePlaceholder.error = message;
         streamingState.value = "error";
         streamError.value = message;
@@ -554,6 +580,7 @@ export const useAiStore = defineStore("ai", () => {
     streamError.value = null;
 
     activeAbort = new AbortController();
+    let sawErrorEvent = false;
     try {
       await streamInlineAction(
         {
@@ -572,6 +599,7 @@ export const useAiStore = defineStore("ai", () => {
             streamingState.value = "idle";
           },
           onError: (message) => {
+            sawErrorEvent = true;
             reactivePlaceholder.error = message;
             reactivePlaceholder.pending = false;
             streamingState.value = "error";
@@ -595,7 +623,7 @@ export const useAiStore = defineStore("ai", () => {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         streamingState.value = "idle";
-      } else {
+      } else if (!sawErrorEvent) {
         reactivePlaceholder.error = message;
         streamingState.value = "error";
         streamError.value = message;
@@ -655,6 +683,7 @@ export const useAiStore = defineStore("ai", () => {
     streamError.value = null;
 
     activeAbort = new AbortController();
+    let sawErrorEvent = false;
     try {
       await streamLineageQuestion(
         {
@@ -673,6 +702,7 @@ export const useAiStore = defineStore("ai", () => {
             streamingState.value = "idle";
           },
           onError: (message) => {
+            sawErrorEvent = true;
             reactivePlaceholder.error = message;
             reactivePlaceholder.pending = false;
             streamingState.value = "error";
@@ -696,7 +726,7 @@ export const useAiStore = defineStore("ai", () => {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         streamingState.value = "idle";
-      } else {
+      } else if (!sawErrorEvent) {
         reactivePlaceholder.error = message;
         streamingState.value = "error";
         streamError.value = message;

@@ -16,7 +16,9 @@ Cases:
 * ``test_sse_stream_invokes_on_checkpoint_at_tool_boundary`` — W42 seam:
   the async hook fires once per complete ``ToolCall``.
 * ``test_sse_stream_propagates_provider_exception_as_error_event`` —
-  upstream raises mid-stream → ``event: error`` emitted, exception re-raised.
+  upstream raises mid-stream → ``event: error`` emitted and the iterator
+  ends cleanly so the wire frame reaches the client before connection
+  teardown.
 * ``test_resumable_sse_stream_skips_until_last_event_id`` — cursor-skip
   drops the matching tool_call and everything before, forwards everything
   after.
@@ -245,19 +247,21 @@ async def test_sse_stream_invokes_on_checkpoint_at_tool_boundary() -> None:
 
 @pytest.mark.asyncio
 async def test_sse_stream_propagates_provider_exception_as_error_event() -> None:
-    out: list[str] = []
     boom = RuntimeError("provider exploded")
 
-    with pytest.raises(RuntimeError, match="provider exploded"):
-        async for line in sse_stream(
+    out = await collect(
+        sse_stream(
             raising_stream(StreamChunk(content_delta="ok"), exc=boom),
             keepalive_interval=10.0,
-        ):
-            out.append(line)
+        )
+    )
 
     # The chunk made it out before the error fired.
     assert out[0].startswith("event: chunk")
     # The last emitted line is the error event so the client sees the failure.
+    # The iterator returns cleanly afterwards — re-raising would tear the
+    # SSE connection down before the error frame is guaranteed to flush,
+    # leaving the browser to surface a generic network-error instead.
     assert out[-1].startswith("event: error")
     payload = json.loads(_data_line(out[-1]).removeprefix("data: "))
     assert "provider exploded" in payload["message"]

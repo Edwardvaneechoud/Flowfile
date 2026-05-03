@@ -22,6 +22,7 @@ interface PyAiProviderCredential {
   has_key: boolean;
   api_base: string | null;
   default_model: string | null;
+  models: string[] | null;
   last_tested_at: string | null;
   last_test_status: "ok" | "error" | null;
   last_test_error: string | null;
@@ -44,6 +45,8 @@ interface PyAiProviderCredentialInput {
   clear_api_key: boolean;
   api_base: string | null;
   default_model: string | null;
+  models: string[] | null;
+  clear_models: boolean;
 }
 
 interface PyAiProviderTestResult {
@@ -56,6 +59,7 @@ const fromPyCredential = (raw: PyAiProviderCredential): AiProviderCredential => 
   hasKey: raw.has_key,
   apiBase: raw.api_base,
   defaultModel: raw.default_model,
+  models: raw.models,
   lastTestedAt: raw.last_tested_at,
   lastTestStatus: raw.last_test_status,
   lastTestError: raw.last_test_error,
@@ -78,6 +82,8 @@ const toPyInput = (input: AiProviderCredentialInput): PyAiProviderCredentialInpu
   clear_api_key: input.clearApiKey,
   api_base: input.apiBase,
   default_model: input.defaultModel,
+  models: input.models,
+  clear_models: input.clearModels,
 });
 
 // Thrown by every fetcher when the backend reports the AI subsystem is off

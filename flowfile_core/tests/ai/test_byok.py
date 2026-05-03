@@ -3,7 +3,8 @@
 Cases:
 
 * ``test_credentials_table_exists_after_alembic`` — Alembic migration 012
-  lands the ``ai_provider_credentials`` table on a fresh DB.
+  lands the ``ai_provider_credentials`` table on a fresh DB; W29 widens the
+  expected column set with ``models``.
 * ``test_alembic_head_is_singular`` — ``alembic heads`` resolves to exactly
   one revision (guards against a branched migration history).
 * ``test_upsert_creates_new_credential_with_secret`` — happy path round trip;
@@ -40,6 +41,26 @@ Cases:
   flowfile_core.ai.credentials`` does not pull ``litellm`` into ``sys.modules``.
 * ``test_credentials_per_user_unique`` — a second insert for the same
   ``(user_id, provider)`` raises ``IntegrityError``.
+
+W29 cases:
+
+* ``test_upsert_stores_models_verbatim`` — ``models=[a, b, c]`` round-trips
+  through the public projection in the same order.
+* ``test_upsert_clears_models_via_flag_and_via_empty_list`` — both
+  ``clear_models=True`` and ``models=[]`` collapse to ``models=None``.
+* ``test_upsert_keeps_models_when_payload_models_is_none`` — partial update
+  doesn't overwrite an existing curated list.
+* ``test_upsert_rejects_models_and_clear_models_together`` — Pydantic
+  validator raises (mirrors the api_key / clear_api_key rule).
+* ``test_get_configured_provider_picks_first_model_when_no_surface_match`` —
+  step 4 of W29's resolver precedence.
+* ``test_get_configured_provider_prefers_surface_model_when_in_curated`` —
+  step 3 wins over step 4 when the routed model is curated.
+* ``test_get_configured_provider_models_loses_to_stored_default`` —
+  ``default_model`` (step 2) still beats the curated list (steps 3+4).
+* ``test_alembic_013_upgrade_downgrade_round_trip`` — fresh sqlite; upgrade
+  to 013 adds the column, downgrade to 012 drops it; existing 012 rows
+  survive the upgrade.
 """
 
 from __future__ import annotations
@@ -145,6 +166,7 @@ def test_credentials_table_exists_after_alembic() -> None:
         "api_key_secret_id",
         "api_base",
         "default_model",
+        "models",  # W29
         "last_tested_at",
         "last_test_status",
         "last_test_error",
@@ -555,3 +577,222 @@ def test_lazy_litellm_import_for_credentials() -> None:
     finally:
         for mod_name, mod in cleared.items():
             sys.modules[mod_name] = mod
+
+
+# ---------- W29 — per-credential curated model list ----------
+
+
+def test_upsert_stores_models_verbatim(local_user_id: int) -> None:
+    """Round-trip the curated list through the public projection in order."""
+    from flowfile_core.ai.credentials import to_public
+
+    with get_db_context() as db:
+        cred = upsert_provider_credential(
+            db,
+            local_user_id,
+            "openrouter",
+            _input(
+                api_key="or-x",
+                models=[
+                    "moonshotai/kimi-k2:free",
+                    "deepseek/deepseek-chat-v3:free",
+                    "meta-llama/llama-3.3-70b-instruct:free",
+                ],
+            ),
+        )
+        public = to_public(cred)
+        assert public.models == [
+            "moonshotai/kimi-k2:free",
+            "deepseek/deepseek-chat-v3:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        ]
+
+
+def test_upsert_clears_models_via_flag_and_via_empty_list(local_user_id: int) -> None:
+    """Both ``clear_models=True`` and ``models=[]`` collapse to NULL."""
+    from flowfile_core.ai.credentials import to_public
+
+    with get_db_context() as db:
+        upsert_provider_credential(
+            db, local_user_id, "openrouter", _input(api_key="or-x", models=["a", "b"])
+        )
+
+        # Clear via flag.
+        upsert_provider_credential(
+            db, local_user_id, "openrouter", _input(api_key=None, clear_models=True)
+        )
+        cred = get_provider_credential(db, local_user_id, "openrouter")
+        assert cred is not None
+        assert to_public(cred).models is None
+
+        # Re-set, then clear via empty list.
+        upsert_provider_credential(
+            db, local_user_id, "openrouter", _input(api_key=None, models=["a"])
+        )
+        upsert_provider_credential(
+            db, local_user_id, "openrouter", _input(api_key=None, models=[])
+        )
+        cred = get_provider_credential(db, local_user_id, "openrouter")
+        assert cred is not None
+        assert to_public(cred).models is None
+
+
+def test_upsert_keeps_models_when_payload_models_is_none(local_user_id: int) -> None:
+    """Partial update with ``models=None`` preserves the existing list."""
+    from flowfile_core.ai.credentials import to_public
+
+    with get_db_context() as db:
+        upsert_provider_credential(
+            db, local_user_id, "openrouter", _input(api_key="or-x", models=["a", "b"])
+        )
+        # Update only default_model — models should survive.
+        upsert_provider_credential(
+            db,
+            local_user_id,
+            "openrouter",
+            _input(api_key=None, models=None, default_model="a"),
+        )
+        cred = get_provider_credential(db, local_user_id, "openrouter")
+        assert cred is not None
+        assert to_public(cred).models == ["a", "b"]
+        assert cred.default_model == "a"
+
+
+def test_upsert_rejects_models_and_clear_models_together() -> None:
+    """Mutual exclusion mirrors the api_key / clear_api_key rule."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ProviderCredentialInput(models=["a"], clear_models=True)
+
+
+def test_get_configured_provider_picks_first_model_when_no_surface_match(
+    local_user_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 4: curated list, no surface routing match → first entry wins."""
+    stub = _patch_factory(monkeypatch)
+    with get_db_context() as db:
+        # default_model deliberately omitted so step 2 doesn't short-circuit.
+        upsert_provider_credential(
+            db,
+            local_user_id,
+            "openrouter",
+            _input(
+                api_key="or-x",
+                default_model=None,
+                models=["custom/model-x:free", "custom/model-y:free"],
+            ),
+        )
+        # OpenRouter's class-level surface_models["cmd_k"] is
+        # "anthropic/claude-haiku-4.5" — not in the curated list, so step 4
+        # picks the first entry.
+        get_configured_provider(db, local_user_id, "openrouter", surface="cmd_k")
+        assert stub.last_kwargs["model"] == "custom/model-x:free"
+        # Surface should not be passed once we've resolved a model — otherwise
+        # the factory would re-resolve via surface_models and overwrite.
+        assert stub.last_kwargs["surface"] is None
+
+
+def test_get_configured_provider_prefers_surface_model_when_in_curated(
+    local_user_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 3: curated list contains the surface routing target → it wins."""
+    stub = _patch_factory(monkeypatch)
+    surface_route = "anthropic/claude-haiku-4.5"  # OpenRouter surface_models["cmd_k"]
+    with get_db_context() as db:
+        upsert_provider_credential(
+            db,
+            local_user_id,
+            "openrouter",
+            _input(
+                api_key="or-x",
+                default_model=None,
+                models=["custom/model-x:free", surface_route],
+            ),
+        )
+        get_configured_provider(db, local_user_id, "openrouter", surface="cmd_k")
+        assert stub.last_kwargs["model"] == surface_route
+
+
+def test_get_configured_provider_models_loses_to_stored_default(
+    local_user_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 2 still beats steps 3+4: stored ``default_model`` wins outright."""
+    stub = _patch_factory(monkeypatch)
+    with get_db_context() as db:
+        upsert_provider_credential(
+            db,
+            local_user_id,
+            "openrouter",
+            _input(
+                api_key="or-x",
+                default_model="default-stays",
+                models=["custom/model-x:free", "anthropic/claude-haiku-4.5"],
+            ),
+        )
+        get_configured_provider(db, local_user_id, "openrouter", surface="cmd_k")
+        assert stub.last_kwargs["model"] == "default-stays"
+
+
+def test_alembic_013_upgrade_downgrade_round_trip(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upgrade fresh DB to 012, insert a row, upgrade to 013, downgrade back.
+
+    Confirms the W29 column add is reversible and that pre-existing 012 rows
+    survive the upgrade. Uses an isolated sqlite file routed through the
+    same ``get_database_url`` seam the alembic ``env.py`` reads, so the
+    URL we set is the one the migrations actually run against.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    db_file = tmp_path / "alembic_013.sqlite"
+    db_url = f"sqlite:///{db_file}"
+
+    # env.py reads ``shared.storage_config.get_database_url()`` to populate
+    # ``sqlalchemy.url`` regardless of what's in alembic.ini, so we patch the
+    # source rather than the config.
+    import shared.storage_config as storage_config
+
+    monkeypatch.setattr(storage_config, "get_database_url", lambda: db_url)
+
+    cfg = Config("flowfile_core/flowfile_core/alembic.ini")
+    cfg.set_main_option("script_location", "flowfile_core/flowfile_core/alembic")
+
+    # Stamp through 012 first so we can prove pre-existing rows survive.
+    command.upgrade(cfg, "012")
+    engine = create_engine(db_url)
+    fake_user_id = 9_999_999  # SQLite FK enforcement is off by default; safe.
+    with engine.begin() as conn:
+        # Confirm pre-013 schema doesn't have the column.
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
+        assert "models" not in cols
+
+        conn.execute(
+            text(
+                "INSERT INTO ai_provider_credentials (user_id, provider) VALUES (:uid, :prov)"
+            ),
+            {"uid": fake_user_id, "prov": "openrouter"},
+        )
+
+    # Upgrade to 013 — column appears, original row survives.
+    command.upgrade(cfg, "013")
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
+        assert "models" in cols
+        survived = conn.execute(
+            text(
+                "SELECT provider, models FROM ai_provider_credentials"
+                " WHERE user_id=:uid"
+            ),
+            {"uid": fake_user_id},
+        ).first()
+        assert survived is not None
+        assert survived[0] == "openrouter"
+        assert survived[1] is None  # nullable, never set
+
+    # Downgrade back to 012 — column gone.
+    command.downgrade(cfg, "012")
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ai_provider_credentials)"))}
+        assert "models" not in cols

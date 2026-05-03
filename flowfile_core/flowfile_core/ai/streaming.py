@@ -138,7 +138,10 @@ async def sse_stream(
     sidecar session persistence.
 
     On exception, emits an ``event: error`` payload so the client sees the
-    failure, then re-raises so Starlette closes the response.
+    failure, then closes the response cleanly. Re-raising would tear the
+    connection down before the error frame is guaranteed to flush, leaving
+    the browser to surface the abort as a generic ``TypeError: network
+    error`` instead of the structured message we just yielded.
     """
     ait = provider_stream.__aiter__()
     next_task: asyncio.Task[StreamChunk] | None = None
@@ -175,7 +178,7 @@ async def sse_stream(
     except Exception as exc:
         logger.exception("sse_stream errored mid-generation")
         yield format_sse_error(str(exc))
-        raise
+        return
     finally:
         if next_task is not None and not next_task.done():
             next_task.cancel()
@@ -252,6 +255,88 @@ def _matches_tool_call_id(sse_block: str, target_id: str) -> bool:
         return False
     match = _TOOL_CALL_ID_LINE.search(sse_block)
     return match is not None and match.group("id") == target_id
+
+
+def format_sse_planner_event(
+    event_name: str,
+    payload: dict,
+    *,
+    session_id: str,
+    step_count: int,
+) -> str:
+    """Serialise a W40 ``PlannerEvent`` as an SSE wire string.
+
+    The ``id:`` line carries ``f"{session_id}.{step_count}"`` so an
+    EventSource client can echo it back via ``Last-Event-ID`` when W42's
+    replay buffer lands. ``event:`` matches the Python ``PlannerEvent.event``
+    Literal — ``tool_call_proposed`` / ``tool_call_staged`` /
+    ``tool_call_warned`` / ``tool_call_rejected`` / ``thinking`` /
+    ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` / ``complete`` /
+    ``error`` / ``info``. ``data:`` is JSON of the payload dict.
+    """
+    data = json.dumps(payload)
+    return SSEEvent(event=event_name, data=data, id=f"{session_id}.{step_count}").format()
+
+
+async def planner_events_sse(
+    events: AsyncIterator,
+    *,
+    session_id: str,
+    step_count_getter: Callable[[], int],
+    keepalive_interval: float = KEEPALIVE_INTERVAL_SECONDS,
+) -> AsyncIterator[str]:
+    """Translate a W40 ``PlannerEvent`` iterator into SSE wire strings.
+
+    Mirrors :func:`sse_stream`'s race-against-keepalive pattern so the
+    connection stays alive across slow LLM calls. ``step_count_getter``
+    is a closure over the live :class:`AgentSession` — each event picks up
+    the *current* step counter so resume cursors are step-aligned, not
+    wall-clock.
+
+    Like :func:`sse_stream`, errors mid-stream become an ``event: error``
+    frame; cancellations propagate. The pending ``__anext__()`` is shielded
+    so a keepalive timeout doesn't tear the underlying generator.
+    """
+    ait = events.__aiter__()
+    next_task: asyncio.Task | None = None
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.ensure_future(ait.__anext__())
+            try:
+                event = await asyncio.wait_for(asyncio.shield(next_task), timeout=keepalive_interval)
+            except asyncio.TimeoutError:
+                yield format_sse_keepalive()
+                continue
+            except StopAsyncIteration:
+                next_task = None
+                return
+            next_task = None
+            yield format_sse_planner_event(
+                event.event,
+                event.payload,
+                session_id=session_id,
+                step_count=step_count_getter(),
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception("planner_events_sse errored mid-generation")
+        yield format_sse_error(str(exc))
+        return
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+            try:
+                await next_task
+            except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                pass
+        aclose = getattr(ait, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.debug("planner events aclose() raised; ignoring", exc_info=True)
 
 
 def make_streaming_response(generator: AsyncIterator[str]) -> StreamingResponse:

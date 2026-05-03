@@ -1,5 +1,9 @@
 <template>
   <div class="status-wrapper">
+    <pop-over content="Toggle AI assistant" placement="left">
+      <ai-assistant-trigger />
+    </pop-over>
+
     <pop-over
       :content="tooltipContent"
       :title="isRunning ? 'Processing Flow' : 'Flow Idle'"
@@ -56,6 +60,7 @@ import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "../../../components/common/DraggableItem/stateStore";
 import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
+import AiAssistantTrigger from "../../ai/AiAssistantTrigger.vue";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();

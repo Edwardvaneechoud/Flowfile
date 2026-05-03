@@ -11,9 +11,12 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
+import AiDiffPanel from "./AiDiffPanel.vue";
 import AiMessage from "./AiMessage.vue";
 import AiMentionAutocomplete from "./AiMentionAutocomplete.vue";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
+
+const emit = defineEmits<{ close: [] }>();
 
 const aiStore = useAiStore();
 const flowStore = useFlowStore();
@@ -163,6 +166,14 @@ const handleMentionHover = (index: number): void => {
       >
         Clear
       </button>
+      <button
+        type="button"
+        class="ai-assistant__close"
+        aria-label="Close AI assistant"
+        @click="emit('close')"
+      >
+        ×
+      </button>
     </header>
 
     <div v-if="isDisabledByFlag" class="ai-assistant__notice">
@@ -182,14 +193,17 @@ const handleMentionHover = (index: number): void => {
       </p>
     </div>
 
-    <div v-else ref="messageContainerRef" class="ai-assistant__messages">
-      <div v-if="aiStore.messages.length === 0" class="ai-assistant__empty">
-        <p>This chat is read-only — it can't change your flow yet.</p>
-        <p class="ai-assistant__notice-hint">
-          Ask anything; tool-driven edits land in a later release.
-        </p>
+    <div v-else class="ai-assistant__chat">
+      <AiDiffPanel />
+      <div ref="messageContainerRef" class="ai-assistant__messages">
+        <div v-if="aiStore.messages.length === 0" class="ai-assistant__empty">
+          <p>This chat is read-only — it can't change your flow yet.</p>
+          <p class="ai-assistant__notice-hint">
+            Ask anything; tool-driven edits land in a later release.
+          </p>
+        </div>
+        <AiMessage v-for="message in aiStore.messages" :key="message.id" :message="message" />
       </div>
-      <AiMessage v-for="message in aiStore.messages" :key="message.id" :message="message" />
     </div>
 
     <div v-if="aiStore.streamError" class="ai-assistant__error">
@@ -287,6 +301,34 @@ const handleMentionHover = (index: number): void => {
 
 .ai-assistant__clear:hover:enabled {
   background-color: var(--color-background-hover, #ececec);
+}
+
+.ai-assistant__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary, #e1e4e8);
+  background-color: var(--color-background-secondary, #f6f8fa);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--color-text-secondary, #6b7280);
+  cursor: pointer;
+}
+
+.ai-assistant__close:hover {
+  background-color: var(--color-background-hover, #ececec);
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-assistant__chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .ai-assistant__messages {

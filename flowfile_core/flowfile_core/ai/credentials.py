@@ -20,14 +20,21 @@ Design notes:
   is the unambiguous link. Avoids name clashes with other features that
   share the ``secrets`` table.
 * **Explicit clear semantics.** The Pydantic input has a separate
-  ``clear_api_key: bool`` flag so the user can rotate to "no key" (Ollama,
-  or a credential that should fall back to env vars) without deleting and
-  recreating the whole row. ``api_key=None`` means "keep existing"; the two
-  fields are mutually exclusive (raises 422).
+  ``clear_api_key: bool`` flag (and W29's ``clear_models``) so the user can
+  rotate to "no key" / "no curated model list" without deleting and
+  recreating the whole row. ``api_key=None`` / ``models=None`` mean "keep
+  existing"; the clear flag is mutually exclusive with the corresponding
+  value (raises 422).
+* **Models as JSON-in-Text (W29).** ``AiProviderCredential.models`` is a
+  nullable ``Text`` column holding a JSON-encoded ``list[str]`` so the
+  schema works on SQLite and PG identically (matches the pattern used by
+  ``flow_runs.node_results_json``, ``configs.tags`` etc.). All
+  encode/decode happens here so callers see ``list[str] | None``.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Literal
 
@@ -55,17 +62,27 @@ class ProviderCredentialInput(BaseModel):
     * ``api_key="sk-..."`` → store/rotate the secret in place.
     * ``clear_api_key=True`` → drop the existing secret (FK nulled, row deleted).
     * ``api_base`` / ``default_model`` overwrite when provided (``None`` keeps).
+    * ``models=None`` (default) → keep the existing curated model list.
+    * ``models=["a", "b"]`` → replace the curated list verbatim, in order.
+    * ``models=[]`` → equivalent to ``clear_models=True`` (the user picked
+      "no curated list"). Stored as ``NULL`` so reads behave consistently.
+    * ``clear_models=True`` → null the curated list. Mutually exclusive with a
+      non-empty ``models``.
     """
 
     api_key: SecretStr | None = None
     clear_api_key: bool = False
     api_base: str | None = None
     default_model: str | None = None
+    models: list[str] | None = None
+    clear_models: bool = False
 
     @model_validator(mode="after")
     def _check_api_key_and_clear_mutually_exclusive(self) -> ProviderCredentialInput:
         if self.api_key is not None and self.clear_api_key:
             raise ValueError("api_key and clear_api_key are mutually exclusive")
+        if self.models is not None and len(self.models) > 0 and self.clear_models:
+            raise ValueError("models and clear_models are mutually exclusive")
         return self
 
 
@@ -76,6 +93,7 @@ class ProviderCredentialPublic(BaseModel):
     has_key: bool
     api_base: str | None = None
     default_model: str | None = None
+    models: list[str] | None = None
     last_tested_at: datetime | None = None
     last_test_status: Literal["ok", "error"] | None = None
     last_test_error: str | None = None
@@ -165,6 +183,13 @@ def upsert_provider_credential(
     elif payload.api_key is not None:
         _store_or_rotate_api_key(db, cred, user_id, payload.api_key.get_secret_value())
 
+    # W29 — curated model list. ``clear_models`` and ``models=[]`` collapse to
+    # the same NULL state so callers don't have to distinguish the two on read.
+    if payload.clear_models or (payload.models is not None and len(payload.models) == 0):
+        cred.models = None
+    elif payload.models is not None:
+        cred.models = json.dumps(list(payload.models))
+
     db.flush()
     if is_new:
         db.commit()
@@ -251,6 +276,27 @@ def decrypt_api_key(db: Session, cred: AiProviderCredential) -> str | None:
     return decrypt_secret(secret.encrypted_value, cred.user_id).get_secret_value()
 
 
+def decode_models(cred: AiProviderCredential) -> list[str] | None:
+    """Decode the JSON-encoded ``models`` column to a ``list[str]`` or ``None``.
+
+    Returns ``None`` for missing / empty / malformed payloads so downstream
+    callers can treat "no curated list" uniformly. Bad JSON in the DB means
+    the column was hand-edited or migration-corrupted; logging is left to the
+    caller because the recovery action is "fall through to ``default_model``"
+    either way.
+    """
+    raw = cred.models
+    if raw is None:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(decoded, list) or not decoded:
+        return None
+    return [str(item) for item in decoded]
+
+
 def to_public(cred: AiProviderCredential) -> ProviderCredentialPublic:
     """Project an ORM row to its public Pydantic shape."""
     return ProviderCredentialPublic(
@@ -258,6 +304,7 @@ def to_public(cred: AiProviderCredential) -> ProviderCredentialPublic:
         has_key=cred.api_key_secret_id is not None,
         api_base=cred.api_base,
         default_model=cred.default_model,
+        models=decode_models(cred),
         last_tested_at=cred.last_tested_at,
         last_test_status=cred.last_test_status,  # type: ignore[arg-type]
         last_test_error=cred.last_test_error,
@@ -272,6 +319,7 @@ __all__ = [
     "ProviderListItem",
     "ProviderStatus",
     "ProviderTestResult",
+    "decode_models",
     "decrypt_api_key",
     "delete_provider_credential",
     "get_provider_credential",

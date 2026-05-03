@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// Floating ✨ button that toggles the AI assistant drawer.
+// Sparkle button that toggles the AI assistant drawer.
 //
-// Anchored to the top-right of the canvas <main> element. Top-right keeps
-// the trigger out of the bottom-right contention zone (MiniMap, layout
-// controls, and bottom/right-anchored draggable panels) and frames AI as a
-// primary app action rather than a corner utility.
+// Mounted inside the header's status-wrapper alongside the flow-status
+// indicator and the results-panel toggle — same control-button visual
+// language (32px circle, neutral default, primary-on-active) so the AI
+// trigger reads as a peer panel-toggle, not a competing floating widget.
 
 import { computed } from "vue";
 import { useEditorStore } from "../../stores/editor-store";
@@ -23,7 +23,7 @@ const handleClick = (event: MouseEvent): void => {
 <template>
   <button
     class="ai-trigger-btn"
-    :class="{ 'is-open': isOpen }"
+    :class="{ 'is-active': isOpen }"
     title="AI Assistant"
     aria-label="Toggle AI assistant"
     @click="handleClick"
@@ -34,44 +34,35 @@ const handleClick = (event: MouseEvent): void => {
 
 <style scoped>
 .ai-trigger-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 45px;
-  height: 45px;
-  border-radius: 50%;
-  border: none;
-  background: linear-gradient(
-    135deg,
-    var(--color-gradient-purple-start, #6f42c1) 0%,
-    var(--color-gradient-purple-end, #5933a8) 100%
-  );
-  box-shadow: var(--shadow-md, 0 2px 8px rgba(0, 0, 0, 0.18));
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Same z-index tier as layoutControls (FLOATING_WIDGET = 200). */
-  z-index: 200;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-gray-400);
+  color: var(--color-button-primary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: var(--shadow-sm);
 }
 
 .ai-trigger-btn:hover {
-  width: 55px;
-  height: 55px;
-  box-shadow: var(--shadow-lg, 0 4px 12px rgba(0, 0, 0, 0.22));
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
-.ai-trigger-btn.is-open {
-  /* Slight visual cue when the drawer is showing — outline, not glow. */
-  outline: 2px solid var(--color-focus-ring-purple-light, #d4c1ff);
-  outline-offset: 2px;
+.ai-trigger-btn.is-active {
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
 }
 
 .ai-trigger-btn__icon {
-  font-size: 22px;
+  font-size: 16px;
   line-height: 1;
-  color: var(--color-text-inverse, #ffffff);
   pointer-events: none;
 }
 </style>

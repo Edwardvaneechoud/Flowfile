@@ -192,6 +192,38 @@
         </div>
 
         <div class="form-field">
+          <label class="form-label">Available models (optional)</label>
+          <div class="chip-input">
+            <el-tag
+              v-for="(model, index) in formModels"
+              :key="`${model}-${index}`"
+              closable
+              :disable-transitions="false"
+              class="chip-input__tag"
+              @close="handleRemoveModel(index)"
+            >
+              {{ model }}
+            </el-tag>
+            <input
+              v-model="formNewModel"
+              type="text"
+              class="chip-input__input"
+              :placeholder="
+                formModels.length === 0
+                  ? 'e.g. moonshotai/kimi-k2:free — press Enter to add'
+                  : 'Add another…'
+              "
+              @keydown.enter.prevent="handleAddModel"
+              @keydown.delete="handleBackspaceTrim"
+            />
+          </div>
+          <p class="hint-text">
+            Lets the chat drawer switch between several models on this credential. Empty = chat
+            drawer offers only the default model.
+          </p>
+        </div>
+
+        <div class="form-field">
           <label class="form-label" for="api-base">API base URL (optional)</label>
           <input
             id="api-base"
@@ -238,7 +270,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ElButton, ElDialog, ElMessage } from "element-plus";
+import { ElButton, ElDialog, ElMessage, ElTag } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
 import {
   AiDisabledError,
@@ -267,6 +299,12 @@ const formApiKey = ref("");
 const formClearApiKey = ref(false);
 const formDefaultModel = ref("");
 const formApiBase = ref("");
+// W29 — curated models list, mirrors AiProviderCredential.models. The editor
+// always works with an array; submit collapses [] to clearModels=true so the
+// backend round-trips to NULL and reads stay null-vs-non-null (no [] in the
+// wild).
+const formModels = ref<string[]>([]);
+const formNewModel = ref("");
 const showApiKey = ref(false);
 const isSubmitting = ref(false);
 

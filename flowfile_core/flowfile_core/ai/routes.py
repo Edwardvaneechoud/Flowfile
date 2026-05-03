@@ -17,9 +17,11 @@ and any future sub-router automatically.
 
 from fastapi import APIRouter, Depends
 
+from flowfile_core.ai.agent_routes import router as agent_router
 from flowfile_core.ai.autocomplete_routes import router as autocomplete_router
 from flowfile_core.ai.byok_routes import router as byok_router
 from flowfile_core.ai.chat_routes import router as chat_router
+from flowfile_core.ai.command_palette_routes import router as command_palette_router
 from flowfile_core.ai.diff_routes import router as diff_router
 from flowfile_core.ai.docgen_routes import router as docgen_router
 from flowfile_core.ai.feature_flag import require_ai_enabled
@@ -38,6 +40,8 @@ router.include_router(diff_router)
 router.include_router(suggest_next_node_router)
 router.include_router(inline_action_router)
 router.include_router(lineage_router)
+router.include_router(command_palette_router)
+router.include_router(agent_router)
 
 
 @router.get("/health")

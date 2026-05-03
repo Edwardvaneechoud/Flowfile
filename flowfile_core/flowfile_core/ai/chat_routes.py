@@ -32,8 +32,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from flowfile_core import flow_file_handler
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
-from flowfile_core.ai.context import SURFACE_TO_LEVEL, assemble_system_prompt
+from flowfile_core.ai.context import (
+    SURFACE_TO_LEVEL,
+    assemble_system_prompt,
+    render_prompt_context,
+)
 from flowfile_core.ai.providers import (
     PROVIDERS,
     Message,
@@ -78,6 +83,20 @@ class ChatStreamRequest(BaseModel):
     surface: str | None = None
     messages: list[ChatMessageInput] = Field(min_length=1)
     max_tokens: int | None = Field(default=None, gt=0)
+    # W28 — when ``flow_id`` is set, the route resolves the live ``FlowGraph``
+    # via :mod:`flowfile_core.flow_file_handler` and pipes it through W22's
+    # :func:`render_prompt_context` so the model sees the actual subgraph +
+    # schemas instead of just the W26 identity prompt. ``selected_node_ids``
+    # narrows the pinned set. ``mentions`` carries W24's parse output (e.g.
+    # ``["@flow", "@node:filter_3"]``) when the client passes them; when
+    # nothing is pinned and no mentions are given, we auto-expand to
+    # ``"@flow"`` so the model can still answer "what is this flow about?".
+    # When ``flow_id`` is omitted, behaviour matches W26 (identity-only) —
+    # keeps the contract backwards-compatible for any caller that doesn't
+    # have a flow context to share.
+    flow_id: int | None = None
+    selected_node_ids: list[int] | None = None
+    mentions: list[str] | None = None
 
 
 def _ensure_known_provider(name: str) -> None:
@@ -156,11 +175,47 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     prompt_surface = _resolve_prompt_surface(body.surface)
-    system_prompt = assemble_system_prompt(prompt_surface)
-    messages = [
-        Message(role="system", content=system_prompt),
-        *_to_provider_messages(body.messages),
-    ]
+
+    # W28 — when the client sends a ``flow_id``, build a context-rich prompt
+    # via W22's pipeline (subgraph snapshot + per-node schemas + optional
+    # samples). Otherwise fall back to the W26 identity-only prompt so the
+    # contract stays backwards-compatible for callers without a flow.
+    if body.flow_id is not None:
+        flow = flow_file_handler.get_flow(body.flow_id)
+        if flow is None:
+            raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
+        # If the client passed parsed mentions (W24), forward them as a
+        # single space-joined string — W22's ``render_prompt_context`` parses
+        # raw text via ``_coerce_mentions``. When neither mentions nor a
+        # selection are given, default to ``@flow`` so the chat is still
+        # context-grounded by default (the smoke-test gap that motivated
+        # W28). Explicit selections + explicit mentions both win over the
+        # auto-expand default.
+        mention_text: str
+        if body.mentions:
+            mention_text = " ".join(body.mentions)
+        elif not body.selected_node_ids:
+            mention_text = "@flow"
+        else:
+            mention_text = ""
+        ctx = render_prompt_context(
+            flow,
+            body.selected_node_ids or [],
+            surface=prompt_surface,
+            mentions=mention_text or None,
+            samples_mode="off",  # D009 default; samples-on is opt-in per flow.
+        )
+        messages = [
+            Message(role="system", content=ctx.system),
+            Message(role="user", content=ctx.user),
+            *_to_provider_messages(body.messages),
+        ]
+    else:
+        system_prompt = assemble_system_prompt(prompt_surface)
+        messages = [
+            Message(role="system", content=system_prompt),
+            *_to_provider_messages(body.messages),
+        ]
 
     provider_stream = provider.stream(
         messages=messages,

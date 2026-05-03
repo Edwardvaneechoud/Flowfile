@@ -28,6 +28,14 @@ export interface ChatStreamRequest {
   surface?: string | null;
   messages: ChatMessageBody[];
   max_tokens?: number | null;
+  // W28 — backend builds a context-rich PromptContext via W22 when set.
+  // Omitted = backwards-compatible W26 identity-only prompt.
+  flow_id?: number | null;
+  selected_node_ids?: number[] | null;
+  // W24's parsed mention strings (e.g. ["@flow", "@node:filter_3"]).
+  // When omitted and no selection is set, the backend defaults to
+  // ``@flow`` so chat is grounded in the whole graph by default.
+  mentions?: string[] | null;
 }
 
 export interface ChatStreamHandlers {
@@ -319,4 +327,246 @@ export const streamLineageQuestion = async (
   await _postSseRequest("ai/lineage_question", body, handlers, signal);
 };
 
-export const _internal = { parseEventBlock, dispatch };
+// --------------------------------------------------------------------------- //
+// W40 — multi-turn planner agent                                                //
+// --------------------------------------------------------------------------- //
+
+export interface AgentStartRequest {
+  flow_id: number;
+  prompt: string;
+  surface?: "agent" | "agent_complex";
+  samples_mode?: "off" | "regex";
+  provider: string;
+  model?: string | null;
+  max_steps?: number;
+  max_tokens?: number;
+  max_retries_per_step?: number;
+  session_id?: string | null;
+}
+
+export interface AgentDriftDetail {
+  missing_node_ids: number[];
+  mutated_node_ids: number[];
+  schema_changed_node_ids: number[];
+}
+
+export interface AgentToolCallProposed {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface AgentToolCallStaged {
+  id: string;
+  name: string;
+  node_id: number | null;
+  predicted_output_schema: Record<string, unknown>[] | null;
+  warnings: string[];
+}
+
+export interface AgentToolCallRejected {
+  id: string;
+  name: string;
+  reason: string;
+  detail: string;
+}
+
+export interface AgentCompleteResult {
+  session_id: string;
+  diff_id: string | null;
+  op_count: number;
+  rationale: string | null;
+  diff_payload: Record<string, unknown> | null;
+}
+
+export interface AgentSessionHandlers {
+  onThinking?: (text: string) => void;
+  onToolCallProposed?: (tc: AgentToolCallProposed) => void;
+  onToolCallStaged?: (entry: AgentToolCallStaged) => void;
+  onToolCallWarned?: (entry: AgentToolCallStaged) => void;
+  onToolCallRejected?: (refusal: AgentToolCallRejected) => void;
+  onDriftDetected?: (drift: AgentDriftDetail, sessionId: string) => void;
+  onPaused?: (reason: string, sessionId: string) => void;
+  onRetry?: (attempt: number, max: number) => void;
+  onAbort?: (sessionId: string) => void;
+  onComplete?: (result: AgentCompleteResult) => void;
+  onInfo?: (payload: Record<string, unknown>) => void;
+  onError?: (message: string) => void;
+}
+
+const dispatchPlannerEvent = (parsed: ParsedEvent, handlers: AgentSessionHandlers): void => {
+  if (parsed.event === null) return; // keepalive comment
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = parsed.data ? JSON.parse(parsed.data) : {};
+  } catch (err) {
+    console.error("aiStreamClient: failed to parse planner SSE data", err, parsed.data);
+    handlers.onError?.("malformed planner SSE payload from server");
+    return;
+  }
+
+  switch (parsed.event) {
+    case "thinking": {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (text) handlers.onThinking?.(text);
+      break;
+    }
+    case "tool_call_proposed":
+      handlers.onToolCallProposed?.(payload as unknown as AgentToolCallProposed);
+      break;
+    case "tool_call_staged":
+      handlers.onToolCallStaged?.(payload as unknown as AgentToolCallStaged);
+      break;
+    case "tool_call_warned":
+      handlers.onToolCallWarned?.(payload as unknown as AgentToolCallStaged);
+      break;
+    case "tool_call_rejected":
+      handlers.onToolCallRejected?.(payload as unknown as AgentToolCallRejected);
+      break;
+    case "drift_detected": {
+      const drift = (payload as { drift?: AgentDriftDetail }).drift;
+      const sid = (payload as { session_id?: string }).session_id ?? "";
+      if (drift) handlers.onDriftDetected?.(drift, sid);
+      break;
+    }
+    case "paused": {
+      const reason = typeof payload.reason === "string" ? payload.reason : "paused";
+      const sid = typeof payload.session_id === "string" ? payload.session_id : "";
+      handlers.onPaused?.(reason, sid);
+      break;
+    }
+    case "retry": {
+      const attempt = typeof payload.attempt === "number" ? payload.attempt : 1;
+      const max = typeof payload.max === "number" ? payload.max : 3;
+      handlers.onRetry?.(attempt, max);
+      break;
+    }
+    case "abort": {
+      const sid = typeof payload.session_id === "string" ? payload.session_id : "";
+      handlers.onAbort?.(sid);
+      break;
+    }
+    case "complete":
+      handlers.onComplete?.(payload as unknown as AgentCompleteResult);
+      break;
+    case "error": {
+      const msg = typeof payload.message === "string" ? payload.message : "AI agent error";
+      handlers.onError?.(msg);
+      break;
+    }
+    case "info":
+      handlers.onInfo?.(payload);
+      break;
+    default:
+      break;
+  }
+};
+
+const _consumePlannerSse = async (
+  response: Response,
+  handlers: AgentSessionHandlers,
+): Promise<void> => {
+  if (!response.body) {
+    handlers.onError?.("Server returned an empty stream.");
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  try {
+    let streamDone = false;
+    while (!streamDone) {
+      const { value, done } = await reader.read();
+      if (done) {
+        streamDone = true;
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let separatorIndex = buffer.search(DOUBLE_NEWLINE);
+      while (separatorIndex !== -1) {
+        const block = buffer.slice(0, separatorIndex);
+        const matched = buffer.slice(separatorIndex).match(/^\r?\n\r?\n/);
+        const advance = (matched?.[0] ?? "\n\n").length;
+        buffer = buffer.slice(separatorIndex + advance);
+        const parsed = parseEventBlock(block);
+        if (parsed !== null) dispatchPlannerEvent(parsed, handlers);
+        separatorIndex = buffer.search(DOUBLE_NEWLINE);
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released — fine */
+    }
+  }
+};
+
+export const streamAgentSession = async (
+  body: AgentStartRequest,
+  handlers: AgentSessionHandlers,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // W40 — POSTs the user's goal to ``/ai/agent/start``. The backend opens a
+  // session, registers a snapshot, and streams ``PlannerEvent``s as SSE.
+  // Per-event types: ``thinking`` / ``tool_call_proposed`` /
+  // ``tool_call_staged`` / ``tool_call_warned`` / ``tool_call_rejected`` /
+  // ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` / ``complete`` /
+  // ``error`` / ``info``. ``id:`` carries ``f"{session_id}.{step_count}"``
+  // for W42 resumption.
+  const token = await authService.getToken();
+  if (!token) {
+    handlers.onError?.("Not authenticated. Please log in again.");
+    return;
+  }
+  const url = new URL("ai/agent/start", flowfileCorebaseURL).toString();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    signal,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const detail = await readErrorBody(response);
+    throw new AiStreamHttpError(response.status, detail);
+  }
+  await _consumePlannerSse(response, handlers);
+};
+
+export const resumeAgentSessionStream = async (
+  sessionId: string,
+  handlers: AgentSessionHandlers,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // W40 — resume after drift via SSE. Body ``{action: "continue"}`` is the
+  // SSE-stream form; ``"discard"`` is JSON-only and lives in api/ai.api.ts.
+  const token = await authService.getToken();
+  if (!token) {
+    handlers.onError?.("Not authenticated. Please log in again.");
+    return;
+  }
+  const url = new URL(`ai/agent/${encodeURIComponent(sessionId)}/resume`, flowfileCorebaseURL).toString();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ action: "continue" }),
+    signal,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const detail = await readErrorBody(response);
+    throw new AiStreamHttpError(response.status, detail);
+  }
+  await _consumePlannerSse(response, handlers);
+};
+
+export const _internal = { parseEventBlock, dispatch, dispatchPlannerEvent };

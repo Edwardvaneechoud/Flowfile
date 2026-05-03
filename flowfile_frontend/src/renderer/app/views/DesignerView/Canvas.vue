@@ -60,8 +60,9 @@ import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import AiAssistant from "../../features/ai/AiAssistant.vue";
-import AiAssistantTrigger from "../../features/ai/AiAssistantTrigger.vue";
+import AiCommandPalette from "../../features/ai/AiCommandPalette.vue";
 import AiGhostNode from "../../features/ai/AiGhostNode.vue";
+import { useAiCommandPaletteStore } from "../../stores/ai-command-palette-store";
 import { useGhostNodeSuggestions } from "../../features/ai/useGhostNodeSuggestions";
 import {
   NodeCopyInput,
@@ -93,6 +94,7 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const flowStore = useFlowStore();
 const aiStore = useAiStore();
+const commandPalette = useAiCommandPaletteStore();
 const rawCustomNode = markRaw(CustomNode);
 const rawDeletableEdge = markRaw(DeletableEdge);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes, onPaneReady } =
@@ -960,6 +962,14 @@ const handleKeyDown = (event: KeyboardEvent) => {
     // "o" with a stuck modifier (or rapid macro) don't open the dialog.
     event.preventDefault();
     emit("open");
+  } else if (eventKeyClicked && key === "k" && !isInputElement && !isInCodeMirror) {
+    // W33 — Cmd+K / Ctrl+K opens the AI command palette. Skipped when
+    // typing in any input or CodeMirror so the user can still cut/copy
+    // text inside those surfaces unmodified.
+    if (flowStore.flowId && flowStore.flowId > 0) {
+      event.preventDefault();
+      commandPalette.toggle();
+    }
   }
 };
 
@@ -1225,20 +1235,16 @@ defineExpose({
       >
         <CodeGenerator />
       </draggable-item>
-      <draggable-item
+      <div
         v-if="editorStore.isAiOpen"
-        id="aiAssistant"
-        :show-right="true"
-        initial-position="right"
-        :initial-width="440"
-        title="AI Assistant"
-        :allow-full-screen="true"
-        :on-minize="() => editorStore.closeAiDrawer()"
-        group="rightPanels"
+        class="ai-modal-backdrop"
+        @click="editorStore.closeAiDrawer()"
       >
-        <AiAssistant />
-      </draggable-item>
-      <AiAssistantTrigger />
+        <div class="ai-modal" @click.stop>
+          <AiAssistant @close="editorStore.closeAiDrawer()" />
+        </div>
+      </div>
+      <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
   </div>
@@ -1389,6 +1395,26 @@ body,
 main {
   flex-grow: 1;
   position: relative;
+  overflow: hidden;
+}
+
+.ai-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-modal {
+  width: min(720px, 90vw);
+  height: min(70vh, 720px);
+  background: var(--color-background-primary, #ffffff);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 </style>
