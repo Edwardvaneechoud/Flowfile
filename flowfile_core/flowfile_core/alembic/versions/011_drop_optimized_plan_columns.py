@@ -6,8 +6,8 @@ which has been collapsed into the unified ``resolve_virtual_flow_table`` flow.
 ``is_optimized`` is kept as a derived "producer flow is fully lazy" indicator
 that drives the laziness-blocker propagation.
 
-Revision ID: 010
-Revises: 009
+Revision ID: 011
+Revises: 010
 Create Date: 2026-05-01
 """
 
@@ -16,8 +16,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "010"
-down_revision: str | None = "009"
+revision: str = "011"
+down_revision: str | None = "010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
