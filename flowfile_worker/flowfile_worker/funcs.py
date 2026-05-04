@@ -123,7 +123,7 @@ def apply_model_task(
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(
-        f"Starting apply_model_task: model_path={model_path}, output_column={output_column}"
+        f"Starting apply_model_task, output_column={output_column}"
     )
     try:
         with open(model_path, "rb") as f:
@@ -133,7 +133,7 @@ def apply_model_task(
         scored_lf = trainer.apply(lf, model, output_column)
         scored_df = collect_lazy_frame(scored_lf)
         scored_df.write_ipc(file_path)
-        flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows -> {file_path}")
+        flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:

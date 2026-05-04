@@ -1,3 +1,4 @@
+import uuid
 from typing import Literal
 
 from sqlalchemy import (
@@ -152,6 +153,9 @@ class FlowRegistration(Base):
     __tablename__ = "flow_registrations"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Stable identity that survives delete+recreate. Run history is keyed against this so
+    # SQLite reusing a deleted FlowRegistration.id can never pull another flow's runs in.
+    flow_uuid = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     flow_path = Column(String, nullable=False)
@@ -168,6 +172,10 @@ class FlowRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
+    # Copied from FlowRegistration.flow_uuid at run-record creation. Survives the
+    # registration being deleted (registration_id is nulled) so historical runs stay
+    # attributable to the original flow without leaking under a new registration.
+    flow_uuid = Column(String(36), nullable=True, index=True)
     flow_name = Column(String, nullable=False)
     flow_path = Column(String, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)

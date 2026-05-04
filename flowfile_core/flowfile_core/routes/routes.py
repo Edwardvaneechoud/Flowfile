@@ -259,6 +259,26 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
     )
 
 
+def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
+    """Return ``(registration_id, display_name, flow_path)`` for run-tracking.
+
+    Prefers the catalog registration's user-typed ``name`` over
+    ``flow.flow_settings.name``, which after a save is the file stem
+    (``9_house_price`` for ``9_house_price.yaml``) — that prefix is a filename
+    collision-avoidance trick that should never reach the run-history UI.
+    """
+    fallback_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
+    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+    reg_id = getattr(flow.flow_settings, "source_registration_id", None)
+    display_name = fallback_name
+    if reg_id is not None:
+        with get_db_context() as db:
+            reg = SQLAlchemyCatalogRepository(db).get_flow(reg_id)
+            if reg is not None and reg.name:
+                display_name = reg.name
+    return reg_id, display_name, flow_path
+
+
 def _run_and_track(flow, user_id: int | None):
     """Wrapper that runs a flow and persists the run record to the database.
 
@@ -270,14 +290,11 @@ def _run_and_track(flow, user_id: int | None):
     completed but won't appear in the run history. Failures are logged at
     ERROR level so they're visible in logs.
     """
-    flow_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
-
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
-    logger.debug(
-        f"source_registration_id for flow '{flow_name}': {getattr(flow.flow_settings, 'source_registration_id', None)}"
-    )
+    reg_id, flow_name, flow_path = _resolve_run_identity(flow)
+    logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
     # Phase 1: Create run record before execution
     run_id = None
@@ -291,8 +308,6 @@ def _run_and_track(flow, user_id: int | None):
             logger.warning(f"Flow '{flow_name}': snapshot serialization failed: {snap_err}")
 
         with get_db_context() as db:
-            reg_id = getattr(flow.flow_settings, "source_registration_id", None)
-            flow_path = flow.flow_settings.path or flow.flow_settings.save_location
             service = CatalogService(SQLAlchemyCatalogRepository(db))
             db_run = service.start_run(
                 registration_id=reg_id,
@@ -342,8 +357,6 @@ def _run_and_track(flow, user_id: int | None):
         else:
             # Fallback: create the full record if phase 1 failed
             with get_db_context() as db:
-                reg_id = getattr(flow.flow_settings, "source_registration_id", None)
-                flow_path = flow.flow_settings.path or flow.flow_settings.save_location
                 service = CatalogService(SQLAlchemyCatalogRepository(db))
                 service.create_completed_run(
                     registration_id=reg_id,
@@ -383,6 +396,14 @@ async def run_flow(
     """
     logger.info("starting to run...")
     flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        # Frontend's flow_id has drifted from the in-memory handler — typically
+        # after a Save As or backend restart. Surface a 404 so the UI can prompt
+        # a reload instead of falling through to an AttributeError 500.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again.",
+        )
     lock = get_flow_run_lock(flow_id)
     user_id = current_user.id if current_user else None
     async with lock:

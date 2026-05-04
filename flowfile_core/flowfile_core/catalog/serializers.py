@@ -29,16 +29,19 @@ class VizEnrichment:
     namespace_name: str | None
 
 
-def run_to_out(run: FlowRun, *, has_log: bool) -> FlowRunOut:
+def run_to_out(run: FlowRun, *, has_log: bool, display_name: str | None = None) -> FlowRunOut:
     """Convert a FlowRun ORM row to its FlowRunOut DTO.
 
     ``has_log`` is supplied by the caller because it requires filesystem
-    access (which is not pure).
+    access (which is not pure). ``display_name`` overrides the snapshot
+    ``flow_name`` so the UI can show the registration's current user-typed
+    name (rather than the prefixed file stem captured at run time).
     """
     return FlowRunOut(
         id=run.id,
         registration_id=run.registration_id,
-        flow_name=run.flow_name,
+        flow_uuid=run.flow_uuid,
+        flow_name=display_name or run.flow_name,
         flow_path=run.flow_path,
         user_id=run.user_id,
         started_at=run.started_at,
