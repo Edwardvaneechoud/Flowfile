@@ -122,9 +122,7 @@ def get_configured_provider(
         if resolved_model is None:
             curated = decode_models(cred)
             if curated:
-                surface_route = (
-                    cls.surface_models.get(surface) if (cls is not None and surface is not None) else None
-                )
+                surface_route = cls.surface_models.get(surface) if (cls is not None and surface is not None) else None
                 if surface_route is not None and surface_route in curated:
                     resolved_model = surface_route
                 else:

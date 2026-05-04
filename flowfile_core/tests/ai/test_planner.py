@@ -33,20 +33,18 @@ import pytest
 
 from flowfile_core.ai import diff as diff_module
 from flowfile_core.ai import sessions
-from flowfile_core.ai.agents import planner
 from flowfile_core.ai.agents.planner import (
     PlannerEvent,
     _allocate_node_id,
     _resolve_insertion_context,
     run_planner_session,
 )
+from flowfile_core.ai.context.builder import SURFACE_TO_LEVEL
 from flowfile_core.ai.providers.base import ChatResponse, ToolCall, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
 from flowfile_core.ai.tools.registry import SURFACE_PRESETS
-from flowfile_core.ai.context.builder import SURFACE_TO_LEVEL
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
-
 
 # --------------------------------------------------------------------------- #
 # Test helpers                                                                 #
@@ -322,9 +320,7 @@ async def test_happy_path_single_tool_call() -> None:
     provider = _ScriptedProvider(
         [
             _Step(
-                tool_calls=[
-                    ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())
-                ],
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
                 content="adding a filter",
                 finish_reason="tool_calls",
             ),
@@ -357,16 +353,12 @@ async def test_happy_path_multi_step_chains_upstream() -> None:
         [
             # Step 1: add filter
             _Step(
-                tool_calls=[
-                    ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())
-                ],
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
                 finish_reason="tool_calls",
             ),
             # Step 2: add select on top of the filter
             _Step(
-                tool_calls=[
-                    ToolCall(id="t2", name="flowfile.graph.add_select", arguments=_select_args())
-                ],
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_select", arguments=_select_args())],
                 finish_reason="tool_calls",
             ),
             # Step 3: done
@@ -411,18 +403,14 @@ async def test_surface_agent_two_stage_routes_through_pick_category() -> None:
                 finish_reason="tool_calls",
             ),
             _Step(
-                tool_calls=[
-                    ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())
-                ],
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())],
                 finish_reason="tool_calls",
             ),
             _Step(tool_calls=[], finish_reason="stop"),
         ]
     )
 
-    await _drain(
-        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
-    )
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
 
     assert len(provider.calls) == 3
     # First call's tools should be exactly the agent surface (just pick_category).
@@ -446,9 +434,7 @@ async def test_surface_agent_complex_uses_full_catalog_from_step_one() -> None:
         ]
     )
 
-    await _drain(
-        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
-    )
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
 
     first_tools = {tool.name for tool in provider.calls[0]["tools"]}
     # Full catalog: every add_* node-type tool plus universal ops + pick_category.
@@ -476,15 +462,11 @@ async def test_retry_then_success_resets_counter() -> None:
     provider = _ScriptedProvider(
         [
             _Step(
-                tool_calls=[
-                    ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=bad_args)
-                ],
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=bad_args)],
                 finish_reason="tool_calls",
             ),
             _Step(
-                tool_calls=[
-                    ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())
-                ],
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())],
                 finish_reason="tool_calls",
             ),
             _Step(tool_calls=[], finish_reason="stop"),
@@ -595,7 +577,13 @@ async def test_max_steps_caps_loop() -> None:
     provider = _ScriptedProvider(
         [
             _Step(
-                tool_calls=[ToolCall(id=f"t{i}", name="flowfile.graph.add_filter", arguments=_filter_args(node_id=10 + i))],
+                tool_calls=[
+                    ToolCall(
+                        id=f"t{i}",
+                        name="flowfile.graph.add_filter",
+                        arguments=_filter_args(node_id=10 + i),
+                    )
+                ],
                 finish_reason="tool_calls",
             )
             for i in range(5)

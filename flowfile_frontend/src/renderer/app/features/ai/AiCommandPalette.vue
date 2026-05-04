@@ -40,6 +40,36 @@ const canSubmit = computed(
     palette.prompt.trim().length > 0,
 );
 
+// W36 — model picker. Mirrors the chat drawer's pattern (AiAssistant.vue):
+// prefer the W29-curated `credential.models` list, fall back to the singleton
+// `defaultModel`, and only render the <select> when there are 2+ options.
+// Existing behaviour is preserved verbatim for users with a single default
+// model: the picker just doesn't render. The picker writes to the same
+// `aiStore.selectedModel` that the palette already forwards on each request,
+// so changing it routes the next call to the picked model and survives across
+// surfaces (W27 persistence covers it via the existing watcher).
+const selectedProviderMeta = computed(() => {
+  const name = aiStore.selectedProvider;
+  if (!name) return null;
+  return aiStore.providers.find((p) => p.provider === name) ?? null;
+});
+
+const availableModels = computed<string[]>(() => {
+  const meta = selectedProviderMeta.value;
+  if (!meta) return [];
+  const curated = meta.credential?.models;
+  if (curated && curated.length > 0) return curated;
+  const singleton = meta.credential?.defaultModel ?? meta.defaultModel ?? null;
+  return singleton ? [singleton] : [];
+});
+
+const showModelPicker = computed(() => availableModels.value.length > 1);
+
+const handleModelChange = (event: Event): void => {
+  const target = event.target as HTMLSelectElement;
+  aiStore.setSelectedModel(target.value || null);
+};
+
 const focusInput = (): void => {
   void nextTick(() => {
     requestAnimationFrame(() => inputEl.value?.focus());
@@ -127,6 +157,21 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
       @click="handleBackdropClick"
     >
       <div class="ai-cmdk__panel" @click.stop>
+        <div v-if="showModelPicker && !_disabled" class="ai-cmdk__header">
+          <label class="ai-cmdk__model-label" for="ai-cmdk-model">Model</label>
+          <select
+            id="ai-cmdk-model"
+            class="ai-cmdk__model-select"
+            :value="aiStore.selectedModel ?? ''"
+            :disabled="palette.loading"
+            :title="aiStore.selectedModel ?? 'Pick a model'"
+            @change="handleModelChange"
+          >
+            <option v-for="model in availableModels" :key="model" :value="model">
+              {{ model }}
+            </option>
+          </select>
+        </div>
         <div class="ai-cmdk__row">
           <span class="ai-cmdk__icon" aria-hidden="true">✨</span>
           <input
@@ -205,6 +250,39 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
   flex-direction: column;
   gap: 8px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.ai-cmdk__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.ai-cmdk__model-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.ai-cmdk__model-select {
+  font-size: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+  max-width: 320px;
+  text-overflow: ellipsis;
+}
+
+.ai-cmdk__model-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ai-cmdk__row {

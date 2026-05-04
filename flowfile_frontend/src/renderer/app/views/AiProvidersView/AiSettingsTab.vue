@@ -352,8 +352,34 @@ const showEditModal = (provider: AiProvider) => {
   formClearApiKey.value = false;
   formDefaultModel.value = provider.credential?.defaultModel ?? "";
   formApiBase.value = provider.credential?.apiBase ?? "";
+  formModels.value = provider.credential?.models ? [...provider.credential.models] : [];
+  formNewModel.value = "";
   showApiKey.value = false;
   dialogVisible.value = true;
+};
+
+const handleAddModel = () => {
+  const candidate = formNewModel.value.trim();
+  if (!candidate) return;
+  if (formModels.value.includes(candidate)) {
+    formNewModel.value = "";
+    return;
+  }
+  formModels.value = [...formModels.value, candidate];
+  formNewModel.value = "";
+};
+
+const handleRemoveModel = (index: number) => {
+  formModels.value = formModels.value.filter((_, i) => i !== index);
+};
+
+const handleBackspaceTrim = (event: KeyboardEvent) => {
+  // Backspace on an empty input pops the last chip — common chip-input UX.
+  if (event.key !== "Backspace") return;
+  if (formNewModel.value.length > 0) return;
+  if (formModels.value.length === 0) return;
+  event.preventDefault();
+  formModels.value = formModels.value.slice(0, -1);
 };
 
 const showDeleteModal = (provider: AiProvider) => {
@@ -367,12 +393,33 @@ const handleSubmit = async () => {
     ElMessage.error("Choose either a new key or clear — not both.");
     return;
   }
+  // Auto-commit a pending typed-but-unconfirmed model so we don't silently
+  // drop the user's last entry on Save.
+  if (formNewModel.value.trim()) {
+    handleAddModel();
+  }
+
+  const existingModels = editingProvider.value.credential?.models ?? null;
+  const hadModels = existingModels !== null && existingModels.length > 0;
+  // null = "leave the curated list alone" (matches apiKey=null semantics).
+  // [] would be the same thing on the wire (collapses to NULL backend-side),
+  // but we send clearModels=true explicitly when the user emptied a list they
+  // previously had, so it reads naturally in the audit / network log.
+  let modelsField: string[] | null = null;
+  let clearModels = false;
+  if (formModels.value.length > 0) {
+    modelsField = [...formModels.value];
+  } else if (hadModels) {
+    clearModels = true;
+  }
 
   const payload: AiProviderCredentialInput = {
     apiKey: formApiKey.value ? formApiKey.value : null,
     clearApiKey: formClearApiKey.value,
     apiBase: formApiBase.value ? formApiBase.value : null,
     defaultModel: formDefaultModel.value ? formDefaultModel.value : null,
+    models: modelsField,
+    clearModels,
   };
 
   isSubmitting.value = true;
@@ -652,6 +699,33 @@ onMounted(loadProviders);
   gap: var(--spacing-2);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  min-height: 38px;
+  align-items: center;
+}
+
+.chip-input__tag {
+  margin: 0;
+}
+
+.chip-input__input {
+  flex: 1;
+  min-width: 200px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  padding: 4px 6px;
 }
 
 .dialog-footer {

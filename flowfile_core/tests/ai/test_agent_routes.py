@@ -28,8 +28,6 @@ Cases:
 
 from __future__ import annotations
 
-import json
-import sys
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -46,7 +44,6 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs.settings import FEATURE_FLAG_AI
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
-
 
 # --------------------------------------------------------------------------- #
 # Test helpers                                                                 #
@@ -171,9 +168,7 @@ def test_start_streams_planner_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeProvider(
-        tool_calls_per_step=[
-            [ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]
-        ]
+        tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
     )
     monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
 

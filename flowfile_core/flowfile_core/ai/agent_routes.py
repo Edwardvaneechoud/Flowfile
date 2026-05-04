@@ -190,13 +190,28 @@ async def agent_start(
     _ensure_known_provider(body.provider)
     flow = _resolve_flow(body.flow_id)
 
+    # Resolve the model with surface-aware routing **before** byok runs so the
+    # explicit ``model=`` arg wins. Default behaviour (cred.default_model
+    # wins over surface) is right for chat — your chat default is whatever
+    # you configured — but wrong for agent: the agent surface needs a tool-
+    # capable model. Free-tier defaults like ``minimax-m2.5:free`` can't
+    # reliably tool-call AND get rate-limited within seconds. Forcing
+    # ``surface_models[surface]`` here means OpenRouter / Groq users on a
+    # cheap chat default automatically get routed to a sonnet-class model
+    # for agent runs.
+    resolved_model = body.model
+    if resolved_model is None:
+        cls = PROVIDERS.get(body.provider)
+        if cls is not None:
+            resolved_model = cls.surface_models.get(body.surface)
+
     try:
         provider = get_configured_provider(
             db,
             current_user.id,
             body.provider,
             surface=body.surface,
-            model=body.model,
+            model=resolved_model,
         )
     except ProviderNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -285,13 +300,22 @@ async def agent_resume(
 
     # continue
     flow = _resolve_flow(session.flow_id)
+    # Mirror /start's surface-aware model resolution: if the session was
+    # opened without an explicit model, force ``surface_models[surface]`` so
+    # the resumed run uses the same tool-capable model the original /start
+    # picked (rather than falling back to cred.default_model on resume).
+    resume_model = session.model_name
+    if resume_model is None:
+        cls = PROVIDERS.get(session.provider_name)
+        if cls is not None:
+            resume_model = cls.surface_models.get(session.surface)
     try:
         provider = get_configured_provider(
             db,
             current_user.id,
             session.provider_name,
             surface=session.surface,
-            model=session.model_name,
+            model=resume_model,
         )
     except ProviderNotConfiguredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

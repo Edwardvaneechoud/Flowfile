@@ -550,7 +550,10 @@ export const resumeAgentSessionStream = async (
     handlers.onError?.("Not authenticated. Please log in again.");
     return;
   }
-  const url = new URL(`ai/agent/${encodeURIComponent(sessionId)}/resume`, flowfileCorebaseURL).toString();
+  const url = new URL(
+    `ai/agent/${encodeURIComponent(sessionId)}/resume`,
+    flowfileCorebaseURL,
+  ).toString();
   const response = await fetch(url, {
     method: "POST",
     headers: {

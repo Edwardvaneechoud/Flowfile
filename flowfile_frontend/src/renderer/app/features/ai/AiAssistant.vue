@@ -8,6 +8,7 @@
 // in W22 / W24 / W31+ and extends the store rather than this view.
 
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useAiAgentStore } from "../../stores/ai-agent-store";
 import { useAiStore } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
@@ -20,6 +21,13 @@ const emit = defineEmits<{ close: [] }>();
 
 const aiStore = useAiStore();
 const flowStore = useFlowStore();
+const agentStore = useAiAgentStore();
+
+// W40 — agent-mode toggle. When true, the composer's Send dispatches the
+// multi-turn planner instead of single-shot chat. Defaults off so the read-
+// only chat surface stays the path of least surprise; experienced users opt
+// in for the "build me a flow that…" workflow.
+const agentMode = ref(false);
 
 const composerText = ref("");
 const composerTextarea = ref<HTMLTextAreaElement | null>(null);
@@ -48,9 +56,35 @@ const placeholder = computed(() =>
     : "Configure a provider in Settings → AI Providers to start chatting.",
 );
 
+// W29 — model picker source. Prefer the credential's curated `models` list
+// (multiple free models behind one OpenRouter / Groq key); fall back to the
+// singleton `defaultModel`; finally the class-level default. Picker only
+// renders when there are multiple options.
+const selectedProviderMeta = computed(() => {
+  const name = aiStore.selectedProvider;
+  if (!name) return null;
+  return aiStore.providers.find((p) => p.provider === name) ?? null;
+});
+
+const availableModels = computed<string[]>(() => {
+  const meta = selectedProviderMeta.value;
+  if (!meta) return [];
+  const curated = meta.credential?.models;
+  if (curated && curated.length > 0) return curated;
+  const singleton = meta.credential?.defaultModel ?? meta.defaultModel ?? null;
+  return singleton ? [singleton] : [];
+});
+
+const showModelPicker = computed(() => availableModels.value.length > 1);
+
+const isAgentRunning = computed(
+  () => agentStore.status === "running" || agentStore.status === "paused_drift",
+);
+
 const canSend = computed(
   () =>
     !aiStore.isStreaming &&
+    !isAgentRunning.value &&
     aiStore.hasConfiguredProvider &&
     composerText.value.trim().length > 0 &&
     aiStore.selectedProvider !== null,
@@ -90,15 +124,72 @@ const handleProviderChange = (event: Event): void => {
   aiStore.setSelectedProvider(target.value);
 };
 
+const handleModelChange = (event: Event): void => {
+  const target = event.target as HTMLSelectElement;
+  aiStore.setSelectedModel(target.value || null);
+};
+
 const handleSend = async (): Promise<void> => {
   if (!canSend.value) return;
   const text = composerText.value;
   composerText.value = "";
+
+  if (agentMode.value) {
+    if (flowStore.flowId === null) {
+      // Hard-edge case: agent mode without a flow loaded — surface the gap as
+      // a chat-side error rather than silently no-op'ing.
+      aiStore.streamError = "Open a flow before starting the agent.";
+      return;
+    }
+    // Capture the user's typed prompt in the visible chat trail. The wire-
+    // level prompt is built server-side via W22's render_prompt_context;
+    // this synthetic message is purely cosmetic so the user sees what they
+    // asked alongside the streamed agent events.
+    aiStore.messages.push({
+      id: Date.now(),
+      role: "user",
+      content: `[Agent] ${text}`,
+    });
+    // Forward the model the user picked verbatim. If the W29 picker has a
+    // value, that's the user's choice and the backend honours it. If it's
+    // null (no picker rendered, no manual selection), the backend's
+    // surface-aware routing picks a tool-capable model from
+    // ``Provider.surface_models[surface]``.
+    await agentStore.start({
+      flow_id: flowStore.flowId,
+      prompt: text,
+      // ``agent`` is the planner default — two-stage with ``pick_category``,
+      // routes to a sonnet-class model. ``agent_complex`` exposes the full
+      // catalog and routes to opus-class; opt in via a future toggle if
+      // dogfood shows the two-stage flow under-performs.
+      surface: "agent",
+      provider: aiStore.selectedProvider ?? "anthropic",
+      model: aiStore.selectedModel ?? null,
+    });
+    return;
+  }
+
   await aiStore.sendMessage(text);
 };
 
 const handleAbort = (): void => {
+  if (agentStore.status === "running" || agentStore.status === "paused_drift") {
+    void agentStore.abort();
+    return;
+  }
   aiStore.abortStream();
+};
+
+const handleAgentResumeContinue = async (): Promise<void> => {
+  const sid = agentStore.currentSessionId;
+  if (!sid) return;
+  await agentStore.resumeContinue(sid);
+};
+
+const handleAgentResumeDiscard = async (): Promise<void> => {
+  const sid = agentStore.currentSessionId;
+  if (!sid) return;
+  await agentStore.resumeDiscard(sid);
 };
 
 const handleClear = (): void => {
@@ -132,6 +223,81 @@ const handleMentionDismiss = (): void => {
 const handleMentionHover = (index: number): void => {
   mention.setActiveIndex(index);
 };
+
+// W40 — agent event payload accessors. Vue templates can't use TS type
+// assertions, so unwrap with helpers that return safe defaults.
+const _str = (payload: Record<string, unknown>, key: string): string => {
+  const v = payload?.[key];
+  return typeof v === "string" ? v : "";
+};
+const _num = (payload: Record<string, unknown>, key: string): number | null => {
+  const v = payload?.[key];
+  return typeof v === "number" ? v : null;
+};
+
+// Strip the ``flowfile.graph.add_`` prefix so summaries read "filter" not
+// "flowfile.graph.add_filter". Other dotted names render whole.
+const _shortToolName = (name: string): string =>
+  name.startsWith("flowfile.graph.add_") ? name.slice("flowfile.graph.add_".length) : name;
+
+// One human-readable summary per planner event. Keeps the chat trail
+// scannable; the raw payload stays available in the event object for
+// debug-mode rendering if a future workstream needs it.
+type AgentEventLike = { kind: string; payload: Record<string, unknown> };
+const summarizeEvent = (event: AgentEventLike): string => {
+  const p = event.payload ?? {};
+  switch (event.kind) {
+    case "thinking":
+      return _str(p, "text") || "Thinking…";
+    case "tool_call_proposed": {
+      const name = _shortToolName(_str(p, "name"));
+      if (name === "flowfile.meta.pick_category") return "Picking category…";
+      if (name === "flowfile.schema.read_node_schema") return "Reading node schema…";
+      return name ? `Planning: add ${name}` : "Planning a step…";
+    }
+    case "tool_call_staged": {
+      const name = _shortToolName(_str(p, "name"));
+      const nid = _num(p, "node_id");
+      return nid !== null ? `Staged ${name} (node ${nid})` : `Staged ${name}`;
+    }
+    case "tool_call_warned": {
+      const name = _shortToolName(_str(p, "name"));
+      const nid = _num(p, "node_id");
+      const head = nid !== null ? `Staged ${name} (node ${nid})` : `Staged ${name}`;
+      return `${head} — with warnings`;
+    }
+    case "tool_call_rejected": {
+      const name = _shortToolName(_str(p, "name"));
+      const detail = _str(p, "detail");
+      return detail ? `Rejected ${name}: ${detail}` : `Rejected ${name}`;
+    }
+    case "drift_detected":
+      return "Graph changed since the agent started — pausing.";
+    case "paused":
+      return "Paused, waiting for your decision.";
+    case "retry": {
+      const attempt = _num(p, "attempt") ?? 1;
+      const max = _num(p, "max") ?? 3;
+      return `Retrying step (attempt ${attempt} of ${max}).`;
+    }
+    case "abort":
+      return "Agent aborted.";
+    case "complete": {
+      const ops = _num(p, "op_count") ?? 0;
+      return ops === 0
+        ? "Agent finished — nothing to stage."
+        : `Agent finished — ${ops} ${ops === 1 ? "op" : "ops"} staged for review.`;
+    }
+    case "info": {
+      const cat = _str(p, "category");
+      if (cat) return `Picked category: ${cat}.`;
+      const msg = _str(p, "message");
+      return msg || "";
+    }
+    default:
+      return "";
+  }
+};
 </script>
 
 <template>
@@ -141,7 +307,7 @@ const handleMentionHover = (index: number): void => {
         v-if="aiStore.providers.length > 0 && !isDisabledByFlag"
         class="ai-assistant__select"
         :value="aiStore.selectedProvider ?? ''"
-        :disabled="aiStore.isStreaming"
+        :disabled="aiStore.isStreaming || isAgentRunning"
         @change="handleProviderChange"
       >
         <option value="" disabled>Pick a provider</option>
@@ -157,6 +323,34 @@ const handleMentionHover = (index: number): void => {
           <template v-else-if="provider.status === 'unconfigured'"> (not configured)</template>
         </option>
       </select>
+      <select
+        v-if="showModelPicker && !isDisabledByFlag"
+        class="ai-assistant__select ai-assistant__select--model"
+        :value="aiStore.selectedModel ?? ''"
+        :disabled="aiStore.isStreaming || isAgentRunning"
+        :title="aiStore.selectedModel ?? 'Pick a model'"
+        @change="handleModelChange"
+      >
+        <option v-for="model in availableModels" :key="model" :value="model">
+          {{ model }}
+        </option>
+      </select>
+      <label
+        v-if="!isDisabledByFlag"
+        class="ai-assistant__agent-toggle"
+        :title="
+          agentMode
+            ? 'Agent mode is on — Send opens a multi-turn planner that stages a GraphDiff for review.'
+            : 'Agent mode is off — Send starts a read-only chat.'
+        "
+      >
+        <input
+          v-model="agentMode"
+          type="checkbox"
+          :disabled="isAgentRunning || aiStore.isStreaming"
+        />
+        Agent
+      </label>
       <button
         v-if="aiStore.messages.length > 0"
         type="button"
@@ -195,14 +389,62 @@ const handleMentionHover = (index: number): void => {
 
     <div v-else class="ai-assistant__chat">
       <AiDiffPanel />
+      <div
+        v-if="agentStore.status === 'paused_drift' && agentStore.driftDetail"
+        class="ai-assistant__drift-banner"
+      >
+        <p class="ai-assistant__drift-title">⚠ Graph changed since the agent started</p>
+        <ul class="ai-assistant__drift-list">
+          <li v-if="agentStore.driftDetail.missingNodeIds.length">
+            Removed: {{ agentStore.driftDetail.missingNodeIds.join(", ") }}
+          </li>
+          <li v-if="agentStore.driftDetail.mutatedNodeIds.length">
+            Changed: {{ agentStore.driftDetail.mutatedNodeIds.join(", ") }}
+          </li>
+          <li v-if="agentStore.driftDetail.schemaChangedNodeIds.length">
+            Schema: {{ agentStore.driftDetail.schemaChangedNodeIds.join(", ") }}
+          </li>
+        </ul>
+        <div class="ai-assistant__drift-actions">
+          <button
+            type="button"
+            class="ai-assistant__btn ai-assistant__btn--danger"
+            @click="handleAgentResumeDiscard"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            class="ai-assistant__btn ai-assistant__btn--primary"
+            @click="handleAgentResumeContinue"
+          >
+            Continue against new state
+          </button>
+        </div>
+      </div>
       <div ref="messageContainerRef" class="ai-assistant__messages">
-        <div v-if="aiStore.messages.length === 0" class="ai-assistant__empty">
-          <p>This chat is read-only — it can't change your flow yet.</p>
-          <p class="ai-assistant__notice-hint">
+        <div
+          v-if="aiStore.messages.length === 0 && agentStore.events.length === 0"
+          class="ai-assistant__empty"
+        >
+          <p v-if="agentMode">
+            Agent mode is on. Type a goal — e.g. "filter to last 30 days, then sort by region".
+          </p>
+          <p v-else>This chat is read-only — it can't change your flow yet.</p>
+          <p v-if="!agentMode" class="ai-assistant__notice-hint">
             Ask anything; tool-driven edits land in a later release.
           </p>
         </div>
         <AiMessage v-for="message in aiStore.messages" :key="message.id" :message="message" />
+        <ul v-if="agentStore.events.length > 0" class="ai-assistant__agent-events">
+          <li
+            v-for="(event, idx) in agentStore.events"
+            :key="`${event.kind}-${idx}-${event.at}`"
+            :class="`ai-assistant__agent-event ai-assistant__agent-event--${event.kind}`"
+          >
+            <span class="ai-assistant__agent-event-summary">{{ summarizeEvent(event) }}</span>
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -235,7 +477,7 @@ const handleMentionHover = (index: number): void => {
       </div>
       <div class="ai-assistant__actions">
         <button
-          v-if="aiStore.isStreaming"
+          v-if="aiStore.isStreaming || isAgentRunning"
           type="button"
           class="ai-assistant__btn ai-assistant__btn--danger"
           @click="handleAbort"
@@ -432,5 +674,95 @@ const handleMentionHover = (index: number): void => {
 .ai-assistant__btn--danger {
   background-color: var(--color-danger, #c53030);
   color: var(--color-text-inverse, #ffffff);
+}
+
+/* W40 — agent-mode toggle + drift banner + event list */
+
+.ai-assistant__agent-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #586069);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-assistant__agent-toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.ai-assistant__drift-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  margin: 0 0 8px 0;
+  background-color: var(--color-warning-soft, #fff3cd);
+  border: 1px solid var(--color-warning, #d4a72c);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.ai-assistant__drift-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-warning-text, #5c4400);
+}
+
+.ai-assistant__drift-list {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.ai-assistant__drift-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ai-assistant__agent-events {
+  list-style: none;
+  margin: 8px 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-assistant__agent-event {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background-color: var(--color-background-secondary, #f7f8fa);
+  border-left: 3px solid var(--color-border-primary, #e1e4e8);
+  border-radius: 2px;
+}
+
+.ai-assistant__agent-event-summary {
+  color: var(--color-text-primary, #24292e);
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.ai-assistant__agent-event--tool_call_staged,
+.ai-assistant__agent-event--complete {
+  border-left-color: var(--color-success, #2ea043);
+}
+
+.ai-assistant__agent-event--tool_call_rejected,
+.ai-assistant__agent-event--paused,
+.ai-assistant__agent-event--drift_detected {
+  border-left-color: var(--color-warning, #d4a72c);
+}
+
+.ai-assistant__agent-event--abort {
+  border-left-color: var(--color-danger, #c53030);
+}
+
+.ai-assistant__agent-event--retry {
+  border-left-color: var(--color-info, #4a90e2);
 }
 </style>

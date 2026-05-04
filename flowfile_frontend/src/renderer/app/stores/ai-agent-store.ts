@@ -120,7 +120,13 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       onToolCallRejected: (refusal: AgentToolCallRejected) =>
         _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>),
       onDriftDetected: (drift, sessionId) => {
-        driftDetail.value = drift;
+        // SSE wire shape is snake_case; the store exposes camelCase to match
+        // ai.api.ts AgentDriftDetail.
+        driftDetail.value = {
+          missingNodeIds: drift.missing_node_ids ?? [],
+          mutatedNodeIds: drift.mutated_node_ids ?? [],
+          schemaChangedNodeIds: drift.schema_changed_node_ids ?? [],
+        };
         _appendEvent("drift_detected", {
           drift: drift as unknown as Record<string, unknown>,
           session_id: sessionId,
