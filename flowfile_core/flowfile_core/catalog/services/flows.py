@@ -238,6 +238,12 @@ class FlowRegistrationService:
     def ensure_local_flows_namespace(self) -> CatalogNamespace | None:
         return self._ensure_general_child("Local Flows", "Flows saved to disk at user-chosen paths")
 
+    def ensure_python_editor_flows_namespace(self) -> CatalogNamespace | None:
+        return self._ensure_general_child(
+            "Python Editor",
+            "Flows authored programmatically via the FlowFrame Python API",
+        )
+
     def resolve_registration_id(self, flow_path: str) -> int | None:
         """Look up the registration ID for a flow by its file path."""
         reg = self.repo.get_flow_by_path(flow_path)

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from flowfile_core.schemas.catalog_schema import CatalogTableOut
     from flowfile_frame.flow_frame import FlowFrame
 
-WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update", "delete"]
+WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"]
 
 
 def _get_current_user_id() -> int:

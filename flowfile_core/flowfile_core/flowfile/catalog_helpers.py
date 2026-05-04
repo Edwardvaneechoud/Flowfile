@@ -6,6 +6,7 @@ to avoid coupling the handler to the database layer.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,8 +14,18 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
+
+
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_filename_stem(name: str) -> str:
+    """Slugify ``name`` for use as a flow filename stem."""
+    cleaned = _SAFE_FILENAME_RE.sub("_", name).strip("._-")
+    return cleaned or "flow"
 
 
 class FlowPathNamespaceCollision(Exception):
@@ -169,6 +180,90 @@ def find_registration_by_registration_id(rid: int | None) -> FlowRegistrationSna
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         return _snapshot(service.repo.get_flow(rid))
+
+
+def register_python_editor_flow(
+    flow,
+    *,
+    name: str | None = None,
+    namespace_id: int | None = None,
+    flow_path: str | None = None,
+    user_id: int | None = None,
+) -> int:
+    """Save and register a Python-authored flow with the catalog.
+
+    Mirrors what the canvas does for in-designer flows: persists the flow as
+    YAML on disk, creates a ``FlowRegistration`` row, and stamps the
+    resulting ``source_registration_id`` back onto the in-memory flow so
+    downstream operations (notably ``write_mode='virtual'`` catalog writes)
+    can succeed.
+
+    By default the flow lands under
+    ``~/.flowfile/flows/python_editor_flows/<flow_id>_<name>.yaml`` and is
+    registered under the seeded ``General > Python Editor`` namespace.
+
+    Args:
+        flow: The :class:`FlowGraph` to register.
+        name: Display name for the registration. Defaults to
+            ``flow.flow_settings.name``.
+        namespace_id: Optional explicit namespace. Defaults to
+            ``General > Python Editor``.
+        flow_path: Optional explicit YAML save path. When omitted, a path is
+            chosen under :attr:`FlowfileStorage.python_editor_flows_directory`.
+        user_id: Owner id for the registration. Defaults to ``1``
+            (single-user mode).
+
+    Returns:
+        The ``id`` of the resulting ``FlowRegistration`` row.
+
+    Raises:
+        ValueError: If ``flow`` does not look like a ``FlowGraph``.
+    """
+    if not hasattr(flow, "save_flow") or not hasattr(flow, "flow_settings"):
+        raise ValueError("register_python_editor_flow requires a FlowGraph instance")
+
+    owner_id = user_id if user_id is not None else 1
+    display_name = name or getattr(flow.flow_settings, "name", None) or f"Flow_{flow.flow_id}"
+
+    if flow_path is None:
+        flow_path = getattr(flow.flow_settings, "path", None) or getattr(flow.flow_settings, "save_location", None)
+    if not flow_path:
+        stem = _safe_filename_stem(f"{flow.flow_id}_{display_name}")
+        flow_path = str(storage.python_editor_flows_directory / f"{stem}.yaml")
+
+    flow.save_flow(flow_path)
+
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+
+        target_ns_id = namespace_id
+        if target_ns_id is None:
+            ns = service.ensure_python_editor_flows_namespace()
+            if ns is None:
+                # Fall back to default namespace if the seeding helper can't
+                # create the Python Editor bucket (e.g. 'General' missing).
+                target_ns_id = service.get_default_namespace_id()
+            else:
+                target_ns_id = ns.id
+
+        existing = service.repo.get_flow_by_path(flow_path)
+        if existing is not None:
+            reg_id = existing.id
+        else:
+            reg = service.register_flow(
+                name=display_name,
+                flow_path=flow_path,
+                owner_id=owner_id,
+                namespace_id=target_ns_id,
+            )
+            reg_id = reg.id
+
+    try:
+        flow.flow_settings.source_registration_id = reg_id
+    except (AttributeError, ValueError):
+        object.__setattr__(flow.flow_settings, "source_registration_id", reg_id)
+
+    return reg_id
 
 
 def resolve_source_registration_id(flow) -> None:
