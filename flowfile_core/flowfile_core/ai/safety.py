@@ -76,9 +76,14 @@ from flowfile_core.ai.audit import (
 
 SampleMode = Literal["off", "regex", "presidio"]
 
-#: Default sample mode for every new flow per D009. Schema only — no row data
-#: leaves the box unless the user explicitly opts in.
-DEFAULT_SAMPLE_MODE: SampleMode = "off"
+#: Default sample mode for every new flow.
+#:
+#: DEV DEFAULT: ``"regex"`` (samples on with regex PII scrubbing) so the
+#: agent + chat surfaces have actual data to ground on while we test.
+#: Plan §9.1 / D009 specs the production ship-default as ``"off"`` (schema
+#: only, no row data leaves the box). Flip back before going live, or set
+#: per-flow via :class:`FlowSafetyConfig.sample_mode`.
+DEFAULT_SAMPLE_MODE: SampleMode = "regex"
 
 #: Default sample-row count when the user opts into ``regex`` or ``presidio``.
 #: Configurable per-flow on :class:`FlowSafetyConfig`.

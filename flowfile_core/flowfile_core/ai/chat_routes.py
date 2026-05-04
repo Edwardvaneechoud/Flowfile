@@ -203,7 +203,8 @@ async def chat_stream(
             body.selected_node_ids or [],
             surface=prompt_surface,
             mentions=mention_text or None,
-            samples_mode="off",  # D009 default; samples-on is opt-in per flow.
+            # samples_mode left to W22's default (currently "regex" — see
+            # safety.DEFAULT_SAMPLE_MODE; will flip to "off" before release).
         )
         messages = [
             Message(role="system", content=ctx.system),

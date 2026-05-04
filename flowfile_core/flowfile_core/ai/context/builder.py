@@ -126,7 +126,7 @@ class SubgraphSnapshot(BaseModel):
     pinned_node_ids: list[int | str]
     nodes: list[NodeSnapshot]
     edges: list[tuple[int | str, int | str]] = Field(default_factory=list)
-    samples_mode: SamplesMode = "off"
+    samples_mode: SamplesMode = "regex"  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
 
 
 class PromptContext(BaseModel):
@@ -153,7 +153,7 @@ def render_prompt_context(
     pinned_node_ids: list[int | str] | int | str,
     *,
     surface: SurfaceLiteral,
-    samples_mode: SamplesMode = "off",
+    samples_mode: SamplesMode = "regex",  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
     sample_rows: int = 5,
     mentions: list[Mention] | str | None = None,
     selection_node_ids: list[int | str] | None = None,
@@ -267,7 +267,7 @@ def extract_subgraph(
 def snapshot_node(
     node: FlowNode,
     *,
-    samples_mode: SamplesMode = "off",
+    samples_mode: SamplesMode = "regex",  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
     sample_rows: int = 0,
     is_pinned: bool = False,
 ) -> NodeSnapshot:

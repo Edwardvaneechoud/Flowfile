@@ -269,14 +269,22 @@ def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> 
     The system block comes from ``assemble_system_prompt(surface)`` (via
     ``render_prompt_context``) — D008's ``base.md`` + ``planner.md`` for
     both ``agent`` and ``agent_complex``. The user block is W22's
-    deterministic subgraph snapshot (cold flow → empty section) plus a
-    ``## Goal`` block carrying the user's prompt verbatim.
+    deterministic subgraph snapshot followed by a ``## Goal`` block.
+
+    **Context bug fix (D1 from W40 diagnostic 2026-05-04):** previously
+    called with ``pinned_node_ids=[]`` and no ``mentions``, so the user
+    saw ``## Subgraph (empty)`` regardless of canvas state — the agent
+    was context-blind and refused every cold-flow request even when nodes
+    existed. Pass ``mentions="@flow"`` so the resolver expands to all
+    current nodes (mirrors W28's chat-route fix and W23's "Fix with AI"
+    pattern).
     """
     ctx = render_prompt_context(
         flow,
         [],
         surface=session.surface,
         samples_mode=session.samples_mode,
+        mentions="@flow",
     )
     user_text = f"{ctx.user}\n\n## Goal\n\n{session.user_prompt}".strip()
     return [
