@@ -2046,7 +2046,7 @@ class FlowFrame:
         *,
         schema: SchemaReference | None = None,
         namespace_id: int | None = None,
-        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete"] = "overwrite",
+        write_mode: Literal["overwrite", "error", "append", "upsert", "update", "delete", "virtual"] = "overwrite",
         merge_keys: list[str] | None = None,
         description: str | None = None,
     ) -> FlowFrame:
@@ -2056,7 +2056,10 @@ class FlowFrame:
             table_name: Name of the catalog table to write to.
             schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
             namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
-            write_mode: How to handle existing data.
+            write_mode: How to handle existing data. ``"virtual"`` registers
+                the result as a virtual catalog table backed by this flow
+                (requires the flow to be registered with the catalog first;
+                see :func:`flowfile_frame.register_flow_with_catalog`).
             merge_keys: Column names for merge operations (required for upsert/update/delete).
             description: Optional description for this operation.
 

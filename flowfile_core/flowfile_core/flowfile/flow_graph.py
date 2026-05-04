@@ -653,9 +653,24 @@ def _handle_virtual_table_write(
     settings = node_catalog_writer.catalog_write_settings
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:
+        # Python-built flows have no catalog registration on creation. Try to
+        # auto-register under "General > Python Editor" so the user does not
+        # need to manually save+register before calling write_mode='virtual'.
+        try:
+            from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+
+            reg_id = register_python_editor_flow(
+                graph,
+                user_id=node_catalog_writer.user_id,
+            )
+        except Exception as auto_register_exc:
+            graph.flow_logger.info(f"Auto-registration for virtual catalog write failed: {auto_register_exc}")
+            reg_id = None
+    if not reg_id:
         raise ValueError(
             "Cannot create a virtual table: this flow is not linked to a catalog registration. "
-            "Open the flow from the catalog, or register it first."
+            "Open the flow from the catalog, or register it first via "
+            "flowfile_frame.register_flow_with_catalog(...)."
         )
 
     serialized_lf: bytes | None = None
