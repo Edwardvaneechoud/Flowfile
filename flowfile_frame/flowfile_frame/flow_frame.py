@@ -50,6 +50,50 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
+def _try_translate_flowfile_formulas(
+    flowfile_formulas: list[str],
+    output_column_names: list[str],
+) -> list[Expr] | None:
+    """Translate flowfile-formula strings into native FlowFrame expressions.
+
+    Returns a list of :class:`Expr` (one per formula, aliased to its output
+    column name) when every formula translates successfully, otherwise
+    ``None`` so the caller can fall back to the legacy formula path.
+
+    Uses :func:`polars_expr_transformer.to_flowframe_code` (>= 0.5.4) which
+    emits ``ff.col(...)``/``ff.lit(...)`` style strings. Generated code is
+    eval'd in a restricted namespace (``ff``, ``pl``, ``datetime``) with
+    builtins disabled.
+    """
+    try:
+        from polars_expr_transformer import to_flowframe_code
+    except ImportError:
+        return None
+
+    import datetime as _datetime
+
+    import flowfile_frame as _ff_module
+
+    eval_namespace = {"ff": _ff_module, "pl": pl, "datetime": _datetime}
+
+    expressions: list[Expr] = []
+    for formula, output_name in zip(flowfile_formulas, output_column_names, strict=False):
+        try:
+            generated = to_flowframe_code(formula)
+        except Exception:
+            return None
+        if not generated:
+            return None
+        try:
+            expr = eval(generated, {"__builtins__": {}}, eval_namespace)  # noqa: S307
+        except Exception:
+            return None
+        if not isinstance(expr, Expr):
+            return None
+        expressions.append(expr.alias(output_name))
+    return expressions
+
+
 def get_method_name_from_code(code: str) -> str | None:
     split_code = code.split("input_df.")
     if len(split_code) > 1:
@@ -2902,6 +2946,15 @@ class FlowFrame:
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
+
+            # When the user did not request explicit output datatypes, try to
+            # upgrade flowfile formulas to native polars/flowframe expressions
+            # for a more efficient node type. Falls back transparently when
+            # the upstream translator can't handle a given formula.
+            if output_column_datatypes is None:
+                translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
+                if translated is not None:
+                    return self.with_columns(*translated, description=description)
 
             datatypes = output_column_datatypes or ["Auto"] * len(flowfile_formulas)
             if len(flowfile_formulas) == 1:
