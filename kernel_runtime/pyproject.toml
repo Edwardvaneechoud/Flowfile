@@ -21,9 +21,11 @@ scikit-learn = {version = "^1.5.0", optional = true}
 xgboost = {version = "^2.0.0", optional = true}
 lightgbm = {version = "^4.0.0", optional = true}
 statsmodels = {version = "^0.14.0", optional = true}
+pytest = {version = ">=7.0.0", optional = true}
 
 [tool.poetry.extras]
 ml = ["scikit-learn", "xgboost", "lightgbm", "statsmodels"]
+test = ["pytest"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0.0"
