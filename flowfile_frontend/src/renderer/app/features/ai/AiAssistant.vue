@@ -240,6 +240,23 @@ const _num = (payload: Record<string, unknown>, key: string): number | null => {
 const _shortToolName = (name: string): string =>
   name.startsWith("flowfile.graph.add_") ? name.slice("flowfile.graph.add_".length) : name;
 
+// W45 Q3 — render the drift banner's per-id rows with typed labels:
+// "Filter node 6 was deleted" / "Manual-input node 3 was added externally".
+// Falls back to "Node {id}" when the snapshot didn't capture a type.
+const _formatNodeType = (nodeType: string): string => {
+  if (!nodeType) return "Node";
+  const pretty = nodeType.replace(/_/g, "-");
+  return pretty.charAt(0).toUpperCase() + pretty.slice(1) + " node";
+};
+const formatDriftRemoval = (id: number): string => {
+  const nt = agentStore.driftDetail?.nodeTypes?.[id];
+  return `${_formatNodeType(nt ?? "")} ${id} was deleted`;
+};
+const formatDriftExternalAdd = (id: number): string => {
+  const nt = agentStore.driftDetail?.nodeTypes?.[id];
+  return `${_formatNodeType(nt ?? "")} ${id} was added externally`;
+};
+
 // One human-readable summary per planner event. Keeps the chat trail
 // scannable; the raw payload stays available in the event object for
 // debug-mode rendering if a future workstream needs it.
@@ -395,14 +412,11 @@ const summarizeEvent = (event: AgentEventLike): string => {
       >
         <p class="ai-assistant__drift-title">⚠ Graph changed since the agent started</p>
         <ul class="ai-assistant__drift-list">
-          <li v-if="agentStore.driftDetail.missingNodeIds.length">
-            Removed: {{ agentStore.driftDetail.missingNodeIds.join(", ") }}
+          <li v-for="id in agentStore.driftDetail.missingNodeIds" :key="`missing-${id}`">
+            {{ formatDriftRemoval(id) }}
           </li>
-          <li v-if="agentStore.driftDetail.mutatedNodeIds.length">
-            Changed: {{ agentStore.driftDetail.mutatedNodeIds.join(", ") }}
-          </li>
-          <li v-if="agentStore.driftDetail.schemaChangedNodeIds.length">
-            Schema: {{ agentStore.driftDetail.schemaChangedNodeIds.join(", ") }}
+          <li v-for="id in agentStore.driftDetail.externalAddedNodeIds" :key="`added-${id}`">
+            {{ formatDriftExternalAdd(id) }}
           </li>
         </ul>
         <div class="ai-assistant__drift-actions">

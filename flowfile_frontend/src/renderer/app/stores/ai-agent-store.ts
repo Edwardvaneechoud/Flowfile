@@ -120,12 +120,24 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       onToolCallRejected: (refusal: AgentToolCallRejected) =>
         _appendEvent("tool_call_rejected", refusal as unknown as Record<string, unknown>),
       onDriftDetected: (drift, sessionId) => {
+        // Populate currentSessionId from the wire — start() can't because
+        // the server allocates the id and streams it back with each event.
+        // Without this the resume buttons silently no-op (handler at
+        // AiAssistant.vue:184-187 / 189-192 early-returns on null sid).
+        if (sessionId) currentSessionId.value = sessionId;
         // SSE wire shape is snake_case; the store exposes camelCase to match
         // ai.api.ts AgentDriftDetail.
+        const nodeTypes: Record<number, string> = {};
+        if (drift.node_types) {
+          for (const [k, v] of Object.entries(drift.node_types)) {
+            const id = Number(k);
+            if (Number.isFinite(id) && typeof v === "string") nodeTypes[id] = v;
+          }
+        }
         driftDetail.value = {
           missingNodeIds: drift.missing_node_ids ?? [],
-          mutatedNodeIds: drift.mutated_node_ids ?? [],
-          schemaChangedNodeIds: drift.schema_changed_node_ids ?? [],
+          externalAddedNodeIds: drift.external_added_node_ids ?? [],
+          nodeTypes,
         };
         _appendEvent("drift_detected", {
           drift: drift as unknown as Record<string, unknown>,
@@ -133,15 +145,23 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         });
       },
       onPaused: (reason, sessionId) => {
+        if (sessionId) currentSessionId.value = sessionId;
         status.value = "paused_drift";
         _appendEvent("paused", { reason, session_id: sessionId });
       },
       onRetry: (attempt, max) => _appendEvent("retry", { attempt, max }),
       onAbort: (sessionId) => {
+        // Q2 W45 — propagate session_id from the wire (defensive consistency
+        // with onPaused / onDriftDetected; abort flow doesn't gate on it but
+        // refreshState callers may still want the id available).
+        if (sessionId) currentSessionId.value = sessionId;
         status.value = "aborted";
         _appendEvent("abort", { session_id: sessionId });
       },
       onComplete: (result) => {
+        // Q2 W45 — propagate session_id from the wire on completion too.
+        // ``result.session_id`` is part of AgentCompleteResult.
+        if (result.session_id) currentSessionId.value = result.session_id;
         status.value = "completed";
         lastResult.value = result;
         _appendEvent("complete", result as unknown as Record<string, unknown>);

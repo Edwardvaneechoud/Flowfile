@@ -446,8 +446,11 @@ export const submitCommandPalette = async (
 
 export interface AgentDriftDetail {
   missingNodeIds: number[];
-  mutatedNodeIds: number[];
-  schemaChangedNodeIds: number[];
+  externalAddedNodeIds: number[];
+  /** Snapshot-time ``node_type`` for each id appearing in either bucket
+   * (W45 Q3). Frontend renders typed messages — *"Filter node 6 was deleted"*.
+   * Optional: falls back to bare ids when an id is missing. */
+  nodeTypes: Record<number, string>;
 }
 
 export interface AgentSessionState {
@@ -480,8 +483,9 @@ export interface AgentDiscardResponse {
 
 interface PyAgentDriftDetail {
   missing_node_ids: number[];
-  mutated_node_ids: number[];
-  schema_changed_node_ids: number[];
+  external_added_node_ids: number[];
+  /** Server-side dict[int, str] serialises with string keys in JSON; coerce in mapper. */
+  node_types?: Record<string, string> | null;
 }
 
 interface PyAgentSessionState {
@@ -501,11 +505,22 @@ interface PyAgentSessionState {
   updated_at: string;
 }
 
-const fromPyDriftDetail = (raw: PyAgentDriftDetail): AgentDriftDetail => ({
-  missingNodeIds: raw.missing_node_ids,
-  mutatedNodeIds: raw.mutated_node_ids,
-  schemaChangedNodeIds: raw.schema_changed_node_ids,
-});
+const fromPyDriftDetail = (raw: PyAgentDriftDetail): AgentDriftDetail => {
+  const nodeTypes: Record<number, string> = {};
+  if (raw.node_types) {
+    for (const [k, v] of Object.entries(raw.node_types)) {
+      const id = Number(k);
+      if (Number.isFinite(id) && typeof v === "string") {
+        nodeTypes[id] = v;
+      }
+    }
+  }
+  return {
+    missingNodeIds: raw.missing_node_ids,
+    externalAddedNodeIds: raw.external_added_node_ids,
+    nodeTypes,
+  };
+};
 
 export const getAgentSession = async (
   sessionId: string,

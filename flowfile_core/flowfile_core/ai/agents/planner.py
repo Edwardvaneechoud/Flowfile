@@ -398,8 +398,14 @@ async def _run_planner_loop(
             )
             return
 
-        # D006 — drift check before every dispatch
-        drift = sessions.detect_drift(flow, session.snapshot)
+        # D006 — drift check before every dispatch. ``staged_node_ids``
+        # excludes the agent's own staged additions from the external-added
+        # bucket so the planner doesn't self-pause on its own work (W45 Q1).
+        drift = sessions.detect_drift(
+            flow,
+            session.snapshot,
+            agent_staged_node_ids=set(session.staged_node_ids),
+        )
         if drift is not None:
             session.status = "paused_drift"
             session.drift_detail = drift
@@ -551,6 +557,14 @@ async def _run_planner_loop(
                             staged_node_payload=result.staged_node_payload,
                         )
                     )
+                    # Track ids the agent has staged so subsequent drift
+                    # checks can exclude them from external-added detection
+                    # (W45 Q1). Only ``add_<node_type>`` calls produce a
+                    # node_id — connection / delete payloads don't.
+                    if tc.name.startswith(_ADD_PREFIX):
+                        staged_id = _payload_node_id(result.staged_node_payload)
+                        if staged_id is not None and staged_id not in session.staged_node_ids:
+                            session.staged_node_ids.append(staged_id)
                 event_name: PlannerEventName = "tool_call_warned" if result.status == "warned" else "tool_call_staged"
                 yield PlannerEvent(
                     event=event_name,

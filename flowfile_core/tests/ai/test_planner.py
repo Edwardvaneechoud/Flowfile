@@ -519,12 +519,12 @@ async def test_three_consecutive_rejections_fail() -> None:
 
 @pytest.mark.asyncio
 async def test_drift_mid_stream_pauses_session() -> None:
+    """External addition mid-stream → drift fires (W45 — id-set only)."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
 
-    # Provider would call add_filter, but we mutate the flow before the drift check.
-    flow.get_node(1).setting_input.raw_data_format.data = [[99], ["XX"], [42.0]]
-    flow.get_node(1).setting_input = flow.get_node(1).setting_input  # trigger reset
+    # User adds an external node before the drift check fires.
+    _add_orders(flow, node_id=42)
 
     provider = _ScriptedProvider(
         [
@@ -542,6 +542,156 @@ async def test_drift_mid_stream_pauses_session() -> None:
     assert "paused" in names
     assert sess.status == "paused_drift"
     assert sess.drift_detail is not None
+    assert 42 in sess.drift_detail.external_added_node_ids
+
+
+@pytest.mark.asyncio
+async def test_drift_missing_external_deletion() -> None:
+    """W45 — user deleting a node mid-run still fires drift via missing_node_ids."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+
+    flow.delete_node(1)
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    assert any(e.event == "drift_detected" for e in events)
+    assert sess.status == "paused_drift"
+    assert sess.drift_detail is not None
+    assert 1 in sess.drift_detail.missing_node_ids
+
+
+@pytest.mark.asyncio
+async def test_three_consecutive_stages_does_not_self_drift() -> None:
+    """W45 Q1 acceptance #1 — agent stages 3 nodes back-to-back without drift.
+
+    Pre-W45 the agent self-drifted because ``_resolve_upstream_schemas``
+    warmed live ``predicted_schema`` as a side-effect, and the (then) hash-
+    based ``schema_changed`` bucket flagged that as drift. W45 dropped the
+    hash buckets and tracks the agent's own staged ids — the agent's own
+    additions are excluded from the new ``external_added_node_ids`` bucket
+    so subsequent iterations see no drift.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args(value="US"))],
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[ToolCall(id="t3", name="flowfile.graph.add_filter", arguments=_filter_args(value="UK"))],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], content="done.", finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+    assert "drift_detected" not in names
+    assert "paused" not in names
+    assert sess.status == "completed"
+    assert names.count("tool_call_staged") == 3
+    assert len(sess.staged_node_ids) == 3
+    # Allocator picks 2 / 3 / 4 in order (live had id 1; in-batch chained adds).
+    assert sess.staged_node_ids == [2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_planner_records_staged_node_ids_for_add_calls() -> None:
+    """W45 Q1 — every successful add_<node_type> stage appends to staged_node_ids."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    assert sess.staged_node_ids == [2]
+
+
+@pytest.mark.asyncio
+async def test_external_drift_still_detected_after_one_stage() -> None:
+    """W45 Q1 acceptance #3 — external mutation between iterations still pauses.
+
+    The provider's first ``chat`` call simulates the user adding node 99 to
+    the canvas while the LLM is "thinking" (after iteration 1's drift check
+    has already cleared) and returns an ``add_filter`` tool call. The
+    planner stages node 2 from that tool call, and on iteration 2's drift
+    check, only node 99 (not 2) appears in ``external_added_node_ids``.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+
+    class _ScriptedWithSideEffect:
+        name = "fake"
+        model = "fake"
+        supports_tools = True
+        supports_streaming = True
+
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def chat(self, *_a, **_k):
+            self.call_count += 1
+            if self.call_count == 1:
+                # User adds an external node mid-LLM-thinking. The agent's
+                # next drift check (start of iteration 2) should see it.
+                _add_orders(flow, node_id=99)
+                return ChatResponse(
+                    model="fake",
+                    content="staging",
+                    tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                    finish_reason="tool_calls",
+                    usage=Usage(),
+                )
+            return ChatResponse(  # pragma: no cover — planner pauses before reaching here
+                model="fake",
+                content="unreachable",
+                tool_calls=[],
+                finish_reason="stop",
+                usage=Usage(),
+            )
+
+        def stream(self, *_a, **_k):
+            raise AssertionError
+
+    provider = _ScriptedWithSideEffect()
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    assert any(e.event == "drift_detected" for e in events)
+    assert sess.status == "paused_drift"
+    assert sess.drift_detail is not None
+    assert 99 in sess.drift_detail.external_added_node_ids
+    # The planner recorded its own stage in staged_node_ids — whatever id
+    # got allocated, it must NOT also appear in external_added.
+    assert sess.staged_node_ids
+    for sid in sess.staged_node_ids:
+        assert sid not in sess.drift_detail.external_added_node_ids
 
 
 # --------------------------------------------------------------------------- #

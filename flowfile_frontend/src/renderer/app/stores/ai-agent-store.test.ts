@@ -121,8 +121,13 @@ describe("useAiAgentStore - start", () => {
     expect(mockSymbols.editorStoreOpenAiDrawer).toHaveBeenCalled();
   });
 
-  it("captures drift_detected and freezes status at paused_drift", async () => {
-    const drift = { missing_node_ids: [1], mutated_node_ids: [], schema_changed_node_ids: [] };
+  it("captures drift_detected and freezes status at paused_drift (W45 shape)", async () => {
+    const drift = {
+      missing_node_ids: [1],
+      external_added_node_ids: [42],
+      // Server-side dict[int, str] serialises with string keys.
+      node_types: { "1": "filter", "42": "manual_input" },
+    };
     mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
       handlers.onDriftDetected?.(drift, "s-1");
       handlers.onPaused?.("graph_changed", "s-1");
@@ -132,11 +137,11 @@ describe("useAiAgentStore - start", () => {
     await store.start(startBody());
 
     expect(store.status).toBe("paused_drift");
-    // Store exposes camelCase mirroring api/ai.api.ts AgentDriftDetail.
     expect(store.driftDetail).toEqual({
       missingNodeIds: [1],
-      mutatedNodeIds: [],
-      schemaChangedNodeIds: [],
+      externalAddedNodeIds: [42],
+      // String keys on the wire → numeric keys on the store.
+      nodeTypes: { 1: "filter", 42: "manual_input" },
     });
   });
 
@@ -243,7 +248,7 @@ describe("useAiAgentStore - abort + clear", () => {
     store.status = "running";
     store.events = [{ kind: "thinking", payload: { text: "x" }, at: Date.now() }];
     store.error = "boom";
-    store.driftDetail = { missingNodeIds: [], mutatedNodeIds: [], schemaChangedNodeIds: [] };
+    store.driftDetail = { missingNodeIds: [], externalAddedNodeIds: [], nodeTypes: {} };
 
     store.clear();
 
@@ -252,5 +257,95 @@ describe("useAiAgentStore - abort + clear", () => {
     expect(store.events).toEqual([]);
     expect(store.error).toBe(null);
     expect(store.driftDetail).toBe(null);
+  });
+});
+
+// --------------------------------------------------------------------------
+// W45 — currentSessionId from-wire propagation + Q4 resume state machine
+// --------------------------------------------------------------------------
+
+describe("useAiAgentStore - W45 Q2 currentSessionId from wire", () => {
+  it("onPaused populates currentSessionId from the SSE wire", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onPaused?.("graph_changed", "sess-pause");
+    });
+    const store = useAiAgentStore();
+    await store.start(startBody());
+    expect(store.currentSessionId).toBe("sess-pause");
+  });
+
+  it("onDriftDetected populates currentSessionId from the SSE wire", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onDriftDetected?.(
+        { missing_node_ids: [], external_added_node_ids: [], node_types: {} },
+        "sess-drift",
+      );
+    });
+    const store = useAiAgentStore();
+    await store.start(startBody());
+    expect(store.currentSessionId).toBe("sess-drift");
+  });
+
+  it("onAbort populates currentSessionId from the SSE wire (Q2 propagation)", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onAbort?.("sess-abort");
+    });
+    const store = useAiAgentStore();
+    await store.start(startBody());
+    expect(store.currentSessionId).toBe("sess-abort");
+    expect(store.status).toBe("aborted");
+  });
+
+  it("onComplete populates currentSessionId from the result payload (Q2 propagation)", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-complete",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+    const store = useAiAgentStore();
+    await store.start(startBody());
+    expect(store.currentSessionId).toBe("sess-complete");
+    expect(store.status).toBe("completed");
+  });
+
+  it("start() body without session_id leaves currentSessionId null until wire populates it", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async () => {
+      // No events at all — the wire never gets a chance to populate the id.
+    });
+    const store = useAiAgentStore();
+    expect(store.currentSessionId).toBe(null);
+    const body = startBody();
+    expect((body as { session_id?: string }).session_id).toBeUndefined();
+    await store.start(body);
+    expect(store.currentSessionId).toBe(null);
+  });
+});
+
+describe("useAiAgentStore - W45 Q4 resume state machine", () => {
+  it("paused → resumeContinue transitions paused_drift → running, next event lands", async () => {
+    // First stream: pause.
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onPaused?.("graph_changed", "sess-q4");
+    });
+    const store = useAiAgentStore();
+    await store.start(startBody());
+    expect(store.status).toBe("paused_drift");
+    expect(store.currentSessionId).toBe("sess-q4");
+
+    // Resume stream: emit info + thinking; without a subsequent state-changing
+    // event the store should remain in "running".
+    mockSymbols.resumeAgentSessionStream.mockImplementation(async (_sid, handlers) => {
+      handlers.onInfo?.({ message: "resumed; re-snapshotted graph" });
+      handlers.onThinking?.("planning step 2");
+    });
+    await store.resumeContinue("sess-q4");
+    expect(store.status).toBe("running");
+    expect(store.driftDetail).toBeNull();
+    expect(store.events.some((e) => e.kind === "thinking")).toBe(true);
+    expect(store.events.some((e) => e.kind === "info")).toBe(true);
   });
 });

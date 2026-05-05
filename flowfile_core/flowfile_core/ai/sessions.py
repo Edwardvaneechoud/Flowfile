@@ -8,11 +8,14 @@ established.
 
 Per D006 (snapshot+warn-and-pause), :func:`capture_graph_snapshot` records the
 shape of the live graph at agent-start and :func:`detect_drift` compares the
-live graph to that snapshot before each tool dispatch. Any mutation to a node
-that the agent referenced (deletion, settings change, schema change) yields a
-:class:`DriftDetail` so the planner loop can yield ``drift_detected`` +
-``paused`` and exit cleanly. The user's resume action picks back up against
-either the original or a freshly-captured snapshot.
+live graph to that snapshot before each tool dispatch. Drift detection is
+**id-set-only** (W45): we surface deletions (``missing_node_ids``) and
+external additions (``external_added_node_ids``, excluding the agent's own
+``staged_node_ids``). Hash-based mutation detection (settings/schema changes)
+was removed in W45 because the executor's upstream schema warm-up
+(``_resolve_upstream_schemas`` calling ``get_predicted_schema(force=True)``)
+mutated live nodes as a side-effect, making the agent self-drift on its own
+staging. Restoring hash-based drift is a separate workstream.
 
 Per D007, sessions are sidecar-by-default and never embedded in ``.flowfile``
 unless the user opts in via the export toggle (W43).
@@ -20,13 +23,11 @@ unless the user opts in via the export toggle (W43).
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,42 +61,45 @@ SamplesMode = Literal["off", "regex"]
 class GraphSnapshot(BaseModel):
     """D006 snapshot — captured at agent-start; compared per-step for drift.
 
-    The snapshot is intentionally cheap: node ids, deterministic hashes of
-    each node's settings, and a stable signature of each node's predicted
-    schema. No row data, no expensive callbacks.
+    Tracks the set of node ids that existed at agent-start, plus each node's
+    ``node_type`` (W45 — used by :class:`DriftDetail` so the frontend banner
+    can render *"Filter node 6 was deleted"* even after the node is gone).
 
-    Hash determinism rests on
-    ``json.dumps(model_dump(mode="json"), sort_keys=True)`` so the same
-    settings produce the same hash across pickle/serialise round-trips and
-    across W42's eventual disk persistence. ``model_dump(mode="json")``
-    coerces datetimes / Pydantic SecretStr / etc. to JSON-stable shapes.
+    Hash-based settings/schema drift was removed in W45 — see module docstring.
     """
 
     model_config = ConfigDict(frozen=True)
 
     flow_id: int
     node_ids: tuple[int, ...]
-    settings_hashes: dict[int, str]
-    schema_signatures: dict[int, str]
+    node_types: dict[int, str] = Field(default_factory=dict)
 
 
 class DriftDetail(BaseModel):
     """The shape of mutation detected since :class:`GraphSnapshot` was taken.
 
-    Empty buckets are valid (a mutation in any one bucket is drift). The
-    planner surfaces this verbatim in the ``drift_detected`` SSE event; the
-    frontend's drift-pause banner formats it for the user.
+    Two id-set buckets — populating either is enough to surface a pause:
+
+    * **Missing**: a node that existed at snapshot time has been deleted.
+    * **External-added**: a node exists on the live flow that was neither in
+      the snapshot nor staged by the agent (``staged_node_ids``). The user
+      added it externally mid-run.
+
+    ``node_types`` carries the snapshot-time type for every id appearing in
+    either bucket so the frontend banner can render typed messages. Optional
+    — the frontend falls back to bare ids when an id is missing from the map.
     """
 
     missing_node_ids: list[int] = Field(default_factory=list)
     """Nodes that existed at snapshot time and are now gone."""
-    mutated_node_ids: list[int] = Field(default_factory=list)
-    """Nodes whose ``settings_hash`` no longer matches the snapshot."""
-    schema_changed_node_ids: list[int] = Field(default_factory=list)
-    """Nodes whose predicted schema signature has changed."""
+    external_added_node_ids: list[int] = Field(default_factory=list)
+    """Nodes on the live flow that the agent did not stage."""
+    node_types: dict[int, str] = Field(default_factory=dict)
+    """``node_type`` for each id appearing in either bucket. Snapshot-time
+    type for missing ids; live type for external-added ids."""
 
     def is_empty(self) -> bool:
-        return not (self.missing_node_ids or self.mutated_node_ids or self.schema_changed_node_ids)
+        return not (self.missing_node_ids or self.external_added_node_ids)
 
 
 class AgentSession(BaseModel):
@@ -138,6 +142,10 @@ class AgentSession(BaseModel):
     last_assistant_text: str | None = None
     """Text content of the most recent assistant turn — used as the
     ``GraphDiff.rationale`` when the loop completes."""
+    staged_node_ids: list[int] = Field(default_factory=list)
+    """Node ids the agent has staged this session via ``add_<node_type>``
+    tool calls — used to exclude the agent's own additions from W45's
+    ``external_added_node_ids`` drift bucket."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -147,62 +155,27 @@ class AgentSession(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Hashing — deterministic, JSON-stable                                         #
+# Snapshot capture + id-set drift detection (W45)                              #
 # --------------------------------------------------------------------------- #
 
 
-def _hash_settings(settings: Any) -> str:
-    """Deterministic SHA-256 of a node's settings.
-
-    Accepts a Pydantic ``BaseModel`` or a plain dict / scalar. Falls back to
-    ``repr`` for opaque objects so the hash is at least stable under
-    same-process comparison (the only mode that matters until W42).
-    """
-    if settings is None:
-        return _hash_payload(None)
-    if isinstance(settings, BaseModel):
-        try:
-            payload = settings.model_dump(mode="json")
-        except Exception:
-            payload = repr(settings)
-    elif isinstance(settings, dict | list | tuple | str | int | float | bool):
-        payload = settings
-    else:
-        # Best-effort — repr is at least stable within a process.
-        payload = repr(settings)
-    return _hash_payload(payload)
-
-
-def _hash_payload(payload: Any) -> str:
-    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _schema_signature(node: Any) -> str:
-    """Stable signature for a node's predicted schema.
-
-    Reads ``node.node_schema.predicted_schema`` only — no force-recompute.
-    Empty / ``None`` schema hashes to a sentinel constant so two un-resolved
-    upstreams compare equal (they share the same drift class).
-    """
-    schema = getattr(getattr(node, "node_schema", None), "predicted_schema", None)
-    if not schema:
-        return _hash_payload({"schema": None})
-    cols = [{"name": getattr(col, "column_name", ""), "type": getattr(col, "data_type", None)} for col in schema]
-    return _hash_payload({"schema": cols})
+def _node_type(node: object) -> str:
+    """Best-effort string ``node_type`` reader; defaults to empty string."""
+    raw = getattr(node, "node_type", None)
+    return str(raw) if raw else ""
 
 
 def capture_graph_snapshot(flow: FlowGraph) -> GraphSnapshot:
     """Take a D006 snapshot of ``flow``.
 
-    Pure read: walks ``flow.nodes`` once and reads each node's settings and
-    predicted schema. No callbacks fired, no I/O, safe to call before every
-    agent step (though the planner only captures once at start and on
-    explicit re-snapshot via ``resume(action="continue")``).
+    Pure read: walks ``flow.nodes`` once and records each node's id and
+    ``node_type``. No settings hashing, no schema callbacks fired — id-set
+    drift only (W45). Safe to call before every agent step (the planner
+    only captures once at start and on explicit re-snapshot via
+    ``resume(action="continue")``).
     """
     node_ids: list[int] = []
-    settings_hashes: dict[int, str] = {}
-    schema_signatures: dict[int, str] = {}
+    node_types: dict[int, str] = {}
     for node in flow.nodes:
         try:
             nid_raw = node.node_id
@@ -213,35 +186,43 @@ def capture_graph_snapshot(flow: FlowGraph) -> GraphSnapshot:
         except (TypeError, ValueError):
             continue
         node_ids.append(nid)
-        settings_hashes[nid] = _hash_settings(node.setting_input)
-        schema_signatures[nid] = _schema_signature(node)
+        node_types[nid] = _node_type(node)
     node_ids.sort()
     return GraphSnapshot(
         flow_id=int(flow.flow_id),
         node_ids=tuple(node_ids),
-        settings_hashes=settings_hashes,
-        schema_signatures=schema_signatures,
+        node_types=node_types,
     )
 
 
-def detect_drift(flow: FlowGraph, snapshot: GraphSnapshot) -> DriftDetail | None:
+def detect_drift(
+    flow: FlowGraph,
+    snapshot: GraphSnapshot,
+    *,
+    agent_staged_node_ids: set[int] | None = None,
+) -> DriftDetail | None:
     """Compare ``flow`` to ``snapshot``; return a :class:`DriftDetail` or ``None``.
 
-    Three drift classes — any one is enough to surface a pause:
+    Two id-set buckets — populating either is enough to surface a pause:
 
     * **Missing**: a node that existed at snapshot time has been deleted.
-    * **Mutated**: a node still exists but its ``setting_input`` hash has
-      changed (the user re-configured a setting since agent-start).
-    * **Schema-changed**: a node's predicted schema signature changed (often
-      a downstream consequence of a mutated upstream, but worth surfacing
-      separately so the user knows *what* the planner's view of the world
-      is now wrong about).
+    * **External-added**: a node exists on the live flow that was neither in
+      the snapshot nor staged by the agent. The user added it externally
+      mid-run and the planner's view of the world is now stale.
 
-    New nodes (added by the user mid-run) are *not* drift — they don't
-    invalidate the planner's prior tool calls. The planner can simply
-    refer to them via ``read_node_schema`` if they become relevant.
+    ``agent_staged_node_ids`` is the set of node ids the planner has staged
+    this session (passed via :attr:`AgentSession.staged_node_ids`). Excluded
+    from the external-added bucket so the agent's own work never looks like
+    drift to itself. ``mode="stage"`` doesn't actually leak ids into the live
+    graph today (W31's executor refuses live mutation in stage mode), but
+    excluding them is defensive against future code paths that might.
+
+    Hash-based mutation detection (settings/schema changes) was removed in
+    W45 — see module docstring. Restoring it is a separate workstream.
     """
-    live_nodes: dict[int, Any] = {}
+    staged = agent_staged_node_ids or set()
+
+    live_nodes: dict[int, object] = {}
     for node in flow.nodes:
         try:
             nid = int(node.node_id)
@@ -249,28 +230,30 @@ def detect_drift(flow: FlowGraph, snapshot: GraphSnapshot) -> DriftDetail | None
             continue
         live_nodes[nid] = node
 
-    missing: list[int] = []
-    mutated: list[int] = []
-    schema_changed: list[int] = []
+    snapshot_ids = set(snapshot.node_ids)
 
-    for nid in snapshot.node_ids:
-        if nid not in live_nodes:
-            missing.append(nid)
-            continue
-        node = live_nodes[nid]
-        live_settings_hash = _hash_settings(node.setting_input)
-        if live_settings_hash != snapshot.settings_hashes.get(nid):
-            mutated.append(nid)
-        live_schema_sig = _schema_signature(node)
-        if live_schema_sig != snapshot.schema_signatures.get(nid):
-            schema_changed.append(nid)
+    missing = sorted(snapshot_ids - set(live_nodes.keys()))
+    external_added = sorted(set(live_nodes.keys()) - snapshot_ids - staged)
 
-    if not (missing or mutated or schema_changed):
+    if not (missing or external_added):
         return None
+
+    # Build the node_types map for ids in either bucket: snapshot-time type
+    # for missing (live no longer has them), live type for external-added.
+    types: dict[int, str] = {}
+    for nid in missing:
+        snap_type = snapshot.node_types.get(nid)
+        if snap_type:
+            types[nid] = snap_type
+    for nid in external_added:
+        live_type = _node_type(live_nodes[nid])
+        if live_type:
+            types[nid] = live_type
+
     return DriftDetail(
-        missing_node_ids=sorted(missing),
-        mutated_node_ids=sorted(mutated),
-        schema_changed_node_ids=sorted(schema_changed),
+        missing_node_ids=missing,
+        external_added_node_ids=external_added,
+        node_types=types,
     )
 
 

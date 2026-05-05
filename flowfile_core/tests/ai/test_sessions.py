@@ -1,4 +1,4 @@
-"""W40 — :mod:`flowfile_core.ai.sessions` tests.
+"""W40 + W45 — :mod:`flowfile_core.ai.sessions` tests.
 
 Cases:
 
@@ -7,16 +7,19 @@ Cases:
   ``pop_session`` return None for a different user_id than the owner.
 * ``test_clear_for_tests_wipes_all`` — fixture cleanup works.
 * ``test_capture_snapshot_basic`` — snapshot a flow with one node;
-  ``node_ids``, ``settings_hashes``, ``schema_signatures`` populated.
+  ``node_ids`` and ``node_types`` populated (W45 — hash fields removed).
 * ``test_detect_drift_no_change`` — fresh snapshot vs same flow → None.
-* ``test_detect_drift_added_node_is_not_drift`` — adding a node after the
-  snapshot doesn't trip drift; planner can refer to it via read_node_schema.
+* ``test_detect_drift_external_addition_fires`` — user adds a node
+  post-snapshot the agent didn't stage → ``external_added_node_ids`` populated.
+* ``test_detect_drift_agent_staged_addition_is_not_drift`` — agent's own
+  staged node is excluded from the external-added bucket (W45 Q1).
 * ``test_detect_drift_missing_node`` — delete a node post-snapshot →
   ``missing_node_ids`` populated.
-* ``test_detect_drift_settings_mutation`` — change a node's settings →
-  ``mutated_node_ids`` populated.
-* ``test_detect_drift_schema_change`` — manually mutate the predicted
-  schema → ``schema_changed_node_ids`` populated.
+* ``test_capture_snapshot_records_node_types`` — node_type captured per id.
+* ``test_drift_detail_includes_node_types_for_missing`` — node_type survives
+  the deletion via the snapshot map.
+* ``test_drift_detail_includes_node_types_for_external_added`` — node_type
+  pulled from the live node for new additions.
 * ``test_lazy_litellm_contract`` — importing
   ``flowfile_core.ai.sessions`` doesn't load ``litellm``.
 * ``test_list_sessions_for_user`` — only matching user_id returned.
@@ -146,12 +149,20 @@ def test_capture_snapshot_basic() -> None:
     snap = sessions.capture_graph_snapshot(flow)
     assert snap.flow_id == 1
     assert snap.node_ids == (1,)
-    assert isinstance(snap.settings_hashes[1], str) and len(snap.settings_hashes[1]) == 64
-    assert isinstance(snap.schema_signatures[1], str) and len(snap.schema_signatures[1]) == 64
+    # W45 — settings_hashes / schema_signatures removed; node_types added.
+    assert snap.node_types == {1: "manual_input"}
+
+
+def test_capture_snapshot_records_node_types() -> None:
+    """W45 — ``node_types`` map is populated for every captured node."""
+    flow = _flow_with_orders()
+    _add_orders(flow, node_id=2)
+    snap = sessions.capture_graph_snapshot(flow)
+    assert snap.node_types == {1: "manual_input", 2: "manual_input"}
 
 
 # --------------------------------------------------------------------------- #
-# Drift detection                                                              #
+# Drift detection (W45 — id-set only)                                          #
 # --------------------------------------------------------------------------- #
 
 
@@ -161,12 +172,24 @@ def test_detect_drift_no_change() -> None:
     assert sessions.detect_drift(flow, snap) is None
 
 
-def test_detect_drift_added_node_is_not_drift() -> None:
+def test_detect_drift_external_addition_fires() -> None:
+    """W45 — a node added after the snapshot that the agent didn't stage IS drift."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
-    # User adds a second node after the snapshot — that's not drift.
     _add_orders(flow, node_id=2)
     drift = sessions.detect_drift(flow, snap)
+    assert drift is not None
+    assert drift.external_added_node_ids == [2]
+    assert drift.missing_node_ids == []
+
+
+def test_detect_drift_agent_staged_addition_is_not_drift() -> None:
+    """W45 Q1 — the agent's own staged ids are excluded from external-added."""
+    flow = _flow_with_orders()
+    snap = sessions.capture_graph_snapshot(flow)
+    _add_orders(flow, node_id=2)
+    # Agent claims it staged node 2 — drift should ignore it.
+    drift = sessions.detect_drift(flow, snap, agent_staged_node_ids={2})
     assert drift is None
 
 
@@ -177,30 +200,40 @@ def test_detect_drift_missing_node() -> None:
     drift = sessions.detect_drift(flow, snap)
     assert drift is not None
     assert drift.missing_node_ids == [1]
+    assert drift.external_added_node_ids == []
 
 
-def test_detect_drift_settings_mutation() -> None:
+def test_detect_drift_mixed_missing_and_external_added() -> None:
+    """W45 — both buckets can populate in the same call."""
     flow = _flow_with_orders()
+    _add_orders(flow, node_id=2)
     snap = sessions.capture_graph_snapshot(flow)
-    # Mutate the node's settings — re-attach a new manual input with different data.
-    node = flow.get_node(1)
-    raw_setting = node.setting_input
-    raw_setting.raw_data_format.data = [[99, 100, 101], ["AS", "AS", "AS"]]
-    node.setting_input = raw_setting  # triggers reset
+    flow.delete_node(1)
+    _add_orders(flow, node_id=5)
     drift = sessions.detect_drift(flow, snap)
     assert drift is not None
-    assert 1 in drift.mutated_node_ids
+    assert drift.missing_node_ids == [1]
+    assert drift.external_added_node_ids == [5]
 
 
-def test_detect_drift_schema_change() -> None:
+def test_drift_detail_includes_node_types_for_missing() -> None:
+    """W45 Q3 — node_type for a deleted node comes from the snapshot."""
     flow = _flow_with_orders()
     snap = sessions.capture_graph_snapshot(flow)
-    node = flow.get_node(1)
-    # Forcibly clobber predicted_schema to simulate a downstream change.
-    node.node_schema.predicted_schema = []
+    flow.delete_node(1)
     drift = sessions.detect_drift(flow, snap)
     assert drift is not None
-    assert 1 in drift.schema_changed_node_ids
+    assert drift.node_types.get(1) == "manual_input"
+
+
+def test_drift_detail_includes_node_types_for_external_added() -> None:
+    """W45 Q3 — node_type for a new external addition comes from the live node."""
+    flow = _flow_with_orders()
+    snap = sessions.capture_graph_snapshot(flow)
+    _add_orders(flow, node_id=2)
+    drift = sessions.detect_drift(flow, snap)
+    assert drift is not None
+    assert drift.node_types.get(2) == "manual_input"
 
 
 def test_drift_detail_is_empty() -> None:
@@ -208,6 +241,8 @@ def test_drift_detail_is_empty() -> None:
     assert detail.is_empty()
     detail2 = sessions.DriftDetail(missing_node_ids=[1])
     assert not detail2.is_empty()
+    detail3 = sessions.DriftDetail(external_added_node_ids=[5])
+    assert not detail3.is_empty()
 
 
 # --------------------------------------------------------------------------- #
@@ -242,4 +277,5 @@ def test_session_default_status_is_running() -> None:
     assert sess.status == "running"
     assert sess.step_count == 0
     assert sess.staged_results == []
+    assert sess.staged_node_ids == []  # W45 Q1
     assert sess.diff_id is None

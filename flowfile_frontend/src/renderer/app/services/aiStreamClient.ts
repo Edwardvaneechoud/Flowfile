@@ -346,8 +346,9 @@ export interface AgentStartRequest {
 
 export interface AgentDriftDetail {
   missing_node_ids: number[];
-  mutated_node_ids: number[];
-  schema_changed_node_ids: number[];
+  external_added_node_ids: number[];
+  /** dict[int, str] from server serialises with string keys. Optional. */
+  node_types?: Record<string, string> | null;
 }
 
 export interface AgentToolCallProposed {
