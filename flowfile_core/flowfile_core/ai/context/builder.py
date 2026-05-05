@@ -384,14 +384,14 @@ _FULL_CATALOG_SURFACES: frozenset[str] = frozenset({"agent", "agent_complex"})
 # Surfaces that get a narrowed catalog filtered to their D002 preset.
 _PRESET_CATALOG_SURFACES: frozenset[str] = frozenset({"cmd_k", "ghost_node"})
 
-# Read-only / advisory surfaces — they don't call tools, but they advise
-# the user about Flowfile, so they need user-facing UI vocabulary. We give
-# them a per-node-type reference rendered from ``user_instructions``
-# (palette label, sidebar, settings labels, worked example, pitfalls) so
-# "how do I X" answers cite real UI elements instead of hallucinating a
-# "transform node" or "expression editor" — the bug from the live transcript
-# that motivated the post-W56-v1 widening.
-_NODE_REFERENCE_SURFACES: frozenset[str] = frozenset({"explain", "lineage", "docgen"})
+# Read-only / advisory ("assist-level") surfaces — they don't call tools,
+# but they advise the user about Flowfile, so they need user-facing UI
+# vocabulary. We give them a per-node-type reference rendered from
+# ``user_instructions`` (palette label, sidebar, settings labels, worked
+# example, pitfalls) so "how do I X" answers cite real UI elements
+# instead of hallucinating a "transform node" or "expression editor" —
+# the bug from the live transcript that motivated the post-W56-v1 widening.
+_ASSIST_CATALOG_SURFACES: frozenset[str] = frozenset({"explain", "lineage", "docgen"})
 
 _NODE_TYPE_TOOL_PREFIX = "flowfile.graph.add_"
 
@@ -399,17 +399,22 @@ _NODE_TYPE_TOOL_PREFIX = "flowfile.graph.add_"
 def _build_catalog_block(surface: str) -> str:
     """Build the W56 narrative block for ``surface``.
 
-    Two render paths sharing one function (per the user's instruction
-    to keep it as one function with a slice selector):
+    One function, two render paths via a slice-selector per surface group
+    (per the user's W56 v2 spec). Two views over one source-of-truth:
 
-    * Tool-calling surfaces — emit ``## Tool catalog`` with each tool's
-      :attr:`ToolSpec.long_description` (agent-shaped: "when to call
-      this tool").
-    * Read-only / advisory surfaces — emit ``## Flowfile node reference``
-      with each node-type tool's :attr:`ToolSpec.user_instructions`
-      (user-shaped: palette label / sidebar / settings labels / worked
-      example / pitfalls).
-    * ``settings_autocomplete`` — returns ``""`` (constrained JSON
+    * **Tool-calling surfaces** (``agent`` / ``agent_complex`` /
+      ``cmd_k`` / ``ghost_node``) — emit ``## Tool catalog`` with each
+      tool's ``long_description`` plus, where set, a fenced
+      ``agent_payload_example`` showing the literal JSON the executor
+      accepts. Agent-shaped: *"when to call this tool"*.
+    * **Assist-level surfaces** (``explain`` / ``lineage`` / ``docgen``)
+      — emit ``## Flowfile node reference`` with each node-type tool's
+      ``user_instructions`` only (palette label / sidebar / settings
+      labels / worked example / pitfalls). User-shaped: *"how does the
+      user do this in the UI"*. Agent specs and payload examples are
+      omitted: the chat surface can't call tools, surfacing them would
+      only confuse the model into mixing UI advice with tool-call talk.
+    * ``settings_autocomplete`` — returns ``""`` (constrained-JSON
       output, no narrative grounding needed).
 
     Lazy-imports ``tools.registry`` so the prompts package stays
@@ -426,14 +431,21 @@ def _build_catalog_block(surface: str) -> str:
     if surface in _PRESET_CATALOG_SURFACES:
         tools = build_tool_catalog(surface=surface)
         return _render_tool_catalog(tools)
-    if surface in _NODE_REFERENCE_SURFACES:
+    if surface in _ASSIST_CATALOG_SURFACES:
         node_tools = [tool for tool in full_catalog if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX)]
         return _render_node_reference(node_tools)
     return ""
 
 
 def _render_tool_catalog(tools: list[Any]) -> str:
-    """Render the agent-shaped ``## Tool catalog`` block from ``long_description``."""
+    """Render the agent-shaped ``## Tool catalog`` block.
+
+    Includes ``long_description`` for every documented tool, plus a
+    fenced JSON ``Example payload`` block for the seven node types
+    whose Pydantic shape diverges from the natural LLM guess
+    (group_by / pivot / join / fuzzy_match / select / unpivot /
+    text_to_rows — see ``NODE_AGENT_PAYLOAD_EXAMPLES``).
+    """
 
     documented = [tool for tool in tools if tool.long_description]
     if not documented:
@@ -447,13 +459,22 @@ def _render_tool_catalog(tools: list[Any]) -> str:
             "fits the user's request. The JSON Schema parameters are sent "
             "separately on each call; this section is the *when to use* "
             "narrative. Match the user's intent to the closest match here "
-            "before emitting a tool call."
+            "before emitting a tool call. For a handful of node types whose "
+            "Pydantic shape diverges from the natural guess, an `Example "
+            "payload` block follows the description — copy that exact shape, "
+            "don't re-derive it from the JSON Schema."
         ),
         "",
     ]
     for tool in documented:
         lines.append(f"### {tool.name}")
         lines.append(tool.long_description.strip())
+        if tool.agent_payload_example:
+            lines.append("")
+            lines.append("Example payload:")
+            lines.append("```json")
+            lines.append(tool.agent_payload_example.strip())
+            lines.append("```")
         lines.append("")
     return "\n".join(lines).rstrip()
 

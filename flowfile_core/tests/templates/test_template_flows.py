@@ -100,3 +100,18 @@ class TestTemplateFlowExecution:
             f"node {s.node_id} ({s.node_name}): {s.error}" for s in result.node_step_result if not s.success and s.error
         )
         assert result.nodes_completed > 0
+
+    def test_get_schema_of_flow(self, template_yaml_path, template_data_dir: Path, tmp_path: Path):
+        _, _, flow_dict = _load_template_yaml(template_yaml_path)
+        resolved = _replace_data_dir_placeholder(flow_dict, template_data_dir)
+        flowfile_data = FlowfileData.model_validate(resolved)
+
+        temp_yaml = tmp_path / f"{template_yaml_path.stem}.yaml"
+        with open(temp_yaml, "w", encoding="utf-8") as f:
+            yaml.dump(flowfile_data.model_dump(), f, default_flow_style=False, allow_unicode=True)
+
+        flow = open_flow(temp_yaml)
+        flow.execution_location = "local"
+        breakpoint()
+        for node in flow.nodes:
+            node.get_predicted_resulting_data()

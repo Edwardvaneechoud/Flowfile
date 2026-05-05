@@ -850,10 +850,131 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Agent payload examples (W56 v2 follow-up)                                    #
+# --------------------------------------------------------------------------- #
+#
+# Only for node types whose Pydantic settings shape diverges from what an LLM
+# would naively guess from the field names. The agent prompt injects this
+# JSON verbatim under the per-tool catalog entry so the model copies the
+# correct shape rather than re-deriving it from the JSON Schema each time.
+#
+# Each entry MUST validate via the corresponding ``NodeXxx.model_validate``
+# (the CI test ``test_w56v2_agent_payload_examples_validate`` enforces this).
+# If a Pydantic field is renamed or the nested shape changes, the test fails
+# before any user hits the agent retry loop.
+#
+# Why these seven specifically:
+#   - group_by  — agg_cols list mixes group-keys (agg="groupby") and
+#                 aggregations; the natural LLM guess is two separate lists.
+#   - pivot     — index_columns / pivot_column / value_col / aggregations is
+#                 a four-key shape, easy to flatten incorrectly.
+#   - join      — left_select / right_select are nested dicts wrapping
+#                 ``renames``; the natural guess is column name lists.
+#   - fuzzy_match — same as join + extra threshold_score / fuzzy_type per pair.
+#   - select    — keep/drop/rename in a single list, not three lists.
+#   - unpivot   — index_columns vs value_columns naming.
+#   - text_to_rows — split_by_fixed_value / split_fixed_value (not "split_by"
+#                 or "delimiter" as the LLM would guess).
+#
+# Simple nodes (filter, sort, formula, unique, sample, …) don't get an example
+# because the JSON Schema alone is unambiguous. Adding one would burn tokens
+# without improving accuracy.
+NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
+    "group_by": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "groupby_input": {\n'
+        '    "agg_cols": [\n'
+        '      {"old_name": "city", "agg": "groupby"},\n'
+        '      {"old_name": "customer_id", "agg": "count", "new_name": "customer_count"}\n'
+        "    ]\n"
+        "  }\n"
+        "}"
+    ),
+    "pivot": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "pivot_input": {\n'
+        '    "index_columns": ["region"],\n'
+        '    "pivot_column": "month",\n'
+        '    "value_col": "revenue",\n'
+        '    "aggregations": ["sum"]\n'
+        "  }\n"
+        "}"
+    ),
+    "join": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "join_input": {\n'
+        '    "join_mapping": [{"left_col": "customer_id", "right_col": "id"}],\n'
+        '    "left_select": {"renames": [\n'
+        '      {"old_name": "order_id"}, {"old_name": "amount"}, {"old_name": "customer_id"}\n'
+        "    ]},\n"
+        '    "right_select": {"renames": [\n'
+        '      {"old_name": "id"}, {"old_name": "name"}\n'
+        "    ]},\n"
+        '    "how": "left"\n'
+        "  }\n"
+        "}"
+    ),
+    "fuzzy_match": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "join_input": {\n'
+        '    "join_mapping": [\n'
+        '      {"left_col": "name", "right_col": "company_name", '
+        '"threshold_score": 80.0, "fuzzy_type": "levenshtein"}\n'
+        "    ],\n"
+        '    "left_select": {"renames": [{"old_name": "name"}]},\n'
+        '    "right_select": {"renames": [{"old_name": "company_name"}]},\n'
+        '    "how": "left"\n'
+        "  }\n"
+        "}"
+    ),
+    "select": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "select_input": [\n'
+        '    {"old_name": "id", "new_name": "user_id", "keep": true},\n'
+        '    {"old_name": "email", "keep": false}\n'
+        "  ]\n"
+        "}"
+    ),
+    "unpivot": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "unpivot_input": {\n'
+        '    "index_columns": ["region"],\n'
+        '    "value_columns": ["jan", "feb", "mar"]\n'
+        "  }\n"
+        "}"
+    ),
+    "text_to_rows": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "text_to_rows_input": {\n'
+        '    "column_to_split": "tags",\n'
+        '    "split_by_fixed_value": true,\n'
+        '    "split_fixed_value": ","\n'
+        "  }\n"
+        "}"
+    ),
+}
+
+
 __all__ = [
     "NODE_LONG_DESCRIPTIONS",
     "NODE_USER_INSTRUCTIONS",
     "NODE_GROUP_TO_SIDEBAR_LABEL",
+    "NODE_AGENT_PAYLOAD_EXAMPLES",
     "palette_label_for",
     "sidebar_section_for",
 ]

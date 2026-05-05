@@ -426,6 +426,100 @@ describe("useAiStore - undoPromotion", () => {
     expect(mockSymbols.agentStoreAbort).not.toHaveBeenCalled();
     expect(mockSymbols.streamChat).not.toHaveBeenCalled();
   });
+
+  it("also clears agentModeAccepted (mutually exclusive with continue-as-agent)", async () => {
+    // W58 round 7 — undo means "back to chat". If a prior accept set
+    // agentModeAccepted=true, leaving it on would force the next send
+    // back to agent and silently erase the undo.
+    mockSymbols.routeMessage.mockResolvedValue({
+      verdict: "agent",
+      kind: "build",
+      confidence: 0.85,
+      reason: "build signal",
+      latencyMs: 200,
+    });
+    mockSymbols.agentStoreStart.mockResolvedValue(undefined);
+    mockSymbols.agentStoreAbort.mockResolvedValue(undefined);
+    mockSymbols.streamChat.mockImplementation(async (_body, handlers) => {
+      handlers.onDone?.("stop");
+    });
+
+    const store = _withProvider();
+    await store.sendMessage("add a sort node");
+    store.acceptPromotion();
+    expect(store.agentModeAccepted).toBe(true);
+
+    // Re-arm the banner (acceptPromotion clears it) so undo has something
+    // to act on.
+    store.promotionBanner = { reason: "...", message: "add a sort node" };
+    await store.undoPromotion();
+
+    expect(store.agentModeAccepted).toBe(false);
+    expect(store.autoPromote).toBe(false);
+  });
+});
+
+describe("useAiStore - acceptPromotion (round 7)", () => {
+  it("flips agentModeAccepted=true and clears the banner", async () => {
+    mockSymbols.routeMessage.mockResolvedValue({
+      verdict: "agent",
+      kind: "build",
+      confidence: 0.85,
+      reason: "build signal",
+      latencyMs: 200,
+    });
+    mockSymbols.agentStoreStart.mockResolvedValue(undefined);
+
+    const store = _withProvider();
+    await store.sendMessage("add a sort node");
+    expect(store.promotionBanner).not.toBeNull();
+    expect(store.agentModeAccepted).toBe(false);
+
+    store.acceptPromotion();
+
+    expect(store.agentModeAccepted).toBe(true);
+    expect(store.promotionBanner).toBeNull();
+    // Accept does NOT abort the in-flight run — "continue", not "restart".
+    expect(mockSymbols.agentStoreAbort).not.toHaveBeenCalled();
+  });
+
+  it("subsequent sendMessage skips /ai/route and dispatches agent directly", async () => {
+    mockSymbols.agentStoreStart.mockResolvedValue(undefined);
+
+    const store = _withProvider();
+    // Simulate post-accept state: banner cleared, flag flipped.
+    store.agentModeAccepted = true;
+    expect(store.messages).toHaveLength(0);
+
+    await store.sendMessage("now add a sort downstream");
+
+    expect(mockSymbols.routeMessage).not.toHaveBeenCalled();
+    expect(mockSymbols.agentStoreStart).toHaveBeenCalledTimes(1);
+    expect(mockSymbols.streamChat).not.toHaveBeenCalled();
+    const agentArgs = mockSymbols.agentStoreStart.mock.calls[0][0];
+    expect(agentArgs.flow_id).toBe(1);
+    expect(agentArgs.surface).toBe("agent");
+    // The user message lands in the chat trail exactly once (round 6
+    // optimistic-push contract preserved).
+    expect(store.messages.filter((m) => m.role === "user")).toHaveLength(1);
+  });
+
+  it("acceptPromotion is a no-op when no banner is showing", () => {
+    const store = _withProvider();
+    expect(store.promotionBanner).toBeNull();
+    store.acceptPromotion();
+    expect(store.agentModeAccepted).toBe(false);
+  });
+
+  it("clearMessages resets agentModeAccepted", async () => {
+    const store = _withProvider();
+    store.agentModeAccepted = true;
+    store.messages = [{ id: 1, createdAt: 1, role: "user", content: "hi" }];
+
+    store.clearMessages();
+    expect(store.agentModeAccepted).toBe(false);
+    expect(store.messages).toHaveLength(0);
+  });
 });
 
 describe("useAiStore - autoPromote default + persistence", () => {

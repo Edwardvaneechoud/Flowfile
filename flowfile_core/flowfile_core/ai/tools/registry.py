@@ -35,6 +35,7 @@ from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
 from flowfile_core.ai.tools.meta_ops import CATEGORY_NAMES, META_OPS_TOOLS
 from flowfile_core.ai.tools.node_docs import (
+    NODE_AGENT_PAYLOAD_EXAMPLES,
     NODE_LONG_DESCRIPTIONS,
     NODE_USER_INSTRUCTIONS,
     palette_label_for,
@@ -115,6 +116,7 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
         description=description,
         long_description=NODE_LONG_DESCRIPTIONS.get(node_type, ""),
         user_instructions=_compose_user_instructions(node_type),
+        agent_payload_example=NODE_AGENT_PAYLOAD_EXAMPLES.get(node_type, ""),
         parameters=schema,
     )
 

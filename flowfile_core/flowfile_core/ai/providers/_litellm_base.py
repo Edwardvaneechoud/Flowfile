@@ -248,46 +248,48 @@ def _dev_log_prompt(
 ) -> None:
     """TODO REMOVE WHEN GOING LIVE — dump every AI prompt to the core log.
 
-    The user explicitly asked for visibility into what's being sent. The
-    chat surface in particular kept hallucinating UI affordances, and it
-    wasn't visible whether the W56 catalog was actually reaching the LLM.
-    This dumps everything verbatim. Strip before release — content is
-    unredacted (samples may leak PII), and the volume is non-trivial.
+    Uses ``print(flush=True)`` rather than ``logger.info`` because the
+    project's runtime logging is highly customised: ``PipelineHandler``
+    has ``propagate=False`` and its own handler, while module-named
+    loggers inherit the root logger's config — which in Electron / IDE
+    runs is not always wired to a visible stream. ``print`` is the
+    dumbest thing that works; the user explicitly asked for visibility.
+    Strip before release — content is unredacted (samples may leak PII),
+    volume is high, and ``print`` bypasses log routing / structured
+    logging entirely.
     """
+    import sys as _sys
+
+    out = _sys.stderr  # uvicorn's INFO access lines also go to stderr
     total_chars = sum(len(m.content or "") for m in messages)
     tool_count = len(tools) if tools else 0
-    logger.info(
-        "[DEV-PROMPT-DUMP — REMOVE WHEN GOING LIVE] provider=%s model=%s mode=%s "
-        "messages=%d total_chars=%d total_tokens~%d tools=%d",
-        provider,
-        model,
-        "stream" if stream else "chat",
-        len(messages),
-        total_chars,
-        total_chars // 4,
-        tool_count,
+    print(
+        f"\n[DEV-PROMPT-DUMP — REMOVE WHEN GOING LIVE] provider={provider} "
+        f"model={model} mode={'stream' if stream else 'chat'} "
+        f"messages={len(messages)} total_chars={total_chars} "
+        f"total_tokens~{total_chars // 4} tools={tool_count}",
+        file=out,
+        flush=True,
     )
     for i, m in enumerate(messages):
         content = m.content or ""
-        logger.info(
-            "[DEV-PROMPT-DUMP] [%d/%d] role=%s chars=%d\n"
-            "----- BEGIN %s MESSAGE -----\n%s\n----- END %s MESSAGE -----",
-            i + 1,
-            len(messages),
-            m.role,
-            len(content),
-            m.role.upper(),
-            content,
-            m.role.upper(),
+        print(
+            f"[DEV-PROMPT-DUMP] [{i + 1}/{len(messages)}] role={m.role} "
+            f"chars={len(content)}\n"
+            f"----- BEGIN {m.role.upper()} MESSAGE -----\n"
+            f"{content}\n"
+            f"----- END {m.role.upper()} MESSAGE -----",
+            file=out,
+            flush=True,
         )
     if tools:
         for i, t in enumerate(tools):
-            logger.info(
-                "[DEV-PROMPT-DUMP] tool [%d/%d] name=%s description=%s",
-                i + 1,
-                len(tools),
-                t.name,
-                (t.description or "")[:200],
+            desc = (t.description or "")[:200]
+            print(
+                f"[DEV-PROMPT-DUMP] tool [{i + 1}/{len(tools)}] "
+                f"name={t.name} description={desc}",
+                file=out,
+                flush=True,
             )
 
 

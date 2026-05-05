@@ -196,6 +196,14 @@ const handleUndoPromotion = async (): Promise<void> => {
   await aiStore.undoPromotion();
 };
 
+// W58 round 7 — banner "Continue as agent" affordance: keeps the current
+// run going AND short-circuits classification on subsequent sends so every
+// future message dispatches straight to the agent. The store handles the
+// session-flag flip; we just clear the banner via the store.
+const handleAcceptPromotion = (): void => {
+  aiStore.acceptPromotion();
+};
+
 // W58 — drawer-side autoPromote toggle (the AI Settings tab carries a
 // secondary entry point; the drawer is where the behavior is most
 // discoverable since it's right next to where the user is typing). The
@@ -418,10 +426,20 @@ const timelineItems = computed<TimelineItem[]>(() => {
         <p class="ai-assistant__promo-text">
           <span class="ai-assistant__promo-icon">✨</span>
           <span> Switched to Agent mode — {{ aiStore.promotionBanner.reason }}. </span>
+        </p>
+        <div class="ai-assistant__promo-actions">
+          <button
+            type="button"
+            class="ai-assistant__promo-accept"
+            title="Skip the classifier on subsequent sends; every message goes to the agent until you Clear or undo."
+            @click="handleAcceptPromotion"
+          >
+            Continue as agent
+          </button>
           <button type="button" class="ai-assistant__promo-undo" @click="handleUndoPromotion">
             Keep this as chat instead
           </button>
-        </p>
+        </div>
       </div>
       <div
         v-if="agentStore.status === 'paused_drift' && agentStore.driftDetail"
@@ -817,6 +835,30 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
 .ai-assistant__promo-icon {
   flex-shrink: 0;
+}
+
+.ai-assistant__promo-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.ai-assistant__promo-accept {
+  padding: 4px 12px;
+  border: 1px solid var(--color-info, #6366f1);
+  background-color: var(--color-info, #6366f1);
+  color: var(--color-text-inverse, #ffffff);
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ai-assistant__promo-accept:hover {
+  background-color: var(--color-info-hover, #4f46e5);
+  border-color: var(--color-info-hover, #4f46e5);
 }
 
 .ai-assistant__promo-undo {

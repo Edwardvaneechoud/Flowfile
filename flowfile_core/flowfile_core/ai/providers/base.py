@@ -42,7 +42,7 @@ class Message(BaseModel):
 class ToolSpec(BaseModel):
     """An MCP-shaped tool the model may call.
 
-    Three audiences for the prose fields:
+    Four audiences for the prose / shape fields:
 
     * ``description`` — short, JSON-Schema-shaped summary forwarded to
       the provider's tools API (kept terse — every byte counts on the
@@ -57,12 +57,20 @@ class ToolSpec(BaseModel):
       hallucinating UI elements. Empty for non-node-type tools (graph
       ops / schema ops / codegen / meta — the user can't reach these
       directly through the canvas anyway).
+    * ``agent_payload_example`` — a fully-validatable JSON payload, only
+      set for node types whose Pydantic shape diverges from what an LLM
+      would naively guess (group_by, pivot, join, fuzzy_match, select,
+      unpivot, text_to_rows). Surfaced ONLY on tool-calling surfaces
+      (agent / agent_complex). The CI test parses each example and runs
+      it through ``NodeXxx.model_validate`` so a Pydantic-shape change
+      breaks the test before any user hits the agent retry loop.
     """
 
     name: str
     description: str
     long_description: str = ""
     user_instructions: str = ""
+    agent_payload_example: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 

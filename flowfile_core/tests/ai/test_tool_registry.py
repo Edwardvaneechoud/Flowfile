@@ -604,3 +604,135 @@ def test_w56v2_palette_labels_match_node_store() -> None:
     # updating the chat repro test in test_context.py.
     assert palette_label_for("group_by") == "Group by"
     assert palette_label_for("filter") == "Filter data"
+
+
+# ---------------------------------------------------------------------------
+# W56 v2 — agent_payload_example field (Pydantic-shape drift guard)
+# ---------------------------------------------------------------------------
+
+
+def test_w56v2_agent_payload_examples_validate() -> None:
+    """W56 v2 — every agent_payload_example must round-trip through the
+    real Pydantic settings class.
+
+    Catches drift: if NodeGroupBy.groupby_input.agg_cols is renamed in
+    transform_schema.py but the example in node_docs.py isn't updated,
+    this test fails before any user hits the agent retry loop.
+    """
+    import json as _json
+
+    from flowfile_core.ai.tools.node_docs import NODE_AGENT_PAYLOAD_EXAMPLES
+    from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+
+    drift: list[tuple[str, str]] = []
+    for node_type, example_json in NODE_AGENT_PAYLOAD_EXAMPLES.items():
+        settings_cls = get_settings_class_for_node_type(node_type)
+        if settings_cls is None:
+            drift.append((node_type, f"no settings class for node_type={node_type!r}"))
+            continue
+        try:
+            data = _json.loads(example_json)
+        except _json.JSONDecodeError as exc:
+            drift.append((node_type, f"JSON decode error: {exc}"))
+            continue
+        try:
+            settings_cls.model_validate(data)
+        except Exception as exc:  # noqa: BLE001 — surface any validation error
+            drift.append((node_type, f"{settings_cls.__name__}.model_validate failed: {exc}"))
+    assert not drift, "agent_payload_example drift:\n" + "\n".join(f"  - {nt}: {err}" for nt, err in drift)
+
+
+def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
+    """W56 v2 — examples are only authored for the seven node types whose
+    Pydantic shape diverges from the natural LLM guess.
+
+    Adding examples for simple nodes (filter / sort / etc.) burns tokens
+    without improving accuracy. If a future ergonomics improvement
+    actually needs more examples, the test here is the place to widen
+    the allow-list deliberately.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_AGENT_PAYLOAD_EXAMPLES
+
+    expected = {
+        "group_by",
+        "pivot",
+        "join",
+        "fuzzy_match",
+        "select",
+        "unpivot",
+        "text_to_rows",
+    }
+    actual = set(NODE_AGENT_PAYLOAD_EXAMPLES)
+    extra = actual - expected
+    missing = expected - actual
+    assert not extra, (
+        f"agent_payload_example added for non-divergent node types: {extra}. "
+        "Widen the allow-list here deliberately if this is intentional."
+    )
+    assert not missing, f"agent_payload_example missing for divergent node types: {missing}"
+
+
+def test_w56v2_agent_payload_examples_surface_on_agent_only() -> None:
+    """W56 v2 — examples appear ONLY on agent / agent_complex catalog.
+
+    Read-only / advisory surfaces (explain / lineage / docgen) get
+    user_instructions, not agent payloads. cmd_k / ghost_node get the
+    agent-shaped catalog but their preset filters out group_by / pivot /
+    fuzzy_match / etc. (they only carry a narrow set of common transforms).
+    """
+    from flowfile_core.ai.context.builder import assemble_system_prompt
+
+    agent_prompt = assemble_system_prompt("agent")
+    explain_prompt = assemble_system_prompt("explain")
+
+    # The example payload's distinctive marker — the customer-count line
+    # from group_by — must appear in agent and NOT in explain.
+    example_marker = '"new_name": "customer_count"'
+    assert example_marker in agent_prompt, "agent surface missing group_by example payload"
+    assert example_marker not in explain_prompt, (
+        "explain surface should not see agent payload examples — those are "
+        "tool-call shape only, irrelevant for chat/advisory answers."
+    )
+
+    # Conversely, the user-instructions worked-example phrase appears on
+    # explain but not (necessarily) on agent — they're separate slices
+    # over the same source-of-truth.
+    user_marker = "customers per city"
+    assert user_marker in explain_prompt.lower(), "explain surface missing user-instructions worked example"
+
+
+# ---------------------------------------------------------------------------
+# W56 v2 — frontend sidebar label cross-check
+# ---------------------------------------------------------------------------
+
+
+def test_w56v2_sidebar_labels_match_frontend() -> None:
+    """W56 v2 — every NODE_GROUP_TO_SIDEBAR_LABEL value appears verbatim
+    in the frontend's NodeList.vue.
+
+    Brittle by design: a frontend rename must propagate to the catalog,
+    or this test fails. Catches drift like "Aggregations" → "Group / Pivot"
+    that would break chat answers citing the old label.
+    """
+    from pathlib import Path
+
+    from flowfile_core.ai.tools.node_docs import NODE_GROUP_TO_SIDEBAR_LABEL
+
+    # Walk up from this test file to the repo root, then to the frontend.
+    repo_root = Path(__file__).resolve().parents[3]
+    nodelist_path = (
+        repo_root / "flowfile_frontend" / "src" / "renderer" / "app" / "views" / "DesignerView" / "NodeList.vue"
+    )
+    if not nodelist_path.is_file():
+        pytest.skip(f"frontend NodeList.vue not found at {nodelist_path}")
+    nodelist_text = nodelist_path.read_text(encoding="utf-8")
+
+    drift: list[tuple[str, str]] = []
+    for node_group, sidebar_label in NODE_GROUP_TO_SIDEBAR_LABEL.items():
+        if sidebar_label not in nodelist_text:
+            drift.append((node_group, sidebar_label))
+    assert not drift, (
+        "NODE_GROUP_TO_SIDEBAR_LABEL drifted from frontend NodeList.vue:\n"
+        + "\n".join(f"  - node_group={ng!r} → label={label!r} not found" for ng, label in drift)
+        + f"\n(checked against {nodelist_path})"
+    )

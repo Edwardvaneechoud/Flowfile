@@ -26,6 +26,12 @@ export interface PersistedAiState {
    * ``false``. Optional so callers from the W27 era don't need to pass
    * an explicit ``null``. */
   autoPromote?: boolean | null;
+  /** W58 round 7 — session-scoped "Continue as agent" acceptance flag,
+   * set when the user clicks the promotion banner's primary button to
+   * lock subsequent sends into agent mode without re-classification.
+   * Optional / nullable for the same backward-compat reason as
+   * ``autoPromote`` — pre-W58-round-7 entries don't carry the field. */
+  agentModeAccepted?: boolean | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
@@ -33,6 +39,7 @@ const EMPTY_STATE: PersistedAiState = {
   selectedProvider: null,
   selectedModel: null,
   autoPromote: null,
+  agentModeAccepted: null,
 };
 
 interface StorageLike {
@@ -119,6 +126,8 @@ export const loadPersistedAiState = (storage?: StorageLike | null): PersistedAiS
       typeof payload.selectedProvider === "string" ? payload.selectedProvider : null,
     selectedModel: typeof payload.selectedModel === "string" ? payload.selectedModel : null,
     autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
+    agentModeAccepted:
+      typeof payload.agentModeAccepted === "boolean" ? payload.agentModeAccepted : null,
   };
 };
 
@@ -133,6 +142,7 @@ export const persistAiState = (state: PersistedAiState, storage?: StorageLike | 
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
     autoPromote: state.autoPromote ?? null,
+    agentModeAccepted: state.agentModeAccepted ?? null,
   };
 
   let payload: string;

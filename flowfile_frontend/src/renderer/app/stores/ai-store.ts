@@ -93,7 +93,15 @@ export const useAiStore = defineStore("ai", () => {
   // implicitly via the promotion-banner "undo" affordance. ``promotionBanner``
   // is purely transient — present only while a just-promoted agent run is in
   // flight (or until the user dismisses it via Stop / Clear).
+  //
+  // Round 7: ``agentModeAccepted`` is the post-promotion accept flag. When
+  // the user clicks the banner's "Continue as agent" button, this flips to
+  // ``true`` and short-circuits classification on subsequent sends — every
+  // future message goes straight to the agent. Persisted via sessionStorage
+  // so a tab refresh keeps the user's choice. Cleared by ``undoPromotion``
+  // (which means "back to chat") and ``clearMessages``.
   const autoPromote = ref<boolean>(true);
+  const agentModeAccepted = ref<boolean>(false);
   const promotionBanner = ref<{ reason: string; message: string } | null>(null);
 
   // ----- W27 hydrate from sessionStorage -----
@@ -117,6 +125,9 @@ export const useAiStore = defineStore("ai", () => {
   }
   if (_hydrated.autoPromote !== null && _hydrated.autoPromote !== undefined) {
     autoPromote.value = _hydrated.autoPromote;
+  }
+  if (_hydrated.agentModeAccepted !== null && _hydrated.agentModeAccepted !== undefined) {
+    agentModeAccepted.value = _hydrated.agentModeAccepted;
   }
 
   // Throttled save. SessionStorage writes are sync + main-thread; coalescing
@@ -143,6 +154,7 @@ export const useAiStore = defineStore("ai", () => {
           selectedProvider: selectedProvider.value,
           selectedModel: selectedModel.value,
           autoPromote: autoPromote.value,
+          agentModeAccepted: agentModeAccepted.value,
         });
       },
       isStreaming ? PERSIST_THROTTLE_MS : 0,
@@ -160,6 +172,7 @@ export const useAiStore = defineStore("ai", () => {
   watch(selectedModel, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
   watch(autoPromote, queuePersist, { flush: "sync" });
+  watch(agentModeAccepted, queuePersist, { flush: "sync" });
 
   // ----- derived -----
   const isAiOpen = computed<boolean>({
@@ -195,6 +208,9 @@ export const useAiStore = defineStore("ai", () => {
     abortStream();
     messages.value = [];
     promotionBanner.value = null;
+    // W58 round 7 — clearing the chat resets the session-scoped accept;
+    // a fresh chat shouldn't inherit the prior session's mode commitment.
+    agentModeAccepted.value = false;
   };
 
   const loadProviders = async (): Promise<void> => {
@@ -454,8 +470,14 @@ export const useAiStore = defineStore("ai", () => {
     // chat trail while the classifier round-trip is in flight (~800 ms
     // p50 / ~1500 ms p95). Without optimistic push the user sees their
     // input vanish during the routing await — feels like a UI glitch.
+    //
+    // Round 7: the ``agentModeAccepted`` short-circuit takes precedence
+    // over ``autoPromote``. The user clicked "Continue as agent" on a
+    // prior promotion banner, so every subsequent send in this session
+    // skips classification and dispatches as agent directly.
     const flowStore = useFlowStore();
-    const wantsClassification = autoPromote.value && flowStore.flowId !== null;
+    const wantsClassification =
+      !agentModeAccepted.value && autoPromote.value && flowStore.flowId !== null;
     // ``ChatRole`` is already ``"user" | "assistant"`` (no "system" — those
     // come from the server, never the chat trail), so the cast to
     // ``RouteHistoryEntry`` is shape-compatible without a runtime guard.
@@ -473,6 +495,15 @@ export const useAiStore = defineStore("ai", () => {
       content: text,
     };
     messages.value.push(userMessage);
+
+    // W58 round 7 — once accepted, every send goes straight to the agent
+    // without re-classifying. We still gate on a flow being loaded; otherwise
+    // dispatching the agent would surface a confusing "Open a flow first"
+    // error from ``_dispatchPromotedAgent`` for what looks like a normal chat.
+    if (agentModeAccepted.value && flowStore.flowId !== null) {
+      await _dispatchPromotedAgent(text, "session set to continue as agent");
+      return;
+    }
 
     if (wantsClassification) {
       // The classifier is fail-quiet (any timeout / parse error / provider
@@ -516,10 +547,15 @@ export const useAiStore = defineStore("ai", () => {
     // re-dispatches the saved message as a regular chat. The user message
     // is already in ``messages`` from the original promoted send — we
     // skip pushing it again to keep the chat trail readable.
+    //
+    // Round 7: also reset ``agentModeAccepted`` since "back to chat" and
+    // "continue as agent" are mutually exclusive — leaving the accept on
+    // would force the next send back to agent and erase the undo.
     const banner = promotionBanner.value;
     if (banner === null) return;
     promotionBanner.value = null;
     autoPromote.value = false;
+    agentModeAccepted.value = false;
 
     try {
       const agentStore = useAiAgentStore();
@@ -529,6 +565,18 @@ export const useAiStore = defineStore("ai", () => {
     }
 
     await _openChatStream();
+  };
+
+  const acceptPromotion = (): void => {
+    // W58 round 7 — banner "Continue as agent" affordance. The user has
+    // confirmed they want subsequent sends to go directly to the agent.
+    // Flip the session-scoped flag so ``sendMessage`` skips
+    // ``routeMessage`` going forward; clear the banner since its job is
+    // done. We do NOT abort the in-flight agent run — accepting means
+    // *"keep going"*, not *"start over"*.
+    if (promotionBanner.value === null) return;
+    agentModeAccepted.value = true;
+    promotionBanner.value = null;
   };
 
   const explainRunFailure = async (
@@ -950,6 +998,7 @@ export const useAiStore = defineStore("ai", () => {
     streamingState,
     streamError,
     autoPromote,
+    agentModeAccepted,
     promotionBanner,
     // computed
     isAiOpen,
@@ -973,6 +1022,7 @@ export const useAiStore = defineStore("ai", () => {
     setAutoPromote,
     dismissPromotionBanner,
     undoPromotion,
+    acceptPromotion,
   };
 });
 
