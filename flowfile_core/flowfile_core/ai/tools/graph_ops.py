@@ -83,26 +83,10 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             required=["flow_id", "from_node_id", "to_node_id"],
         ),
     ),
-    ToolSpec(
-        name="flowfile.graph.update_node_settings",
-        description=(
-            "Patch an existing node's settings. Pass the full settings object — "
-            "the executor validates against the matching Pydantic class for the "
-            "node's type and rejects unknown columns against the live upstream schema."
-        ),
-        parameters=_schema(
-            properties={
-                "flow_id": {"type": "integer"},
-                "node_id": {"type": "integer"},
-                "settings": {
-                    "type": "object",
-                    "description": "Full settings dict matching the node-type's Pydantic class.",
-                    "additionalProperties": True,
-                },
-            },
-            required=["flow_id", "node_id", "settings"],
-        ),
-    ),
+    # ``flowfile.graph.update_node_settings`` removed from the catalog in W46
+    # (2026-05-05). The executor (W31) refused it with "not implemented", so
+    # the LLM kept burning retries on a stub. Implementing it properly needs
+    # ``GraphDiff.modifications`` (deferred from W41) — tracked under W47.
     ToolSpec(
         name="flowfile.graph.delete_node",
         description="Remove a node from the flow graph. Mirrors POST /editor/delete_node/.",
@@ -136,99 +120,15 @@ GRAPH_OPS_TOOLS: Final[list[ToolSpec]] = [
             required=["flow_id", "from_node_id", "to_node_id"],
         ),
     ),
-    ToolSpec(
-        name="flowfile.graph.run_node",
-        description=(
-            "Execute a single node and its required upstream chain. " "Mirrors POST /node/trigger_fetch_data."
-        ),
-        parameters=_schema(
-            properties={
-                "flow_id": {"type": "integer"},
-                "node_id": {"type": "integer"},
-            },
-            required=["flow_id", "node_id"],
-        ),
-    ),
-    ToolSpec(
-        name="flowfile.graph.propose_subgraph",
-        description=(
-            "Stage a multi-node GraphDiff for atomic accept/reject by the user. "
-            "Used by Level 3 (planner agent) — never auto-applies. The executor "
-            "validates the entire diff before staging; failures are reported per-tool-call."
-        ),
-        parameters=_schema(
-            properties={
-                "flow_id": {"type": "integer"},
-                "additions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "node_id": {"type": "integer"},
-                            "node_type": {"type": "string"},
-                            "settings": {"type": "object", "additionalProperties": True},
-                            "pos_x": {"type": "number", "default": 0},
-                            "pos_y": {"type": "number", "default": 0},
-                        },
-                        "required": ["node_id", "node_type", "settings"],
-                    },
-                },
-                "modifications": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "node_id": {"type": "integer"},
-                            "settings": {"type": "object", "additionalProperties": True},
-                        },
-                        "required": ["node_id", "settings"],
-                    },
-                },
-                "deletions": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "Node ids to delete.",
-                },
-                "connections_added": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "from_node_id": {"type": "integer"},
-                            "to_node_id": {"type": "integer"},
-                            "input_class": {
-                                "type": "string",
-                                "enum": ["input-0", "input-1", "input-2"],
-                                "default": "input-0",
-                            },
-                            "output_class": {
-                                "type": "string",
-                                "enum": ["output-0", "output-1"],
-                                "default": "output-0",
-                            },
-                        },
-                        "required": ["from_node_id", "to_node_id"],
-                    },
-                },
-                "connections_removed": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "from_node_id": {"type": "integer"},
-                            "to_node_id": {"type": "integer"},
-                        },
-                        "required": ["from_node_id", "to_node_id"],
-                    },
-                },
-                "rationale": {
-                    "type": "string",
-                    "description": "Short user-facing explanation of why this diff achieves the request.",
-                },
-            },
-            required=["flow_id", "rationale"],
-        ),
-    ),
+    # ``flowfile.graph.run_node`` removed from the catalog in W46 (2026-05-05).
+    # Triggering full node execution autonomously from an LLM is unsafe — could
+    # materialise large datasets, run user code, hit external systems. Stays
+    # user-driven; not re-added.
+    #
+    # ``flowfile.graph.propose_subgraph`` removed from the catalog in W46
+    # (2026-05-05). Redundant with W40's planner loop — multi-node staging
+    # happens naturally via repeated add_/connect_ calls bundled into a
+    # ``GraphDiff`` at completion via ``bundle_staged_results``. Not re-added.
 ]
 
 

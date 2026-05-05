@@ -42,6 +42,14 @@ vi.mock("../services/aiDiffClient", () => ({
   rejectDiff: mockSymbols.rejectDiff,
 }));
 
+// `flow-store` transitively reaches `auth.service` which touches `window`
+// at module load. Mock it out — the diff store only calls `requestReload()`
+// after a successful accept (W46/Bug-1), and the test asserts that call.
+const mockRequestReload = vi.fn();
+vi.mock("./flow-store", () => ({
+  useFlowStore: () => ({ requestReload: mockRequestReload }),
+}));
+
 import { useAiDiffStore } from "./ai-diff-store";
 
 const {
@@ -124,6 +132,7 @@ beforeEach(() => {
   mockStage.mockReset();
   mockAccept.mockReset();
   mockReject.mockReset();
+  mockRequestReload.mockReset();
 });
 
 afterEach(() => {
@@ -189,6 +198,37 @@ describe("ai-diff-store — accept", () => {
     expect(store.lastApplyResult).not.toBeNull();
     expect(store.lastApplyResult!.applied_node_ids).toEqual([7]);
     expect(store.error).toBeNull();
+  });
+
+  it("calls flowStore.requestReload() on accept-success so the canvas refreshes", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockResolvedValue(acceptOk("diff-1"));
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    // Bug fix: before this wiring the backend mutated the FlowGraph but
+    // the VueFlow canvas didn't re-fetch — user accepted a diff and saw
+    // no visible change.
+    expect(mockRequestReload).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call requestReload() on accept-409 drift (canvas is unchanged)", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-1"));
+    mockAccept.mockRejectedValue(
+      new AiDiffHttpError(409, {
+        error: "diff_drift",
+        missing_node_ids: [3],
+        diff_id: "diff-1",
+      }),
+    );
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.accept();
+
+    expect(mockRequestReload).not.toHaveBeenCalled();
   });
 
   it("keeps currentDiff staged when the backend reports drift (409)", async () => {

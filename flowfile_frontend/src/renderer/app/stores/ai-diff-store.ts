@@ -32,6 +32,7 @@ import {
   type StageDiffRequest,
   synthesiseDiffFromStageRequest,
 } from "../features/ai/aiDiffTypes";
+import { useFlowStore } from "./flow-store";
 
 const isAbortError = (err: unknown): boolean =>
   err instanceof DOMException && err.name === "AbortError";
@@ -138,6 +139,18 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
       const response = await acceptDiff(diff.diff_id, { flow_id: diff.flow_id }, controller.signal);
       lastApplyResult.value = response;
       currentDiff.value = null;
+      // The backend mutated the live FlowGraph (W41 `apply_diff`). Signal
+      // the canvas to re-fetch so the new nodes/connections render —
+      // without this the user accepts a diff and sees no visible change
+      // until they manually reload the page.
+      try {
+        useFlowStore().requestReload();
+      } catch (reloadErr) {
+        // Pinia not registered (e.g. tests with no flow store mock) —
+        // swallowing keeps the accept path successful even when the
+        // canvas-reload signal can't fire.
+        console.warn("ai-diff-store: requestReload failed", reloadErr);
+      }
     } catch (err) {
       _handleError(err);
       // On 409 drift the diff stays staged. On any other error we also

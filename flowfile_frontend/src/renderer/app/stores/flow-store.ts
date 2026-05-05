@@ -34,6 +34,16 @@ export const useFlowStore = defineStore("flow", {
       historyState: { ...defaultHistoryState } as HistoryState,
       // Artifact visualization data
       artifactData: { ...defaultArtifactData } as FlowArtifactData,
+      // Monotonic counter bumped by `requestReload()`. Components rendering
+      // the canvas (e.g. `Canvas.vue`'s `loadFlow`) watch this and re-fetch
+      // the graph on bump. Used when the backend mutates the flow without
+      // going through the in-canvas mutation paths — for instance when
+      // `useAiDiffStore.accept()` applies a server-staged diff (W46/W41).
+      // `graphVersion` is a different signal: it bumps on EVERY mutation
+      // (incl. canvas-local ones) and drives dirty-state UI; watching it
+      // for re-fetch would loop. `pendingReloadCounter` is "external
+      // mutation happened; please re-fetch" only.
+      pendingReloadCounter: 0,
     };
   },
 
@@ -99,6 +109,14 @@ export const useFlowStore = defineStore("flow", {
 
     getNodeArtifactSummary(nodeId: number): NodeArtifactSummary | null {
       return this.artifactData.nodes[String(nodeId)] ?? null;
+    },
+
+    // Signal "the backend mutated the flow; please re-fetch and re-render".
+    // Canvas.vue watches `pendingReloadCounter` and calls its local
+    // `loadFlow()` on bump. Safe to call multiple times — the watcher's
+    // debouncing (via `loadToken`) cancels stale runs.
+    requestReload() {
+      this.pendingReloadCounter += 1;
     },
   },
 });

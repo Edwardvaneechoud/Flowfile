@@ -139,6 +139,55 @@ def linear_flow() -> FlowGraph:
     return flow
 
 
+@pytest.fixture
+def cold_static_flow() -> FlowGraph:
+    """orders (1) → filter_eu (2). predicted_schema NOT pre-warmed.
+
+    Used by the W48 tier-1 prospective-schema tests. ``filter`` is
+    classified ``static`` (predictable via the mirror-graph path), so
+    the W48 helper should resolve its schema via the production
+    schema-prediction path on the next ``render_prompt_context`` call.
+    """
+
+    flow = _basic_flow()
+    _add_orders_input(flow)
+    _add_filter(flow)
+    # Be explicit: ensure the filter's cache is empty so the W48 helper
+    # is the only thing that can populate it during the test.
+    flow.get_node(2).node_schema.predicted_schema = None
+    return flow
+
+
+@pytest.fixture
+def cold_dynamic_flow() -> FlowGraph:
+    """orders (1) → polars_passthrough (2). polars_code is dynamic.
+
+    The W48 helper short-circuits via ``is_predictable_via_mirror`` for
+    dynamic node types — chat / lineage / Assist must not trigger
+    kernel dry-run (D003 + D012). The snapshot stays
+    ``schema_status="unknown"``.
+    """
+
+    flow = _basic_flow()
+    _add_orders_input(flow)
+    promise = input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="polars_code")
+    flow.add_node_promise(promise)
+    flow.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=flow.flow_id,
+            node_id=2,
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df",
+            ),
+            depending_on_ids=[1],
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.get_node(2).name = "polars_passthrough"
+    flow.get_node(2).node_schema.predicted_schema = None
+    return flow
+
+
 # --------------------------------------------------------------------------- #
 # 1. Subgraph extraction                                                       #
 # --------------------------------------------------------------------------- #
@@ -197,7 +246,10 @@ def test_snapshot_node_unknown_schema(linear_flow: FlowGraph) -> None:
     node = linear_flow.get_node(2)
     # Wipe predicted_schema to simulate a cold flow upstream.
     node.node_schema.predicted_schema = None
-    snap = snapshot_node(node)
+    # W48: pass resolve_schemas=False to keep this test on the legacy
+    # cache-only path. Default-on would auto-resolve this static-schema
+    # filter via FlowNode.get_predicted_schema(force=True).
+    snap = snapshot_node(node, resolve_schemas=False)
     assert snap.schema_status == "unknown"
     assert snap.schema_columns is None
 
@@ -577,7 +629,10 @@ def test_render_prompt_context_samples_off_default(linear_flow: FlowGraph) -> No
 
 def test_render_prompt_context_unknown_schema_propagates(linear_flow: FlowGraph) -> None:
     linear_flow.get_node(1).node_schema.predicted_schema = None
-    ctx = render_prompt_context(linear_flow, [1], surface="explain")
+    # W48: pass resolve_schemas=False to keep this test on the legacy
+    # cache-only path. Default-on would auto-resolve this manual_input
+    # source node and the assertion would flip to "known".
+    ctx = render_prompt_context(linear_flow, [1], surface="explain", resolve_schemas=False)
     [snap] = ctx.snapshot.nodes
     assert snap.schema_status == "unknown"
     assert "schema: unknown" in ctx.user
@@ -588,6 +643,138 @@ def test_render_user_message_handles_empty_subgraph() -> None:
     text = render_user_message(snapshot)
     assert "Subgraph" in text
     assert "(empty)" in text
+
+
+# --------------------------------------------------------------------------- #
+# 6b. W48 — prospective schema resolution in W22                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_render_prompt_context_resolves_static_upstream_via_callback(
+    cold_static_flow: FlowGraph,
+) -> None:
+    """W48: a cold static-schema upstream (filter) gets force-resolved
+    when render_prompt_context runs with the default resolve_schemas=True."""
+
+    filter_node = cold_static_flow.get_node(2)
+    assert filter_node.node_schema.predicted_schema is None  # fixture invariant
+
+    ctx = render_prompt_context(cold_static_flow, [2], surface="explain")
+
+    [filter_snap] = [n for n in ctx.snapshot.nodes if n.node_id == 2]
+    assert filter_snap.schema_status == "known"
+    assert filter_snap.schema_columns is not None
+    column_names = [c.name for c in filter_snap.schema_columns]
+    # Filter passes the upstream schema through; expect the manual_input columns.
+    assert "order_id" in column_names
+    assert "region" in column_names
+    # In-place mutation: the filter's predicted_schema cache is now populated
+    # so same-session repeat reads hit tier 0 (mirrors predictor.py:255).
+    assert filter_node.node_schema.predicted_schema, (
+        "expected the W48 helper to populate the filter's predicted_schema cache in place"
+    )
+    # The rendered user message names the actual columns instead of the
+    # "schema: unknown" sentinel.
+    assert "schema: unknown" not in ctx.user
+    assert "order_id" in ctx.user
+
+
+def test_render_prompt_context_leaves_dynamic_upstream_unknown(
+    cold_dynamic_flow: FlowGraph,
+) -> None:
+    """W48: dynamic node types (polars_code) stay schema_status='unknown'
+    from the chat surface — kernel dry-run is W31-only per D003 + D012."""
+
+    polars_node = cold_dynamic_flow.get_node(2)
+    assert polars_node.node_type == "polars_code"
+
+    ctx = render_prompt_context(cold_dynamic_flow, [2], surface="explain")
+
+    [polars_snap] = [n for n in ctx.snapshot.nodes if n.node_id == 2]
+    assert polars_snap.schema_status == "unknown"
+    assert polars_snap.schema_columns is None
+    assert "schema: unknown" in ctx.user
+    # The chat-surface helper must not have populated the cache for
+    # dynamic types — that path lives in W31's executor.
+    assert polars_node.node_schema.predicted_schema in (None, [])
+
+
+def test_render_prompt_context_in_place_mutation_persists_for_session(
+    cold_static_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W48: the helper fires once per cold node; subsequent
+    render_prompt_context calls hit the populated cache (tier 0)."""
+
+    from flowfile_core.ai.context import builder
+
+    call_count = {"n": 0}
+    real_helper = builder._resolve_predicted_schema_if_predictable
+
+    def counting_helper(node: Any) -> Any:
+        call_count["n"] += 1
+        return real_helper(node)
+
+    monkeypatch.setattr(builder, "_resolve_predicted_schema_if_predictable", counting_helper)
+
+    render_prompt_context(cold_static_flow, [2], surface="explain")
+    first_count = call_count["n"]
+    assert first_count >= 1, "expected the helper to fire at least once on a cold flow"
+
+    render_prompt_context(cold_static_flow, [2], surface="explain")
+    assert call_count["n"] == first_count, (
+        f"expected zero further helper invocations after the cache is populated, "
+        f"got {call_count['n'] - first_count} extra"
+    )
+
+
+def test_render_prompt_context_resolve_schemas_false_preserves_legacy_behaviour(
+    cold_static_flow: FlowGraph,
+) -> None:
+    """W48: opt-out matches today's cache-only semantics — no callbacks
+    fired, no in-place mutation, status stays 'unknown' for un-warmed nodes."""
+
+    filter_node = cold_static_flow.get_node(2)
+    assert filter_node.node_schema.predicted_schema is None  # fixture invariant
+
+    ctx = render_prompt_context(
+        cold_static_flow, [2], surface="explain", resolve_schemas=False,
+    )
+
+    [filter_snap] = [n for n in ctx.snapshot.nodes if n.node_id == 2]
+    assert filter_snap.schema_status == "unknown"
+    assert filter_snap.schema_columns is None
+    assert "schema: unknown" in ctx.user
+    # No in-place mutation when opted out.
+    assert filter_node.node_schema.predicted_schema is None
+
+
+def test_render_prompt_context_d012_clean(
+    cold_static_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W48: the chat / lineage / Assist context build never invokes
+    LazyFrame.collect — D012's worker-only-materialization invariant.
+
+    Patches polars.LazyFrame.collect to raise; render_prompt_context must
+    still complete on a cold static flow.
+    """
+
+    import polars as pl
+
+    def _refuse_collect(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "D012 violation — render_prompt_context invoked LazyFrame.collect"
+        )
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", _refuse_collect)
+
+    ctx = render_prompt_context(cold_static_flow, [2], surface="explain")
+    assert isinstance(ctx, PromptContext)
+    [filter_snap] = [n for n in ctx.snapshot.nodes if n.node_id == 2]
+    # Sanity: the resolution still succeeded — the test is meaningful only
+    # when the static node's schema lands as "known" without .collect().
+    assert filter_snap.schema_status == "known"
 
 
 # --------------------------------------------------------------------------- #

@@ -53,11 +53,17 @@ const sanitizeMessage = (raw: unknown): ChatMessage | null => {
   if (typeof obj.id !== "number") return null;
   if (!isChatRole(obj.role)) return null;
   if (typeof obj.content !== "string") return null;
+  // ``createdAt`` was added after the persistence format shipped — older
+  // entries in sessionStorage may not have it. Fall back to ``id`` (small
+  // counter, but at least monotonic) so the timeline still has *some*
+  // ordering signal. New messages always carry ``createdAt`` (Date.now).
+  const createdAt = typeof obj.createdAt === "number" ? obj.createdAt : obj.id;
   // A pending message means the stream was open at persist time. On
   // hydration the stream is gone, so resurrect it as a non-pending message
   // (with the partial content) rather than a stuck spinner.
   return {
     id: obj.id,
+    createdAt,
     role: obj.role,
     content: obj.content,
     pending: false,

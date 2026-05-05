@@ -678,6 +678,113 @@ def test_chat_stream_defaults_to_at_flow_when_no_pin_or_mentions(
     assert captured["kwargs"]["mentions"] == "@flow"
 
 
+# ---------- 11b. W48 — prospective schema reaches the chat surface ----------
+
+_W48_FLOW_ID = 9948
+
+
+@pytest.fixture
+def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
+    """Same shape as the W28 fixture but with the filter's
+    ``predicted_schema`` cleared post-construction so it lands cold —
+    the exact scenario W48 fixes. ``orders`` (manual_input) keeps its
+    cached schema; the filter must be auto-resolved by the W48 helper
+    when ``render_prompt_context`` walks it.
+    """
+    flow = FlowGraph(
+        flow_settings=schemas.FlowSettings(
+            flow_id=_W48_FLOW_ID,
+            execution_mode="Performance",
+            execution_location="local",
+            path="/tmp/test_w48_chat",
+        ),
+        name="w48_test",
+    )
+
+    raw = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="order_id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="region", data_type="String"),
+            ],
+            data=[[1, 2], ["EU", "US"]],
+        ),
+    )
+    flow.add_manual_input(raw)
+    flow.get_node(1).name = "orders"
+
+    filter_node = input_schema.NodeFilter(
+        flow_id=flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        filter_input=transform_schema.FilterInput(
+            filter_type="advanced",
+            advanced_filter="[region]=='EU'",
+        ),
+    )
+    flow.add_filter(filter_node)
+    add_connection(
+        flow,
+        node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2),
+    )
+    flow.get_node(2).name = "filter_eu"
+
+    # Cold filter: the cache is empty, but the schema_callback / fallback
+    # path is intact. W48 should resolve it on the next render_prompt_context.
+    flow.get_node(2).node_schema.predicted_schema = None
+
+    flow_file_handler._flows[flow.flow_id] = flow
+    try:
+        yield flow
+    finally:
+        flow_file_handler._flows.pop(flow.flow_id, None)
+
+
+def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
+    authed_client: TestClient,
+    patch_get_configured_provider: FakeProvider,
+    registered_cold_flow_for_w48: FlowGraph,
+) -> None:
+    """W48 — POST with ``flow_id`` set on a flow whose static upstream
+    nodes are un-run (``predicted_schema=None``) → the W22 user block
+    surfaces real column names instead of the ``schema: unknown``
+    sentinel. Mirrors the live transcript bug: user asked about column
+    averages on a cold flow and the assistant refused, citing unknown
+    schemas.
+    """
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "flow_id": _W48_FLOW_ID,
+            "messages": [{"role": "user", "content": "what columns does the filter expose?"}],
+        },
+    )
+    assert response.status_code == 200
+
+    captured = patch_get_configured_provider.last_call_kwargs["messages"]
+    assert len(captured) == 3  # system + W22 user + question
+    _system_msg, ctx_user_msg, _question_msg = captured
+
+    # The filter must report a known schema — the bug-of-record was the
+    # assistant seeing "schema: unknown" for the filter and refusing.
+    assert "filter_eu" in ctx_user_msg.content
+    # Real columns surface in the rendered user block.
+    assert "order_id" in ctx_user_msg.content
+    assert "region" in ctx_user_msg.content
+    # The "filter_eu" node's section must NOT carry the unknown sentinel.
+    # (We slice by the node header; the orders node above it is
+    # always-known so a global "schema: unknown" check would be too loose.)
+    filter_block_start = ctx_user_msg.content.find("### filter_eu")
+    assert filter_block_start != -1, "expected ### filter_eu header in W22 user block"
+    filter_block = ctx_user_msg.content[filter_block_start:]
+    assert "schema: unknown" not in filter_block, (
+        f"filter block still reports schema: unknown — W48 fix not applied. Block:\n{filter_block[:500]}"
+    )
+
+
 # ---------- 9. lazy litellm import ----------
 
 

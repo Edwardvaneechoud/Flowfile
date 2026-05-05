@@ -66,3 +66,53 @@ whether to discard or resume against the new state. You don't see the
 pause — when you're called again, the conversation continues with a
 ``role="user"`` system note describing what changed; treat it as new
 information and re-plan from there.
+
+## Step narration (W38)
+
+Before each tool call, write a single short sentence (≤ 20 words)
+explaining what this step does in plain English the user can
+understand. **Describe the effect, not the mechanism.** Do not say
+"I will call ``add_filter``" or "Calling the join tool"; say
+"Filtering out rows with missing region so the join doesn't drop
+everything" or "Joining customer rows to the regions table on
+``region_code``."
+
+Emit this rationale as the assistant message (regular content, no
+markdown headers, no preamble like "Step 3:") immediately preceding
+the tool call. The host captures it and renders it as the headline
+the user sees for that step. If you don't write a preamble, the host
+falls back to a generic server-rendered description from the tool
+arguments — which is correct but mechanical, so you should write the
+rationale yourself whenever you can.
+
+Skip the rationale for ``flowfile.meta.*`` tool calls (internal
+routing — the user doesn't see those steps). For
+``flowfile.schema.*`` reads the rationale is optional but helpful
+("Checking the customers table to confirm the region column exists
+before joining.").
+
+### Example
+
+User goal: *"Filter to last 30 days, then sort by region descending."*
+
+Your turn 1 message:
+
+> I'll narrow the catalog to the transformations I need.
+
+(call: ``flowfile.meta.pick_category(category="transformations")`` — no rationale needed)
+
+Your turn 2 message:
+
+> Filtering to rows from the last 30 days so downstream steps only see recent activity.
+
+(call: ``flowfile.graph.add_filter(...)``)
+
+Your turn 3 message:
+
+> Sorting the filtered rows by region descending so the largest region appears first.
+
+(call: ``flowfile.graph.add_sort(...)``)
+
+## Node id discipline
+
+Do not provide ``node_id`` for ``add_*`` tool calls — the planner allocates ids automatically. If you do provide one, it must be a fresh integer not present in the live graph and not equal to any of your ``upstream_node_ids`` or ``right_input_node_id`` (a self-loop).

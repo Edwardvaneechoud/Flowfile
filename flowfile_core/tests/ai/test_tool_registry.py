@@ -102,6 +102,38 @@ def test_full_catalog_returns_tool_specs() -> None:
     assert all(isinstance(tool, ToolSpec) for tool in catalog)
 
 
+def test_w46_unimplemented_stubs_absent_from_catalog() -> None:
+    """W46 — the three W31 stub tools must not be in the catalog.
+
+    ``update_node_settings`` / ``run_node`` / ``propose_subgraph`` were
+    advertised in the catalog but the executor refused them. The LLM kept
+    burning retries on stubs. W46 dropped the entries; the executor's
+    rejection branch stays as defence-in-depth.
+    """
+    catalog = build_tool_catalog()
+    names = {tool.name for tool in catalog}
+    assert "flowfile.graph.update_node_settings" not in names
+    assert "flowfile.graph.run_node" not in names
+    assert "flowfile.graph.propose_subgraph" not in names
+
+    # And not in any preset / category lookup either (defence vs
+    # `_UNIVERSAL_OP_NAMES` derivation drift).
+    from flowfile_core.ai.tools.registry import (
+        CATEGORY_PRESETS,
+        SURFACE_PRESETS,
+    )
+
+    forbidden = {
+        "flowfile.graph.update_node_settings",
+        "flowfile.graph.run_node",
+        "flowfile.graph.propose_subgraph",
+    }
+    for surface, preset in SURFACE_PRESETS.items():
+        assert not (forbidden & preset), f"surface {surface!r} contains a removed stub: {forbidden & preset}"
+    for category, preset in CATEGORY_PRESETS.items():
+        assert not (forbidden & preset), f"category {category!r} contains a removed stub: {forbidden & preset}"
+
+
 # ---------------------------------------------------------------------------
 # Naming convention (D004)
 # ---------------------------------------------------------------------------

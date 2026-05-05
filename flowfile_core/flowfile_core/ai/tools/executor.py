@@ -115,6 +115,8 @@ def execute_tool_call(
     mode: ExecutionMode = "apply",
     flow=None,
     dry_run_cache: DryRunCache | None = None,
+    llm_provided_node_id: int | None = None,
+    audit_meta: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     """Validate, predict, and dispatch a single LLM tool call.
 
@@ -125,6 +127,15 @@ def execute_tool_call(
     ``dry_run_cache`` is the per-session :class:`DryRunCache`. If ``None``, a
     fresh cache is created (no cross-call hit). Long-running planner sessions
     should reuse one cache so identical proposals don't re-pay the kernel cost.
+
+    ``llm_provided_node_id`` and ``audit_meta`` are W54 surfaces. The planner
+    sets ``llm_provided_node_id`` when the LLM emitted ``node_id`` itself
+    (instead of letting the planner allocate); the executor then validates
+    the id is fresh + non-self-looping. ``audit_meta`` rides on every
+    ``add_*`` audit row under ``tool_args["__planner_meta__"]`` so future
+    self-loops are diagnosable from the audit row alone (the existing
+    ``AuditEvent.extra`` field is dropped before persistence — see
+    plan §6).
     """
     redacted_args = safety.redact_secrets(tool_args) if tool_args else {}
 
@@ -170,6 +181,8 @@ def execute_tool_call(
             user_id=user_id,
             mode=mode,
             dry_run_cache=dry_run_cache,
+            llm_provided_node_id=llm_provided_node_id,
+            audit_meta=audit_meta,
         )
 
     if domain == "schema":
@@ -236,6 +249,8 @@ def _handle_graph(
     user_id: int,
     mode: ExecutionMode,
     dry_run_cache: DryRunCache,
+    llm_provided_node_id: int | None = None,
+    audit_meta: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     if op.startswith("add_"):
         node_type = op[len("add_") :]
@@ -250,6 +265,8 @@ def _handle_graph(
             user_id=user_id,
             mode=mode,
             dry_run_cache=dry_run_cache,
+            llm_provided_node_id=llm_provided_node_id,
+            audit_meta=audit_meta,
         )
 
     if op == "connect":
@@ -259,7 +276,12 @@ def _handle_graph(
     if op == "delete_connection":
         return _handle_delete_connection(tool_name, tool_args, redacted_args, flow, session_id, user_id, mode)
 
-    # update_node_settings, run_node, propose_subgraph: out of W31 scope.
+    # ``update_node_settings`` / ``run_node`` / ``propose_subgraph`` were
+    # removed from the catalog in W46 (graph_ops.py 2026-05-05) so the LLM
+    # never sees them. This rejection branch stays as defence-in-depth in
+    # case a future workstream re-adds them to the catalog before wiring an
+    # implementation. ``update_node_settings`` is tracked for proper
+    # implementation under W47 (depends on ``GraphDiff.modifications``).
     return _reject_and_audit(
         tool_name=tool_name,
         tool_args=redacted_args,
@@ -267,7 +289,7 @@ def _handle_graph(
         user_id=user_id,
         flow_id=flow.flow_id,
         refusal_reason=None,
-        refusal_detail=f"graph op {op!r} not implemented in W31",
+        refusal_detail=f"graph op {op!r} is not in the agent's catalog",
     )
 
 
@@ -283,7 +305,18 @@ def _handle_add_node(
     user_id: int,
     mode: ExecutionMode,
     dry_run_cache: DryRunCache,
+    llm_provided_node_id: int | None = None,
+    audit_meta: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
+    # W54 — every audit row this function emits piggybacks on tool_args
+    # under the namespaced ``__planner_meta__`` key. Rebind ``redacted_args``
+    # once at the top so all downstream rejection / record_event sites pick
+    # it up automatically. (Why tool_args and not AuditEvent.extra: the
+    # extra field is silently dropped by record_event — the AiAuditEvent
+    # ORM has no ``extra`` column. See plan §6.)
+    if audit_meta is not None:
+        redacted_args = {**redacted_args, "__planner_meta__": audit_meta}
+
     settings_cls = get_settings_class_for_node_type(node_type)
     if settings_cls is None:
         return _reject_and_audit(
@@ -295,6 +328,43 @@ def _handle_add_node(
             refusal_reason=None,
             refusal_detail=f"unknown node type: {node_type!r}",
         )
+
+    # --- W54 stage 0: LLM-provided node_id validation ---
+    # Only fires when the planner observed the LLM emit ``node_id`` itself
+    # rather than letting the planner allocate. The id must be fresh
+    # (not in the live graph), not a duplicate of another agent-staged id,
+    # and not equal to any of its own upstream / right_input — that last
+    # rule overlaps with the planner-side guard in defence-in-depth.
+    if llm_provided_node_id is not None:
+        live_ids: set[int] = set()
+        for node in flow.nodes:
+            try:
+                live_ids.add(int(node.node_id))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        staged_ids_meta = (audit_meta or {}).get("staged_node_ids_at_stage") or []
+        staged_ids = {sid for sid in staged_ids_meta if isinstance(sid, int)}
+        upstream_ids_set = {uid for uid in insertion_context.upstream_node_ids if isinstance(uid, int)}
+        if insertion_context.right_input_node_id is not None:
+            upstream_ids_set.add(insertion_context.right_input_node_id)
+
+        violation: str | None = None
+        if llm_provided_node_id in live_ids:
+            violation = f"already exists in the live graph (live_node_ids={sorted(live_ids)})"
+        elif llm_provided_node_id in staged_ids:
+            violation = f"already staged this session (staged_node_ids={sorted(staged_ids)})"
+        elif llm_provided_node_id in upstream_ids_set:
+            violation = f"equals one of its own upstream / right_input ids ({sorted(upstream_ids_set)}) — would create a self-loop"
+        if violation is not None:
+            return _reject_and_audit(
+                tool_name=tool_name,
+                tool_args=redacted_args,
+                session_id=session_id,
+                user_id=user_id,
+                flow_id=flow.flow_id,
+                refusal_reason="self_loop_prevented",
+                refusal_detail=f"LLM-provided node_id {llm_provided_node_id} is invalid: {violation}",
+            )
 
     # --- Refusal stage 1: Pydantic shape ---
     try:

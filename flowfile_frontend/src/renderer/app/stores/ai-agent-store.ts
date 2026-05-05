@@ -15,7 +15,7 @@
 // but flips local status so the UI clears.
 
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 
 import {
   abortAgentSession,
@@ -36,8 +36,19 @@ import {
   type AgentToolCallRejected,
   type AgentToolCallStaged,
 } from "../services/aiStreamClient";
+import {
+  clearPersistedAgentState,
+  loadPersistedAgentState,
+  persistAgentState,
+} from "./ai-agent-store-persistence";
 import { useAiDiffStore } from "./ai-diff-store";
 import { useEditorStore } from "./editor-store";
+
+// Mirror of W27's throttle in `ai-store.ts`. Streaming events arrive ~10/s
+// during an active agent run; coalescing them into ~4 writes/sec keeps the
+// sessionStorage cost negligible. User-driven actions (start, abort, clear)
+// flush on the next tick so the next refresh sees them.
+const AGENT_PERSIST_THROTTLE_MS = 250;
 
 export type AgentStoreStatus =
   | "idle"
@@ -80,6 +91,54 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   const aiDisabled = ref(false);
 
   let activeAbort: AbortController | null = null;
+
+  // ----- Hydrate from sessionStorage -----
+  // Order matters: hydrate refs BEFORE wiring the watchers so the initial
+  // assignment doesn't trigger a redundant write. The persistence helper
+  // normalises `running` → `idle` on load (the SSE stream is dead post-
+  // refresh; W40 has no re-attach route). `paused_drift` survives so the
+  // user can still hit the resume buttons via `currentSessionId` (W45 Q2).
+  const _hydrated = loadPersistedAgentState();
+  if (_hydrated.events.length > 0) events.value = _hydrated.events;
+  if (_hydrated.currentSessionId) currentSessionId.value = _hydrated.currentSessionId;
+  status.value = _hydrated.status;
+  driftDetail.value = _hydrated.driftDetail;
+  lastResult.value = _hydrated.lastResult;
+  if (_hydrated.error) error.value = _hydrated.error;
+
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const queuePersist = (): void => {
+    const isStreaming = status.value === "running";
+    if (saveTimer !== null) {
+      if (isStreaming) return;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    saveTimer = setTimeout(
+      () => {
+        saveTimer = null;
+        persistAgentState({
+          events: events.value,
+          currentSessionId: currentSessionId.value,
+          status: status.value,
+          driftDetail: driftDetail.value,
+          lastResult: lastResult.value,
+          error: error.value,
+        });
+      },
+      isStreaming ? AGENT_PERSIST_THROTTLE_MS : 0,
+    );
+  };
+
+  // `flush: "sync"` so each mutation is evaluated against the current
+  // `status` value, not the post-flush value — same posture as W27's
+  // `ai-store.ts` watchers.
+  watch(events, queuePersist, { deep: true, flush: "sync" });
+  watch(currentSessionId, queuePersist, { flush: "sync" });
+  watch(status, queuePersist, { flush: "sync" });
+  watch(driftDetail, queuePersist, { deep: true, flush: "sync" });
+  watch(lastResult, queuePersist, { deep: true, flush: "sync" });
+  watch(error, queuePersist, { flush: "sync" });
 
   const _newController = (): AbortController => {
     if (activeAbort) {
@@ -187,8 +246,23 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   const start = async (body: AgentStartRequest): Promise<void> => {
     const controller = _newController();
     currentSessionId.value = body.session_id ?? null;
+    // Keep prior runs' events visible — the chat trail accumulates across
+    // agent invocations so the user can scroll up to the previous run.
+    // ``currentSessionId`` / ``status`` / ``driftDetail`` / ``lastResult``
+    // are per-run state and DO reset, but ``events`` is the visible
+    // history. Insert a small "info" boundary so the user can see where
+    // a new run started.
+    if (events.value.length > 0) {
+      events.value = [
+        ...events.value,
+        {
+          kind: "info",
+          payload: { message: "── new agent run ──" },
+          at: Date.now(),
+        },
+      ];
+    }
     status.value = "running";
-    events.value = [];
     error.value = null;
     driftDetail.value = null;
     lastResult.value = null;
@@ -337,6 +411,9 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     driftDetail.value = null;
     lastResult.value = null;
     aiDisabled.value = false;
+    // Also wipe the persisted copy so a fresh refresh doesn't resurrect
+    // the cleared state from sessionStorage.
+    clearPersistedAgentState();
   };
 
   return {

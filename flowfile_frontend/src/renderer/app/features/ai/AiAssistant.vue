@@ -8,13 +8,15 @@
 // in W22 / W24 / W31+ and extends the store rather than this view.
 
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useAiAgentStore } from "../../stores/ai-agent-store";
-import { useAiStore } from "../../stores/ai-store";
+import { useAiAgentStore, type AgentEvent } from "../../stores/ai-agent-store";
+import { useAiStore, type ChatMessage } from "../../stores/ai-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { AiDisabledError } from "../../views/AiProvidersView/api";
+import AiAgentRun from "./AiAgentRun.vue";
 import AiDiffPanel from "./AiDiffPanel.vue";
 import AiMessage from "./AiMessage.vue";
 import AiMentionAutocomplete from "./AiMentionAutocomplete.vue";
+import { isAgentEventHidden } from "./argSummary";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
 
 const emit = defineEmits<{ close: [] }>();
@@ -75,7 +77,7 @@ const availableModels = computed<string[]>(() => {
   return singleton ? [singleton] : [];
 });
 
-const showModelPicker = computed(() => availableModels.value.length > 1);
+const showModelPicker = computed(() => availableModels.value.length >= 1);
 
 const isAgentRunning = computed(
   () => agentStore.status === "running" || agentStore.status === "paused_drift",
@@ -147,6 +149,7 @@ const handleSend = async (): Promise<void> => {
     // asked alongside the streamed agent events.
     aiStore.messages.push({
       id: Date.now(),
+      createdAt: Date.now(),
       role: "user",
       content: `[Agent] ${text}`,
     });
@@ -194,6 +197,10 @@ const handleAgentResumeDiscard = async (): Promise<void> => {
 
 const handleClear = (): void => {
   aiStore.clearMessages();
+  // Also wipe the agent event trail + persisted state so the chat is
+  // genuinely empty after clicking Clear. ``agentStore.clear()`` aborts
+  // any in-flight stream and removes the sessionStorage entry too.
+  agentStore.clear();
 };
 
 const handleComposerKeydown = (event: KeyboardEvent): void => {
@@ -224,22 +231,6 @@ const handleMentionHover = (index: number): void => {
   mention.setActiveIndex(index);
 };
 
-// W40 — agent event payload accessors. Vue templates can't use TS type
-// assertions, so unwrap with helpers that return safe defaults.
-const _str = (payload: Record<string, unknown>, key: string): string => {
-  const v = payload?.[key];
-  return typeof v === "string" ? v : "";
-};
-const _num = (payload: Record<string, unknown>, key: string): number | null => {
-  const v = payload?.[key];
-  return typeof v === "number" ? v : null;
-};
-
-// Strip the ``flowfile.graph.add_`` prefix so summaries read "filter" not
-// "flowfile.graph.add_filter". Other dotted names render whole.
-const _shortToolName = (name: string): string =>
-  name.startsWith("flowfile.graph.add_") ? name.slice("flowfile.graph.add_".length) : name;
-
 // W45 Q3 — render the drift banner's per-id rows with typed labels:
 // "Filter node 6 was deleted" / "Manual-input node 3 was added externally".
 // Falls back to "Node {id}" when the snapshot didn't capture a type.
@@ -257,64 +248,57 @@ const formatDriftExternalAdd = (id: number): string => {
   return `${_formatNodeType(nt ?? "")} ${id} was added externally`;
 };
 
-// One human-readable summary per planner event. Keeps the chat trail
-// scannable; the raw payload stays available in the event object for
-// debug-mode rendering if a future workstream needs it.
-type AgentEventLike = { kind: string; payload: Record<string, unknown> };
-const summarizeEvent = (event: AgentEventLike): string => {
-  const p = event.payload ?? {};
-  switch (event.kind) {
-    case "thinking":
-      return _str(p, "text") || "Thinking…";
-    case "tool_call_proposed": {
-      const name = _shortToolName(_str(p, "name"));
-      if (name === "flowfile.meta.pick_category") return "Picking category…";
-      if (name === "flowfile.schema.read_node_schema") return "Reading node schema…";
-      return name ? `Planning: add ${name}` : "Planning a step…";
-    }
-    case "tool_call_staged": {
-      const name = _shortToolName(_str(p, "name"));
-      const nid = _num(p, "node_id");
-      return nid !== null ? `Staged ${name} (node ${nid})` : `Staged ${name}`;
-    }
-    case "tool_call_warned": {
-      const name = _shortToolName(_str(p, "name"));
-      const nid = _num(p, "node_id");
-      const head = nid !== null ? `Staged ${name} (node ${nid})` : `Staged ${name}`;
-      return `${head} — with warnings`;
-    }
-    case "tool_call_rejected": {
-      const name = _shortToolName(_str(p, "name"));
-      const detail = _str(p, "detail");
-      return detail ? `Rejected ${name}: ${detail}` : `Rejected ${name}`;
-    }
-    case "drift_detected":
-      return "Graph changed since the agent started — pausing.";
-    case "paused":
-      return "Paused, waiting for your decision.";
-    case "retry": {
-      const attempt = _num(p, "attempt") ?? 1;
-      const max = _num(p, "max") ?? 3;
-      return `Retrying step (attempt ${attempt} of ${max}).`;
-    }
-    case "abort":
-      return "Agent aborted.";
-    case "complete": {
-      const ops = _num(p, "op_count") ?? 0;
-      return ops === 0
-        ? "Agent finished — nothing to stage."
-        : `Agent finished — ${ops} ${ops === 1 ? "op" : "ops"} staged for review.`;
-    }
-    case "info": {
-      const cat = _str(p, "category");
-      if (cat) return `Picked category: ${cat}.`;
-      const msg = _str(p, "message");
-      return msg || "";
-    }
-    default:
-      return "";
+// Merged chronological timeline of chat messages and agent events.
+//
+// `ChatMessage.createdAt` is `Date.now()` at push time; `AgentEvent.at`
+// is `Date.now()` captured at append. Both directly comparable.
+// `ChatMessage.id` is a small monotonic counter — historically used here,
+// but it can't interleave with event timestamps (1, 2, 3 always sort
+// before 1.7e12), which is why earlier layouts pinned all events to the
+// bottom even when they were newer than the messages above them.
+//
+// Walk the sorted list and **group consecutive agent events into a single
+// "agent run" bubble**, breaking only when a chat message appears between
+// events. The result reads chronologically: user q → assistant a → [Agent]
+// q → agent run (one bubble) → next user q → next assistant a.
+type ChatTimelineItem = { kind: "message"; at: number; data: ChatMessage };
+type AgentRunTimelineItem = { kind: "agent_run"; at: number; events: AgentEvent[] };
+type TimelineItem = ChatTimelineItem | AgentRunTimelineItem;
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  type RawItem =
+    | { kind: "message"; at: number; data: ChatMessage }
+    | { kind: "event"; at: number; data: AgentEvent };
+  const raw: RawItem[] = [];
+  for (const msg of aiStore.messages) {
+    raw.push({ kind: "message", at: msg.createdAt, data: msg });
   }
-};
+  for (const evt of agentStore.events) {
+    // W38 — filter D002 meta routing + housekeeping info events out of the
+    // chat trail before grouping, so a streaming run that produces nothing
+    // but pick_category + "category narrowed" doesn't render as an empty
+    // agent bubble between user/assistant messages.
+    if (isAgentEventHidden(evt.kind, evt.payload)) continue;
+    raw.push({ kind: "event", at: evt.at, data: evt });
+  }
+  raw.sort((a, b) => a.at - b.at);
+
+  const grouped: TimelineItem[] = [];
+  let currentRun: AgentRunTimelineItem | null = null;
+  for (const item of raw) {
+    if (item.kind === "event") {
+      if (currentRun === null) {
+        currentRun = { kind: "agent_run", at: item.at, events: [] };
+        grouped.push(currentRun);
+      }
+      currentRun.events.push(item.data);
+    } else {
+      currentRun = null;
+      grouped.push({ kind: "message", at: item.at, data: item.data });
+    }
+  }
+  return grouped;
+});
 </script>
 
 <template>
@@ -334,8 +318,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
           :value="provider.provider"
           :disabled="provider.status === 'unconfigured'"
         >
-          {{ provider.provider }} —
-          {{ provider.credential?.defaultModel ?? provider.defaultModel }}
+          {{ provider.provider }}
           <template v-if="provider.status === 'env_fallback'"> (env)</template>
           <template v-else-if="provider.status === 'unconfigured'"> (not configured)</template>
         </option>
@@ -369,10 +352,10 @@ const summarizeEvent = (event: AgentEventLike): string => {
         Agent
       </label>
       <button
-        v-if="aiStore.messages.length > 0"
+        v-if="aiStore.messages.length > 0 || agentStore.events.length > 0"
         type="button"
         class="ai-assistant__clear"
-        :disabled="aiStore.isStreaming"
+        :disabled="aiStore.isStreaming || isAgentRunning"
         @click="handleClear"
       >
         Clear
@@ -438,7 +421,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
       </div>
       <div ref="messageContainerRef" class="ai-assistant__messages">
         <div
-          v-if="aiStore.messages.length === 0 && agentStore.events.length === 0"
+          v-if="aiStore.messages.length === 0 && timelineItems.length === 0"
           class="ai-assistant__empty"
         >
           <p v-if="agentMode">
@@ -449,16 +432,10 @@ const summarizeEvent = (event: AgentEventLike): string => {
             Ask anything; tool-driven edits land in a later release.
           </p>
         </div>
-        <AiMessage v-for="message in aiStore.messages" :key="message.id" :message="message" />
-        <ul v-if="agentStore.events.length > 0" class="ai-assistant__agent-events">
-          <li
-            v-for="(event, idx) in agentStore.events"
-            :key="`${event.kind}-${idx}-${event.at}`"
-            :class="`ai-assistant__agent-event ai-assistant__agent-event--${event.kind}`"
-          >
-            <span class="ai-assistant__agent-event-summary">{{ summarizeEvent(event) }}</span>
-          </li>
-        </ul>
+        <template v-for="(item, idx) in timelineItems" :key="`${item.kind}-${item.at}-${idx}`">
+          <AiMessage v-if="item.kind === 'message'" :message="item.data" />
+          <AiAgentRun v-else :events="item.events" />
+        </template>
       </div>
     </div>
 
@@ -529,10 +506,12 @@ const summarizeEvent = (event: AgentEventLike): string => {
   gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--color-border-primary, #e1e4e8);
+  min-width: 0;
 }
 
 .ai-assistant__select {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
@@ -547,6 +526,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
 }
 
 .ai-assistant__clear {
+  flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid var(--color-border-primary, #e1e4e8);
@@ -561,6 +541,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
 
 .ai-assistant__close {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 26px;
@@ -694,6 +675,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
 
 .ai-assistant__agent-toggle {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 4px;
   font-size: 12px;
@@ -736,47 +718,7 @@ const summarizeEvent = (event: AgentEventLike): string => {
   justify-content: flex-end;
 }
 
-.ai-assistant__agent-events {
-  list-style: none;
-  margin: 8px 0 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.ai-assistant__agent-event {
-  display: flex;
-  gap: 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  background-color: var(--color-background-secondary, #f7f8fa);
-  border-left: 3px solid var(--color-border-primary, #e1e4e8);
-  border-radius: 2px;
-}
-
-.ai-assistant__agent-event-summary {
-  color: var(--color-text-primary, #24292e);
-  word-break: break-word;
-  line-height: 1.4;
-}
-
-.ai-assistant__agent-event--tool_call_staged,
-.ai-assistant__agent-event--complete {
-  border-left-color: var(--color-success, #2ea043);
-}
-
-.ai-assistant__agent-event--tool_call_rejected,
-.ai-assistant__agent-event--paused,
-.ai-assistant__agent-event--drift_detected {
-  border-left-color: var(--color-warning, #d4a72c);
-}
-
-.ai-assistant__agent-event--abort {
-  border-left-color: var(--color-danger, #c53030);
-}
-
-.ai-assistant__agent-event--retry {
-  border-left-color: var(--color-info, #4a90e2);
-}
+/* Old `.ai-assistant__agent-events` / `.ai-assistant__agent-event` styles
+   moved into the `AiAgentEvent` component's scoped block — the timeline
+   now renders each item as its own component, not a `<li>` in a `<ul>`. */
 </style>

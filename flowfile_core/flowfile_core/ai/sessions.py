@@ -195,6 +195,99 @@ def capture_graph_snapshot(flow: FlowGraph) -> GraphSnapshot:
     )
 
 
+_ADD_PREFIX = "flowfile.graph.add_"
+_StagedDropReason = Literal["live_id_collision", "upstream_missing"]
+
+
+def _entry_node_id(entry: StagedToolEntry) -> int | None:
+    payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else None
+    if payload is None:
+        return None
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        return None
+    nid = settings.get("node_id")
+    return nid if isinstance(nid, int) else None
+
+
+def _entry_upstream_ids(entry: StagedToolEntry) -> list[int]:
+    payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else None
+    if payload is None:
+        return []
+    ic = payload.get("insertion_context")
+    if not isinstance(ic, dict):
+        return []
+    upstream = ic.get("upstream_node_ids")
+    out: list[int] = []
+    if isinstance(upstream, list):
+        for uid in upstream:
+            if isinstance(uid, int):
+                out.append(uid)
+    right = ic.get("right_input_node_id")
+    if isinstance(right, int):
+        out.append(right)
+    return out
+
+
+def revalidate_staged_results_against_live(
+    session: AgentSession,
+    flow: FlowGraph,
+) -> tuple[list[StagedToolEntry], list[tuple[StagedToolEntry, _StagedDropReason]]]:
+    """Drop staged entries that are inconsistent with the live graph.
+
+    Used by the planner's resume-from-drift path (W54). Two drop reasons:
+
+    * ``live_id_collision`` — an ``add_*`` entry's ``node_id`` is now in the
+      live graph (the user manually created a node with that id during the
+      pause). Keeping the entry would have the planner stage onto an id
+      that's already taken; ``apply_diff`` would fail or worse, the next
+      ``_allocate_node_id`` round would collide.
+    * ``upstream_missing`` — an ``add_*`` entry references an upstream id
+      that no longer exists in the live graph (the user deleted the
+      upstream during the pause). Keeping the entry would re-introduce an
+      edge to a deleted node, surfacing as a 422 at apply time.
+
+    Mutates ``session.staged_results`` (replaces with the kept entries) and
+    rebuilds ``session.staged_node_ids`` from the survivors. Returns a
+    ``(kept, dropped_with_reason)`` tuple — the planner walks the dropped
+    list to emit one audit row per drop. Non-``add_*`` entries (connect,
+    delete) pass through unchanged.
+    """
+    live_ids: set[int] = set()
+    for node in flow.nodes:
+        try:
+            live_ids.add(int(node.node_id))
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    kept: list[StagedToolEntry] = []
+    dropped: list[tuple[StagedToolEntry, _StagedDropReason]] = []
+    surviving_node_ids: list[int] = []
+
+    for entry in session.staged_results:
+        if not entry.tool_name.startswith(_ADD_PREFIX):
+            kept.append(entry)
+            continue
+
+        nid = _entry_node_id(entry)
+        if nid is not None and nid in live_ids:
+            dropped.append((entry, "live_id_collision"))
+            continue
+
+        upstream_ids = _entry_upstream_ids(entry)
+        if any(uid not in live_ids for uid in upstream_ids):
+            dropped.append((entry, "upstream_missing"))
+            continue
+
+        kept.append(entry)
+        if nid is not None:
+            surviving_node_ids.append(nid)
+
+    session.staged_results = kept
+    session.staged_node_ids = surviving_node_ids
+    return kept, dropped
+
+
 def detect_drift(
     flow: FlowGraph,
     snapshot: GraphSnapshot,
@@ -340,4 +433,5 @@ __all__ = [
     "list_sessions_for_user",
     "pop_session",
     "register_session",
+    "revalidate_staged_results_against_live",
 ]

@@ -39,6 +39,11 @@ export interface ChatMessage {
   id: number;
   role: ChatRole;
   content: string;
+  /** ``Date.now()`` at push time. The chat timeline (AiAssistant.vue
+   * ``timelineItems``) sorts by this — ``id`` is a monotonic counter, not
+   * a wall-clock timestamp, so it can't be used to interleave messages
+   * with agent events (which carry ``Date.now()`` in their ``at`` field). */
+  createdAt: number;
   /** Set on the assistant placeholder while the stream is open. */
   pending?: boolean;
   /** Reason why a message is in an error state, if any. */
@@ -237,11 +242,13 @@ export const useAiStore = defineStore("ai", () => {
 
     const userMessage: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "user",
       content: text,
     };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "assistant",
       content: "",
       pending: true,
@@ -370,11 +377,13 @@ export const useAiStore = defineStore("ai", () => {
 
     const userMessage: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "user",
       content: userVisibleText,
     };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "assistant",
       content: "",
       pending: true,
@@ -466,11 +475,13 @@ export const useAiStore = defineStore("ai", () => {
 
     const userMessage: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "user",
       content: userVisibleText,
     };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "assistant",
       content: "",
       pending: true,
@@ -564,11 +575,13 @@ export const useAiStore = defineStore("ai", () => {
 
     const userMessage: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "user",
       content: userVisibleText,
     };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "assistant",
       content: "",
       pending: true,
@@ -667,11 +680,13 @@ export const useAiStore = defineStore("ai", () => {
     const userVisibleText = `[Lineage] ${trimmedQuestion}`;
     const userMessage: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "user",
       content: userVisibleText,
     };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
+      createdAt: Date.now(),
       role: "assistant",
       content: "",
       pending: true,

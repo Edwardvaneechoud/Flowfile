@@ -351,10 +351,19 @@ export interface AgentDriftDetail {
   node_types?: Record<string, string> | null;
 }
 
+/** W38 op_kind classifies a tool call for UI gating + styling. */
+export type AgentOpKind = "meta" | "graph" | "schema" | "codegen" | "unknown";
+
 export interface AgentToolCallProposed {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** W38 — meta ops are hidden from the user-visible chat trail. */
+  op_kind?: AgentOpKind;
+  /** W38 — model's plain-English "what this step does"; null if no preamble. */
+  rationale?: string | null;
+  /** W38 — server-generated fallback when ``rationale`` is null. */
+  arg_summary?: string | null;
 }
 
 export interface AgentToolCallStaged {
@@ -363,6 +372,9 @@ export interface AgentToolCallStaged {
   node_id: number | null;
   predicted_output_schema: Record<string, unknown>[] | null;
   warnings: string[];
+  op_kind?: AgentOpKind;
+  rationale?: string | null;
+  arg_summary?: string | null;
 }
 
 export interface AgentToolCallRejected {
@@ -370,6 +382,9 @@ export interface AgentToolCallRejected {
   name: string;
   reason: string;
   detail: string;
+  op_kind?: AgentOpKind;
+  rationale?: string | null;
+  arg_summary?: string | null;
 }
 
 export interface AgentCompleteResult {

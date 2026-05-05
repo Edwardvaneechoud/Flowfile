@@ -9,11 +9,10 @@
 // `pending=true`; we render a blinking caret as the visible streaming
 // indicator alongside the rendered markdown.
 
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import { computed } from "vue";
 
 import type { ChatMessage } from "../../stores/ai-store";
+import { sanitiseMarkdown } from "./markdown";
 
 const props = defineProps<{ message: ChatMessage }>();
 
@@ -24,28 +23,50 @@ const showEmptyHint = computed(
   () => isAssistant.value && !props.message.content && !props.message.pending,
 );
 
-// GFM = GitHub-flavoured markdown (tables, fenced code, task lists).
-// breaks = treat single newlines as <br> so streamed paragraph chunks render
-// naturally without the user needing to remember double-newline semantics.
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-});
-
-// Assistant content rendered as sanitised HTML. DOMPurify strips <script>,
-// on* handlers, and javascript: URIs by default — LLM output is untrusted
-// at this layer (prompt-injection-via-data is a real vector). marked.parse
-// returns string under our config; cast for TS.
+// Assistant content rendered as sanitised HTML via the shared helper —
+// see `./markdown.ts` for the marked + DOMPurify pipeline.
 const renderedHtml = computed<string>(() => {
   if (!isAssistant.value || !props.message.content) return "";
-  const raw = marked.parse(props.message.content) as string;
-  return DOMPurify.sanitize(raw);
+  return sanitiseMarkdown(props.message.content);
+});
+
+// Compact HH:MM time label, locale-aware via Intl.DateTimeFormat.
+// Tooltip shows the full date/time so the user can drill into when an
+// older message came in. Falls back to empty if `createdAt` was missing
+// from a legacy persisted entry (sanitiser should populate it from `id`,
+// but be defensive).
+const timeLabel = computed<string>(() => {
+  const ts = props.message.createdAt;
+  if (typeof ts !== "number" || ts <= 0) return "";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(ts));
+  } catch {
+    return "";
+  }
+});
+
+const timeTooltip = computed<string>(() => {
+  const ts = props.message.createdAt;
+  if (typeof ts !== "number" || ts <= 0) return "";
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return "";
+  }
 });
 </script>
 
 <template>
   <div class="ai-message" :class="{ 'is-user': isUser, 'is-assistant': isAssistant }">
-    <div class="ai-message__role">{{ isUser ? "You" : "Assistant" }}</div>
+    <div class="ai-message__header">
+      <span class="ai-message__role">{{ isUser ? "You" : "Assistant" }}</span>
+      <span v-if="timeLabel" class="ai-message__time" :title="timeTooltip">
+        {{ timeLabel }}
+      </span>
+    </div>
     <div class="ai-message__body">
       <!-- Assistant: rendered markdown, sanitised via DOMPurify before v-html. -->
       <!-- eslint-disable-next-line vue/no-v-html -->
@@ -84,12 +105,24 @@ const renderedHtml = computed<string>(() => {
   background-color: var(--color-background-secondary, #f6f8fa);
 }
 
+.ai-message__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .ai-message__role {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--color-text-muted, #6a737d);
   letter-spacing: 0.4px;
+}
+
+.ai-message__time {
+  font-size: 11px;
+  color: var(--color-text-muted, #6a737d);
+  cursor: default;
 }
 
 .ai-message__body {

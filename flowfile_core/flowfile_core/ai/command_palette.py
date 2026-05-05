@@ -337,9 +337,10 @@ def _is_graph_mutation(tool_name: str) -> bool:
     Read-only tools in the surface (e.g. ``flowfile.schema.read_node_schema``)
     are silently dropped — schemas are already in the W22 user message,
     so the LLM rarely needs the call, and the executor's read path doesn't
-    feed a diff. Any future graph-op (``update_node_settings`` /
-    ``run_node`` / ``propose_subgraph``) would need to be added here when
-    W31's executor stops refusing them.
+    feed a diff. ``update_node_settings`` was dropped from the catalog in
+    W46 — when W47 lands its proper implementation, this filter needs to
+    accept it (mode="modification" instead of pure stage). ``run_node`` /
+    ``propose_subgraph`` were dropped permanently and won't return.
     """
     if tool_name.startswith(_ADD_PREFIX):
         return True
@@ -582,6 +583,12 @@ async def run_command_palette(
             fresh_node_id=fresh_id,
         )
         try:
+            # W54 — ``llm_provided_node_id`` / ``audit_meta`` are intentionally
+            # unset here. ``_inject_id_overrides`` already forces ``fresh_id``
+            # into ``tool_args["node_id"]`` for every call, so the executor's
+            # LLM-provided-id validation has nothing to validate. The agent
+            # planner is the only surface where the LLM's emitted ``node_id``
+            # reaches the executor as-is.
             result = execute_tool_call(
                 flow_id=flow_id,
                 tool_name=call.name,

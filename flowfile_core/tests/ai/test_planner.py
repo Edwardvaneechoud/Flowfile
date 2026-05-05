@@ -31,11 +31,17 @@ from typing import Any
 
 import pytest
 
+import json
+
+from flowfile_core.ai import audit
 from flowfile_core.ai import diff as diff_module
 from flowfile_core.ai import sessions
 from flowfile_core.ai.agents.planner import (
     PlannerEvent,
     _allocate_node_id,
+    _arg_summary,
+    _capture_rationale,
+    _classify_op_kind,
     _resolve_insertion_context,
     run_planner_session,
 )
@@ -839,3 +845,272 @@ async def test_resume_from_paused_drift_resnapshots() -> None:
     assert sess.status == "completed"
     assert sess.drift_detail is None
     assert sess.pause_reason is None
+
+
+# --------------------------------------------------------------------------- #
+# W38 — Step narration, op_kind classification, meta-op suppression           #
+# --------------------------------------------------------------------------- #
+
+
+def test_w38_classify_op_kind_meta() -> None:
+    assert _classify_op_kind("flowfile.meta.pick_category") == "meta"
+
+
+def test_w38_classify_op_kind_graph() -> None:
+    assert _classify_op_kind("flowfile.graph.add_filter") == "graph"
+    assert _classify_op_kind("flowfile.graph.connect") == "graph"
+    assert _classify_op_kind("flowfile.graph.delete_node") == "graph"
+
+
+def test_w38_classify_op_kind_schema() -> None:
+    assert _classify_op_kind("flowfile.schema.read_node_schema") == "schema"
+    assert _classify_op_kind("flowfile.schema.read_node_preview") == "schema"
+
+
+def test_w38_classify_op_kind_codegen() -> None:
+    assert _classify_op_kind("flowfile.codegen.generate_polars_code") == "codegen"
+
+
+def test_w38_classify_op_kind_unknown_falls_through() -> None:
+    assert _classify_op_kind("vendor.thing.do_stuff") == "unknown"
+
+
+def test_w38_capture_rationale_strips_whitespace() -> None:
+    assert _capture_rationale("  Filtering null regions.  \n") == "Filtering null regions."
+
+
+def test_w38_capture_rationale_returns_none_for_empty() -> None:
+    assert _capture_rationale("") is None
+    assert _capture_rationale("   ") is None
+    assert _capture_rationale(None) is None
+
+
+def test_w38_capture_rationale_clips_overlong_text() -> None:
+    long_text = "Sentence one. " + ("padding " * 80) + "Sentence two."
+    out = _capture_rationale(long_text)
+    assert out is not None
+    assert len(out) <= 281  # cap + optional ellipsis byte
+    # Should prefer to clip on a sentence boundary when possible.
+    assert out.endswith(".") or out.endswith("…")
+
+
+def test_w38_arg_summary_filter_renders_predicate() -> None:
+    args = {"settings_input": {"filter_input": {"advanced_filter": "[region]=='EU'"}}}
+    summary = _arg_summary("flowfile.graph.add_filter", args)
+    assert summary is not None
+    assert "[region]=='EU'" in summary
+
+
+def test_w38_arg_summary_join_renders_keys_and_how() -> None:
+    args = {
+        "settings_input": {
+            "join_input": {
+                "how": "left",
+                "join_mapping": [
+                    {"left_col": "region_code", "right_col": "code"},
+                ],
+            },
+        },
+    }
+    summary = _arg_summary("flowfile.graph.add_join", args)
+    assert summary is not None
+    assert "region_code=code" in summary
+    assert summary.lower().startswith("left join")
+
+
+def test_w38_arg_summary_meta_returns_none() -> None:
+    assert _arg_summary("flowfile.meta.pick_category", {"intent": "filter"}) is None
+
+
+def test_w38_arg_summary_connect() -> None:
+    summary = _arg_summary(
+        "flowfile.graph.connect",
+        {"upstream_node_id": 5, "downstream_node_id": 7},
+    )
+    assert summary == "Connecting node 5 → node 7"
+
+
+def test_w38_arg_summary_falls_back_to_generic_for_unknown_node_type() -> None:
+    summary = _arg_summary("flowfile.graph.add_some_unknown_type", {})
+    assert summary == "Adding some unknown type"
+
+
+@pytest.mark.asyncio
+async def test_w38_tool_call_proposed_carries_op_kind_rationale_arg_summary() -> None:
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                content="Filtering to EU rows so the join doesn't drop unrelated data.",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    proposed = [e for e in events if e.event == "tool_call_proposed"]
+    assert len(proposed) == 1
+    payload = proposed[0].payload
+    assert payload["op_kind"] == "graph"
+    assert payload["rationale"] == "Filtering to EU rows so the join doesn't drop unrelated data."
+    assert payload["arg_summary"] is not None
+    assert "[region]=='EU'" in payload["arg_summary"]
+
+
+@pytest.mark.asyncio
+async def test_w38_tool_call_staged_carries_rationale_and_op_kind() -> None:
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                content="Filtering null regions.",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    staged = [e for e in events if e.event == "tool_call_staged"]
+    assert len(staged) == 1
+    payload = staged[0].payload
+    assert payload["op_kind"] == "graph"
+    assert payload["rationale"] == "Filtering null regions."
+    assert payload["arg_summary"] is not None
+
+
+@pytest.mark.asyncio
+async def test_w38_rationale_falls_back_to_none_when_no_preamble() -> None:
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                content=None,  # no preamble
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    staged = [e for e in events if e.event == "tool_call_staged"]
+    payload = staged[0].payload
+    assert payload["rationale"] is None
+    # arg_summary still populates so the frontend has something to show.
+    assert payload["arg_summary"] is not None
+    assert "[region]=='EU'" in payload["arg_summary"]
+
+
+@pytest.mark.asyncio
+async def test_w38_meta_pick_category_carries_op_kind_meta_no_rationale() -> None:
+    """Even if the model writes a preamble before pick_category, op_kind=='meta'
+    suppresses rationale on the proposed/info events so the frontend hides the
+    whole D002 routing dance from the user-visible chat trail."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(id="t1", name="flowfile.meta.pick_category", arguments={"intent": "filter to EU"})
+                ],
+                content="Picking the right tool category for this goal.",  # would-be rationale
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                content="Filtering to EU rows.",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    # First proposed event — the meta call — must be op_kind="meta", rationale=None
+    proposed = [e for e in events if e.event == "tool_call_proposed"]
+    assert proposed[0].payload["name"] == "flowfile.meta.pick_category"
+    assert proposed[0].payload["op_kind"] == "meta"
+    assert proposed[0].payload["rationale"] is None
+    # Second proposed — the graph op — must carry op_kind="graph" with rationale.
+    assert proposed[1].payload["name"] == "flowfile.graph.add_filter"
+    assert proposed[1].payload["op_kind"] == "graph"
+    assert proposed[1].payload["rationale"] == "Filtering to EU rows."
+    # The "category narrowed" info event also tagged op_kind="meta" so the UI
+    # can suppress it as part of the meta-routing dance.
+    info = [e for e in events if e.event == "info" and e.payload.get("category")]
+    assert info, "expected a category-narrowed info event"
+    assert info[0].payload["op_kind"] == "meta"
+
+
+@pytest.mark.asyncio
+async def test_w38_rationale_attached_to_each_call_in_multi_call_round() -> None:
+    """A single assistant turn that emits multiple tool calls shares one
+    preamble — every event in the round carries the same captured rationale."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args()),
+                    ToolCall(id="t2", name="flowfile.graph.add_select", arguments=_select_args()),
+                ],
+                content="Trimming rows then narrowing columns.",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    proposed = [e for e in events if e.event == "tool_call_proposed"]
+    assert [p.payload["rationale"] for p in proposed] == [
+        "Trimming rows then narrowing columns.",
+        "Trimming rows then narrowing columns.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_w38_rejected_event_carries_op_kind_for_ui_styling() -> None:
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="flowfile.graph.add_filter",
+                        arguments=_bad_filter_args_basic_unknown_column(),
+                    )
+                ],
+                content="Filtering on a column that doesn't exist (this will be rejected).",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    rejected = [e for e in events if e.event == "tool_call_rejected"]
+    assert rejected, "expected at least one rejection"
+    payload = rejected[0].payload
+    assert payload["op_kind"] == "graph"
+    # Rationale + arg_summary still attach so the frontend can render the
+    # failed step the same way it renders a successful one.
+    assert payload["rationale"] == "Filtering on a column that doesn't exist (this will be rejected)."
+    assert payload["arg_summary"] is not None

@@ -1091,6 +1091,22 @@ onMounted(async () => {
       refreshAllEdgeLabels();
     },
   );
+
+  // External-mutation signal — the backend mutated the live flow without
+  // going through the in-canvas mutation paths. Triggered today by
+  // `useAiDiffStore.accept()` after the W41 apply_diff lands; future
+  // workstreams that mutate the server graph (e.g. W47's
+  // `update_node_settings` end-to-end) call `flowStore.requestReload()`
+  // and Canvas reloads. The closure-scoped `loadToken` in `loadFlow`
+  // already cancels stale runs if multiple bumps land in quick succession.
+  watch(
+    () => flowStore.pendingReloadCounter,
+    (count, prev) => {
+      if (count > (prev ?? 0)) {
+        void loadFlow();
+      }
+    },
+  );
 });
 
 onUnmounted(() => {
@@ -1239,6 +1255,7 @@ defineExpose({
         v-if="editorStore.isAiOpen"
         class="ai-modal-backdrop"
         @click="editorStore.closeAiDrawer()"
+        @dblclick.stop
       >
         <div class="ai-modal" @click.stop>
           <AiAssistant @close="editorStore.closeAiDrawer()" />

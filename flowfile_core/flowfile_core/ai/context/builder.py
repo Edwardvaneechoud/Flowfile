@@ -14,11 +14,19 @@ Composes the per-call prompt context used by the AI surfaces:
 Sample rows are gated by ``samples_mode`` (default ``"off"`` per **D009**).
 PII regex scrubbing is **not** performed here — that is W25's seam.
 
-When an upstream node's ``predicted_schema`` is ``None`` (cold flow,
-schema callback returned empty, source not yet accessible) the builder
-emits ``schema_status="unknown"`` and propagates a ``None``
-``schema_columns``. **W31 owns the D011 degraded-mode policy** — this
-module is intentionally agnostic.
+When ``resolve_schemas=True`` (the default) and an upstream node's
+``predicted_schema`` is ``None``, the builder applies **D011**'s tier-1
+step for predictable upstreams (``static`` / ``source`` /
+``passthrough`` per
+:func:`flowfile_core.ai.tools.classification.is_predictable_via_mirror`)
+by calling :meth:`FlowNode.get_predicted_schema(force=True)`, which
+fires the registered ``schema_callback`` (or the ``_predicted_data_getter``
+fallback). Dynamic node types (``polars_code`` / ``python_script`` /
+``sql_query`` / ``pivot`` / etc.) stay ``schema_status="unknown"`` from
+this surface — kernel dry-run is W31-only per **D003** + **D012**.
+Callers that need the legacy cache-only behaviour pass
+``resolve_schemas=False`` (W34's ``settings_autocomplete`` path keeps
+its own resolver and does not need to opt in here).
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from flowfile_core.ai.context.mentions import (
     resolve_mentions,
 )
 from flowfile_core.ai.providers.base import Message
+from flowfile_core.ai.tools.classification import is_predictable_via_mirror
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
@@ -159,6 +168,7 @@ def render_prompt_context(
     selection_node_ids: list[int | str] | None = None,
     max_columns_per_node: int | None = None,
     depth: int | None = None,
+    resolve_schemas: bool = True,
 ) -> PromptContext:
     """Build a budget-bounded :class:`PromptContext` for ``surface``.
 
@@ -167,6 +177,11 @@ def render_prompt_context(
     Any ``@flow`` / ``@selection`` / ``@node`` / ``@schema`` mention
     contributes its resolved ``node_ids`` to the pinned set so the
     subgraph walk includes them.
+
+    ``resolve_schemas`` (default ``True``) applies **D011**'s tier-1
+    prospective-schema resolution for predictable upstreams (see module
+    docstring). Pass ``False`` to fall back to the legacy cache-only
+    behaviour.
     """
 
     pinned_list = _coerce_to_list(pinned_node_ids)
@@ -175,7 +190,7 @@ def render_prompt_context(
     extra_pinned = [node_id for r in resolved for node_id in r.node_ids if node_id not in pinned_list]
     pinned_list = pinned_list + extra_pinned
 
-    snapshot = extract_subgraph(graph, pinned_list, depth=depth)
+    snapshot = extract_subgraph(graph, pinned_list, depth=depth, resolve_schemas=resolve_schemas)
     snapshot = _attach_samples(snapshot, graph, samples_mode=samples_mode, sample_rows=sample_rows)
     snapshot.samples_mode = samples_mode
 
@@ -212,6 +227,7 @@ def extract_subgraph(
     pinned_node_ids: list[int | str] | int | str,
     *,
     depth: int | None = None,
+    resolve_schemas: bool = True,
 ) -> SubgraphSnapshot:
     """Walk upstream from ``pinned_node_ids``, returning a snapshot.
 
@@ -219,6 +235,10 @@ def extract_subgraph(
     the pinned set only; ``depth=N`` is the pinned set plus ``N``
     levels of parents. Nodes are returned in topological upstream-first
     order so :mod:`budget` can drop the furthest-upstream entries first.
+
+    ``resolve_schemas`` (default ``True``) is forwarded to
+    :func:`snapshot_node` — see the module docstring for the D011
+    semantics.
     """
 
     pinned_list = _coerce_to_list(pinned_node_ids)
@@ -252,6 +272,7 @@ def extract_subgraph(
             samples_mode="off",
             sample_rows=0,
             is_pinned=node.node_id in pinned_resolved_ids,
+            resolve_schemas=resolve_schemas,
         )
         for node in topo
     ]
@@ -270,12 +291,17 @@ def snapshot_node(
     samples_mode: SamplesMode = "regex",  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
     sample_rows: int = 0,
     is_pinned: bool = False,
+    resolve_schemas: bool = True,
 ) -> NodeSnapshot:
     """Project ``node`` into a JSON-safe :class:`NodeSnapshot`.
 
     Sample rows are only attached when ``samples_mode != "off"`` and the
     node has cached predicted data with ``data`` populated. PII scrubbing
     is **not** applied here — W25 wraps this seam.
+
+    When ``resolve_schemas=True`` (default) and the cached predicted
+    schema is empty, this fires the W48 tier-1 resolver for predictable
+    upstreams; see the module docstring.
     """
 
     settings_dict = _settings_to_dict(node.setting_input)
@@ -283,6 +309,8 @@ def snapshot_node(
     status: Literal["known", "unknown"] = "unknown"
 
     predicted = _safe_get_predicted_schema(node)
+    if predicted is None and resolve_schemas:
+        predicted = _resolve_predicted_schema_if_predictable(node)
     if predicted is not None:
         columns = [_column_snapshot(col) for col in predicted]
         status = "known"
@@ -437,9 +465,10 @@ def _safe_get_predicted_schema(node: FlowNode) -> list[FlowfileColumn] | None:
     """Read predicted schema without forcing recomputation.
 
     Prefers the cached :attr:`NodeSchemaInformation.predicted_schema`
-    attribute so we don't accidentally trigger expensive schema
-    callbacks during prompt building. If the cache is empty we leave it
-    empty and signal ``schema_status="unknown"``.
+    attribute so the cache-only tier (D011 tier 0) stays cheap. The
+    optional D011 tier-1 step lives in
+    :func:`_resolve_predicted_schema_if_predictable` and is gated by the
+    ``resolve_schemas`` kwarg in :func:`snapshot_node`.
     """
 
     node_schema = getattr(node, "node_schema", None)
@@ -447,6 +476,43 @@ def _safe_get_predicted_schema(node: FlowNode) -> list[FlowfileColumn] | None:
         return None
     cached = getattr(node_schema, "predicted_schema", None)
     return cached or None
+
+
+def _resolve_predicted_schema_if_predictable(node: FlowNode) -> list[FlowfileColumn] | None:
+    """Apply **D011** tier-1 resolution for predictable upstreams.
+
+    Mirrors the pattern in :func:`flowfile_core.ai.tools.predictor._resolve_upstream_schemas`
+    (predictor.py:251-256). For ``static`` / ``source`` / ``passthrough``
+    node types — i.e. anything for which
+    :func:`flowfile_core.ai.tools.classification.is_predictable_via_mirror`
+    returns ``True`` — we call :meth:`FlowNode.get_predicted_schema(force=True)`,
+    which fires the registered ``schema_callback`` (or the
+    ``_predicted_data_getter`` fallback) without invoking
+    ``LazyFrame.collect`` — D012 stays clean.
+
+    Dynamic node types (``polars_code`` / ``python_script`` /
+    ``sql_query`` / ``pivot`` / etc.) need kernel dry-run, which stays
+    W31-only per D003 + D012; this helper returns ``None`` for them so
+    the snapshot keeps ``schema_status="unknown"``.
+
+    Any exception falls back to ``None`` for parity with
+    ``predictor.py:251-253`` so a malformed flow can't crash the prompt
+    build.
+    """
+
+    if not is_predictable_via_mirror(node.node_type):
+        return None
+    try:
+        forced = node.get_predicted_schema(force=True)
+    except Exception:
+        return None
+    if not forced:
+        return None
+    # Mirror predictor.py:255 — be explicit about the in-place mutation
+    # so same-session repeat reads (next render_prompt_context call)
+    # hit the cache via _safe_get_predicted_schema.
+    node.node_schema.predicted_schema = list(forced)
+    return list(forced)
 
 
 def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None:

@@ -52,7 +52,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flowfile_core.ai import audit as audit_module
 from flowfile_core.ai import diff as diff_module
+from flowfile_core.ai import safety
 from flowfile_core.ai import sessions
 from flowfile_core.ai.context.builder import render_prompt_context
 from flowfile_core.ai.providers.base import Message, Provider, ToolCall
@@ -115,6 +117,243 @@ class PlannerEvent(BaseModel):
 
 _ADD_PREFIX = "flowfile.graph.add_"
 _PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
+
+# W38 — single short sentence per step, ≤ 20 words per the prompt instruction;
+# we capture up to ~280 chars (a generous cap that tolerates the model running
+# slightly long) and trim trailing whitespace. Rationale longer than this is
+# almost always the model writing a paragraph — clipping keeps the chat scannable.
+_RATIONALE_MAX_CHARS: int = 280
+
+
+OpKind = Literal["meta", "graph", "schema", "codegen", "unknown"]
+
+
+def _classify_op_kind(tool_name: str) -> OpKind:
+    """Map a fully-qualified tool name to its op_kind for the W38 UI gating.
+
+    ``flowfile.meta.*`` are LLM-internal routing decisions (D002 two-stage
+    selection) and the frontend hides them. ``flowfile.graph.*`` are the
+    user-facing canvas mutations that need a rationale. ``flowfile.schema.*``
+    are read-only introspection calls — we still show them so the user
+    knows the agent is "looking at" something. ``flowfile.codegen.*`` are
+    code generation helpers that only show up under ``agent_complex``.
+    """
+    if tool_name.startswith("flowfile.meta."):
+        return "meta"
+    if tool_name.startswith("flowfile.graph."):
+        return "graph"
+    if tool_name.startswith("flowfile.schema."):
+        return "schema"
+    if tool_name.startswith("flowfile.codegen."):
+        return "codegen"
+    return "unknown"
+
+
+def _capture_rationale(text: str | None) -> str | None:
+    """Trim and bound the model's preamble for use as a tool_step rationale.
+
+    The planner prompt instructs the model to emit a single short
+    natural-language sentence immediately before each tool call. We capture
+    that assistant ``content`` and clip it; if the model didn't produce a
+    preamble (or emitted only whitespace), we return ``None`` so the
+    frontend / executor falls back to the server-generated arg_summary.
+    """
+    if not isinstance(text, str):
+        return None
+    trimmed = text.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > _RATIONALE_MAX_CHARS:
+        # Cut on the last sentence boundary inside the cap if we can find one,
+        # else hard-truncate. Keeps the UI from showing a half-sentence with
+        # an awkward dangling "and".
+        head = trimmed[:_RATIONALE_MAX_CHARS]
+        for boundary in (". ", "! ", "? ", "\n"):
+            idx = head.rfind(boundary)
+            if idx > _RATIONALE_MAX_CHARS // 2:
+                return head[: idx + 1].strip()
+        return head.rstrip() + "…"
+    return trimmed
+
+
+def _format_columns(value: Any) -> str | None:
+    """Render a list-of-strings / list-of-dicts as a comma-separated column list."""
+    if isinstance(value, list):
+        names: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item:
+                names.append(item)
+            elif isinstance(item, dict):
+                nm = item.get("name") or item.get("column")
+                if isinstance(nm, str) and nm:
+                    names.append(nm)
+        if names:
+            return ", ".join(names)
+    return None
+
+
+def _arg_summary_for_add(node_type: str, settings: dict[str, Any]) -> str:
+    """Render a one-line natural-language summary for an ``add_<node_type>`` call.
+
+    Used by the planner as the frontend's secondary line (raw args reference)
+    and by the frontend as the headline when the model failed to emit a
+    preamble. Each branch covers the load-bearing fields for the most common
+    node types; everything else falls back to the generic ``"Adding <type>"``
+    shape so we never crash on a settings shape we didn't anticipate.
+
+    The LLM's tool call ``arguments`` follow the per-node Pydantic settings
+    schema directly (e.g. ``NodeFilter`` has ``filter_input`` at the top
+    level), so the load-bearing fields live at the root of ``settings``.
+    Some surfaces (e.g. ``add_node`` with explicit envelope) wrap them
+    under ``settings_input`` — we handle both shapes.
+    """
+    if not isinstance(settings, dict):
+        settings = {}
+    nested = settings.get("settings_input")
+    settings_dict: dict[str, Any] = nested if isinstance(nested, dict) else settings
+
+    pretty_type = node_type.replace("_", " ")
+
+    if node_type == "filter":
+        predicate = settings_dict.get("filter_input", {})
+        if isinstance(predicate, dict):
+            expr = predicate.get("advanced_filter") or predicate.get("basic_filter")
+            if isinstance(expr, str) and expr.strip():
+                return f"Filter on `{expr.strip()}`"
+        return "Adding filter"
+
+    if node_type == "sort":
+        cols = settings_dict.get("sort_by")
+        if isinstance(cols, list) and cols:
+            names = []
+            for item in cols:
+                if isinstance(item, dict):
+                    nm = item.get("column")
+                    direction = item.get("how") or item.get("direction") or "asc"
+                    if isinstance(nm, str) and nm:
+                        names.append(f"{nm} {direction}")
+            if names:
+                return f"Sort by {', '.join(names)}"
+        return "Adding sort"
+
+    if node_type == "join":
+        join_input = settings_dict.get("join_input", {})
+        if isinstance(join_input, dict):
+            keys = join_input.get("join_mapping") or join_input.get("join_keys")
+            how = join_input.get("how") or "inner"
+            if isinstance(keys, list) and keys:
+                key_strs: list[str] = []
+                for k in keys:
+                    if isinstance(k, dict):
+                        left = k.get("left_col") or k.get("left")
+                        right = k.get("right_col") or k.get("right")
+                        if isinstance(left, str) and isinstance(right, str):
+                            key_strs.append(f"{left}={right}")
+                    elif isinstance(k, str):
+                        key_strs.append(k)
+                if key_strs:
+                    return f"{how.capitalize()} join on {', '.join(key_strs)}"
+        return "Adding join"
+
+    if node_type == "select":
+        cols = _format_columns(settings_dict.get("select_input"))
+        if cols:
+            return f"Select columns: {cols}"
+        return "Adding select"
+
+    if node_type in {"formula", "polars_code", "python_script", "sql_query"}:
+        # These either have a code/expression body or a target column; show
+        # the target name when present so the user sees "Adding amount_usd"
+        # rather than the raw expression.
+        target = settings_dict.get("function") or settings_dict.get("output_column")
+        if isinstance(target, dict):
+            field = target.get("field") or target.get("column")
+            if isinstance(field, str) and field:
+                return f"Adding {pretty_type} → `{field}`"
+        return f"Adding {pretty_type}"
+
+    if node_type == "group_by":
+        group_cols = _format_columns(settings_dict.get("group_by_input"))
+        if group_cols:
+            return f"Group by {group_cols}"
+        return "Adding group_by"
+
+    if node_type == "unique":
+        cols = _format_columns(settings_dict.get("unique_input"))
+        if cols:
+            return f"Unique on {cols}"
+        return "Adding unique"
+
+    if node_type == "union":
+        return "Adding union"
+
+    if node_type.startswith("read_") or node_type.endswith("_source") or node_type in {"manual_input"}:
+        # Sources don't have an upstream; a path / table is the right hint.
+        path = settings_dict.get("path") or settings_dict.get("file_path")
+        table = settings_dict.get("table_name")
+        if isinstance(path, str) and path:
+            return f"Reading from `{path}`"
+        if isinstance(table, str) and table:
+            return f"Reading from `{table}`"
+        return f"Adding {pretty_type}"
+
+    return f"Adding {pretty_type}"
+
+
+def _arg_summary(tool_name: str, tool_args: dict[str, Any]) -> str | None:
+    """Server-side fallback summary for a tool call.
+
+    Used when the model didn't emit a rationale preamble. Returns ``None``
+    for meta ops (the UI hides them anyway). For ``flowfile.graph.add_*``
+    we render a settings-aware one-liner; for ``connect`` / ``delete_*`` /
+    ``schema.*`` we render a generic but still informative line.
+    """
+    if not tool_args:
+        tool_args = {}
+
+    if tool_name.startswith(_ADD_PREFIX):
+        node_type = tool_name.removeprefix(_ADD_PREFIX)
+        return _arg_summary_for_add(node_type, tool_args)
+
+    if tool_name == "flowfile.graph.connect":
+        upstream = tool_args.get("upstream_node_id") or tool_args.get("from_node_id")
+        downstream = tool_args.get("downstream_node_id") or tool_args.get("to_node_id")
+        if isinstance(upstream, int) and isinstance(downstream, int):
+            return f"Connecting node {upstream} → node {downstream}"
+        return "Connecting nodes"
+
+    if tool_name == "flowfile.graph.delete_node":
+        nid = tool_args.get("node_id")
+        if isinstance(nid, int):
+            return f"Removing node {nid}"
+        return "Removing a node"
+
+    if tool_name == "flowfile.graph.delete_connection":
+        upstream = tool_args.get("upstream_node_id")
+        downstream = tool_args.get("downstream_node_id")
+        if isinstance(upstream, int) and isinstance(downstream, int):
+            return f"Disconnecting node {upstream} ↛ node {downstream}"
+        return "Removing a connection"
+
+    if tool_name == "flowfile.schema.read_node_schema":
+        nid = tool_args.get("node_id")
+        if isinstance(nid, int):
+            return f"Reading schema for node {nid}"
+        return "Reading node schema"
+
+    if tool_name == "flowfile.schema.read_node_preview":
+        nid = tool_args.get("node_id")
+        if isinstance(nid, int):
+            return f"Reading preview for node {nid}"
+        return "Reading node preview"
+
+    if tool_name.startswith("flowfile.codegen."):
+        return f"Generating code ({tool_name.removeprefix('flowfile.codegen.')})"
+
+    if tool_name.startswith("flowfile.meta."):
+        return None
+
+    return None
 
 
 def _allocate_node_id(flow: FlowGraph, session: sessions.AgentSession) -> int:
@@ -237,6 +476,43 @@ def _payload_node_id(payload: dict[str, Any] | None) -> int | None:
         return None
     nid = settings.get("node_id")
     return nid if isinstance(nid, int) else None
+
+
+def _collect_live_node_ids(flow: FlowGraph) -> list[int]:
+    out: list[int] = []
+    for node in flow.nodes:
+        try:
+            out.append(int(node.node_id))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return out
+
+
+def _check_self_loop(
+    proposed_node_id: int,
+    insertion_context: InsertionContext,
+) -> str | None:
+    """Return a refusal_detail string if ``proposed_node_id`` would self-loop, else None.
+
+    W54 universal invariant: a new node's ``node_id`` may never equal any of
+    its own ``upstream_node_ids`` or its ``right_input_node_id``. Catches all
+    three plausible upstream causes (LLM-provided collision, stale
+    staged_results post-resume, live-graph drift) regardless of which one
+    fired — the apply_diff cycle error is the same.
+    """
+    upstream = list(insertion_context.upstream_node_ids or [])
+    right_input = insertion_context.right_input_node_id
+    if proposed_node_id in upstream:
+        return (
+            f"proposed node_id {proposed_node_id} collides with upstream_node_ids "
+            f"{upstream} — would create a self-loop on apply"
+        )
+    if right_input is not None and proposed_node_id == right_input:
+        return (
+            f"proposed node_id {proposed_node_id} equals right_input_node_id "
+            f"{right_input} — would create a self-loop on apply"
+        )
+    return None
 
 
 def _op_count(graph_diff: diff_module.GraphDiff) -> int:
@@ -367,6 +643,47 @@ async def _run_planner_loop(
         session.drift_detail = None
         session.pause_reason = None
         session.status = "running"
+
+        # W54 — staged_results hygiene. Drop entries whose node_id now
+        # collides with a live node (user manually added one mid-pause)
+        # or whose upstream references an id that no longer exists (user
+        # deleted the upstream). One audit row per drop so the cause is
+        # diagnosable post-hoc. ``awaiting_user`` is reserved-but-unused
+        # today, so we only thread hygiene through the paused_drift path.
+        _, dropped = sessions.revalidate_staged_results_against_live(session, flow)
+        for entry, reason in dropped:
+            try:
+                audit_module.record_event(
+                    audit_module.AuditEvent(
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                        tool_name="internal.staged_drop_on_resume",
+                        flow_id=session.flow_id,
+                        result_status="error",
+                        error=f"staged_drop_on_resume:{reason}",
+                        tool_args={
+                            "__planner_meta__": {
+                                "dropped_tool_name": entry.tool_name,
+                                "dropped_payload": entry.staged_node_payload,
+                                "dropped_audit_id": entry.audit_id,
+                                "reason": reason,
+                                "live_node_ids_at_resume": sorted(_collect_live_node_ids(flow)),
+                            }
+                        },
+                    )
+                )
+            except Exception:  # noqa: BLE001 — audit-side errors must not crash the loop
+                logger.warning("audit.record_event failed for staged_drop_on_resume", exc_info=False)
+        if dropped:
+            yield PlannerEvent(
+                event="info",
+                payload={
+                    "message": "resumed; dropped stale staged entries",
+                    "dropped_count": len(dropped),
+                    "drop_reasons": [reason for _, reason in dropped],
+                },
+            )
+
         session.touch()
         yield PlannerEvent(
             event="info",
@@ -455,30 +772,144 @@ async def _run_planner_loop(
         )
         session.messages.append(assistant_msg)
 
-        if assistant_text:
+        tool_calls = list(response.tool_calls or [])
+
+        # W38 — when the assistant turn is pure prose (no tool calls), surface
+        # it as a ``thinking`` event so the user sees what the model said.
+        # When tool calls follow, the same text rides on each ``tool_call_*``
+        # event as ``rationale`` (the W38 contract), so emitting both would
+        # render the same sentence twice in the chat trail.
+        if assistant_text and not tool_calls:
             yield PlannerEvent(event="thinking", payload={"text": assistant_text})
 
-        tool_calls = list(response.tool_calls or [])
         if not tool_calls:
             # LLM has nothing more to do.
             break
 
         any_succeeded_this_round = False
 
+        # W38 — capture the assistant preamble that landed alongside this turn's
+        # tool calls; it's the natural-language "what this step does" that the
+        # planner.md prompt asks the model to emit. Shared across every tool
+        # call in this round (the model writes one preamble per turn, even when
+        # it ends up emitting multiple calls). Falls back to ``None`` when the
+        # model skipped the preamble — the per-call ``arg_summary`` covers the
+        # rendering gap.
+        rationale_for_round = _capture_rationale(assistant_text)
+
         for tc in tool_calls:
+            op_kind = _classify_op_kind(tc.name)
+            # Rationale only attaches to user-facing ops. Meta ops are LLM-internal
+            # routing and the UI hides them; if the model wrote a preamble for a
+            # round whose only call is meta, that preamble belongs to whatever
+            # *next* round of work the meta call is selecting for, not to the
+            # meta call itself.
+            rationale = rationale_for_round if op_kind != "meta" else None
+            arg_summary = _arg_summary(tc.name, tc.arguments or {})
+
             yield PlannerEvent(
                 event="tool_call_proposed",
-                payload={"id": tc.id, "name": tc.name, "arguments": tc.arguments},
+                payload={
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    "op_kind": op_kind,
+                    "rationale": rationale,
+                    "arg_summary": arg_summary,
+                },
             )
 
             # Inject planner-managed args for add_* dispatches
             tool_args: dict[str, Any] = dict(tc.arguments) if tc.arguments else {}
+            # W54 — capture provenance: did the LLM emit ``node_id`` itself,
+            # or did the planner allocate? Both values flow into audit_meta
+            # so the audit row alone shows whether a self-loop traced back
+            # to an LLM hallucination or a planner allocation collision.
+            llm_provided_node_id: int | None = None
+            allocated_node_id: int | None = None
             if tc.name.startswith(_ADD_PREFIX):
+                raw_llm_id = tool_args.get("node_id")
+                if isinstance(raw_llm_id, int):
+                    llm_provided_node_id = raw_llm_id
                 tool_args.setdefault("flow_id", session.flow_id)
                 if "node_id" not in tool_args:
                     tool_args["node_id"] = _allocate_node_id(flow, session)
+                    raw_allocated = tool_args.get("node_id")
+                    if isinstance(raw_allocated, int):
+                        allocated_node_id = raw_allocated
 
             insertion_context = _resolve_insertion_context(session, tc, flow)
+
+            # W54 — build audit_meta for instrumentation. Rides on
+            # tool_args["__planner_meta__"] in the persisted audit row.
+            # Always populated for add_* calls (success or rejected) so
+            # any future self-loop is diagnosable from the audit row alone.
+            audit_meta: dict[str, Any] | None = None
+            if tc.name.startswith(_ADD_PREFIX):
+                audit_meta = {
+                    "allocated_node_id": allocated_node_id,
+                    "llm_provided_node_id": llm_provided_node_id,
+                    "resolved_upstream_node_ids": list(insertion_context.upstream_node_ids or []),
+                    "right_input_node_id": insertion_context.right_input_node_id,
+                    "live_node_ids_at_stage": sorted(_collect_live_node_ids(flow)),
+                    "staged_node_ids_at_stage": list(session.staged_node_ids),
+                }
+
+            # W54 — universal self-loop invariant guard. Catches all three
+            # plausible upstream causes (LLM-provided collision, stale
+            # staged_results post-resume, live-graph drift). When it fires,
+            # treat as ``tool_call_rejected`` with refusal_reason
+            # ``self_loop_prevented``; counts toward W53's retry budget;
+            # writes its own audit row (we never reach execute_tool_call,
+            # which is what would otherwise persist the audit).
+            if tc.name.startswith(_ADD_PREFIX):
+                proposed = tool_args.get("node_id")
+                if isinstance(proposed, int):
+                    self_loop_detail = _check_self_loop(proposed, insertion_context)
+                    if self_loop_detail is not None:
+                        audit_id_for_event: int | None = None
+                        try:
+                            audit_row = audit_module.record_event(
+                                audit_module.AuditEvent(
+                                    session_id=session.session_id,
+                                    user_id=session.user_id,
+                                    tool_name=tc.name,
+                                    flow_id=session.flow_id,
+                                    result_status="rejected",
+                                    error=self_loop_detail,
+                                    tool_args={
+                                        **(safety.redact_secrets(tool_args) if tool_args else {}),
+                                        "__planner_meta__": audit_meta,
+                                    },
+                                )
+                            )
+                            audit_id_for_event = audit_row.id if audit_row is not None else None
+                        except Exception:  # noqa: BLE001 — audit must not crash the loop
+                            logger.warning("audit.record_event failed for self_loop_prevented", exc_info=False)
+
+                        # Feed the rejection back to the LLM so it can correct on retry.
+                        session.messages.append(
+                            Message(
+                                role="tool",
+                                tool_call_id=tc.id,
+                                name=tc.name,
+                                content=f"status: rejected | refusal: self_loop_prevented | detail: {self_loop_detail}",
+                            )
+                        )
+                        yield PlannerEvent(
+                            event="tool_call_rejected",
+                            payload={
+                                "id": tc.id,
+                                "name": tc.name,
+                                "reason": "self_loop_prevented",
+                                "detail": self_loop_detail,
+                                "op_kind": op_kind,
+                                "rationale": rationale,
+                                "arg_summary": arg_summary,
+                                "audit_id": audit_id_for_event,
+                            },
+                        )
+                        continue
 
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
             # result instead) but we wrap defensively.
@@ -493,6 +924,8 @@ async def _run_planner_loop(
                     mode="stage",
                     flow=flow,
                     dry_run_cache=dry_run_cache,
+                    llm_provided_node_id=llm_provided_node_id,
+                    audit_meta=audit_meta,
                 )
             except Exception as exc:  # noqa: BLE001 — defence in depth
                 logger.exception("tool dispatch raised; treating as rejected")
@@ -510,6 +943,9 @@ async def _run_planner_loop(
                         "name": tc.name,
                         "reason": "exception",
                         "detail": str(exc),
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "arg_summary": arg_summary,
                     },
                 )
                 continue
@@ -531,6 +967,9 @@ async def _run_planner_loop(
                         "name": tc.name,
                         "reason": result.refusal_reason or "rejected",
                         "detail": result.refusal_detail or "",
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "arg_summary": arg_summary,
                     },
                 )
                 continue
@@ -540,9 +979,17 @@ async def _run_planner_loop(
                 chosen = result.extra.get("category") if isinstance(result.extra, dict) else None
                 if isinstance(chosen, str) and chosen:
                     narrowed_category = chosen
+                    # ``op_kind: "meta"`` lets the frontend suppress this from the
+                    # user-visible chat trail (D002 internal routing — not a step
+                    # the user needs to see). The audit log still captures the
+                    # underlying tool call via execute_tool_call().
                     yield PlannerEvent(
                         event="info",
-                        payload={"message": "category narrowed", "category": chosen},
+                        payload={
+                            "message": "category narrowed",
+                            "category": chosen,
+                            "op_kind": "meta",
+                        },
                     )
                 any_succeeded_this_round = True
                 continue
@@ -574,6 +1021,9 @@ async def _run_planner_loop(
                         "node_id": _payload_node_id(result.staged_node_payload),
                         "predicted_output_schema": result.predicted_output_schema,
                         "warnings": list(result.warnings),
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "arg_summary": arg_summary,
                     },
                 )
                 any_succeeded_this_round = True
@@ -658,6 +1108,7 @@ __all__ = [
     "DEFAULT_MAX_RETRIES_PER_STEP",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
+    "OpKind",
     "PlannerEvent",
     "PlannerEventName",
     "RATIONALE_MAX_LEN",

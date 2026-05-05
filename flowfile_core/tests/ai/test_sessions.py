@@ -32,6 +32,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from flowfile_core.ai import diff as diff_module
 from flowfile_core.ai import sessions
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
@@ -279,3 +280,112 @@ def test_session_default_status_is_running() -> None:
     assert sess.staged_results == []
     assert sess.staged_node_ids == []  # W45 Q1
     assert sess.diff_id is None
+
+
+# --------------------------------------------------------------------------- #
+# W54 — staged_results hygiene on resume                                       #
+# --------------------------------------------------------------------------- #
+
+
+def _staged_add_entry(
+    *,
+    node_id: int,
+    upstream_node_ids: list[int],
+    right_input_node_id: int | None = None,
+    audit_id: int | None = None,
+) -> "diff_module.StagedToolEntry":
+    """Build a minimal StagedToolEntry for ``add_filter`` (any add_* works)."""
+    return diff_module.StagedToolEntry(
+        tool_name="flowfile.graph.add_filter",
+        audit_id=audit_id,
+        staged_node_payload={
+            "node_type": "filter",
+            "settings": {"node_id": node_id, "flow_id": 1},
+            "insertion_context": {
+                "upstream_node_ids": upstream_node_ids,
+                "right_input_node_id": right_input_node_id,
+                "pos_x": 0.0,
+                "pos_y": 0.0,
+            },
+            "predicted_output_schema": [],
+        },
+    )
+
+
+def test_revalidate_staged_results_drops_collision_with_live() -> None:
+    """W54 AC4 — a staged add whose node_id is now live (user-added during pause) is dropped."""
+    sess = _make_session()
+    # Pre-pause: agent staged node 3 with upstream from live node 1.
+    sess.staged_results = [_staged_add_entry(node_id=3, upstream_node_ids=[1])]
+    sess.staged_node_ids = [3]
+
+    # During pause: user adds node 3 manually. Build a flow that now contains live id 3.
+    flow = _flow_with_orders()
+    _add_orders(flow, node_id=3)
+
+    kept, dropped = sessions.revalidate_staged_results_against_live(sess, flow)
+
+    assert kept == []
+    assert len(dropped) == 1
+    entry, reason = dropped[0]
+    assert reason == "live_id_collision"
+    assert entry.staged_node_payload["settings"]["node_id"] == 3
+    assert sess.staged_results == []
+    assert sess.staged_node_ids == []
+
+
+def test_revalidate_staged_results_drops_dead_upstream_reference() -> None:
+    """W54 AC3 — a staged add referencing an upstream id that's no longer live is dropped."""
+    sess = _make_session()
+    # Pre-pause: agent staged node 7 chained off live node 5 (which we'll delete).
+    sess.staged_results = [_staged_add_entry(node_id=7, upstream_node_ids=[5])]
+    sess.staged_node_ids = [7]
+
+    # Build a flow that doesn't contain id 5 (the upstream the staged entry references).
+    # _flow_with_orders gives us node 1 only; that's enough for the upstream-missing check.
+    flow = _flow_with_orders()
+
+    kept, dropped = sessions.revalidate_staged_results_against_live(sess, flow)
+
+    assert kept == []
+    assert len(dropped) == 1
+    entry, reason = dropped[0]
+    assert reason == "upstream_missing"
+    assert entry.staged_node_payload["insertion_context"]["upstream_node_ids"] == [5]
+    assert sess.staged_results == []
+    assert sess.staged_node_ids == []
+
+
+def test_revalidate_staged_results_keeps_valid_entries() -> None:
+    """Negative: entries whose state is consistent with the live graph survive."""
+    sess = _make_session()
+    valid = _staged_add_entry(node_id=4, upstream_node_ids=[1])
+    sess.staged_results = [valid]
+    sess.staged_node_ids = [4]
+    # Live: node 1 only (matches valid's upstream); 4 isn't live yet.
+    flow = _flow_with_orders()
+
+    kept, dropped = sessions.revalidate_staged_results_against_live(sess, flow)
+
+    assert dropped == []
+    assert kept == [valid]
+    assert sess.staged_results == [valid]
+    assert sess.staged_node_ids == [4]
+
+
+def test_revalidate_staged_results_passes_through_non_add_entries() -> None:
+    """Connect / delete entries don't carry node_id+upstream the helper can validate; pass through."""
+    sess = _make_session()
+    connect_entry = diff_module.StagedToolEntry(
+        tool_name="flowfile.graph.connect",
+        audit_id=None,
+        staged_node_payload={"connection": {"input_connection_class": {}, "output_connection_class": {}}},
+    )
+    sess.staged_results = [connect_entry]
+    sess.staged_node_ids = []
+    flow = _flow_with_orders()
+
+    kept, dropped = sessions.revalidate_staged_results_against_live(sess, flow)
+
+    assert dropped == []
+    assert kept == [connect_entry]

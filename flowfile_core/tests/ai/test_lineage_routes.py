@@ -667,6 +667,84 @@ def test_lineage_question_history_limit_forwarded(
 
 
 # --------------------------------------------------------------------------- #
+# 4b. W48 — prospective schema reaches the lineage surface                     #
+# --------------------------------------------------------------------------- #
+
+
+_W48_LINEAGE_FLOW_ID = 9947
+
+
+@pytest.fixture
+def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
+    """Same shape as ``registered_flow`` but with the filter's
+    ``predicted_schema`` cleared post-construction so it lands cold —
+    the W48 path must auto-resolve it when ``render_prompt_context``
+    walks the subgraph from the lineage route.
+    """
+
+    flow = _build_linear_flow(name="w48_lineage")
+    # Override the flow_id so we don't clash with the W51 ``_FLOW_ID`` fixture
+    # if both fixtures are alive at the same time. The setter cascades to
+    # flow_settings + every node's setting_input.
+    flow.flow_id = _W48_LINEAGE_FLOW_ID
+    flow.get_node(2).node_schema.predicted_schema = None
+    flow_file_handler._flows[flow.flow_id] = flow
+    try:
+        yield flow
+    finally:
+        flow_file_handler._flows.pop(flow.flow_id, None)
+
+
+def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream(
+    authed_client: TestClient,
+    patch_get_configured_provider: FakeProvider,
+    patch_collect_run_history: dict[str, Any],
+    registered_cold_flow_for_w48: FlowGraph,
+) -> None:
+    """W48 — a lineage question over a flow whose static upstream nodes
+    are un-run (``predicted_schema=None``) → the W22 user block carries
+    real column names instead of the ``schema: unknown`` sentinel. W51
+    inherits the W22 fix transparently."""
+
+    response = authed_client.post(
+        "/ai/lineage_question",
+        json={
+            "flow_id": _W48_LINEAGE_FLOW_ID,
+            "provider": "anthropic",
+            "question": "what columns flow through the filter?",
+        },
+    )
+    assert response.status_code == 200
+
+    captured = patch_get_configured_provider.last_call_kwargs["messages"]
+    assert len(captured) == 2  # system + user (W22 + history + question)
+    _system_msg, user_msg = captured
+
+    # The lineage user message is W22's body + history block + question.
+    # The filter's section must surface its columns — the bug-of-record
+    # was the assistant seeing "schema: unknown" for the filter and
+    # asking the user to run the upstream nodes.
+    assert "filter_eu" in user_msg.content
+    assert "order_id" in user_msg.content
+    assert "region" in user_msg.content
+
+    filter_block_start = user_msg.content.find("### filter_eu")
+    assert filter_block_start != -1, "expected ### filter_eu header in W22 user block"
+    # Find where the filter block ends — at the next ### header or at the
+    # ## Run history block if no further nodes.
+    next_header = user_msg.content.find("\n##", filter_block_start + 1)
+    filter_block = (
+        user_msg.content[filter_block_start:next_header]
+        if next_header != -1
+        else user_msg.content[filter_block_start:]
+    )
+    assert "schema: unknown" not in filter_block, (
+        f"filter block still reports schema: unknown — W48 fix not applied via lineage route. "
+        f"Block:\n{filter_block[:500]}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 5. Error mapping                                                             #
 # --------------------------------------------------------------------------- #
 

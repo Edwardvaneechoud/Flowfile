@@ -37,8 +37,14 @@ const makeStorage = (): MockStorage => {
 };
 
 const sampleMessages = (): ChatMessage[] => [
-  { id: 1, role: "user", content: "Hello" },
-  { id: 2, role: "assistant", content: "Hi there!", pending: false },
+  { id: 1, createdAt: 1_700_000_000_000, role: "user", content: "Hello" },
+  {
+    id: 2,
+    createdAt: 1_700_000_000_001,
+    role: "assistant",
+    content: "Hi there!",
+    pending: false,
+  },
 ];
 
 describe("loadPersistedAiState", () => {
@@ -119,8 +125,14 @@ describe("loadPersistedAiState", () => {
     persistAiState(
       {
         messages: [
-          { id: 1, role: "user", content: "Hi" },
-          { id: 2, role: "assistant", content: "partial...", pending: true },
+          { id: 1, createdAt: 1_700_000_000_000, role: "user", content: "Hi" },
+          {
+            id: 2,
+            createdAt: 1_700_000_000_001,
+            role: "assistant",
+            content: "partial...",
+            pending: true,
+          },
         ],
         selectedProvider: null,
         selectedModel: null,
@@ -161,7 +173,12 @@ describe("persistAiState", () => {
     const storage = makeStorage();
     const many: ChatMessage[] = [];
     for (let i = 1; i <= MAX_PERSISTED_MESSAGES + 50; i += 1) {
-      many.push({ id: i, role: i % 2 === 0 ? "assistant" : "user", content: `m${i}` });
+      many.push({
+        id: i,
+        createdAt: 1_700_000_000_000 + i,
+        role: i % 2 === 0 ? "assistant" : "user",
+        content: `m${i}`,
+      });
     }
     persistAiState({ messages: many, selectedProvider: null, selectedModel: null }, storage);
 
@@ -224,9 +241,9 @@ describe("highestPersistedMessageId", () => {
   it("returns the maximum id", () => {
     expect(
       highestPersistedMessageId([
-        { id: 3, role: "user", content: "" },
-        { id: 7, role: "assistant", content: "" },
-        { id: 5, role: "user", content: "" },
+        { id: 3, createdAt: 1_700_000_000_003, role: "user", content: "" },
+        { id: 7, createdAt: 1_700_000_000_007, role: "assistant", content: "" },
+        { id: 5, createdAt: 1_700_000_000_005, role: "user", content: "" },
       ]),
     ).toBe(7);
   });
@@ -245,8 +262,8 @@ describe("acceptance criteria — full round-trip mirroring W27 spec", () => {
 
     // Tab 1: push messages and persist.
     const pushed: ChatMessage[] = [
-      { id: 1, role: "user", content: "What's up?" },
-      { id: 2, role: "assistant", content: "Not much." },
+      { id: 1, createdAt: 1_700_000_000_001, role: "user", content: "What's up?" },
+      { id: 2, createdAt: 1_700_000_000_002, role: "assistant", content: "Not much." },
     ];
     persistAiState(
       { messages: pushed, selectedProvider: "openai", selectedModel: "gpt-4o" },

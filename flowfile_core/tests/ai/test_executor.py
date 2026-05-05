@@ -549,6 +549,72 @@ def test_formula_predicts_via_mirror_not_kernel(call_kwargs: dict[str, Any], stu
 
 
 # --------------------------------------------------------------------------- #
+# W54 — LLM-provided node_id validation                                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_add_with_llm_provided_colliding_node_id_is_refused(call_kwargs: dict[str, Any]) -> None:
+    """W54 AC2 — LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``.
+
+    The executor refuses with ``self_loop_prevented`` *before* Pydantic validation;
+    no node is staged or applied; an audit row records the rejection.
+    """
+    flow = _flow_with_orders()
+    args = _filter_args(node_id=3, depending_on_id=1, expr="[region]=='EU'")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=args,
+        insertion_context=InsertionContext(upstream_node_ids=[3]),
+        flow=flow,
+        mode="stage",
+        llm_provided_node_id=3,
+        audit_meta={
+            "allocated_node_id": None,
+            "llm_provided_node_id": 3,
+            "resolved_upstream_node_ids": [3],
+            "right_input_node_id": None,
+            "live_node_ids_at_stage": [1],
+            "staged_node_ids_at_stage": [],
+        },
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "self_loop_prevented"
+    assert result.refusal_detail is not None
+    assert "LLM-provided node_id 3" in result.refusal_detail
+    assert "self-loop" in result.refusal_detail
+    assert result.staged_node_payload is None
+    assert flow.get_node(3) is None  # not added
+
+    rows = audit.query_events(session_id=call_kwargs["session_id"], limit=10)
+    matching = [r for r in rows if r.tool_name == "flowfile.graph.add_filter" and r.result_status == "rejected"]
+    assert matching, "audit row for the rejection must be present"
+
+
+def test_add_with_llm_provided_id_already_live_is_refused(call_kwargs: dict[str, Any]) -> None:
+    """W54 — LLM-provided node_id collides with an existing live node id."""
+    flow = _flow_with_orders()  # contains node 1
+    args = _filter_args(node_id=1, depending_on_id=1, expr="[region]=='EU'")
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=args,
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        mode="stage",
+        llm_provided_node_id=1,
+        audit_meta={"staged_node_ids_at_stage": []},
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "self_loop_prevented"
+    assert "already exists in the live graph" in (result.refusal_detail or "")
+
+
+# --------------------------------------------------------------------------- #
 # Sanity: ToolExecutionResult shape                                            #
 # --------------------------------------------------------------------------- #
 
