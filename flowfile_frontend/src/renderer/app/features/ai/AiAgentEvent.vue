@@ -85,7 +85,8 @@ const toolStepHeadline = computed<string>(() => {
     return name ? `Planning: ${name}` : "Planning a step…";
   }
   if (props.event.kind === "tool_call_staged") return name ? `Staged ${name}` : "Staged a step";
-  if (props.event.kind === "tool_call_warned") return `${name ? `Staged ${name}` : "Staged a step"} — with warnings`;
+  if (props.event.kind === "tool_call_warned")
+    return `${name ? `Staged ${name}` : "Staged a step"} — with warnings`;
   if (props.event.kind === "tool_call_rejected") {
     const detail = _str(props.event.payload ?? {}, "detail");
     return detail ? `Rejected ${name}: ${detail}` : `Rejected ${name}`;
@@ -193,12 +194,18 @@ const thinkingHtml = computed<string>(() => {
     <!-- W38 — rationale-primary tool_step rendering. -->
     <template v-if="isToolStep">
       <div class="ai-agent-event__rationale">{{ toolStepHeadline }}</div>
-      <details v-if="toolStepCaption || toolStepArgsJson || showRejectionDetail" class="ai-agent-event__details" :open="detailsOpen">
+      <details
+        v-if="toolStepCaption || toolStepArgsJson || showRejectionDetail"
+        class="ai-agent-event__details"
+        :open="detailsOpen"
+      >
         <summary class="ai-agent-event__details-summary">
           <span class="ai-agent-event__caption">{{ toolStepCaption || "Show details" }}</span>
         </summary>
         <pre v-if="toolStepArgsJson" class="ai-agent-event__args">{{ toolStepArgsJson }}</pre>
-        <p v-if="showRejectionDetail" class="ai-agent-event__refusal">{{ toolStepRejectionDetail }}</p>
+        <p v-if="showRejectionDetail" class="ai-agent-event__refusal">
+          {{ toolStepRejectionDetail }}
+        </p>
       </details>
     </template>
     <!-- Thinking events → rendered markdown. eslint-disable: v-html is sanitised. -->

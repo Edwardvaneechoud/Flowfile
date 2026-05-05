@@ -34,6 +34,12 @@ from flowfile_core.ai.providers.base import ToolSpec
 from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
 from flowfile_core.ai.tools.graph_ops import GRAPH_OPS_TOOLS
 from flowfile_core.ai.tools.meta_ops import CATEGORY_NAMES, META_OPS_TOOLS
+from flowfile_core.ai.tools.node_docs import (
+    NODE_LONG_DESCRIPTIONS,
+    NODE_USER_INSTRUCTIONS,
+    palette_label_for,
+    sidebar_section_for,
+)
 from flowfile_core.ai.tools.schema_ops import SCHEMA_OPS_TOOLS
 from flowfile_core.schemas.schemas import (
     NODE_TYPE_TO_SETTINGS_CLASS,
@@ -63,6 +69,7 @@ SurfaceLiteral = Literal[
     "docgen",
     "settings_autocomplete",
     "lineage",
+    "intent_classifier",
 ]
 
 # Regex that every emitted tool name must match (D004).
@@ -106,8 +113,33 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     return ToolSpec(
         name=mcp_tool_name("graph", f"add_{node_type}"),
         description=description,
+        long_description=NODE_LONG_DESCRIPTIONS.get(node_type, ""),
+        user_instructions=_compose_user_instructions(node_type),
         parameters=schema,
     )
+
+
+def _compose_user_instructions(node_type: str) -> str:
+    """Compose the user-instructions block for ``node_type``.
+
+    Combines the runtime palette label + sidebar section (read from
+    ``nodes.py``, the canonical source) with the per-node prose from
+    ``NODE_USER_INSTRUCTIONS``. Returns ``""`` when no user-instructions
+    entry exists; the test suite asserts non-empty for every node type
+    in ``NODE_TYPE_TO_SETTINGS_CLASS``, so this fallback only matters
+    for new node types that haven't been documented yet.
+    """
+
+    body = NODE_USER_INSTRUCTIONS.get(node_type, "").strip()
+    if not body:
+        return ""
+    palette = palette_label_for(node_type)
+    section = sidebar_section_for(node_type)
+    if section:
+        header = f"(palette: {palette!r}, section: {section!r})"
+    else:
+        header = f"(palette: {palette!r}, internal — not in palette)"
+    return f"{header}\n{body}"
 
 
 def _iter_node_types() -> list[str]:
@@ -216,6 +248,9 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
     # provider; the empty frozenset keeps the surface lockstep happy
     # without surfacing tools the LLM would never call.
     "lineage": frozenset(),
+    # W58 intent classifier — single-shot judgement; the route passes
+    # ``tools=None`` and reads strict JSON. No tool catalog needed.
+    "intent_classifier": frozenset(),
 }
 
 

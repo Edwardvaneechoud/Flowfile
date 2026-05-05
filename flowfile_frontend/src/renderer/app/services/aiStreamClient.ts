@@ -588,4 +588,87 @@ export const resumeAgentSessionStream = async (
   await _consumePlannerSse(response, handlers);
 };
 
+// --------------------------------------------------------------------------- //
+// W58 — Chat → Agent auto-promotion routing                                     //
+// --------------------------------------------------------------------------- //
+
+export interface RouteHistoryEntry {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface RouteRequestBody {
+  message: string;
+  provider: string;
+  model?: string | null;
+  /** Recent chat turns, oldest first, excluding the current `message`. The
+   * backend caps this at the configured turns budget; oversized history
+   * is trimmed server-side. */
+  history?: RouteHistoryEntry[];
+}
+
+export type RouteVerdict = "chat" | "agent";
+export type RouteKind = "build" | "chat" | "ambiguous";
+
+export interface RouteResponseBody {
+  verdict: RouteVerdict;
+  kind: RouteKind;
+  confidence: number;
+  reason: string;
+  /** End-to-end classifier latency in ms. Surfaced for telemetry; the
+   * banner doesn't render it. */
+  latencyMs: number;
+}
+
+interface PyRouteResponseBody {
+  verdict: RouteVerdict;
+  kind: RouteKind;
+  confidence: number;
+  reason: string;
+  latency_ms: number;
+}
+
+export const routeMessage = async (
+  body: RouteRequestBody,
+  signal?: AbortSignal,
+): Promise<RouteResponseBody> => {
+  // W58 — POSTs ``{message, provider, model?}`` to ``/ai/route``. The
+  // backend's classifier collapses every internal failure mode (timeout,
+  // parse error, provider hiccup) into ``verdict="chat"``, so the only
+  // non-200 outcomes here are the standard 4xx provider / auth / flag
+  // failures. ``AiStreamHttpError`` mirrors the existing chat-stream
+  // error shape so the store's failure handling stays uniform.
+  const token = await authService.getToken();
+  if (!token) {
+    throw new AiStreamHttpError(401, "Not authenticated. Please log in again.");
+  }
+
+  const url = new URL("ai/route", flowfileCorebaseURL).toString();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    signal,
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorBody(response);
+    throw new AiStreamHttpError(response.status, detail);
+  }
+
+  const raw = (await response.json()) as PyRouteResponseBody;
+  return {
+    verdict: raw.verdict,
+    kind: raw.kind,
+    confidence: raw.confidence,
+    reason: raw.reason,
+    latencyMs: raw.latency_ms,
+  };
+};
+
 export const _internal = { parseEventBlock, dispatch, dispatchPlannerEvent };

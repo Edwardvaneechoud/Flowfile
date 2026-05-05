@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any, ClassVar, TypedDict
 
@@ -101,32 +102,14 @@ class LiteLLMProvider:
         response_format: dict[str, Any] | None = None,
     ) -> LiteLLMKwargs:
         # TODO REMOVE WHEN GOING LIVE — dev-only verbose prompt dump.
-        # Logs every assembled prompt to the core log so the user can see
-        # exactly what's being sent to the LLM. Strip before release —
-        # content is unredacted (samples may leak PII), volume is high.
-        _total = sum(len(m.content or "") for m in messages)
-        logger.info(
-            "[DEV-PROMPT-DUMP — REMOVE WHEN GOING LIVE] provider=%s model=%s mode=%s "
-            "messages=%d total_chars=%d tools=%d",
-            self.name,
-            self.model,
-            "stream" if stream else "chat",
-            len(messages),
-            _total,
-            len(tools) if tools else 0,
-        )
-        for _i, _m in enumerate(messages):
-            logger.info(
-                "[DEV-PROMPT-DUMP] [%d/%d] role=%s chars=%d\n"
-                "----- BEGIN %s MESSAGE -----\n%s\n----- END %s MESSAGE -----",
-                _i + 1,
-                len(messages),
-                _m.role,
-                len(_m.content or ""),
-                _m.role.upper(),
-                _m.content or "",
-                _m.role.upper(),
-            )
+        # Logs the full assembled messages right before they're sent to the
+        # provider so the user can see exactly what the LLM sees. Covers
+        # every AI route (chat / planner / run-failure / autocomplete /
+        # docgen / lineage / inline-actions / command-palette / suggest /
+        # intent-router) because every one of them goes through this seam.
+        # Strip before release — content is unredacted (samples may leak PII)
+        # and the volume is high.
+        _dev_log_prompt(provider=self.name, model=self.model, messages=messages, tools=tools, stream=stream)
         kwargs: LiteLLMKwargs = {
             "model": self.model,
             "messages": [_message_to_litellm(m) for m in messages],
@@ -151,6 +134,10 @@ class LiteLLMProvider:
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        *,
+        surface: str | None = None,
+        session_id: str | None = None,
+        user_id: int | None = None,
     ) -> ChatResponse:
         import litellm  # lazy: keeps module import cheap
 
@@ -161,24 +148,147 @@ class LiteLLMProvider:
             stream=False,
             response_format=response_format,
         )
-        response = await litellm.acompletion(**kwargs)
-        return _response_from_litellm(response, model=self.model)
+        started_at = time.perf_counter()
+        error: str | None = None
+        result: ChatResponse | None = None
+        try:
+            response = await litellm.acompletion(**kwargs)
+            result = _response_from_litellm(response, model=self.model)
+            return result
+        except Exception as exc:
+            error = repr(exc)
+            raise
+        finally:
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            _record_call_telemetry(
+                provider=self.name,
+                surface=surface,
+                model=self.model,
+                error=error,
+            )
+            _record_chat_log(
+                provider=self.name,
+                model=self.model,
+                surface=surface,
+                session_id=session_id,
+                user_id=user_id,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                response=result,
+                latency_ms=latency_ms,
+                error=error,
+            )
 
     async def stream(
         self,
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
+        *,
+        surface: str | None = None,
+        session_id: str | None = None,
+        user_id: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         import litellm
 
         kwargs = self._build_kwargs(messages, tools, max_tokens, stream=True)
-        response = await litellm.acompletion(**kwargs)
+        started_at = time.perf_counter()
+        error: str | None = None
+        aggregated_text: list[str] = []
+        aggregated_tool_calls: list[ToolCall] = []
+        finish_reason: str | None = None
+        try:
+            response = await litellm.acompletion(**kwargs)
+            tool_buffer: dict[int, _PartialToolCall] = {}
+            async for raw_chunk in response:
+                for chunk in _chunks_from_litellm(raw_chunk, tool_buffer):
+                    if chunk.content_delta:
+                        aggregated_text.append(chunk.content_delta)
+                    if chunk.tool_call_delta is not None:
+                        aggregated_tool_calls.append(chunk.tool_call_delta)
+                    if chunk.finish_reason:
+                        finish_reason = chunk.finish_reason
+                    yield chunk
+        except Exception as exc:
+            error = repr(exc)
+            raise
+        finally:
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            _record_call_telemetry(
+                provider=self.name,
+                surface=surface,
+                model=self.model,
+                error=error,
+            )
+            _record_stream_log(
+                provider=self.name,
+                model=self.model,
+                surface=surface,
+                session_id=session_id,
+                user_id=user_id,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                response_text="".join(aggregated_text) if aggregated_text else None,
+                response_tool_calls=aggregated_tool_calls,
+                finish_reason=finish_reason,
+                latency_ms=latency_ms,
+                error=error,
+            )
 
-        tool_buffer: dict[int, _PartialToolCall] = {}
-        async for raw_chunk in response:
-            for chunk in _chunks_from_litellm(raw_chunk, tool_buffer):
-                yield chunk
+
+def _dev_log_prompt(
+    *,
+    provider: str,
+    model: str,
+    messages: list[Message],
+    tools: list[ToolSpec] | None,
+    stream: bool,
+) -> None:
+    """TODO REMOVE WHEN GOING LIVE — dump every AI prompt to the core log.
+
+    The user explicitly asked for visibility into what's being sent. The
+    chat surface in particular kept hallucinating UI affordances, and it
+    wasn't visible whether the W56 catalog was actually reaching the LLM.
+    This dumps everything verbatim. Strip before release — content is
+    unredacted (samples may leak PII), and the volume is non-trivial.
+    """
+    total_chars = sum(len(m.content or "") for m in messages)
+    tool_count = len(tools) if tools else 0
+    logger.info(
+        "[DEV-PROMPT-DUMP — REMOVE WHEN GOING LIVE] provider=%s model=%s mode=%s "
+        "messages=%d total_chars=%d total_tokens~%d tools=%d",
+        provider,
+        model,
+        "stream" if stream else "chat",
+        len(messages),
+        total_chars,
+        total_chars // 4,
+        tool_count,
+    )
+    for i, m in enumerate(messages):
+        content = m.content or ""
+        logger.info(
+            "[DEV-PROMPT-DUMP] [%d/%d] role=%s chars=%d\n"
+            "----- BEGIN %s MESSAGE -----\n%s\n----- END %s MESSAGE -----",
+            i + 1,
+            len(messages),
+            m.role,
+            len(content),
+            m.role.upper(),
+            content,
+            m.role.upper(),
+        )
+    if tools:
+        for i, t in enumerate(tools):
+            logger.info(
+                "[DEV-PROMPT-DUMP] tool [%d/%d] name=%s description=%s",
+                i + 1,
+                len(tools),
+                t.name,
+                (t.description or "")[:200],
+            )
 
 
 def _message_to_litellm(msg: Message) -> dict[str, Any]:
@@ -350,3 +460,131 @@ def _parse_arguments(raw: str | dict[str, Any]) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return {}
     return parsed
+
+
+# ---------------------------------------------------------------------------
+# Telemetry + prompt-log hooks (W59)
+# ---------------------------------------------------------------------------
+#
+# Imports below are kept inside the helper functions for the same reason as
+# ``litellm`` — keeping ``providers/_litellm_base`` cheap to import. The
+# wrappers also swallow logging errors so a misconfigured log dir / disk
+# pressure / serialisation hiccup never crashes the actual LLM call.
+
+
+def _record_call_telemetry(
+    *,
+    provider: str,
+    surface: str | None,
+    model: str,
+    error: str | None,
+) -> None:
+    """Bump the W15 ``flowfile_ai_provider_call_total`` counter.
+
+    Independent of ``FLOWFILE_AI_LOG_PROMPTS`` — the counter is cheap and
+    always-on so dashboards see traffic regardless of whether prompt
+    transcripts are being captured. Failures are swallowed.
+    """
+    try:
+        from flowfile_core.ai.metrics import record_provider_call
+
+        record_provider_call(
+            provider=provider,
+            surface=surface,
+            model=model,
+            status="error" if error else "success",
+        )
+    except Exception:  # noqa: BLE001 — telemetry must not crash the call path
+        logger.warning("provider call telemetry failed", exc_info=True)
+
+
+def _record_chat_log(
+    *,
+    provider: str,
+    model: str,
+    surface: str | None,
+    session_id: str | None,
+    user_id: int | None,
+    messages: list[Message],
+    tools: list[ToolSpec] | None,
+    max_tokens: int | None,
+    response: ChatResponse | None,
+    latency_ms: int,
+    error: str | None,
+) -> None:
+    """Append one prompt-log entry for a non-streaming chat call (W59)."""
+    try:
+        from flowfile_core.ai.prompt_log import (
+            build_entry_from_chat,
+            is_logging_enabled,
+            log_prompt,
+        )
+
+        if not is_logging_enabled():
+            return
+        entry = build_entry_from_chat(
+            provider=provider,
+            model=model,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            response=response,
+            latency_ms=latency_ms,
+            error=error,
+            surface=surface,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        log_prompt(entry)
+    except Exception:  # noqa: BLE001 — prompt-log must not crash the call path
+        logger.warning("prompt_log: chat-side write failed", exc_info=True)
+
+
+def _record_stream_log(
+    *,
+    provider: str,
+    model: str,
+    surface: str | None,
+    session_id: str | None,
+    user_id: int | None,
+    messages: list[Message],
+    tools: list[ToolSpec] | None,
+    max_tokens: int | None,
+    response_text: str | None,
+    response_tool_calls: list[ToolCall],
+    finish_reason: str | None,
+    latency_ms: int,
+    error: str | None,
+) -> None:
+    """Append one prompt-log entry for a streaming call (W59).
+
+    Aggregates the per-chunk deltas the streaming wrapper accumulates;
+    one line per LLM call, not per chunk.
+    """
+    try:
+        from flowfile_core.ai.prompt_log import (
+            build_entry_from_stream,
+            is_logging_enabled,
+            log_prompt,
+        )
+
+        if not is_logging_enabled():
+            return
+        entry = build_entry_from_stream(
+            provider=provider,
+            model=model,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            response_text=response_text,
+            response_tool_calls=response_tool_calls,
+            finish_reason=finish_reason,
+            latency_ms=latency_ms,
+            error=error,
+            surface=surface,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        log_prompt(entry)
+    except Exception:  # noqa: BLE001 — prompt-log must not crash the call path
+        logger.warning("prompt_log: stream-side write failed", exc_info=True)

@@ -24,4 +24,5 @@ class GroqProvider(LiteLLMProvider):
         "docgen": "llama-3.3-70b-versatile",
         "settings_autocomplete": "llama-3.3-70b-versatile",
         "lineage": "llama-3.3-70b-versatile",
+        "intent_classifier": "llama-3.3-70b-versatile",
     }

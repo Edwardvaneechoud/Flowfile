@@ -17,11 +17,22 @@ W34 adds :func:`record_autocomplete_call` — a lightweight non-DB telemetry
 helper for per-call settings-autocomplete observation. The audit-DB write
 path is too noisy for keystroke-frequency events; this helper emits a
 structured ``INFO`` log line instead, ready for downstream collection.
+
+W59 adds :func:`record_provider_call` + :func:`get_provider_call_counts` — an
+in-process counter labelled by ``(provider, surface, model, status)``. Bumped
+on every ``LiteLLMProvider.chat`` / ``.stream`` call regardless of whether
+prompt-logging is enabled (the JSONL log is opt-in; basic call traffic
+counters are always-on so dashboards don't go dark when logging is off).
+The implementation is a plain ``collections.Counter`` — no Prometheus client
+dep gets pulled in for v0; a future workstream can swap it for the proper
+metric backend without changing the call signature.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter
+from threading import Lock
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +41,14 @@ from flowfile_core.database.connection import SessionLocal
 from flowfile_core.database.models import AiAuditEvent
 
 logger = logging.getLogger(__name__)
+
+#: Status label for the ``flowfile_ai_provider_call_total`` counter.
+ProviderCallStatus = str  # "success" | "error"
+
+#: Process-local counter keyed by ``(provider, surface, model, status)``.
+#: Reset between test runs via :func:`reset_provider_call_counts`.
+_PROVIDER_CALL_COUNTER: Counter[tuple[str, str, str, str]] = Counter()
+_PROVIDER_CALL_LOCK = Lock()
 
 
 def aggregate_pass_rate(
@@ -113,4 +132,49 @@ def record_autocomplete_call(
     )
 
 
-__all__ = ["aggregate_pass_rate", "aggregate_tokens", "record_autocomplete_call"]
+def record_provider_call(
+    *,
+    provider: str,
+    surface: str | None,
+    model: str,
+    status: str,
+) -> None:
+    """Increment the ``flowfile_ai_provider_call_total`` counter.
+
+    Called from the W11 ``LiteLLMProvider`` wrap on every ``chat`` /
+    ``stream`` call, success or error. ``surface`` may be ``None`` for
+    callers that haven't been threaded through yet — coerced to ``"unknown"``
+    so the counter key stays a 4-tuple.
+    """
+    key = (provider, surface or "unknown", model, status)
+    with _PROVIDER_CALL_LOCK:
+        _PROVIDER_CALL_COUNTER[key] += 1
+    logger.info(
+        "ai_provider_call provider=%s surface=%s model=%s status=%s",
+        provider,
+        surface or "unknown",
+        model,
+        status,
+    )
+
+
+def get_provider_call_counts() -> dict[tuple[str, str, str, str], int]:
+    """Snapshot of the in-process counter — keyed by full label tuple."""
+    with _PROVIDER_CALL_LOCK:
+        return dict(_PROVIDER_CALL_COUNTER)
+
+
+def reset_provider_call_counts() -> None:
+    """Clear the in-process counter (test helper)."""
+    with _PROVIDER_CALL_LOCK:
+        _PROVIDER_CALL_COUNTER.clear()
+
+
+__all__ = [
+    "aggregate_pass_rate",
+    "aggregate_tokens",
+    "get_provider_call_counts",
+    "record_autocomplete_call",
+    "record_provider_call",
+    "reset_provider_call_counts",
+]

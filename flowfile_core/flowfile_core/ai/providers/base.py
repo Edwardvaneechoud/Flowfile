@@ -40,10 +40,29 @@ class Message(BaseModel):
 
 
 class ToolSpec(BaseModel):
-    """An MCP-shaped tool the model may call."""
+    """An MCP-shaped tool the model may call.
+
+    Three audiences for the prose fields:
+
+    * ``description`` — short, JSON-Schema-shaped summary forwarded to
+      the provider's tools API (kept terse — every byte counts on the
+      per-call wire).
+    * ``long_description`` — agent-shaped narrative ("when to call this
+      tool"). W56 appends it to tool-calling surfaces so the model
+      disambiguates between tools.
+    * ``user_instructions`` — user-shaped narrative ("how does the user
+      do this in the UI"). W56 appends it to read-only / advisory
+      surfaces (chat / explain / lineage / docgen) so the model cites
+      real palette labels and settings field names instead of
+      hallucinating UI elements. Empty for non-node-type tools (graph
+      ops / schema ops / codegen / meta — the user can't reach these
+      directly through the canvas anyway).
+    """
 
     name: str
     description: str
+    long_description: str = ""
+    user_instructions: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 

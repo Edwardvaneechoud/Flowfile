@@ -64,6 +64,7 @@ SurfaceLiteral = Literal[
     "docgen",
     "settings_autocomplete",
     "lineage",
+    "intent_classifier",
 ]
 
 SamplesMode = Literal["off", "regex"]
@@ -86,6 +87,12 @@ SURFACE_TO_LEVEL: dict[str, PromptLevel] = {
     # ``docgen`` and ``explain``. The lineage-specific shape contract lives in
     # the appended user-message block rather than a fourth level file.
     "lineage": "assist",
+    # W58 intent classifier — read-only single-shot judgement, level mapping
+    # is nominal (the classifier injects its own tight system prompt rather
+    # than using the layered W22 prompt). Mapped to ``copilot`` only because
+    # SURFACE_TO_LEVEL is exhaustive over SurfaceLiteral; ``assemble_system_prompt``
+    # is never called for this surface.
+    "intent_classifier": "copilot",
 }
 
 
@@ -135,7 +142,9 @@ class SubgraphSnapshot(BaseModel):
     pinned_node_ids: list[int | str]
     nodes: list[NodeSnapshot]
     edges: list[tuple[int | str, int | str]] = Field(default_factory=list)
-    samples_mode: SamplesMode = "regex"  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
+    samples_mode: SamplesMode = (
+        "regex"  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
+    )
 
 
 class PromptContext(BaseModel):
@@ -339,6 +348,17 @@ def assemble_system_prompt(surface: SurfaceLiteral) -> str:
     strips HTML comment markers used in the W10 stubs, and joins them
     with a blank line.
 
+    Tool-calling surfaces (``agent``, ``agent_complex``, ``cmd_k``,
+    ``ghost_node``) get the W56 ``Tool catalog`` block — agent-shaped
+    "when to call this tool" prose used to disambiguate which tool to
+    dispatch. Read-only / advisory surfaces (``explain``, ``lineage``,
+    ``docgen``) get a separate ``Flowfile node reference`` block built
+    from per-node ``user_instructions`` (palette label, sidebar
+    section, key settings, worked example, pitfalls) so the chat can
+    answer "how do I X" with the user's actual UI vocabulary instead
+    of inventing names like "transform node". ``settings_autocomplete``
+    is a constrained-JSON surface and skips both blocks.
+
     Raises ``ValueError`` for unknown surfaces.
     """
 
@@ -347,8 +367,128 @@ def assemble_system_prompt(surface: SurfaceLiteral) -> str:
 
     base = _load_prompt("base")
     suffix = _load_prompt(SURFACE_TO_LEVEL[surface])
-    blocks = [block for block in (base, suffix) if block]
+    catalog = _build_catalog_block(surface)
+    blocks = [block for block in (base, suffix, catalog) if block]
     return "\n\n".join(blocks)
+
+
+_CATALOG_HEADER = "## Tool catalog"
+_NODE_REFERENCE_HEADER = "## Flowfile node reference"
+
+# Surfaces that get the full catalog block — both stages of the agent see
+# every node's narrative grounding so the first-stage pick_category call
+# can pick the right category and the second-stage tool call can pick the
+# right tool inside it. ``agent_complex`` is the one-shot full surface.
+_FULL_CATALOG_SURFACES: frozenset[str] = frozenset({"agent", "agent_complex"})
+
+# Surfaces that get a narrowed catalog filtered to their D002 preset.
+_PRESET_CATALOG_SURFACES: frozenset[str] = frozenset({"cmd_k", "ghost_node"})
+
+# Read-only / advisory surfaces — they don't call tools, but they advise
+# the user about Flowfile, so they need user-facing UI vocabulary. We give
+# them a per-node-type reference rendered from ``user_instructions``
+# (palette label, sidebar, settings labels, worked example, pitfalls) so
+# "how do I X" answers cite real UI elements instead of hallucinating a
+# "transform node" or "expression editor" — the bug from the live transcript
+# that motivated the post-W56-v1 widening.
+_NODE_REFERENCE_SURFACES: frozenset[str] = frozenset({"explain", "lineage", "docgen"})
+
+_NODE_TYPE_TOOL_PREFIX = "flowfile.graph.add_"
+
+
+def _build_catalog_block(surface: str) -> str:
+    """Build the W56 narrative block for ``surface``.
+
+    Two render paths sharing one function (per the user's instruction
+    to keep it as one function with a slice selector):
+
+    * Tool-calling surfaces — emit ``## Tool catalog`` with each tool's
+      :attr:`ToolSpec.long_description` (agent-shaped: "when to call
+      this tool").
+    * Read-only / advisory surfaces — emit ``## Flowfile node reference``
+      with each node-type tool's :attr:`ToolSpec.user_instructions`
+      (user-shaped: palette label / sidebar / settings labels / worked
+      example / pitfalls).
+    * ``settings_autocomplete`` — returns ``""`` (constrained JSON
+      output, no narrative grounding needed).
+
+    Lazy-imports ``tools.registry`` so the prompts package stays
+    independently importable in tests that mock the catalog.
+    """
+
+    from flowfile_core.ai.tools.registry import build_tool_catalog
+
+    full_catalog = build_tool_catalog()
+
+    if surface in _FULL_CATALOG_SURFACES:
+        tools = build_tool_catalog(surface="agent_complex")
+        return _render_tool_catalog(tools)
+    if surface in _PRESET_CATALOG_SURFACES:
+        tools = build_tool_catalog(surface=surface)
+        return _render_tool_catalog(tools)
+    if surface in _NODE_REFERENCE_SURFACES:
+        node_tools = [tool for tool in full_catalog if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX)]
+        return _render_node_reference(node_tools)
+    return ""
+
+
+def _render_tool_catalog(tools: list[Any]) -> str:
+    """Render the agent-shaped ``## Tool catalog`` block from ``long_description``."""
+
+    documented = [tool for tool in tools if tool.long_description]
+    if not documented:
+        return ""
+    documented.sort(key=lambda tool: tool.name)
+    lines: list[str] = [
+        _CATALOG_HEADER,
+        "",
+        (
+            "Detailed guidance per tool below — use this to choose which tool "
+            "fits the user's request. The JSON Schema parameters are sent "
+            "separately on each call; this section is the *when to use* "
+            "narrative. Match the user's intent to the closest match here "
+            "before emitting a tool call."
+        ),
+        "",
+    ]
+    for tool in documented:
+        lines.append(f"### {tool.name}")
+        lines.append(tool.long_description.strip())
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _render_node_reference(tools: list[Any]) -> str:
+    """Render the user-shaped ``## Flowfile node reference`` block.
+
+    Pulled from each node-type tool's :attr:`ToolSpec.user_instructions`.
+    Empty entries are dropped (caught at test time — every node type
+    must populate them).
+    """
+
+    documented = [tool for tool in tools if tool.user_instructions]
+    if not documented:
+        return ""
+    documented.sort(key=lambda tool: tool.name)
+    lines: list[str] = [
+        _NODE_REFERENCE_HEADER,
+        "",
+        (
+            "Reference of every Flowfile node type and how the user creates "
+            "and configures it in the canvas UI. When advising the user on "
+            "how to accomplish a task, cite the actual palette labels and "
+            "settings field names from this reference — never invent UI "
+            "elements (no 'transform node', no 'aggregator', no "
+            "'expression editor'; only what appears here exists)."
+        ),
+        "",
+    ]
+    for tool in documented:
+        node_type = tool.name.removeprefix(_NODE_TYPE_TOOL_PREFIX)
+        lines.append(f"### {node_type}")
+        lines.append(tool.user_instructions.strip())
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def render_user_message(snapshot: SubgraphSnapshot, *, user_text: str | None = None) -> str:

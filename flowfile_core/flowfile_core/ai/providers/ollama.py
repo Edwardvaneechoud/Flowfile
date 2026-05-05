@@ -26,4 +26,5 @@ class OllamaProvider(LiteLLMProvider):
         "docgen": "llama3.1:8b",
         "settings_autocomplete": "llama3.1:8b",
         "lineage": "llama3.1:8b",
+        "intent_classifier": "llama3.1:8b",
     }

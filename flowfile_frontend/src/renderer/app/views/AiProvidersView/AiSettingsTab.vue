@@ -48,7 +48,33 @@
       </div>
     </div>
 
-    <div v-else class="card mb-3">
+    <!-- W58 — chat → agent auto-promotion preference. Sticky per browser
+         session via the existing W27 sessionStorage pattern; flipping this
+         off also persists when the user clicks the promotion banner's
+         "Keep this as chat instead" affordance. The same toggle lives in
+         the chat drawer footer (Auto-agent) — this card is the secondary
+         entry point so the preference is discoverable from Settings too. -->
+    <div v-if="!isDisabled" class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Chat behavior</h3>
+      </div>
+      <div class="card-content">
+        <label class="behavior-row">
+          <input type="checkbox" :checked="aiStore.autoPromote" @change="handleAutoPromoteChange" />
+          <span class="behavior-row__label">
+            <strong>Auto-switch to Agent mode for build requests</strong>
+            <span class="behavior-row__hint">
+              When the chat detects a build / modify intent (e.g. "add a sort node"), open a
+              multi-turn agent run instead of a one-shot chat. Read-only questions stay in chat
+              mode. Mirrored as the "Auto-agent" toggle in the chat drawer footer — flipping either
+              one updates both.
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div v-if="!isDisabled" class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Providers ({{ providers.length }})</h3>
       </div>
@@ -271,6 +297,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElButton, ElDialog, ElMessage, ElTag } from "element-plus";
+import { useAiStore } from "../../stores/ai-store";
 import { useAuthStore } from "../../stores/auth-store";
 import {
   AiDisabledError,
@@ -285,6 +312,16 @@ import type { AiProvider, AiProviderCredentialInput, AiProviderStatus } from "./
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.isAdmin);
+
+// W58 — autoPromote preference is owned by the chat-drawer store so the
+// drawer's ``sendMessage`` can read it without re-fetching from
+// sessionStorage on every send. The settings tab is just a renderer.
+const aiStore = useAiStore();
+
+const handleAutoPromoteChange = (event: Event): void => {
+  const target = event.target as HTMLInputElement;
+  aiStore.setAutoPromote(target.checked);
+};
 
 const providers = ref<AiProvider[]>([]);
 const isLoading = ref(true);
@@ -732,5 +769,32 @@ onMounted(loadProviders);
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-2);
+}
+
+/* W58 — chat → agent auto-promotion toggle row. */
+.behavior-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.behavior-row input[type="checkbox"] {
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.behavior-row__label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.behavior-row__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-weight: normal;
 }
 </style>

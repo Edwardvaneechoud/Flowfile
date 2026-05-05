@@ -423,3 +423,184 @@ def test_every_node_type_in_catalog_has_corresponding_settings_class() -> None:
         assert title == NODE_TYPE_TO_SETTINGS_CLASS[node_type].__name__, (
             f"{name}: title {title!r} mismatch with class " f"{NODE_TYPE_TO_SETTINGS_CLASS[node_type].__name__!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# W56 — long_description coverage (per-node-type narrative docs)
+# ---------------------------------------------------------------------------
+
+
+# Sanity floor for narrative docs — short enough that placeholder strings
+# trip the test, long enough that "filters rows" alone wouldn't pass.
+_W56_LONG_DESCRIPTION_MIN_CHARS = 80
+
+
+def test_w56_every_node_type_has_long_description() -> None:
+    """W56 AC1 + AC7 — every NODE_TYPE_TO_SETTINGS_CLASS entry surfaces narrative docs.
+
+    Without this guard, a future node type can land without docs and the
+    agent surface silently degrades back to JSON-Schema-only grounding.
+    """
+    catalog = {tool.name: tool for tool in build_tool_catalog()}
+    missing: list[str] = []
+    too_short: list[tuple[str, int]] = []
+    for node_type in NODE_TYPE_TO_SETTINGS_CLASS:
+        name = f"flowfile.graph.add_{node_type}"
+        spec = catalog[name]
+        text = (spec.long_description or "").strip()
+        if not text:
+            missing.append(node_type)
+            continue
+        if len(text) < _W56_LONG_DESCRIPTION_MIN_CHARS:
+            too_short.append((node_type, len(text)))
+    assert not missing, f"node types missing long_description: {missing}"
+    assert not too_short, (
+        f"node types with stub-shaped long_description " f"(< {_W56_LONG_DESCRIPTION_MIN_CHARS} chars): {too_short}"
+    )
+
+
+def test_w56_ops_tools_have_long_descriptions() -> None:
+    """W56 — graph / schema / codegen / meta op tools also carry narrative docs."""
+    too_short: list[tuple[str, int]] = []
+    for tool in (*GRAPH_OPS_TOOLS, *SCHEMA_OPS_TOOLS, *CODEGEN_OPS_TOOLS, *META_OPS_TOOLS):
+        text = (tool.long_description or "").strip()
+        if len(text) < _W56_LONG_DESCRIPTION_MIN_CHARS:
+            too_short.append((tool.name, len(text)))
+    assert not too_short, f"ops tools with missing/short long_description: {too_short}"
+
+
+def test_w56_long_description_does_not_duplicate_short_description() -> None:
+    """W56 — long_description should be substantively different from description.
+
+    Catches the lazy mistake of `long_description=description` (no narrative
+    grounding added). Asserts at least 50% character growth on average,
+    skipping the (handful of) ops tools where the short description is
+    already long.
+    """
+    catalog = build_tool_catalog()
+    for tool in catalog:
+        if not tool.long_description:
+            continue
+        # Tools with very long short descriptions don't need a much longer
+        # long_description; only check the typical case.
+        if len(tool.description) > 200:
+            continue
+        assert len(tool.long_description) > len(tool.description), (
+            f"{tool.name}: long_description not longer than description "
+            f"({len(tool.long_description)} vs {len(tool.description)} chars)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# W56 v2 — user_instructions field (chat / advisory surfaces)
+# ---------------------------------------------------------------------------
+
+
+_W56_USER_INSTRUCTIONS_MIN_CHARS = 200  # higher than long_description floor —
+# user_instructions has more required content (settings + worked example +
+# pitfall) and should always be substantive.
+
+
+def test_w56v2_every_node_type_has_user_instructions() -> None:
+    """W56 v2 — every NODE_TYPE_TO_SETTINGS_CLASS entry has chat-facing prose.
+
+    Without this, the chat surface (uses surface="explain") loses its
+    Flowfile vocabulary for that node type and starts hallucinating
+    UI elements.
+    """
+    catalog = {tool.name: tool for tool in build_tool_catalog()}
+    missing: list[str] = []
+    too_short: list[tuple[str, int]] = []
+    for node_type in NODE_TYPE_TO_SETTINGS_CLASS:
+        name = f"flowfile.graph.add_{node_type}"
+        spec = catalog[name]
+        text = (spec.user_instructions or "").strip()
+        if not text:
+            missing.append(node_type)
+            continue
+        if len(text) < _W56_USER_INSTRUCTIONS_MIN_CHARS:
+            too_short.append((node_type, len(text)))
+    assert not missing, f"node types missing user_instructions: {missing}"
+    assert not too_short, (
+        f"node types with stub-shaped user_instructions " f"(< {_W56_USER_INSTRUCTIONS_MIN_CHARS} chars): {too_short}"
+    )
+
+
+def test_w56v2_user_instructions_cite_canonical_palette_labels() -> None:
+    """W56 v2 — every node-type tool's user_instructions begins with the
+    canonical palette label from ``flowfile_core.configs.node_store.nodes``.
+
+    Catches drift if the palette label is renamed in ``nodes.py`` but the
+    user_instructions file isn't updated (or the runtime composition path
+    silently breaks).
+    """
+    from flowfile_core.ai.tools.node_docs import palette_label_for
+
+    catalog = {tool.name: tool for tool in build_tool_catalog()}
+    drift: list[tuple[str, str, str]] = []
+    for node_type in NODE_TYPE_TO_SETTINGS_CLASS:
+        name = f"flowfile.graph.add_{node_type}"
+        spec = catalog.get(name)
+        if not spec or not spec.user_instructions:
+            continue
+        expected_label = palette_label_for(node_type)
+        # The composer prepends `(palette: 'Group by', section: ...)` so the
+        # palette label appears wrapped in single quotes in the prompt.
+        marker = f"'{expected_label}'"
+        if marker not in spec.user_instructions:
+            drift.append((node_type, expected_label, spec.user_instructions[:120]))
+    assert not drift, "user_instructions drifted from canonical palette labels in nodes.py:\n" + "\n".join(
+        f"  - {nt}: expected palette {label!r}, got: {body!r}..." for nt, label, body in drift
+    )
+
+
+def test_w56v2_ops_tools_skip_user_instructions_by_default() -> None:
+    """W56 v2 — graph / schema / codegen / meta tools have empty
+    user_instructions because the user can't reach them through the canvas.
+
+    Surfacing them in the chat-facing reference would only confuse the
+    model into describing tool calls in chat answers.
+    """
+    for tool in (*GRAPH_OPS_TOOLS, *SCHEMA_OPS_TOOLS, *CODEGEN_OPS_TOOLS, *META_OPS_TOOLS):
+        assert (tool.user_instructions or "").strip() == "", (
+            f"{tool.name} unexpectedly has user_instructions; " "ops tools are not user-facing in the chat sense."
+        )
+
+
+def test_w56v2_palette_labels_match_node_store() -> None:
+    """W56 v2 — every documented node_type has a palette entry in nodes.py.
+
+    Cross-checks the user_instructions dict against the canonical palette
+    config so a renamed (or removed) palette entry breaks the test rather
+    than silently sending stale strings to the model.
+
+    Exceptions: ``promise`` and ``user_defined`` are internal placeholders
+    that are not in the palette; they are documented anyway so the model
+    can answer questions about them when they appear in a flow.
+    """
+    from flowfile_core.ai.tools.node_docs import NODE_USER_INSTRUCTIONS, palette_label_for
+    from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
+
+    _, nodes_dict, _ = get_all_standard_nodes()
+    palette_node_types = set(nodes_dict)
+    documented = set(NODE_USER_INSTRUCTIONS)
+    internal_only = {"promise", "user_defined"}
+    palette_documented = documented - internal_only
+    missing_from_palette = palette_documented - palette_node_types
+    assert not missing_from_palette, (
+        f"node types documented in NODE_USER_INSTRUCTIONS but missing "
+        f"from the palette config: {sorted(missing_from_palette)}"
+    )
+    # And every palette entry that has a matching settings class should
+    # be documented (so we don't ship a node the chat can't talk about).
+    palette_with_settings = {nt for nt in palette_node_types if nt in NODE_TYPE_TO_SETTINGS_CLASS}
+    undocumented = palette_with_settings - documented
+    assert not undocumented, (
+        f"palette node types missing user_instructions: {sorted(undocumented)}. "
+        "Add an entry to NODE_USER_INSTRUCTIONS in node_docs.py."
+    )
+    # Spot-check: the live transcript was about group_by → "Group by".
+    # If this assertion fails, the palette label was renamed without
+    # updating the chat repro test in test_context.py.
+    assert palette_label_for("group_by") == "Group by"
+    assert palette_label_for("filter") == "Filter data"

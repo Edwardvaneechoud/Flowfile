@@ -293,7 +293,7 @@ def _staged_add_entry(
     upstream_node_ids: list[int],
     right_input_node_id: int | None = None,
     audit_id: int | None = None,
-) -> "diff_module.StagedToolEntry":
+) -> diff_module.StagedToolEntry:
     """Build a minimal StagedToolEntry for ``add_filter`` (any add_* works)."""
     return diff_module.StagedToolEntry(
         tool_name="flowfile.graph.add_filter",

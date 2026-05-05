@@ -66,6 +66,16 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "generated code on a single sample row before staging (D003) so downstream "
             "tool calls know the prospective output schema."
         ),
+        long_description=(
+            "Author a Polars-expression body to feed into 'flowfile.graph.add_polars_code'. "
+            "Use when the transform doesn't fit a typed node ('formula' is single-column "
+            "only; 'sql_query' is read-only) but doesn't need full Python either. Common "
+            "uses: window functions, multi-column derived values, struct unpacking. "
+            "Don't use for simple per-row formulas — 'formula' is typed and clearer. "
+            "Don't use to issue arbitrary Python — that's 'generate_python_script'. "
+            "Pass 'expected_columns' if you can; the executor's 1-row dry-run validates "
+            "the actual output and rejects mismatches before staging."
+        ),
         parameters=_schema(
             properties={
                 "intent": _INTENT_PROP,
@@ -82,6 +92,18 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "isolated kernel_runtime sandbox (Docker). Returns a node-settings payload ready "
             "to stage via flowfile.graph.add_python_script. The executor's 1-row dry-run "
             "(D003) verifies the script does not crash and produces a parsable output schema."
+        ),
+        long_description=(
+            "Author a full Python function body for an isolated sandbox. Use only "
+            "when the task genuinely needs imperative Python — multi-step "
+            "enrichment, calling a non-Polars library, complex control flow. "
+            "Don't use for transforms a Polars expression can express; "
+            "'generate_polars_code' is faster and lets the engine optimise. The "
+            "sandbox blocks network egress by default — set 'needs_network=true' "
+            "only when the script genuinely needs to fetch external data, and "
+            "tell the user clearly so they can review before approving. The "
+            "1-row dry-run (D003) discovers the prospective output schema; "
+            "supply 'expected_columns' to catch mismatches early."
         ),
         parameters=_schema(
             properties={
@@ -107,6 +129,16 @@ CODEGEN_OPS_TOOLS: Final[list[ToolSpec]] = [
             "embedded SQL engine over the upstream node outputs. Returns a node-settings "
             "payload ready to stage via flowfile.graph.add_sql_query. Dry-run on one row "
             "verifies the SELECT parses and produces a known schema (D003)."
+        ),
+        long_description=(
+            "Author a SELECT statement against upstream nodes via Polars' embedded "
+            "SQL engine. Use when the user thinks in SQL or when the task is "
+            "naturally a multi-table SELECT (multiple JOINs that would otherwise "
+            "be a chain of 'add_join' nodes). Each upstream node is an addressable "
+            "table. Don't use for write operations — Polars SQL is read-only; "
+            "'database_writer' / 'output' handle persistence. Don't use for "
+            "windowed CTEs or PostgreSQL-specific features Polars SQL doesn't "
+            "support — fall back to 'generate_polars_code'."
         ),
         parameters=_schema(
             properties={

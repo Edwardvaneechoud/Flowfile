@@ -63,6 +63,11 @@ _SURFACE_BUDGETS: dict[str, SurfaceBudget] = {
     # can be sizeable (10+ runs × per-node aggregates). Output stays modest
     # because lineage answers are summary-shaped, not generative.
     "lineage": (32_000, 4_000),
+    # W58 intent classifier: tiny prompt (system + last 4 turns × ≤1 K chars
+    # + current message) and a strict-JSON response capped at 96 tokens.
+    # Smaller than ``settings_autocomplete`` because there's no schema
+    # column dump in the prompt.
+    "intent_classifier": (2_000, 200),
 }
 
 

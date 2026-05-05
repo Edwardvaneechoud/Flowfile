@@ -780,9 +780,9 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
     filter_block_start = ctx_user_msg.content.find("### filter_eu")
     assert filter_block_start != -1, "expected ### filter_eu header in W22 user block"
     filter_block = ctx_user_msg.content[filter_block_start:]
-    assert "schema: unknown" not in filter_block, (
-        f"filter block still reports schema: unknown — W48 fix not applied. Block:\n{filter_block[:500]}"
-    )
+    assert (
+        "schema: unknown" not in filter_block
+    ), f"filter block still reports schema: unknown — W48 fix not applied. Block:\n{filter_block[:500]}"
 
 
 # ---------- 9. lazy litellm import ----------
@@ -816,3 +816,89 @@ def test_lazy_litellm_import_for_chat_routes() -> None:
             ), "flowfile_core.ai.chat_routes pulled litellm into sys.modules at import time"
     finally:
         sys.modules.update(saved)
+
+
+# ---------------------------------------------------------------------------
+# W56 v2 — POST /ai/chat/preview (debug endpoint)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_preview_returns_assembled_messages_as_json(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """W56 v2 — preview returns the exact messages /chat/stream would send,
+    without invoking the provider. Lets the user verify what the LLM sees.
+    """
+    response = authed_client.post(
+        "/ai/chat/preview",
+        json={
+            "provider": "anthropic",
+            "messages": [{"role": "user", "content": "How do I count customers per city?"}],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "anthropic"
+    assert body["prompt_surface"] == "explain"
+    # Two messages: server-issued system + the client's user turn.
+    assert len(body["messages"]) == 2
+    assert body["messages"][0]["role"] == "system"
+    assert body["messages"][1]["role"] == "user"
+    assert body["messages"][1]["content"] == "How do I count customers per city?"
+    # The system prompt must include the W56 v2 node reference for the
+    # chat surface — that's the whole point of the preview endpoint
+    # (let the user verify the catalog is reaching the LLM).
+    assert "## Flowfile node reference" in body["messages"][0]["content"]
+    assert "Group by" in body["messages"][0]["content"]
+    # Char counts and token estimate populated.
+    assert body["total_chars"] > 0
+    assert body["estimated_tokens"] == body["total_chars"] // 4
+
+
+def test_chat_preview_does_not_call_provider(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    """W56 v2 — preview is inspection-only; the provider's stream() must
+    not be invoked. FakeProvider records its last stream() call kwargs;
+    an empty dict means stream() was never called.
+    """
+    response = authed_client.post(
+        "/ai/chat/preview",
+        json={
+            "provider": "anthropic",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 200
+    assert (
+        patch_get_configured_provider.last_call_kwargs == {}
+    ), "preview must not invoke provider.stream() — it's inspection-only"
+
+
+def test_chat_preview_unknown_provider_404(authed_client: TestClient) -> None:
+    response = authed_client.post(
+        "/ai/chat/preview",
+        json={
+            "provider": "imaginary",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_chat_preview_disabled_returns_503(
+    authed_client: TestClient, patch_get_configured_provider: FakeProvider
+) -> None:
+    original = core_settings.FEATURE_FLAG_AI.value
+    core_settings.FEATURE_FLAG_AI.set(False)
+    try:
+        response = authed_client.post(
+            "/ai/chat/preview",
+            json={
+                "provider": "anthropic",
+                "messages": [{"role": "user", "content": "ping"}],
+            },
+        )
+    finally:
+        core_settings.FEATURE_FLAG_AI.set(original)
+    assert response.status_code == 503

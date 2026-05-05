@@ -257,6 +257,24 @@ Key variables (see `.env.example`):
 - **Contributing code:** see `CONTRIBUTING.md` at the repo root
 - **Release feedback:** each release has a Discussion thread linked from [Releases](https://github.com/edwardvaneechoud/Flowfile/releases)
 
+## Debugging the AI
+
+When an agent run misbehaves (tool-name loops, planner self-loops, surprising
+column references, etc.), the fastest way to inspect what the model actually
+saw is the prompt log:
+
+1. Set `FLOWFILE_AI_LOG_PROMPTS=true` in your env.
+2. Re-run the failing flow / chat / agent session.
+3. Tail the latest entries: `python -m flowfile_core.ai.prompt_log tail 20`
+4. Or open the file directly: `~/.flowfile/ai_prompts/YYYY-MM-DD.jsonl` (one
+   line per LLM call, parseable with `jq`).
+
+Each line carries the full system prompt, message history, tool catalog,
+model response, and timing. When sharing transcripts externally, set
+`FLOWFILE_AI_LOG_PROMPTS_SCRUB=true` to mask PII in user / tool messages
+(system + assistant content stays verbatim — that's what you're debugging).
+Default off in both cases; production runs stay silent.
+
 ## Things to Avoid
 
 - Do not commit `master_key.txt`, `.env`, or credential files

@@ -25,4 +25,5 @@ class OpenRouterProvider(LiteLLMProvider):
         "docgen": "anthropic/claude-sonnet-4.5",
         "settings_autocomplete": "anthropic/claude-haiku-4.5",
         "lineage": "anthropic/claude-sonnet-4.5",
+        "intent_classifier": "anthropic/claude-haiku-4.5",
     }

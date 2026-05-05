@@ -85,7 +85,7 @@ const _summaryForAddNode = (nodeType: string, args: Record<string, unknown>): st
     const joinInput = settings.join_input;
     if (_isRecord(joinInput)) {
       const keys = joinInput.join_mapping ?? joinInput.join_keys;
-      const how = (typeof joinInput.how === "string" ? joinInput.how : "inner");
+      const how = typeof joinInput.how === "string" ? joinInput.how : "inner";
       if (Array.isArray(keys) && keys.length > 0) {
         const keyStrs: string[] = [];
         for (const k of keys) {
@@ -143,11 +143,7 @@ const _summaryForAddNode = (nodeType: string, args: Record<string, unknown>): st
 
   if (nodeType === "union") return "Adding union";
 
-  if (
-    nodeType.startsWith("read_") ||
-    nodeType.endsWith("_source") ||
-    nodeType === "manual_input"
-  ) {
+  if (nodeType.startsWith("read_") || nodeType.endsWith("_source") || nodeType === "manual_input") {
     const path = settings.path ?? settings.file_path;
     const table = settings.table_name;
     if (typeof path === "string" && path) return `Reading from \`${path}\``;
@@ -243,4 +239,3 @@ export const isAgentEventHidden = (
   }
   return false;
 };
-

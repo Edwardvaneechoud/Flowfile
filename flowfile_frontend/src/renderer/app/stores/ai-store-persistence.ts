@@ -20,12 +20,19 @@ export interface PersistedAiState {
   messages: ChatMessage[];
   selectedProvider: string | null;
   selectedModel: string | null;
+  /** W58 — chat → agent auto-promotion preference. ``null`` (or omitted)
+   * means "no persisted value, use the store's default" so an existing
+   * v1 entry predating W58 doesn't get its absent field treated as
+   * ``false``. Optional so callers from the W27 era don't need to pass
+   * an explicit ``null``. */
+  autoPromote?: boolean | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
   messages: [],
   selectedProvider: null,
   selectedModel: null,
+  autoPromote: null,
 };
 
 interface StorageLike {
@@ -111,6 +118,7 @@ export const loadPersistedAiState = (storage?: StorageLike | null): PersistedAiS
     selectedProvider:
       typeof payload.selectedProvider === "string" ? payload.selectedProvider : null,
     selectedModel: typeof payload.selectedModel === "string" ? payload.selectedModel : null,
+    autoPromote: typeof payload.autoPromote === "boolean" ? payload.autoPromote : null,
   };
 };
 
@@ -124,6 +132,7 @@ export const persistAiState = (state: PersistedAiState, storage?: StorageLike | 
     messages: state.messages.slice(-MAX_PERSISTED_MESSAGES),
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
+    autoPromote: state.autoPromote ?? null,
   };
 
   let payload: string;

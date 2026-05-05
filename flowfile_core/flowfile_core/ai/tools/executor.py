@@ -354,7 +354,10 @@ def _handle_add_node(
         elif llm_provided_node_id in staged_ids:
             violation = f"already staged this session (staged_node_ids={sorted(staged_ids)})"
         elif llm_provided_node_id in upstream_ids_set:
-            violation = f"equals one of its own upstream / right_input ids ({sorted(upstream_ids_set)}) — would create a self-loop"
+            violation = (
+                f"equals one of its own upstream / right_input ids "
+                f"({sorted(upstream_ids_set)}) — would create a self-loop"
+            )
         if violation is not None:
             return _reject_and_audit(
                 tool_name=tool_name,
@@ -538,6 +541,64 @@ def _apply_add_node(flow, node_type: str, settings: BaseModel, ctx: InsertionCon
         add_connection(flow, right_connection)
 
 
+_CONNECTION_FIELD_REWRITES: Final[tuple[tuple[str, str], ...]] = (
+    ("input_connection.connection_class", "input_class"),
+    ("output_connection.connection_class", "output_class"),
+    ("input_connection.node_id", "to_node_id"),
+    ("output_connection.node_id", "from_node_id"),
+    ("input_connection", "input_class/to_node_id"),
+    ("output_connection", "output_class/from_node_id"),
+)
+
+
+def _build_node_connection_from_flat(tool_args: dict[str, Any]) -> input_schema.NodeConnection:
+    """Construct a ``NodeConnection`` from the flat shape advertised by the connect ToolSpec.
+
+    The tool spec exposes ``{from_node_id, to_node_id, input_class?, output_class?}``,
+    but ``NodeConnection`` is nested. We validate the nested dict at the top level
+    (rather than constructing each child independently) so Pydantic emits full
+    field paths like ``input_connection.connection_class`` — :func:`_format_connection_validation_error`
+    rewrites those back to the flat tool-spec names.
+
+    We avoid ``create_from_simple_input`` because it silently downgrades unrecognised
+    input_type values to ``"input-0"`` (input_schema.py: ``create_from_simple_input``).
+    """
+    try:
+        from_node_id = tool_args["from_node_id"]
+        to_node_id = tool_args["to_node_id"]
+    except KeyError as exc:
+        raise ValueError(f"missing required field: {exc.args[0]}") from None
+
+    return input_schema.NodeConnection.model_validate(
+        {
+            "input_connection": {
+                "node_id": to_node_id,
+                "connection_class": tool_args.get("input_class", "input-0"),
+            },
+            "output_connection": {
+                "node_id": from_node_id,
+                "connection_class": tool_args.get("output_class", "output-0"),
+            },
+        }
+    )
+
+
+def _format_connection_validation_error(exc: ValidationError) -> str:
+    """Translate Pydantic field paths from internal ``NodeConnection`` field names
+    back to the flat tool-spec field names (``input_class``, ``output_class``,
+    ``from_node_id``, ``to_node_id``). Otherwise the W53 retry loop hands the LLM
+    error messages referring to fields it never sees in the tool schema."""
+    parts = []
+    for err in exc.errors():
+        loc = ".".join(str(p) for p in err["loc"])
+        for internal, external in _CONNECTION_FIELD_REWRITES:
+            if loc == internal or loc.startswith(internal + "."):
+                loc = loc.replace(internal, external, 1)
+                break
+        parts.append(f"{loc}: {err['msg']}")
+    return "; ".join(parts)
+
+
 def _handle_connect(
     tool_name: str,
     tool_args: dict[str, Any],
@@ -549,8 +610,18 @@ def _handle_connect(
 ) -> ToolExecutionResult:
     """Wire a connection between two existing nodes."""
     try:
-        connection = input_schema.NodeConnection.model_validate(tool_args)
+        connection = _build_node_connection_from_flat(tool_args)
     except ValidationError as exc:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"connection validation failed: {_format_connection_validation_error(exc)}",
+        )
+    except ValueError as exc:
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,
@@ -687,8 +758,18 @@ def _handle_delete_connection(
     mode: ExecutionMode,
 ) -> ToolExecutionResult:
     try:
-        connection = input_schema.NodeConnection.model_validate(tool_args)
+        connection = _build_node_connection_from_flat(tool_args)
     except ValidationError as exc:
+        return _reject_and_audit(
+            tool_name=tool_name,
+            tool_args=redacted_args,
+            session_id=session_id,
+            user_id=user_id,
+            flow_id=flow.flow_id,
+            refusal_reason=None,
+            refusal_detail=f"connection validation failed: {_format_connection_validation_error(exc)}",
+        )
+    except ValueError as exc:
         return _reject_and_audit(
             tool_name=tool_name,
             tool_args=redacted_args,

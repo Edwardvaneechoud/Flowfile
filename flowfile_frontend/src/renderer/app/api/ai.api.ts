@@ -18,6 +18,7 @@ import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiProvidersView/api";
 import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiProvidersView/api";
 import {
+  routeMessage,
   streamChat,
   streamGenerateDocumentation,
   streamInlineAction,
@@ -34,9 +35,15 @@ export type {
   InlineActionRequest,
   InlineActionType,
   LineageQuestionRequest,
+  RouteHistoryEntry,
+  RouteKind,
+  RouteRequestBody as RouteRequest,
+  RouteResponseBody as RouteResponse,
+  RouteVerdict,
 } from "../services/aiStreamClient";
 export { AiStreamHttpError } from "../services/aiStreamClient";
 export {
+  routeMessage,
   streamChat,
   streamGenerateDocumentation,
   streamInlineAction,

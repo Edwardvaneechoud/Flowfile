@@ -16,6 +16,7 @@ import { computed, ref, watch } from "vue";
 import {
   AiStreamHttpError,
   fetchAiProviders,
+  routeMessage,
   streamChat,
   streamGenerateDocumentation,
   streamInlineAction,
@@ -23,8 +24,10 @@ import {
   streamRunFailureExplanation,
   type ChatMessageBody,
   type InlineActionType,
+  type RouteHistoryEntry,
 } from "../api/ai.api";
 import type { AiProvider } from "../views/AiProvidersView/aiProviderTypes";
+import { useAiAgentStore } from "./ai-agent-store";
 import {
   highestPersistedMessageId,
   loadPersistedAiState,
@@ -84,6 +87,15 @@ export const useAiStore = defineStore("ai", () => {
   const streamError = ref<string | null>(null);
   let activeAbort: AbortController | null = null;
 
+  // ----- W58 chat → agent auto-promotion -----
+  // ``autoPromote`` is a sticky session preference: defaults to true, persisted
+  // alongside the chat history. Users flip it off via the AI Settings tab or
+  // implicitly via the promotion-banner "undo" affordance. ``promotionBanner``
+  // is purely transient — present only while a just-promoted agent run is in
+  // flight (or until the user dismisses it via Stop / Clear).
+  const autoPromote = ref<boolean>(true);
+  const promotionBanner = ref<{ reason: string; message: string } | null>(null);
+
   // ----- W27 hydrate from sessionStorage -----
   // Order matters: hydrate refs BEFORE wiring the watch so the initial
   // assignment doesn't trigger a redundant write of what we just read.
@@ -102,6 +114,9 @@ export const useAiStore = defineStore("ai", () => {
   }
   if (_hydrated.selectedModel !== null) {
     selectedModel.value = _hydrated.selectedModel;
+  }
+  if (_hydrated.autoPromote !== null && _hydrated.autoPromote !== undefined) {
+    autoPromote.value = _hydrated.autoPromote;
   }
 
   // Throttled save. SessionStorage writes are sync + main-thread; coalescing
@@ -127,6 +142,7 @@ export const useAiStore = defineStore("ai", () => {
           messages: messages.value,
           selectedProvider: selectedProvider.value,
           selectedModel: selectedModel.value,
+          autoPromote: autoPromote.value,
         });
       },
       isStreaming ? PERSIST_THROTTLE_MS : 0,
@@ -143,6 +159,7 @@ export const useAiStore = defineStore("ai", () => {
   watch(selectedProvider, queuePersist, { flush: "sync" });
   watch(selectedModel, queuePersist, { flush: "sync" });
   watch(streamingState, queuePersist, { flush: "sync" });
+  watch(autoPromote, queuePersist, { flush: "sync" });
 
   // ----- derived -----
   const isAiOpen = computed<boolean>({
@@ -177,6 +194,7 @@ export const useAiStore = defineStore("ai", () => {
   const clearMessages = (): void => {
     abortStream();
     messages.value = [];
+    promotionBanner.value = null;
   };
 
   const loadProviders = async (): Promise<void> => {
@@ -230,22 +248,16 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
-  const sendMessage = async (rawText: string): Promise<void> => {
-    const text = rawText.trim();
-    if (!text) return;
-    if (streamingState.value === "streaming") return;
+  // W58 — open a chat stream for the *current* tail of `messages` (no extra
+  // user message push). Used by both ``sendMessage`` (after pushing the
+  // user message itself) and ``undoPromotion`` (where the user message
+  // is already in history from the original promoted send).
+  const _openChatStream = async (): Promise<void> => {
     if (selectedProvider.value === null) {
       streamError.value = "Pick a provider first.";
       streamingState.value = "error";
       return;
     }
-
-    const userMessage: ChatMessage = {
-      id: nextMessageId(),
-      createdAt: Date.now(),
-      role: "user",
-      content: text,
-    };
     const assistantPlaceholder: ChatMessage = {
       id: nextMessageId(),
       createdAt: Date.now(),
@@ -253,11 +265,8 @@ export const useAiStore = defineStore("ai", () => {
       content: "",
       pending: true,
     };
-    messages.value.push(userMessage, assistantPlaceholder);
-    // The local `assistantPlaceholder` is a raw object; mutating it bypasses
-    // Vue's reactive Proxy and the chat would only repaint when something
-    // else (e.g. `streamingState`) re-triggered. Re-read from the array so
-    // we mutate through the Proxy and each token causes a re-render.
+    messages.value.push(assistantPlaceholder);
+    // Re-read through the reactive Proxy so per-chunk mutations re-render.
     const reactivePlaceholder = messages.value[messages.value.length - 1];
 
     streamingState.value = "streaming";
@@ -341,6 +350,185 @@ export const useAiStore = defineStore("ai", () => {
     } finally {
       activeAbort = null;
     }
+  };
+
+  // W58 — dispatch a freshly-promoted agent run. The caller (``sendMessage``)
+  // is responsible for pushing the user message into ``messages`` *before*
+  // invoking this helper — that's how round-6's optimistic-push UX works,
+  // and skipping the push here also means the message can't accidentally
+  // duplicate when the caller already did it.
+  //
+  // Round-5: the agent's ``prompt`` is *enriched* with the recent chat
+  // transcript (so the planner knows what to implement, e.g. when the user
+  // says *"Can you implement?"* after a chat turn that proposed concrete
+  // nodes). Per-turn payload is capped at 2 K chars to bound the first-call
+  // token cost.
+  const _dispatchPromotedAgent = async (text: string, reason: string): Promise<void> => {
+    const flowStore = useFlowStore();
+    const flowId = flowStore.flowId;
+    if (flowId === null) {
+      // Defensive — sendMessage gates on flowId before classifying, but we
+      // double-check so undoPromotion's fall-through logic is sound.
+      streamError.value = "Open a flow before starting the agent.";
+      streamingState.value = "error";
+      return;
+    }
+
+    const enrichedPrompt = _buildPromotedAgentPrompt(text);
+    promotionBanner.value = { reason, message: text };
+
+    const agentStore = useAiAgentStore();
+    await agentStore.start({
+      flow_id: flowId,
+      prompt: enrichedPrompt,
+      surface: "agent",
+      provider: selectedProvider.value ?? "anthropic",
+      model: selectedModel.value ?? null,
+    });
+  };
+
+  // W58 round 5 — assemble the enriched agent prompt. Returns ``text``
+  // verbatim when there's no prior chat history (first message of a
+  // session — the agent doesn't need a transcript header for a single
+  // turn). When there is prior chat, frames it as an explicit transcript
+  // followed by the current confirmation so the planner reads it as
+  // *"context, then instruction"* rather than as a continuous user message.
+  //
+  // Round-6 nuance: the latest user message has been pushed optimistically
+  // by ``sendMessage`` before classification, so the trailing entry in
+  // ``messages`` is *the same* as ``text``. Strip it from the transcript
+  // so the prompt doesn't render *"User: Can you implement?"* in the body
+  // *and* repeat it in the *"User's latest message"* tail.
+  const _PROMOTED_AGENT_TURN_CAP = 2_000;
+  const _PROMOTED_AGENT_HISTORY_TURNS = 4;
+  const _buildPromotedAgentPrompt = (text: string): string => {
+    const visible = messages.value.filter((m) => !m.pending && m.content.trim().length > 0);
+    const trailing = visible[visible.length - 1];
+    const transcriptSource =
+      trailing !== undefined && trailing.role === "user" && trailing.content === text
+        ? visible.slice(0, -1)
+        : visible;
+    const recent = transcriptSource.slice(-_PROMOTED_AGENT_HISTORY_TURNS);
+    if (recent.length === 0) return text;
+    const transcript = recent
+      .map((m) => {
+        const trimmed =
+          m.content.length > _PROMOTED_AGENT_TURN_CAP
+            ? m.content.slice(0, _PROMOTED_AGENT_TURN_CAP - 3).trimEnd() + "..."
+            : m.content;
+        const label = m.role === "user" ? "User" : "Assistant";
+        return `${label}: ${trimmed}`;
+      })
+      .join("\n\n");
+    return [
+      "The user previously had this chat conversation in the AI drawer (the chat",
+      "assistant operates read-only and only suggests; you are the agent that",
+      "actually applies changes):",
+      "",
+      transcript,
+      "",
+      "---",
+      "",
+      `User's latest message: ${text}`,
+      "",
+      "Use the conversation above as the context for what to build.",
+    ].join("\n");
+  };
+
+  const sendMessage = async (rawText: string): Promise<void> => {
+    const text = rawText.trim();
+    if (!text) return;
+    if (streamingState.value === "streaming") return;
+    if (selectedProvider.value === null) {
+      streamError.value = "Pick a provider first.";
+      streamingState.value = "error";
+      return;
+    }
+    // Each new send wipes any leftover promotion banner from a prior turn
+    // — the banner is contextual to the in-flight run, not the chat.
+    promotionBanner.value = null;
+
+    // W58 round 6 — capture the chat history for the classifier *before*
+    // we push the new user message so the classifier sees only the prior
+    // turns. Then push the message *immediately* so it appears in the
+    // chat trail while the classifier round-trip is in flight (~800 ms
+    // p50 / ~1500 ms p95). Without optimistic push the user sees their
+    // input vanish during the routing await — feels like a UI glitch.
+    const flowStore = useFlowStore();
+    const wantsClassification = autoPromote.value && flowStore.flowId !== null;
+    // ``ChatRole`` is already ``"user" | "assistant"`` (no "system" — those
+    // come from the server, never the chat trail), so the cast to
+    // ``RouteHistoryEntry`` is shape-compatible without a runtime guard.
+    const classifierHistory: RouteHistoryEntry[] = wantsClassification
+      ? messages.value
+          .filter((m) => !m.pending && m.content.trim().length > 0)
+          .slice(-4)
+          .map((m) => ({ role: m.role, content: m.content }))
+      : [];
+
+    const userMessage: ChatMessage = {
+      id: nextMessageId(),
+      createdAt: Date.now(),
+      role: "user",
+      content: text,
+    };
+    messages.value.push(userMessage);
+
+    if (wantsClassification) {
+      // The classifier is fail-quiet (any timeout / parse error / provider
+      // hiccup collapses to verdict "chat" server-side) so a transient
+      // backend failure can't block the chat dispatch — the catch below
+      // handles outright network errors the same way.
+      try {
+        const result = await routeMessage({
+          message: text,
+          provider: selectedProvider.value,
+          model: selectedModel.value,
+          history: classifierHistory.length > 0 ? classifierHistory : undefined,
+        });
+        if (result.verdict === "agent") {
+          await _dispatchPromotedAgent(text, result.reason);
+          return;
+        }
+      } catch (err) {
+        // Network error / 401 / 503: silently fall through to chat dispatch.
+        // The user gets their message answered as chat — better than a
+        // cryptic toast about a routing decision they didn't ask for.
+        console.warn("ai-store: /ai/route failed, falling back to chat", err);
+      }
+    }
+
+    await _openChatStream();
+  };
+
+  const setAutoPromote = (value: boolean): void => {
+    autoPromote.value = value;
+  };
+
+  const dismissPromotionBanner = (): void => {
+    promotionBanner.value = null;
+  };
+
+  const undoPromotion = async (): Promise<void> => {
+    // W58 — banner "Click here to keep this as chat instead" affordance.
+    // Aborts the in-flight agent run, flips the session-scoped autoPromote
+    // off (so a follow-up Send doesn't re-classify the same way), then
+    // re-dispatches the saved message as a regular chat. The user message
+    // is already in ``messages`` from the original promoted send — we
+    // skip pushing it again to keep the chat trail readable.
+    const banner = promotionBanner.value;
+    if (banner === null) return;
+    promotionBanner.value = null;
+    autoPromote.value = false;
+
+    try {
+      const agentStore = useAiAgentStore();
+      await agentStore.abort();
+    } catch (err) {
+      console.warn("ai-store: failed to abort agent during undoPromotion", err);
+    }
+
+    await _openChatStream();
   };
 
   const explainRunFailure = async (
@@ -761,6 +949,8 @@ export const useAiStore = defineStore("ai", () => {
     messages,
     streamingState,
     streamError,
+    autoPromote,
+    promotionBanner,
     // computed
     isAiOpen,
     isStreaming,
@@ -780,6 +970,9 @@ export const useAiStore = defineStore("ai", () => {
     generateDocumentation,
     runInlineAction,
     askLineageQuestion,
+    setAutoPromote,
+    dismissPromotionBanner,
+    undoPromotion,
   };
 });
 

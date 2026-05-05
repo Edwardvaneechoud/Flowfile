@@ -29,4 +29,5 @@ class AnthropicProvider(LiteLLMProvider):
         "docgen": "claude-sonnet-4-6",
         "settings_autocomplete": "claude-haiku-4-5",
         "lineage": "claude-sonnet-4-6",
+        "intent_classifier": "claude-haiku-4-5",
     }

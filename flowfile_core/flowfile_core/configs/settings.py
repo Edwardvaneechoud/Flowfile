@@ -39,6 +39,27 @@ FEATURE_FLAG_AI: MutableBool = MutableBool(
     "true"
 )
 
+# AI prompt logging — dev / debugging hatch (W59).
+#
+# When True, every `LiteLLMProvider.chat` / `.stream` call writes a single
+# JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl`
+# capturing the full system prompt, message history, tool catalog, and
+# response. Off by default — production runs stay silent. Same parsing
+# pattern as `FEATURE_FLAG_AI`; `MutableBool` so the W18-style admin path
+# (or test fixtures) can flip without re-import.
+FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
+# Optional: scrub user / tool messages through the W25 PII regex pipeline
+# before writing to the log. Off by default (the whole point of the log is
+# to see what the model saw). Opt in when you'd rather keep customer-shaped
+# fixtures readable in transcripts that get checked in / shared. System
+# prompts and assistant responses are never scrubbed.
+FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
 
 def parse_args():
     """Parse command line arguments"""

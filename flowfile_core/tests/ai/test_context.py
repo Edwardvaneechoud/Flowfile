@@ -670,9 +670,9 @@ def test_render_prompt_context_resolves_static_upstream_via_callback(
     assert "region" in column_names
     # In-place mutation: the filter's predicted_schema cache is now populated
     # so same-session repeat reads hit tier 0 (mirrors predictor.py:255).
-    assert filter_node.node_schema.predicted_schema, (
-        "expected the W48 helper to populate the filter's predicted_schema cache in place"
-    )
+    assert (
+        filter_node.node_schema.predicted_schema
+    ), "expected the W48 helper to populate the filter's predicted_schema cache in place"
     # The rendered user message names the actual columns instead of the
     # "schema: unknown" sentinel.
     assert "schema: unknown" not in ctx.user
@@ -738,7 +738,10 @@ def test_render_prompt_context_resolve_schemas_false_preserves_legacy_behaviour(
     assert filter_node.node_schema.predicted_schema is None  # fixture invariant
 
     ctx = render_prompt_context(
-        cold_static_flow, [2], surface="explain", resolve_schemas=False,
+        cold_static_flow,
+        [2],
+        surface="explain",
+        resolve_schemas=False,
     )
 
     [filter_snap] = [n for n in ctx.snapshot.nodes if n.node_id == 2]
@@ -763,9 +766,7 @@ def test_render_prompt_context_d012_clean(
     import polars as pl
 
     def _refuse_collect(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError(
-            "D012 violation — render_prompt_context invoked LazyFrame.collect"
-        )
+        raise AssertionError("D012 violation — render_prompt_context invoked LazyFrame.collect")
 
     monkeypatch.setattr(pl.LazyFrame, "collect", _refuse_collect)
 
@@ -826,3 +827,236 @@ def test_budget_report_dataclass_defaults() -> None:
     assert report.samples_dropped == 0
     assert report.nodes_dropped == 0
     assert report.columns_truncated == 0
+
+
+# --------------------------------------------------------------------------- #
+# W56 — per-node-type catalog block in assemble_system_prompt                  #
+# --------------------------------------------------------------------------- #
+
+
+_W56_CATALOG_HEADER = "## Tool catalog"
+
+# Three representative node-type tool headings the agent surface must show
+# (AC2). Picked across categories so a regression in one category doesn't
+# silently pass.
+_W56_REPRESENTATIVE_NODE_TOOLS = (
+    "### flowfile.graph.add_filter",
+    "### flowfile.graph.add_join",
+    "### flowfile.graph.add_group_by",
+)
+
+
+@pytest.mark.parametrize("surface", ["agent", "agent_complex"])
+def test_w56_agent_surfaces_include_catalog_block(surface: SurfaceLiteral) -> None:
+    """W56 AC2 — agent / agent_complex prompts include the catalog header
+    plus several representative node-type sections so the model sees
+    narrative grounding for each tool."""
+    text = assemble_system_prompt(surface)
+    assert _W56_CATALOG_HEADER in text, f"catalog header missing for {surface}"
+    for heading in _W56_REPRESENTATIVE_NODE_TOOLS:
+        assert heading in text, f"{heading} missing from {surface} prompt"
+
+
+def test_w56_cmd_k_only_includes_preset_tools_in_catalog() -> None:
+    """W56 AC3 — cmd_k narrows the catalog to its preset's tools."""
+    from flowfile_core.ai.tools.registry import SURFACE_PRESETS
+
+    text = assemble_system_prompt("cmd_k")
+    assert _W56_CATALOG_HEADER in text
+
+    cmd_k_preset = SURFACE_PRESETS["cmd_k"]
+    # Tools in the preset must appear; tools outside it must not.
+    for tool_name in cmd_k_preset:
+        assert f"### {tool_name}" in text, f"cmd_k preset tool {tool_name} missing from catalog block"
+    # Spot-check a few tools that are *not* in cmd_k's preset:
+    assert "### flowfile.graph.add_join" not in text
+    assert "### flowfile.graph.add_group_by" not in text
+    assert "### flowfile.codegen.generate_python_script" not in text
+
+
+def test_w56_ghost_node_only_includes_preset_tools_in_catalog() -> None:
+    """W56 AC3 — ghost_node narrows the catalog to its preset's tools."""
+    from flowfile_core.ai.tools.registry import SURFACE_PRESETS
+
+    text = assemble_system_prompt("ghost_node")
+    assert _W56_CATALOG_HEADER in text
+
+    ghost_preset = SURFACE_PRESETS["ghost_node"]
+    for tool_name in ghost_preset:
+        assert f"### {tool_name}" in text, f"ghost_node preset tool {tool_name} missing"
+    # ghost_node carries common transforms, so add_join *is* in its preset;
+    # use tools that genuinely aren't.
+    assert "### flowfile.graph.add_pivot" not in text
+    assert "### flowfile.graph.add_train_model" not in text
+
+
+@pytest.mark.parametrize("surface", ["explain", "lineage", "docgen", "settings_autocomplete"])
+def test_w56_read_only_surfaces_do_not_get_tool_catalog(surface: SurfaceLiteral) -> None:
+    """W56 AC4 — read-only surfaces never see the agent-shaped Tool catalog
+    block (it'd be misleading — they can't call tools)."""
+    text = assemble_system_prompt(surface)
+    assert _W56_CATALOG_HEADER not in text, f"{surface} should not include the agent-shaped Tool catalog block"
+
+
+# --------------------------------------------------------------------------- #
+# W56 v2 — node-reference block on read-only / advisory surfaces                #
+# --------------------------------------------------------------------------- #
+#
+# Motivated by the live transcript where the chat surface (uses
+# surface="explain" → assist level) hallucinated a non-existent
+# "transform node" because it had no Flowfile vocabulary in the prompt.
+# Read-only surfaces don't get the agent-shaped Tool catalog (above), but
+# they DO get a separate user-shaped "Flowfile node reference" block built
+# from each ToolSpec.user_instructions so the chat answer cites real
+# palette labels and settings field names.
+
+_W56_NODE_REFERENCE_HEADER = "## Flowfile node reference"
+
+
+@pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
+def test_w56_advisory_surfaces_include_node_reference_block(surface: SurfaceLiteral) -> None:
+    """W56 v2 — explain / lineage / docgen carry a node-reference block.
+
+    The chat surface (surface="explain") was hallucinating UI elements
+    because it had zero Flowfile vocabulary in its prompt. The node
+    reference block fixes this with real palette labels + settings
+    field names so the model can answer "how do I X" correctly.
+    """
+    text = assemble_system_prompt(surface)
+    assert _W56_NODE_REFERENCE_HEADER in text, f"{surface} should include the user-shaped node reference block"
+
+
+@pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
+def test_w56_node_reference_cites_real_palette_labels(surface: SurfaceLiteral) -> None:
+    """W56 v2 — node-reference block cites real palette labels from nodes.py.
+
+    Specifically asserts the user-transcript-relevant labels appear:
+    'Group by' (the actual palette name for group_by), 'Filter data',
+    'Aggregations' (the sidebar section). Without these, chat answers
+    invent names like 'transform node'.
+    """
+    text = assemble_system_prompt(surface)
+    # Real palette labels the chat answer should cite:
+    assert "'Group by'" in text or '"Group by"' in text, "real 'Group by' palette label missing"
+    assert "'Filter data'" in text or '"Filter data"' in text, "real 'Filter data' palette label missing"
+    # Real sidebar section the chat answer should cite:
+    assert "'Aggregations'" in text or '"Aggregations"' in text, "real 'Aggregations' sidebar label missing"
+    # The bug from the live transcript was the model saying "transform
+    # node" — a name that doesn't exist. The prompt's `_render_node_reference`
+    # explicitly tells the model NOT to say "transform node" (that's good —
+    # warning text shouldn't be removed). But the prompt should NOT positively
+    # describe a "transform node" anywhere as if it existed. We allow at most
+    # one occurrence (the explicit don't-say-this warning).
+    matches = text.lower().count("transform node")
+    assert matches <= 1, (
+        f"'transform node' appears {matches} times in the prompt — at most "
+        f"one occurrence is allowed (the explicit warning); more suggests a "
+        f"node-doc entry is positively describing a phantom node type."
+    )
+
+
+def test_w56_node_reference_includes_user_transcript_repro() -> None:
+    """W56 v2 — the customers-per-city worked example from the user
+    transcript is in the prompt verbatim (the example that motivated
+    the v2 widening).
+    """
+    text = assemble_system_prompt("explain")
+    # The exact phrase from group_by's user_instructions.
+    assert "customers per city" in text.lower(), "the customers-per-city worked example is missing"
+    # The settings field labels the chat answer should cite when
+    # describing how to configure group_by:
+    assert "Field" in text and "Action" in text and "Output Field Name" in text
+
+
+def test_w56_node_reference_omits_ops_tools() -> None:
+    """W56 v2 — read-only surfaces only see node-type tools, not ops.
+
+    The user can't call graph_ops / schema_ops / codegen_ops / meta from
+    the canvas; surfacing them in the chat-facing reference would only
+    confuse the model into describing tool calls in chat answers.
+    """
+    text = assemble_system_prompt("explain")
+    assert "flowfile.graph.connect" not in text
+    assert "flowfile.graph.delete_node" not in text
+    assert "flowfile.schema.read_node_schema" not in text
+    assert "flowfile.codegen.generate_polars_code" not in text
+    assert "flowfile.meta.pick_category" not in text
+
+
+def test_w56_settings_autocomplete_skips_both_blocks() -> None:
+    """W56 v2 — settings_autocomplete is constrained-JSON output only;
+    it doesn't need either narrative block."""
+    text = assemble_system_prompt("settings_autocomplete")
+    assert _W56_CATALOG_HEADER not in text
+    assert _W56_NODE_REFERENCE_HEADER not in text
+
+
+def test_w56_node_reference_sorted_for_cache_stability() -> None:
+    """W56 v2 — node-reference headings are alphabetical (cache hygiene)."""
+    text = assemble_system_prompt("explain")
+    block_start = text.find(_W56_NODE_REFERENCE_HEADER)
+    assert block_start >= 0
+    block = text[block_start:]
+    # Headings are bare node_type names (e.g. "### group_by"), not the
+    # dotted MCP names the agent surface uses.
+    headings = [line for line in block.splitlines() if line.startswith("### ") and not line.startswith("### flowfile.")]
+    assert len(headings) >= 30, f"expected most node types in the reference, got {len(headings)}"
+    assert headings == sorted(headings), "node-reference headings out of order — prompt cache will thrash"
+
+
+def test_w56_explain_surface_token_budget_reasonable() -> None:
+    """W56 v2 — the chat / advisory prompt stays within a sensible bound.
+
+    The chat surface combines base.md + assist.md + the node reference;
+    expect ~5-8 K tokens total. We cap at 12 K (chars/4) to flag any
+    bloat regression early — if a node's user_instructions balloons,
+    this test fires.
+    """
+    text = assemble_system_prompt("explain")
+    estimated_tokens = len(text) // 4
+    assert estimated_tokens <= 12_000, (
+        f"explain prompt is {estimated_tokens} tokens; cap is 12,000. "
+        "Investigate which user_instructions entry grew."
+    )
+
+
+def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
+    """W56 AC6 — agent surface system prompt fits inside 70% of D010 agent budget.
+
+    Per D010 the agent budget is 32K tokens; 70% is 22.4K. The prompt is
+    static — it has to carry the catalog plus the layered base + planner
+    suffix and still leave room for the per-call user message and the
+    model's reply on the wire.
+    """
+    text = assemble_system_prompt("agent")
+    # Same chars/4 estimator the budget module uses (no tiktoken pull).
+    estimated_tokens = len(text) // 4
+    cap = int(32_000 * 0.7)
+    assert estimated_tokens <= cap, (
+        f"agent surface system prompt is {estimated_tokens} tokens (chars/4); " f"AC6 caps it at {cap} (70% of 32K)"
+    )
+
+
+def test_w56_catalog_block_does_not_leak_html_comments() -> None:
+    """W56 — the catalog block uses plain markdown only; no HTML comment markers."""
+    text = assemble_system_prompt("agent_complex")
+    # The HTML-comment guard from test_assemble_system_prompt_per_surface already
+    # covers the layered prompts, but the catalog block is generated fresh —
+    # repeat the assertion here so a regression in node_docs.py is caught.
+    assert "<!--" not in text
+    assert "-->" not in text
+
+
+def test_w56_catalog_block_renders_descriptions_in_stable_order() -> None:
+    """W56 — catalog ordering is stable (alphabetical by tool name).
+
+    Stable ordering means the prompt-cache hash is deterministic across
+    process restarts, which matters for any caching layer downstream.
+    """
+    text_a = assemble_system_prompt("agent_complex")
+    text_b = assemble_system_prompt("agent_complex")
+    assert text_a == text_b
+
+    # Walk the headings in document order and verify they are sorted.
+    headings = [line for line in text_a.splitlines() if line.startswith("### flowfile.")]
+    assert headings == sorted(headings), "catalog headings out of order — prompt cache will thrash"

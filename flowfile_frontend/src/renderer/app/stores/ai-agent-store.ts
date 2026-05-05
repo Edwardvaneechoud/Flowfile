@@ -106,6 +106,23 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   lastResult.value = _hydrated.lastResult;
   if (_hydrated.error) error.value = _hydrated.error;
 
+  // W55 — also rehydrate the W35 diff store from `lastResult.diff_payload`.
+  // The agent-store persistence (W45/W55 follow-up) restores `lastResult`,
+  // but without this hand-off the diff store stays empty and AiDiffPanel's
+  // v-if hides the Accept / Reject buttons after a refresh. Skip the push
+  // if the diff store already has a staged diff so we don't clobber an
+  // actively-staged one (e.g. a different code path beat us here).
+  if (_hydrated.lastResult?.diff_payload) {
+    try {
+      const diffStore = useAiDiffStore();
+      if (diffStore.currentDiff === null) {
+        diffStore.setCurrentDiff(_hydrated.lastResult.diff_payload as unknown as never);
+      }
+    } catch (err) {
+      console.error("ai-agent-store: failed to rehydrate diff store", err);
+    }
+  }
+
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const queuePersist = (): void => {
     const isStreaming = status.value === "running";
@@ -232,6 +249,23 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
             open();
           } catch (err) {
             console.error("ai-agent-store: failed to set current diff", err);
+          }
+        } else {
+          // W55 — flag the SSE-serialisation theory: agent claims staged
+          // ops on the wire but no diff_payload arrived. The persistence-
+          // rehydration fix in the hydration block above won't help if the
+          // wire is the broken path, so we log here to make that visible.
+          const stagedCount = events.value.reduce(
+            (n, e) => (e.kind === "tool_call_staged" ? n + 1 : n),
+            0,
+          );
+          if (stagedCount > 0) {
+            console.warn(
+              "ai-agent-store: onComplete with no diff_payload despite",
+              stagedCount,
+              "tool_call_staged event(s)",
+              { session_id: result.session_id, op_count: result.op_count },
+            );
           }
         }
       },

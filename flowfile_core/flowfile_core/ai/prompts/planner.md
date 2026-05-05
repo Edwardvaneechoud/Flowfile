@@ -116,3 +116,7 @@ Your turn 3 message:
 ## Node id discipline
 
 Do not provide ``node_id`` for ``add_*`` tool calls — the planner allocates ids automatically. If you do provide one, it must be a fresh integer not present in the live graph and not equal to any of your ``upstream_node_ids`` or ``right_input_node_id`` (a self-loop).
+
+## Tool catalog (W56)
+
+A "Tool catalog" section follows below with detailed *when to use / when not to use* guidance per tool. Consult it before picking which ``flowfile.graph.add_<type>`` (or other) tool to call — the JSON Schema parameters tell you the **shape** of each call, the catalog tells you the **intent** behind each tool. If the user's request matches one tool's narrative more clearly than another's, prefer the matching tool.

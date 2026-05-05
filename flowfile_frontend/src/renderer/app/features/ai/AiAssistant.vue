@@ -189,6 +189,31 @@ const handleAgentResumeContinue = async (): Promise<void> => {
   await agentStore.resumeContinue(sid);
 };
 
+// W58 — banner "Keep this as chat instead" affordance: aborts the in-flight
+// agent run, flips ``autoPromote`` off for the session, and re-dispatches
+// the saved message as a regular chat. The store wraps all of that.
+const handleUndoPromotion = async (): Promise<void> => {
+  await aiStore.undoPromotion();
+};
+
+// W58 — drawer-side autoPromote toggle (the AI Settings tab carries a
+// secondary entry point; the drawer is where the behavior is most
+// discoverable since it's right next to where the user is typing). The
+// toggle is grayed out while the manual Agent toggle is on or a stream
+// is in flight — those states make autoPromote a no-op.
+const handleAutoPromoteChange = (event: Event): void => {
+  const target = event.target as HTMLInputElement;
+  aiStore.setAutoPromote(target.checked);
+};
+
+const autoPromoteTitle = computed<string>(() =>
+  agentMode.value
+    ? "Manual Agent toggle is on — auto-promotion is overridden until you turn it off."
+    : aiStore.autoPromote
+      ? "Auto-detect build requests and switch to Agent mode for this send. Read-only questions stay in chat."
+      : "Off — every message stays in chat unless you flip the manual Agent toggle.",
+);
+
 const handleAgentResumeDiscard = async (): Promise<void> => {
   const sid = agentStore.currentSessionId;
   if (!sid) return;
@@ -389,6 +414,15 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
     <div v-else class="ai-assistant__chat">
       <AiDiffPanel />
+      <div v-if="aiStore.promotionBanner !== null" class="ai-assistant__promo-banner">
+        <p class="ai-assistant__promo-text">
+          <span class="ai-assistant__promo-icon">✨</span>
+          <span> Switched to Agent mode — {{ aiStore.promotionBanner.reason }}. </span>
+          <button type="button" class="ai-assistant__promo-undo" @click="handleUndoPromotion">
+            Keep this as chat instead
+          </button>
+        </p>
+      </div>
       <div
         v-if="agentStore.status === 'paused_drift' && agentStore.driftDetail"
         class="ai-assistant__drift-banner"
@@ -467,6 +501,15 @@ const timelineItems = computed<TimelineItem[]>(() => {
         />
       </div>
       <div class="ai-assistant__actions">
+        <label class="ai-assistant__autopromote-toggle" :title="autoPromoteTitle">
+          <input
+            type="checkbox"
+            :checked="aiStore.autoPromote"
+            :disabled="agentMode || isAgentRunning || aiStore.isStreaming"
+            @change="handleAutoPromoteChange"
+          />
+          Auto-agent
+        </label>
         <button
           v-if="aiStore.isStreaming || isAgentRunning"
           type="button"
@@ -640,7 +683,34 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
 .ai-assistant__actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+/* W58 — drawer-side auto-promotion toggle. Sits left of Send so the user
+   can see whether auto-promotion is armed without leaving the drawer. */
+.ai-assistant__autopromote-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary, #586069);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-assistant__autopromote-toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.ai-assistant__autopromote-toggle:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-assistant__autopromote-toggle:has(input:disabled) input[type="checkbox"] {
+  cursor: not-allowed;
 }
 
 .ai-assistant__btn {
@@ -721,4 +791,45 @@ const timelineItems = computed<TimelineItem[]>(() => {
 /* Old `.ai-assistant__agent-events` / `.ai-assistant__agent-event` styles
    moved into the `AiAgentEvent` component's scoped block — the timeline
    now renders each item as its own component, not a `<li>` in a `<ul>`. */
+
+/* W58 — chat → agent auto-promotion banner. Sits above the messages and
+   below the diff panel; visually distinct from the W40 drift banner so
+   the two don't read as the same alert pattern. */
+.ai-assistant__promo-banner {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  margin: 0 0 8px 0;
+  background-color: var(--color-info-soft, #eef2ff);
+  border: 1px solid var(--color-info, #6366f1);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-info-text, #312e81);
+}
+
+.ai-assistant__promo-text {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.ai-assistant__promo-icon {
+  flex-shrink: 0;
+}
+
+.ai-assistant__promo-undo {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-info, #6366f1);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ai-assistant__promo-undo:hover {
+  text-decoration: none;
+}
 </style>

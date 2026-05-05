@@ -25,17 +25,15 @@ Cases covered:
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-import json
-
-from flowfile_core.ai import audit
+from flowfile_core.ai import audit, sessions
 from flowfile_core.ai import diff as diff_module
-from flowfile_core.ai import sessions
 from flowfile_core.ai.agents.planner import (
     PlannerEvent,
     _allocate_node_id,
@@ -1114,3 +1112,260 @@ async def test_w38_rejected_event_carries_op_kind_for_ui_styling() -> None:
     # failed step the same way it renders a successful one.
     assert payload["rationale"] == "Filtering on a column that doesn't exist (this will be rejected)."
     assert payload["arg_summary"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# W54 — self-loop prevention + resume staged_results hygiene                   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_allocate_id_collides_with_resolved_upstream_is_refused() -> None:
+    """W54 AC1 — proposed ``node_id`` ∈ resolved upstream → ``self_loop_prevented``.
+
+    Reproduces the user's transcript root cause via the LLM-collision path:
+    LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``. The planner-
+    side guard (which runs before ``execute_tool_call``) refuses cleanly.
+
+    Asserts the full contract: rejected event, no staged event for that
+    call, ``staged_results``/``staged_node_ids`` unchanged, audit row with
+    ``__planner_meta__`` populated.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    pre_staged_results = list(sess.staged_results)
+    pre_staged_node_ids = list(sess.staged_node_ids)
+
+    bad_args = _filter_args(node_id=3)
+    bad_args["upstream_node_ids"] = [3]
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=bad_args)],
+                content="filtering rows that don't exist yet",
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(
+            session=sess,
+            flow=flow,
+            provider=provider,
+            scheduler=_no_wait_scheduler(),
+            max_retries_per_step=3,
+        )
+    )
+
+    # (a) tool_call_rejected event with self_loop_prevented reason — for THIS call id.
+    rejections_for_t1 = [e for e in events if e.event == "tool_call_rejected" and e.payload.get("id") == "t1"]
+    assert rejections_for_t1, "expected a tool_call_rejected event for t1"
+    assert rejections_for_t1[0].payload["reason"] == "self_loop_prevented"
+    assert "self-loop" in rejections_for_t1[0].payload["detail"]
+
+    # (b) NO tool_call_staged for t1.
+    staged_for_t1 = [e for e in events if e.event == "tool_call_staged" and e.payload.get("id") == "t1"]
+    assert staged_for_t1 == [], "self_loop_prevented call must not stage"
+
+    # (c) + (d) — staged_results / staged_node_ids unchanged across the call.
+    assert sess.staged_results == pre_staged_results
+    assert sess.staged_node_ids == pre_staged_node_ids
+
+    # (e) Audit row written; tool_args carries __planner_meta__ with provenance.
+    rows = audit.query_events(session_id=sess.session_id, limit=20)
+    matching = [r for r in rows if r.tool_name == "flowfile.graph.add_filter" and r.result_status == "rejected"]
+    assert matching, "audit row for the rejection must be present"
+    args_blob = matching[0].tool_args
+    assert args_blob, "audit row tool_args must not be empty"
+    parsed = json.loads(args_blob)
+    meta = parsed.get("__planner_meta__")
+    assert isinstance(meta, dict)
+    assert meta["llm_provided_node_id"] == 3
+    # allocated_node_id is None when LLM provided one (allocator skipped).
+    assert meta["allocated_node_id"] is None
+    assert meta["resolved_upstream_node_ids"] == [3]
+    assert meta["live_node_ids_at_stage"] == [1]
+    assert meta["staged_node_ids_at_stage"] == []
+
+
+@pytest.mark.asyncio
+async def test_resume_drops_stale_staged_results_referencing_dead_upstream() -> None:
+    """W54 AC3 — pre-pause stale upstream reference is dropped on resume; next add chains cleanly."""
+    flow = _make_flow()  # contains node 1 only
+    sess = _make_session(flow, surface="agent_complex")
+    # Simulate: pre-pause the agent staged node 7 chained off node 5; user
+    # then deleted node 5 during the pause (we represent that by simply not
+    # adding it to the live flow).
+    sess.staged_results = [
+        diff_module.StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            audit_id=None,
+            staged_node_payload={
+                "node_type": "filter",
+                "settings": {"node_id": 7, "flow_id": 1},
+                "insertion_context": {
+                    "upstream_node_ids": [5],
+                    "right_input_node_id": None,
+                    "pos_x": 0.0,
+                    "pos_y": 0.0,
+                },
+                "predicted_output_schema": [],
+            },
+        )
+    ]
+    sess.staged_node_ids = [7]
+    sess.status = "paused_drift"
+    sess.drift_detail = sessions.DriftDetail(missing_node_ids=[5])
+
+    # Provider: post-resume the LLM emits one fresh add_filter with NO
+    # explicit upstream — we exercise the 3rd-tier fallback to live_nodes[-1].
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], content="done.", finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+
+    # Stale entry dropped from both lists.
+    assert sess.staged_results, "expected the new t1 stage; the stale entry should be gone"
+    assert all(e.staged_node_payload.get("settings", {}).get("node_id") != 7 for e in sess.staged_results)
+    assert 7 not in sess.staged_node_ids
+
+    # Drop info event surfaced.
+    drop_events = [e for e in events if e.event == "info" and e.payload.get("dropped_count")]
+    assert drop_events, "expected an info event noting the drop"
+    assert drop_events[0].payload["dropped_count"] == 1
+    assert drop_events[0].payload["drop_reasons"] == ["upstream_missing"]
+
+    # Next-add semantics: with stale entry gone and no LLM-provided upstream,
+    # resolution falls through to live_nodes[-1] == 1.
+    new_entry = sess.staged_results[-1]
+    assert new_entry.staged_node_payload["insertion_context"]["upstream_node_ids"] == [1]
+    assert sess.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_resume_drops_stale_staged_results_with_now_live_id() -> None:
+    """W54 AC4 — pre-pause staged ``node_id`` is now live → entry dropped, audit row written."""
+    flow = _make_flow()  # node 1
+    # User manually added a node that got id 3 during the pause.
+    _add_orders(flow, node_id=3)
+
+    sess = _make_session(flow, surface="agent_complex")
+    sess.staged_results = [
+        diff_module.StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            audit_id=None,
+            staged_node_payload={
+                "node_type": "filter",
+                "settings": {"node_id": 3, "flow_id": 1},
+                "insertion_context": {
+                    "upstream_node_ids": [1],
+                    "right_input_node_id": None,
+                    "pos_x": 0.0,
+                    "pos_y": 0.0,
+                },
+                "predicted_output_schema": [],
+            },
+        )
+    ]
+    sess.staged_node_ids = [3]
+    sess.status = "paused_drift"
+    # Re-snapshot so detect_drift on the post-resume loop doesn't fire on the
+    # already-known external addition (node 3) — the test is about staged
+    # hygiene, not drift detection.
+    sess.snapshot = sessions.capture_graph_snapshot(flow)
+    sess.drift_detail = sessions.DriftDetail(external_added_node_ids=[3])
+
+    provider = _ScriptedProvider([_Step(tool_calls=[], content="done.", finish_reason="stop")])
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+
+    assert sess.staged_results == []
+    assert sess.staged_node_ids == []
+
+    drop_events = [e for e in events if e.event == "info" and e.payload.get("dropped_count")]
+    assert drop_events
+    assert drop_events[0].payload["drop_reasons"] == ["live_id_collision"]
+
+    rows = audit.query_events(session_id=sess.session_id, limit=20)
+    drop_rows = [r for r in rows if r.tool_name == "internal.staged_drop_on_resume"]
+    assert drop_rows, "expected an audit row for the staged drop"
+    assert drop_rows[0].result_status == "error"
+    assert drop_rows[0].error and drop_rows[0].error.startswith("staged_drop_on_resume:live_id_collision")
+
+
+@pytest.mark.asyncio
+async def test_audit_row_for_add_includes_node_id_instrumentation() -> None:
+    """W54 AC5 — happy-path ``add_*`` audit row carries ``__planner_meta__`` instrumentation."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], content="done.", finish_reason="stop"),
+        ]
+    )
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+    rows = audit.query_events(session_id=sess.session_id, limit=20)
+    add_rows = [r for r in rows if r.tool_name == "flowfile.graph.add_filter" and r.result_status == "success"]
+    assert add_rows, "expected a successful add_filter audit row"
+
+    parsed = json.loads(add_rows[0].tool_args or "{}")
+    meta = parsed.get("__planner_meta__")
+    assert isinstance(meta, dict), "expected __planner_meta__ instrumentation under tool_args"
+    # All six keys present and non-None (lists may be empty, but the keys must exist).
+    assert meta["allocated_node_id"] == 2  # planner-allocated since LLM didn't emit node_id
+    assert meta["llm_provided_node_id"] is None
+    assert meta["resolved_upstream_node_ids"] == [1]
+    assert meta["right_input_node_id"] is None
+    assert meta["live_node_ids_at_stage"] == [1]
+    assert meta["staged_node_ids_at_stage"] == []
+
+
+# --------------------------------------------------------------------------- #
+# W56 — planner sees the per-node-type catalog block in its system prompt      #
+# --------------------------------------------------------------------------- #
+
+
+def test_w56_planner_system_prompt_includes_node_catalog() -> None:
+    """W56 — the planner system prompt for the agent surface includes the
+    catalog header plus a representative slice of node-type docs.
+
+    This doesn't test the *content* of the docs (that's test_tool_registry's
+    job); it tests that the docs are wired through to the planner's system
+    prompt so the model actually sees them. Without this, the catalog could
+    land in the registry but never reach the LLM.
+    """
+    from flowfile_core.ai.context.builder import assemble_system_prompt
+
+    prompt = assemble_system_prompt("agent")
+    assert "## Tool catalog" in prompt, "catalog header missing from planner prompt"
+
+    # At least three representative tools across categories must surface so
+    # we catch a partial wiring (e.g. only graph-ops were fed in).
+    representative = [
+        "### flowfile.graph.add_filter",
+        "### flowfile.graph.add_join",
+        "### flowfile.graph.add_group_by",
+    ]
+    for heading in representative:
+        assert heading in prompt, f"{heading} missing from planner system prompt"
+
+    # Pointer line from prompts/planner.md must precede the catalog so the
+    # model knows the section is coming.
+    pointer_idx = prompt.find("Tool catalog (W56)")
+    catalog_idx = prompt.find("## Tool catalog\n")
+    assert pointer_idx >= 0, "pointer line from planner.md missing"
+    assert catalog_idx > pointer_idx, "catalog block must follow the pointer line"

@@ -41,6 +41,19 @@ META_OPS_TOOLS: Final[list[ToolSpec]] = [
             "category's tools available — pick conservatively. Use 'meta' when you "
             "need more information from the user before acting."
         ),
+        long_description=(
+            "Internal routing call for the two-stage agent (D002). The host expands "
+            "the chosen category into a narrowed tool surface for your next turn. "
+            "Categories: 'transformations' (filter/select/sort/formula/etc.), "
+            "'joins' (join/cross_join/fuzzy_match/union), 'aggregations' "
+            "(group_by/pivot/unpivot/record_count), 'io' (read/output/database/cloud), "
+            "'code' (polars_code/python_script/sql_query), 'ml' "
+            "(train/apply/evaluate_model), 'meta' (clarify with the user; nothing "
+            "is staged), 'graph' (delete/connect — graph mutation outside add_*). "
+            "Pick the category that fits the *immediate next step*; you can pick "
+            "again on the following turn if the work spans categories. Don't "
+            "narrate this call to the user — it's a routing primitive."
+        ),
         parameters={
             "$schema": JSON_SCHEMA_DIALECT,
             "type": "object",

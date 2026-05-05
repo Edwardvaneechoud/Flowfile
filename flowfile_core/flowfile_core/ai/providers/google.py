@@ -25,4 +25,5 @@ class GoogleProvider(LiteLLMProvider):
         "docgen": "gemini-2.5-flash",
         "settings_autocomplete": "gemini-2.5-flash",
         "lineage": "gemini-2.5-flash",
+        "intent_classifier": "gemini-2.5-flash",
     }

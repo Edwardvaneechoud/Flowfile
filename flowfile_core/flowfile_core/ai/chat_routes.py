@@ -227,4 +227,116 @@ async def chat_stream(
     return make_streaming_response(sse_stream(provider_stream))
 
 
+class ChatPreviewMessage(BaseModel):
+    """One message in a preview response."""
+
+    role: str
+    content: str
+    char_count: int
+
+
+class ChatPreviewResponse(BaseModel):
+    """The assembled prompt that would be sent to the LLM, as JSON.
+
+    Inspection-only — no provider call is made. Useful when debugging
+    "why is the model saying X?" without burning provider quota.
+    """
+
+    provider: str
+    model: str
+    surface: str
+    prompt_surface: str
+    messages: list[ChatPreviewMessage]
+    total_chars: int
+    estimated_tokens: int
+
+
+@router.post(
+    "/chat/preview",
+    tags=["ai"],
+    response_model=ChatPreviewResponse,
+)
+async def chat_preview(
+    body: ChatStreamRequest,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> ChatPreviewResponse:
+    """Return the exact messages that ``POST /ai/chat/stream`` would send,
+    as JSON, without calling the provider.
+
+    Same body schema as ``/chat/stream``. Same error mapping for the
+    "before stream" cases (404 / 409 / 422 / 503). Useful for diagnosing
+    "the chat said X — what context did it actually see?".
+
+    The response is plain JSON (not SSE) so any HTTP client can read it.
+    """
+
+    _ensure_known_provider(body.provider)
+
+    try:
+        provider = get_configured_provider(
+            db,
+            current_user.id,
+            body.provider,
+            surface=body.surface,
+            model=body.model,
+        )
+    except ProviderNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnknownProviderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    prompt_surface = _resolve_prompt_surface(body.surface)
+
+    if body.flow_id is not None:
+        flow = flow_file_handler.get_flow(body.flow_id)
+        if flow is None:
+            raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
+        mention_text: str
+        if body.mentions:
+            mention_text = " ".join(body.mentions)
+        elif not body.selected_node_ids:
+            mention_text = "@flow"
+        else:
+            mention_text = ""
+        ctx = render_prompt_context(
+            flow,
+            body.selected_node_ids or [],
+            surface=prompt_surface,
+            mentions=mention_text or None,
+        )
+        messages = [
+            Message(role="system", content=ctx.system),
+            Message(role="user", content=ctx.user),
+            *_to_provider_messages(body.messages),
+        ]
+    else:
+        system_prompt = assemble_system_prompt(prompt_surface)
+        messages = [
+            Message(role="system", content=system_prompt),
+            *_to_provider_messages(body.messages),
+        ]
+
+    preview_messages: list[ChatPreviewMessage] = []
+    total_chars = 0
+    for msg in messages:
+        content = msg.content or ""
+        char_count = len(content)
+        total_chars += char_count
+        preview_messages.append(ChatPreviewMessage(role=msg.role, content=content, char_count=char_count))
+
+    return ChatPreviewResponse(
+        provider=body.provider,
+        # ``provider.model`` is the resolved model after BYOK / surface-keyed
+        # default lookup — what the actual stream call would use.
+        model=getattr(provider, "model", body.model or ""),
+        surface=body.surface or "",
+        prompt_surface=prompt_surface,
+        messages=preview_messages,
+        total_chars=total_chars,
+        # Same chars/4 estimator the budget module uses (no tiktoken pull).
+        estimated_tokens=total_chars // 4,
+    )
+
+
 __all__ = ["router"]

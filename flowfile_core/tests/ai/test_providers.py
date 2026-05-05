@@ -553,3 +553,230 @@ async def test_stream_yields_streamchunks_in_order() -> None:
     assert tool_deltas[0].name == "flowfile.graph.add_filter"
     assert tool_deltas[0].arguments == {"predicate": "amount > 100"}
     assert finish_reasons == ["tool_calls"]
+
+
+# -------- W59: prompt logging + provider-call counter --------
+
+
+@pytest.fixture
+def _isolated_log_dir(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Point ``storage.base_directory`` at tmp_path for the duration of the test."""
+    from shared.storage_config import storage
+
+    original = storage._base_dir
+    storage._base_dir = tmp_path
+    try:
+        yield tmp_path / "ai_prompts"
+    finally:
+        storage._base_dir = original
+
+
+@pytest.fixture
+def _logging_on(monkeypatch):  # type: ignore[no-untyped-def]
+    from flowfile_core.configs import settings as _settings
+
+    original = _settings.FLOWFILE_AI_LOG_PROMPTS.value
+    _settings.FLOWFILE_AI_LOG_PROMPTS.set(True)
+    try:
+        yield
+    finally:
+        _settings.FLOWFILE_AI_LOG_PROMPTS.set(original)
+
+
+@pytest.fixture
+def _logging_off(monkeypatch):  # type: ignore[no-untyped-def]
+    from flowfile_core.configs import settings as _settings
+
+    original = _settings.FLOWFILE_AI_LOG_PROMPTS.value
+    _settings.FLOWFILE_AI_LOG_PROMPTS.set(False)
+    try:
+        yield
+    finally:
+        _settings.FLOWFILE_AI_LOG_PROMPTS.set(original)
+
+
+@pytest.fixture
+def _reset_provider_counter():  # type: ignore[no-untyped-def]
+    from flowfile_core.ai.metrics import reset_provider_call_counts
+
+    reset_provider_call_counts()
+    yield
+    reset_provider_call_counts()
+
+
+@pytest.mark.asyncio
+async def test_chat_writes_prompt_log_when_enabled(
+    _isolated_log_dir, _logging_on, _reset_provider_counter
+) -> None:
+    """W59 acceptance #1: chat call writes one JSONL line with full payload."""
+    p = provider_factory("anthropic", model="claude-haiku-4-5", api_key="sk-test")
+    fake_response = _make_chat_response(content="hello world")
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
+        await p.chat(
+            [Message(role="user", content="filter big rows")],
+            tools=[
+                ToolSpec(
+                    name="flowfile.graph.add_filter",
+                    description="Add a filter",
+                    parameters={"type": "object"},
+                )
+            ],
+            max_tokens=200,
+            surface="agent",
+            session_id="sess-1",
+        )
+
+    files = list(_isolated_log_dir.iterdir())
+    assert len(files) == 1, files
+    lines = files[0].read_text().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["provider"] == "anthropic"
+    assert payload["surface"] == "agent"
+    assert payload["session_id"] == "sess-1"
+    assert payload["max_tokens"] == 200
+    assert payload["response"] == "hello world"
+    assert payload["messages"][0]["content"] == "filter big rows"
+    assert payload["tools"][0]["name"] == "flowfile.graph.add_filter"
+    assert payload["error"] is None
+    assert isinstance(payload["latency_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_chat_no_log_when_disabled(
+    _isolated_log_dir, _logging_off, _reset_provider_counter
+) -> None:
+    """W59 acceptance #2: with the flag off, no file is written."""
+    p = provider_factory("anthropic")
+    fake_response = _make_chat_response(content="hi")
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
+        await p.chat([Message(role="user", content="hi")], surface="agent")
+
+    assert not _isolated_log_dir.exists() or not list(_isolated_log_dir.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_stream_writes_one_log_entry_on_end(
+    _isolated_log_dir, _logging_on, _reset_provider_counter
+) -> None:
+    """W59 acceptance #3: streaming path emits ONE entry on stream-end with
+    aggregated text + tool calls. Per-chunk lines are not emitted."""
+
+    async def fake_stream() -> Any:
+        yield _Obj(choices=[_Obj(delta=_Obj(content="hello "), finish_reason=None)])
+        yield _Obj(choices=[_Obj(delta=_Obj(content="world"), finish_reason=None)])
+        yield _Obj(
+            choices=[
+                _Obj(
+                    delta=_Obj(
+                        content=None,
+                        tool_calls=[
+                            _Obj(
+                                index=0,
+                                id="call_z",
+                                function=_Obj(
+                                    name="flowfile.graph.add_filter",
+                                    arguments='{"predicate": "amount > 100"}',
+                                ),
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+            ]
+        )
+        yield _Obj(choices=[_Obj(delta=_Obj(content=None), finish_reason="tool_calls")])
+
+    p = provider_factory("anthropic")
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_stream())):
+        async for _ in p.stream(
+            [Message(role="user", content="hi")],
+            surface="chat",
+            session_id="sess-2",
+        ):
+            pass
+
+    files = list(_isolated_log_dir.iterdir())
+    assert len(files) == 1
+    lines = files[0].read_text().splitlines()
+    assert len(lines) == 1, "stream must emit one entry per call, not per chunk"
+    payload = json.loads(lines[0])
+    assert payload["surface"] == "chat"
+    assert payload["session_id"] == "sess-2"
+    assert payload["response"] == "hello world"
+    assert payload["finish_reason"] == "tool_calls"
+    assert len(payload["response_tool_calls"]) == 1
+    assert payload["response_tool_calls"][0]["id"] == "call_z"
+
+
+@pytest.mark.asyncio
+async def test_chat_log_records_error(
+    _isolated_log_dir, _logging_on, _reset_provider_counter
+) -> None:
+    """An LLM-call error still writes an entry (with ``error`` populated) and
+    re-raises. The wrapper must not swallow the underlying exception."""
+    p = provider_factory("anthropic")
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            await p.chat([Message(role="user", content="hi")], surface="agent")
+
+    files = list(_isolated_log_dir.iterdir())
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text().splitlines()[0])
+    assert payload["error"] is not None
+    assert "boom" in payload["error"]
+    assert payload["response"] is None
+
+
+@pytest.mark.asyncio
+async def test_provider_counter_increments_regardless_of_log_flag(
+    _logging_off, _reset_provider_counter
+) -> None:
+    """W59 acceptance #7: counter increments even when prompt log is off."""
+    from flowfile_core.ai.metrics import get_provider_call_counts
+
+    p = provider_factory("anthropic")
+    fake_response = _make_chat_response()
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
+        await p.chat([Message(role="user", content="hi")], surface="cmd_k")
+
+    counts = get_provider_call_counts()
+    assert counts.get(("anthropic", "cmd_k", p.model, "success")) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_counter_increments_on_error(
+    _logging_off, _reset_provider_counter
+) -> None:
+    from flowfile_core.ai.metrics import get_provider_call_counts
+
+    p = provider_factory("anthropic")
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        with pytest.raises(RuntimeError):
+            await p.chat([Message(role="user", content="hi")], surface="agent")
+
+    counts = get_provider_call_counts()
+    assert counts.get(("anthropic", "agent", p.model, "error")) == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_surface_defaults_to_unknown_in_counter(
+    _logging_off, _reset_provider_counter
+) -> None:
+    """Calling without ``surface`` keys the counter under ``"unknown"`` so the
+    label tuple stays a 4-tuple."""
+    from flowfile_core.ai.metrics import get_provider_call_counts
+
+    p = provider_factory("anthropic")
+    fake_response = _make_chat_response()
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)):
+        await p.chat([Message(role="user", content="hi")])
+
+    counts = get_provider_call_counts()
+    assert counts.get(("anthropic", "unknown", p.model, "success")) == 1

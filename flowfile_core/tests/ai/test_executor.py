@@ -321,11 +321,13 @@ def test_audit_redacts_secrets(call_kwargs: dict[str, Any]) -> None:
     """Verify that ``redact_secrets`` runs before the audit row is persisted.
     Uses a connect call so we don't need a full database_writer fixture."""
     flow = _flow_with_orders()
-    # Pass tool_args with a *_ref field to trigger the secret heuristic.
+    # Flat shape per the connect ToolSpec; self-loop is rejected, but
+    # redact_secrets runs in execute_tool_call before handler dispatch.
     tool_args = {
-        "input_connection": {"node_id": 1, "connection_class": "input-0"},
-        "output_connection": {"node_id": 1, "connection_class": "output-0"},
-        "password_ref": "my-secret",  # extra field — connect ignores it but redact_secrets runs first
+        "flow_id": flow.flow_id,
+        "from_node_id": 1,
+        "to_node_id": 1,
+        "password_ref": "my-secret",
     }
     result = execute_tool_call(
         flow_id=flow.flow_id,
@@ -338,6 +340,131 @@ def test_audit_redacts_secrets(call_kwargs: dict[str, Any]) -> None:
     # The connection itself may fail (cycle), but redaction happened before we got here.
     assert result.executed_args is not None
     assert result.executed_args.get("password_ref") == "<<secret:my-secret>>"
+
+
+# --------------------------------------------------------------------------- #
+# 6b. Connect tool flat-shape contract                                         #
+# --------------------------------------------------------------------------- #
+
+
+def _flow_with_orders_and_filter() -> FlowGraph:
+    """Orders manual_input (node 1) plus an unwired filter (node 2)."""
+    flow = _flow_with_orders()
+    flow.add_filter(
+        input_schema.NodeFilter(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(filter_type="advanced", advanced_filter="[region]=='EU'"),
+        )
+    )
+    return flow
+
+
+def test_connect_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
+    """The ``flowfile.graph.connect`` ToolSpec advertises a flat shape; the
+    executor must wire the connection from those flat fields without any
+    pre-shaping by the caller."""
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    target_inputs = flow.get_node(2).node_inputs.main_inputs
+    assert [n.node_id for n in target_inputs] == [1]
+
+
+def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -> None:
+    """``input_class`` / ``output_class`` from the flat shape must round-trip
+    into the staged ``NodeConnection`` payload — i.e. they actually reach the
+    constructed connection model and are not silently defaulted."""
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": flow.flow_id,
+            "from_node_id": 1,
+            "to_node_id": 2,
+            "input_class": "input-1",
+            "output_class": "output-0",
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert result.staged_node_payload is not None
+    payload = result.staged_node_payload["connection"]
+    assert payload["input_connection"] == {"node_id": 2, "connection_class": "input-1"}
+    assert payload["output_connection"] == {"node_id": 1, "connection_class": "output-0"}
+
+
+def test_connect_invalid_input_class_surfaces_tool_field_name(call_kwargs: dict[str, Any]) -> None:
+    """A bad ``input_class`` must produce a refusal that mentions the flat
+    tool-spec field name (``input_class``) rather than the internal Pydantic
+    field path (``input_connection.connection_class``) — otherwise the W53
+    retry loop hands the LLM a field name it has never been shown."""
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": flow.flow_id,
+            "from_node_id": 1,
+            "to_node_id": 2,
+            "input_class": "input-99",
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_detail is not None
+    assert "input_class" in result.refusal_detail
+    assert "input_connection" not in result.refusal_detail
+
+
+def test_connect_missing_required_field_is_refused(call_kwargs: dict[str, Any]) -> None:
+    """Missing ``from_node_id`` / ``to_node_id`` produces a tool-shaped
+    refusal (rather than a KeyError leaking through)."""
+    flow = _flow_with_orders_and_filter()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_detail is not None
+    assert "from_node_id" in result.refusal_detail
+
+
+def test_delete_connection_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
+    """The flat-shape contract applies to ``flowfile.graph.delete_connection``
+    too — the executor copy-pastes the same construction path."""
+    flow = _flow_with_orders_and_filter()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert [n.node_id for n in flow.get_node(2).node_inputs.main_inputs] == [1]
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        insertion_context=InsertionContext(),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail
+    assert flow.get_node(2).node_inputs.main_inputs == []
 
 
 # --------------------------------------------------------------------------- #

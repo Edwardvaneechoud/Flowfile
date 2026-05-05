@@ -9,6 +9,8 @@
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PersistedAgentState } from "./ai-agent-store-persistence";
+
 // Hoisted mock factories — must run before store imports.
 const mockSymbols = vi.hoisted(() => {
   class AiStreamHttpError extends Error {
@@ -26,6 +28,14 @@ const mockSymbols = vi.hoisted(() => {
       this.name = "AiDisabledError";
     }
   }
+  const emptyHydrated = (): PersistedAgentState => ({
+    events: [],
+    currentSessionId: null,
+    status: "idle",
+    driftDetail: null,
+    lastResult: null,
+    error: null,
+  });
   return {
     AiStreamHttpError,
     AiDisabledError,
@@ -36,6 +46,18 @@ const mockSymbols = vi.hoisted(() => {
     getAgentSession: vi.fn(),
     diffStoreSetCurrentDiff: vi.fn(),
     editorStoreOpenAiDrawer: vi.fn(),
+    // W55 — diff-store `currentDiff` is read by the hydration block to
+    // skip clobbering an actively-staged diff. Tests mutate this state
+    // directly to control the branch.
+    diffStoreState: { currentDiff: null as unknown },
+    // W55 — `loadPersistedAgentState` is mocked so tests can drive the
+    // hydration path without round-tripping a real `sessionStorage`
+    // (vitest env is `node`; `window` is undefined). Default returns
+    // empty state so the existing tests stay no-op on hydrate.
+    loadPersistedAgentState: vi.fn(() => emptyHydrated()),
+    persistAgentState: vi.fn(),
+    clearPersistedAgentState: vi.fn(),
+    emptyHydrated,
   };
 });
 
@@ -54,6 +76,9 @@ vi.mock("../api/ai.api", () => ({
 
 vi.mock("./ai-diff-store", () => ({
   useAiDiffStore: () => ({
+    get currentDiff() {
+      return mockSymbols.diffStoreState.currentDiff;
+    },
     setCurrentDiff: mockSymbols.diffStoreSetCurrentDiff,
   }),
 }));
@@ -62,6 +87,12 @@ vi.mock("./editor-store", () => ({
   useEditorStore: () => ({
     openAiDrawer: mockSymbols.editorStoreOpenAiDrawer,
   }),
+}));
+
+vi.mock("./ai-agent-store-persistence", () => ({
+  loadPersistedAgentState: mockSymbols.loadPersistedAgentState,
+  persistAgentState: mockSymbols.persistAgentState,
+  clearPersistedAgentState: mockSymbols.clearPersistedAgentState,
 }));
 
 import { useAiAgentStore } from "./ai-agent-store";
@@ -75,6 +106,11 @@ beforeEach(() => {
   mockSymbols.getAgentSession.mockReset();
   mockSymbols.diffStoreSetCurrentDiff.mockReset();
   mockSymbols.editorStoreOpenAiDrawer.mockReset();
+  mockSymbols.diffStoreState.currentDiff = null;
+  mockSymbols.loadPersistedAgentState.mockReset();
+  mockSymbols.loadPersistedAgentState.mockImplementation(() => mockSymbols.emptyHydrated());
+  mockSymbols.persistAgentState.mockReset();
+  mockSymbols.clearPersistedAgentState.mockReset();
 });
 
 afterEach(() => {
@@ -347,5 +383,137 @@ describe("useAiAgentStore - W45 Q4 resume state machine", () => {
     expect(store.driftDetail).toBeNull();
     expect(store.events.some((e) => e.kind === "thinking")).toBe(true);
     expect(store.events.some((e) => e.kind === "info")).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// W55 — diff-store rehydration on agent-store hydrate + onComplete defensive
+// logging when the wire reports staged ops without a diff payload.
+// --------------------------------------------------------------------------
+
+describe("useAiAgentStore - W55 hydration → diff store sync", () => {
+  it("pushes lastResult.diff_payload into the diff store on hydrate", () => {
+    const persistedDiff = { diff_id: "d-restored", flow_id: 1, additions: [] };
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-restored",
+      status: "completed",
+      driftDetail: null,
+      lastResult: {
+        session_id: "sess-restored",
+        diff_id: "d-restored",
+        op_count: 1,
+        rationale: null,
+        diff_payload: persistedDiff,
+      },
+      error: null,
+    });
+
+    useAiAgentStore();
+
+    expect(mockSymbols.diffStoreSetCurrentDiff).toHaveBeenCalledTimes(1);
+    expect(mockSymbols.diffStoreSetCurrentDiff).toHaveBeenCalledWith(persistedDiff);
+  });
+
+  it("does not push when lastResult.diff_payload is null", () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-null",
+      status: "completed",
+      driftDetail: null,
+      lastResult: {
+        session_id: "sess-null",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      },
+      error: null,
+    });
+
+    const store = useAiAgentStore();
+
+    expect(mockSymbols.diffStoreSetCurrentDiff).not.toHaveBeenCalled();
+    expect(store.lastResult).not.toBeNull();
+    expect(store.lastResult!.diff_payload).toBeNull();
+  });
+
+  it("skips the push if the diff store already has a staged diff", () => {
+    const preexisting = { diff_id: "preexisting", flow_id: 1, additions: [] };
+    mockSymbols.diffStoreState.currentDiff = preexisting;
+    const persistedDiff = { diff_id: "d-restored", flow_id: 1, additions: [] };
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-skip",
+      status: "completed",
+      driftDetail: null,
+      lastResult: {
+        session_id: "sess-skip",
+        diff_id: "d-restored",
+        op_count: 1,
+        rationale: null,
+        diff_payload: persistedDiff,
+      },
+      error: null,
+    });
+
+    useAiAgentStore();
+
+    expect(mockSymbols.diffStoreSetCurrentDiff).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAiAgentStore - W55 onComplete defensive logging", () => {
+  it("warns when diff_payload is falsy AND a tool_call_staged event exists", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      // Stage one op, then complete without a diff_payload — simulates
+      // an SSE-serialisation regression where the agent reported staged
+      // work but the bundle path dropped the payload.
+      handlers.onToolCallStaged?.({
+        id: "t1",
+        name: "flowfile.graph.add_filter",
+        node_id: 2,
+        predicted_output_schema: null,
+        warnings: [],
+      });
+      handlers.onComplete?.({
+        session_id: "sess-no-diff",
+        diff_id: null,
+        op_count: 1,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start(startBody());
+
+    expect(mockSymbols.diffStoreSetCurrentDiff).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    const args = warn.mock.calls[0];
+    expect(args[0]).toMatch(/no diff_payload/);
+    expect(args[1]).toBe(1); // staged-event count
+    warn.mockRestore();
+  });
+
+  it("does not warn when diff_payload is falsy but no staged events fired", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-empty",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start(startBody());
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(store.status).toBe("completed");
+    warn.mockRestore();
   });
 });
