@@ -545,6 +545,50 @@ async def test_partial_refusal_stages_valid_ops() -> None:
 
 
 @pytest.mark.asyncio
+async def test_w62_default_insertion_context_resolves_non_zero_coords() -> None:
+    """W62 — when the frontend leaves ``insertion_context.pos_x`` /
+    ``pos_y`` unset (or doesn't pass an ``insertion_context`` at all), the
+    executor's auto-layout resolver fills in coords derived from the
+    upstream. Pre-W62 the staged ops always landed at (0, 0) so the user
+    had to manually drag them apart. Multi-op fan-out from the same
+    upstream stacks vertically via ``staged_offset_index``.
+    """
+    flow = _flow_with_orders()
+    flow.get_node(1).setting_input.pos_x = 100.0
+    flow.get_node(1).setting_input.pos_y = 200.0
+
+    # Two add_filter calls — both anchored at upstream node 1 by passing
+    # ``upstream_node_ids=[1]`` but leaving pos_x / pos_y unset.
+    tool_calls = [
+        ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_settings_for_region()),
+        ToolCall(id="t2", name="flowfile.graph.add_filter", arguments=_filter_settings_for_region(node_id=42)),
+    ]
+    provider = _FakeProvider(tool_calls=tool_calls)
+    response = await run_command_palette(
+        flow,
+        prompt="filter twice",
+        provider=provider,
+        session_id="sid-w62",
+        user_id=1,
+        scheduler=_scheduler(),
+        insertion_context=CommandPaletteInsertionContext(upstream_node_ids=[1]),
+    )
+    assert response.degraded is False, response.refused
+    additions = response.diff.additions
+    assert len(additions) == 2
+
+    coord_a = (additions[0].insertion_context.pos_x, additions[0].insertion_context.pos_y)
+    coord_b = (additions[1].insertion_context.pos_x, additions[1].insertion_context.pos_y)
+    # Pre-W62 regression: both at (0, 0).
+    assert coord_a != (0.0, 0.0)
+    assert coord_b != (0.0, 0.0)
+    # Cmd+K fan-out: both anchored at node 1, so same x and the second
+    # offsets vertically via ``staged_offset_index``.
+    assert coord_a[0] == coord_b[0]
+    assert coord_b[1] > coord_a[1]
+
+
+@pytest.mark.asyncio
 async def test_insertion_context_threaded_into_executor() -> None:
     """The request's ``insertion_context.upstream_node_ids`` lands on the
     staged addition's ``insertion_context``."""

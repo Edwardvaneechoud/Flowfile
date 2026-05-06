@@ -422,7 +422,13 @@ def _redact(value: Any, *, key_hint: str | None, extra: frozenset[str]) -> Any:
 # §9.6 refusal helpers
 # ---------------------------------------------------------------------------
 
-RefusalReason = Literal["unknown_columns", "network_egress", "missing_diff", "self_loop_prevented"]
+RefusalReason = Literal[
+    "unknown_columns",
+    "network_egress",
+    "missing_diff",
+    "self_loop_prevented",
+    "settings_validation",
+]
 
 
 def validate_column_references(

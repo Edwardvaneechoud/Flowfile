@@ -101,14 +101,19 @@ class CommandPaletteInsertionContext(BaseModel):
     ``upstream_node_ids=[]`` lets the LLM propose a source node;
     practical use threads the user's selection or the canvas-context-menu
     target node id in here.
+
+    ``pos_x`` / ``pos_y`` default to ``None`` (W62) so the executor derives
+    layout coordinates from the upstream's canvas position. Frontend callers
+    that already know the click coordinates may pass explicit floats — those
+    win verbatim.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     upstream_node_ids: list[int] = Field(default_factory=list)
     right_input_node_id: int | None = None
-    pos_x: float = 0.0
-    pos_y: float = 0.0
+    pos_x: float | None = None
+    pos_y: float | None = None
 
 
 class CommandPaletteRequest(BaseModel):
@@ -589,6 +594,11 @@ async def run_command_palette(
             # LLM-provided-id validation has nothing to validate. The agent
             # planner is the only surface where the LLM's emitted ``node_id``
             # reaches the executor as-is.
+            #
+            # W62 — ``staged_offset_index=fresh_id_offset`` so successive
+            # ``add_*`` calls in the same Cmd+K batch (which all share
+            # ``base_ic_obj`` and hence the same upstream) stack vertically
+            # instead of landing on the same coordinates.
             result = execute_tool_call(
                 flow_id=flow_id,
                 tool_name=call.name,
@@ -598,6 +608,7 @@ async def run_command_palette(
                 user_id=user_id,
                 mode="stage",
                 flow=graph,
+                staged_offset_index=fresh_id_offset,
             )
         except Exception as exc:  # noqa: BLE001 — defensive; executor catches its own raises but we never want a route-level 500.
             logger.warning(

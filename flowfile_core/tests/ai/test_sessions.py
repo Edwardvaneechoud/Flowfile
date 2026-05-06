@@ -93,6 +93,36 @@ def _reset_session_store() -> Iterator[None]:
 # --------------------------------------------------------------------------- #
 
 
+def test_agent_session_w57_fields_default_to_empty_lists() -> None:
+    """W57 — ``selected_node_ids`` and ``pinned_node_ids`` are present on
+    ``AgentSession`` and default to empty lists."""
+    sess = _make_session()
+    assert sess.selected_node_ids == []
+    assert sess.pinned_node_ids == []
+
+
+def test_agent_session_w57_fields_round_trip_through_model_dump() -> None:
+    """W57 — both fields survive ``model_dump(mode="json")`` so the disk-
+    persisted shape carries them correctly across W42 sidecar reads."""
+    flow = _flow_with_orders()
+    snapshot = sessions.capture_graph_snapshot(flow)
+    sess = sessions.AgentSession(
+        flow_id=1,
+        user_id=1,
+        user_prompt="x",
+        provider_name="anthropic",
+        snapshot=snapshot,
+        selected_node_ids=[2, 3],
+        pinned_node_ids=[5],
+    )
+    payload = sess.model_dump(mode="json")
+    assert payload["selected_node_ids"] == [2, 3]
+    assert payload["pinned_node_ids"] == [5]
+    rehydrated = sessions.AgentSession.model_validate(payload)
+    assert rehydrated.selected_node_ids == [2, 3]
+    assert rehydrated.pinned_node_ids == [5]
+
+
 def test_session_store_roundtrip() -> None:
     sess = _make_session()
     sid = sessions.register_session(sess)

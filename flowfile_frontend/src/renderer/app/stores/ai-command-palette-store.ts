@@ -71,11 +71,16 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
   };
 
   const close = (): void => {
+    // W66 — close preserves the prior response (`error` / `refused` /
+    // `rationale` / `degradedReason`) so an accidental dismiss doesn't
+    // erase what the user was reading. State is cleared at the start of
+    // a new submission via `clearResult()`, or by an explicit caller.
     cancel();
     isOpen.value = false;
     loading.value = false;
-    // Keep `prompt` so re-opening shows the last typed value; clear the
-    // transient state so a new session starts fresh.
+  };
+
+  const clearResult = (): void => {
     error.value = null;
     aiDisabled.value = false;
     degradedReason.value = null;
@@ -94,6 +99,11 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
 
   const submit = async (options: SubmitOptions): Promise<void> => {
     cancel();
+    // W66 — wipe any prior response before validating the new prompt so
+    // a stale rationale from a previous run can't leak into the next
+    // submit's failure UI. Validation errors set `error` after this
+    // clear, so the user still sees the new error.
+    clearResult();
     const trimmed = options.prompt.trim();
     if (!trimmed) {
       error.value = "Type a request first.";
@@ -107,11 +117,6 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
     const controller = new AbortController();
     inflight = controller;
     loading.value = true;
-    error.value = null;
-    aiDisabled.value = false;
-    degradedReason.value = null;
-    rationale.value = null;
-    refused.value = [];
 
     const request: CommandPaletteRequest = {
       flowId: options.flowId,
@@ -175,6 +180,9 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
     const editorStore = useEditorStore();
     editorStore.openAiDrawer?.();
 
+    // W66 — drop the rationale + refused list now that the diff has
+    // been handed off; the W35 panel renders both from the diff itself.
+    clearResult();
     close();
   };
 
@@ -195,5 +203,6 @@ export const useAiCommandPaletteStore = defineStore("aiCommandPalette", () => {
     setPrompt,
     submit,
     cancel,
+    clearResult,
   };
 });

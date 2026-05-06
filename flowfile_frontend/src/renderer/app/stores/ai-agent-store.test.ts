@@ -97,6 +97,26 @@ vi.mock("./ai-agent-store-persistence", () => ({
   clearPersistedAgentState: mockSymbols.clearPersistedAgentState,
 }));
 
+// W57 — `start()` reads canvas selection via `useFlowStore().vueFlowInstance`.
+// Tests drive that read by mutating ``flowStoreState.vueFlowInstance``; the
+// default of ``null`` mirrors the unmounted-canvas case (start() should
+// resolve ``selected_node_ids`` to ``null`` when no instance is available).
+type FakeSelectedNodeRef = { id: string; data?: { id?: number | string } };
+type FakeVueFlowInstance = {
+  getSelectedNodes: { value: FakeSelectedNodeRef[] };
+};
+const flowStoreState: { vueFlowInstance: FakeVueFlowInstance | null } = {
+  vueFlowInstance: null,
+};
+
+vi.mock("./flow-store", () => ({
+  useFlowStore: () => ({
+    get vueFlowInstance() {
+      return flowStoreState.vueFlowInstance;
+    },
+  }),
+}));
+
 import { useAiAgentStore } from "./ai-agent-store";
 
 beforeEach(() => {
@@ -114,6 +134,9 @@ beforeEach(() => {
   mockSymbols.loadPersistedAgentState.mockImplementation(() => mockSymbols.emptyHydrated());
   mockSymbols.persistAgentState.mockReset();
   mockSymbols.clearPersistedAgentState.mockReset();
+  // W57 — reset the flow-store mock so a prior test's selection doesn't
+  // leak into the next case.
+  flowStoreState.vueFlowInstance = null;
 });
 
 afterEach(() => {
@@ -222,6 +245,77 @@ describe("useAiAgentStore - start", () => {
     // (The actual abort path uses store.abort() to flip to "aborted".)
     expect(store.status).toBe("running");
     expect(store.error).toBe(null);
+  });
+
+  // W57 — selection auto-attach on start.
+  it("auto-attaches canvas selection to selected_node_ids when omitted", async () => {
+    flowStoreState.vueFlowInstance = {
+      getSelectedNodes: {
+        value: [
+          { id: "vf-2", data: { id: 2 } },
+          { id: "vf-3", data: { id: 3 } },
+        ],
+      },
+    };
+    let capturedBody: { selected_node_ids?: number[] | null } | undefined;
+    mockSymbols.streamAgentSession.mockImplementation(async (body, handlers) => {
+      capturedBody = body;
+      handlers.onComplete?.({
+        session_id: "s-1",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start(startBody());
+
+    expect(capturedBody?.selected_node_ids).toEqual([2, 3]);
+  });
+
+  it("preserves an explicit selected_node_ids on the body (caller override)", async () => {
+    flowStoreState.vueFlowInstance = {
+      getSelectedNodes: { value: [{ id: "vf-7", data: { id: 7 } }] },
+    };
+    let capturedBody: { selected_node_ids?: number[] | null } | undefined;
+    mockSymbols.streamAgentSession.mockImplementation(async (body, handlers) => {
+      capturedBody = body;
+      handlers.onComplete?.({
+        session_id: "s-1",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start({ ...startBody(), selected_node_ids: [42] });
+
+    // Caller's explicit value wins over the canvas read.
+    expect(capturedBody?.selected_node_ids).toEqual([42]);
+  });
+
+  it("sends null selected_node_ids when no canvas instance is mounted", async () => {
+    flowStoreState.vueFlowInstance = null;
+    let capturedBody: { selected_node_ids?: number[] | null } | undefined;
+    mockSymbols.streamAgentSession.mockImplementation(async (body, handlers) => {
+      capturedBody = body;
+      handlers.onComplete?.({
+        session_id: "s-1",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start(startBody());
+
+    expect(capturedBody?.selected_node_ids).toBeNull();
   });
 });
 

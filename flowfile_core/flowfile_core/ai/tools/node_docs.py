@@ -967,6 +967,26 @@ NODE_AGENT_PAYLOAD_EXAMPLES: Final[dict[str, str]] = {
         "  }\n"
         "}"
     ),
+    # W67 follow-up: RawData.data is COLUMNAR — data[i] is the values for
+    # columns[i]. The LLM defaults to row-oriented and silently corrupts
+    # alignment because both layouts validate as list[list]. Two rows of
+    # {name, age}: data=[["Alice","Bob"],[30,25]] not [["Alice",30],["Bob",25]].
+    "manual_input": (
+        "{\n"
+        '  "flow_id": 1,\n'
+        '  "node_id": 99,\n'
+        '  "raw_data_format": {\n'
+        '    "columns": [\n'
+        '      {"name": "name", "data_type": "String"},\n'
+        '      {"name": "age", "data_type": "Int64"}\n'
+        "    ],\n"
+        '    "data": [\n'
+        '      ["Alice", "Bob"],\n'
+        "      [30, 25]\n"
+        "    ]\n"
+        "  }\n"
+        "}"
+    ),
 }
 
 

@@ -169,6 +169,19 @@ class AgentSession(BaseModel):
     """Node ids the agent has staged this session via ``add_<node_type>``
     tool calls — used to exclude the agent's own additions from W45's
     ``external_added_node_ids`` drift bucket."""
+    selected_node_ids: list[int] = Field(default_factory=list)
+    """W57 — node ids the user had selected on the canvas at session start.
+    Read by ``planner._resolve_insertion_context`` as a fallback signal for
+    the contextual upstream when the LLM does not provide an explicit
+    ``upstream_node_ids`` arg AND no in-batch staged-add chain is in flight.
+    Wired in from ``AgentStartRequest.selected_node_ids`` (frontend reads
+    from the live flow store at start time)."""
+    pinned_node_ids: list[int] = Field(default_factory=list)
+    """W57 — node ids the user pinned via ``@``-mention (W24) at session
+    start. Read by ``planner._resolve_insertion_context`` as a tier below
+    selection. Currently always empty — no v0 wire path populates it; the
+    field is structurally present so a future workstream can extract
+    ``@``-mentions from the user prompt without an additional schema bump."""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

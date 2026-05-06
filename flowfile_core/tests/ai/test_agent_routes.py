@@ -255,6 +255,69 @@ def test_start_422_provider_no_tools(
     assert "tool-calling" in response.json()["detail"].lower()
 
 
+def test_start_persists_selected_node_ids_on_session(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W57 — ``selected_node_ids`` round-trips through ``AgentStartRequest``
+    onto ``AgentSession.selected_node_ids``. Pre-allocates a session_id so we
+    can read the session record back without racing the SSE stream."""
+    fake = _FakeProvider(
+        tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
+    )
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    response = authed_client.post(
+        "/ai/agent/start",
+        json={
+            "flow_id": 1,
+            "prompt": "filter to EU",
+            "surface": "agent_complex",
+            "provider": "anthropic",
+            "session_id": "w57-selected-roundtrip",
+            "selected_node_ids": [1, 2],
+        },
+    )
+    assert response.status_code == 200
+    # Drain so the registration + first events have run.
+    response.text  # noqa: B018
+    session = sessions.get_session("w57-selected-roundtrip", user_id=1)
+    assert session is not None
+    assert session.selected_node_ids == [1, 2]
+    # Pinned defaults to empty until a future workstream wires it.
+    assert session.pinned_node_ids == []
+
+
+def test_start_defaults_selected_node_ids_to_empty_when_omitted(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W57 — omitting ``selected_node_ids`` defaults to ``[]`` rather than
+    raising; the field is optional on the wire."""
+    fake = _FakeProvider(
+        tool_calls_per_step=[[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())]]
+    )
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    response = authed_client.post(
+        "/ai/agent/start",
+        json={
+            "flow_id": 1,
+            "prompt": "filter to EU",
+            "surface": "agent_complex",
+            "provider": "anthropic",
+            "session_id": "w57-selected-default",
+        },
+    )
+    assert response.status_code == 200
+    response.text  # noqa: B018
+    session = sessions.get_session("w57-selected-default", user_id=1)
+    assert session is not None
+    assert session.selected_node_ids == []
+
+
 def test_start_422_session_id_collision(
     authed_client: TestClient,
     registered_flow: FlowGraph,

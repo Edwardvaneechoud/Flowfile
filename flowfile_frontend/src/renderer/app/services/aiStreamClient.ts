@@ -342,6 +342,16 @@ export interface AgentStartRequest {
   max_tokens?: number;
   max_retries_per_step?: number;
   session_id?: string | null;
+  /**
+   * W57 — node ids the user has selected on the canvas at start time.
+   * The planner reads this in ``_resolve_insertion_context`` as a fallback
+   * upstream signal when the LLM does not emit explicit
+   * ``upstream_node_ids``. Mirrors the chat route's selection-passing
+   * pattern (W28). When the request is built inside the store, the store
+   * pulls selection from ``useFlowStore().vueFlowInstance`` automatically;
+   * callers can override by setting this field explicitly.
+   */
+  selected_node_ids?: number[] | null;
 }
 
 export interface AgentDriftDetail {

@@ -586,6 +586,185 @@ def test_stage_mode_returns_payload(call_kwargs: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 10b. W62 — auto-layout for staged nodes                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_w62_default_pos_resolves_from_upstream(call_kwargs: dict[str, Any]) -> None:
+    """W62 regression — when InsertionContext leaves ``pos_x`` / ``pos_y``
+    unset (the default), the executor derives non-(0, 0) coords from the
+    upstream node. Pre-W62 the staged payload always carried (0.0, 0.0)."""
+    from flowfile_core.ai.tools.executor import (
+        _AUTO_LAYOUT_X_SPACING,
+        _AUTO_LAYOUT_Y_SPACING,
+    )
+
+    flow = _flow_with_orders()
+    # Stamp a known upstream position so the assertion is unambiguous.
+    flow.get_node(1).setting_input.pos_x = 400.0
+    flow.get_node(1).setting_input.pos_y = 300.0
+
+    args = _filter_args(node_id=2, depending_on_id=1)
+    # Strip pos_x / pos_y from tool_args so the executor's "settings have
+    # explicit coords" branch doesn't fire.
+    args.pop("pos_x", None)
+    args.pop("pos_y", None)
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=args,
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged", result.refusal_detail
+    payload = result.staged_node_payload
+    assert payload is not None
+
+    ic = payload["insertion_context"]
+    assert ic["pos_x"] == 400.0 + _AUTO_LAYOUT_X_SPACING
+    assert ic["pos_y"] == 300.0
+    # W62 also stamps the resolved coords onto settings so the apply path
+    # (which reads ``settings.pos_x`` via ``set_node_information``) lands
+    # the node at the resolved position.
+    assert payload["settings"]["pos_x"] == 400.0 + _AUTO_LAYOUT_X_SPACING
+    assert payload["settings"]["pos_y"] == 300.0
+    # Sanity: not the pre-W62 (0, 0) bug.
+    assert (ic["pos_x"], ic["pos_y"]) != (0.0, 0.0)
+    # Layout offset Δy unused for a single anchor — staged_offset_index defaults to 0.
+    _ = _AUTO_LAYOUT_Y_SPACING  # imported to assert it exists
+
+
+def test_w62_explicit_pos_respected_verbatim(call_kwargs: dict[str, Any]) -> None:
+    """Caller deliberately sets pos_x / pos_y (frontend click, ghost-node
+    handoff). The executor must NOT auto-resolve in that case — the
+    sentinel-vs-default distinction is the whole point of the
+    ``float | None`` shape."""
+    flow = _flow_with_orders()
+    args = _filter_args(node_id=3, depending_on_id=1)
+    args.pop("pos_x", None)
+    args.pop("pos_y", None)
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=args,
+        # Deliberate (50.0, 75.0) — must survive verbatim in the staged
+        # insertion_context. Settings stamping ALSO uses these because
+        # tool_args has no explicit pos_x / pos_y.
+        insertion_context=InsertionContext(upstream_node_ids=[1], pos_x=50.0, pos_y=75.0),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged"
+    ic = result.staged_node_payload["insertion_context"]
+    assert ic["pos_x"] == 50.0
+    assert ic["pos_y"] == 75.0
+    assert result.staged_node_payload["settings"]["pos_x"] == 50.0
+    assert result.staged_node_payload["settings"]["pos_y"] == 75.0
+
+
+def test_w62_explicit_zero_pos_respected(call_kwargs: dict[str, Any]) -> None:
+    """Edge: caller passes ``pos_x=0.0`` deliberately. The resolver must
+    NOT fire — only ``None`` triggers auto-layout. This is the whole point
+    of switching the field type from ``float = 0.0`` to ``float | None = None``."""
+    flow = _flow_with_orders()
+    flow.get_node(1).setting_input.pos_x = 400.0
+    flow.get_node(1).setting_input.pos_y = 300.0
+    args = _filter_args(node_id=4, depending_on_id=1)
+    args.pop("pos_x", None)
+    args.pop("pos_y", None)
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_filter",
+        tool_args=args,
+        insertion_context=InsertionContext(upstream_node_ids=[1], pos_x=0.0, pos_y=0.0),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "staged"
+    ic = result.staged_node_payload["insertion_context"]
+    # (0, 0) survives — it was deliberate.
+    assert (ic["pos_x"], ic["pos_y"]) == (0.0, 0.0)
+
+
+def test_w62_cold_flow_uses_fallback(call_kwargs: dict[str, Any]) -> None:
+    """No upstream → resolver returns the seed coords, NOT (0, 0)."""
+    from flowfile_core.ai.tools.executor import (
+        _AUTO_LAYOUT_FALLBACK_X,
+        _AUTO_LAYOUT_FALLBACK_Y,
+    )
+
+    flow = FlowGraph(flow_settings=_flow_settings(), name="w62-cold")
+    raw = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=11,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="a", data_type="Integer")],
+            data=[[1, 2]],
+        ),
+    )
+    args = raw.model_dump(mode="json")
+    args.pop("pos_x", None)
+    args.pop("pos_y", None)
+
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args=args,
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status in ("staged", "warned"), result.refusal_detail
+    ic = result.staged_node_payload["insertion_context"]
+    assert ic["pos_x"] == _AUTO_LAYOUT_FALLBACK_X
+    assert ic["pos_y"] == _AUTO_LAYOUT_FALLBACK_Y
+
+
+def test_w62_staged_offset_index_stacks_fan_out(call_kwargs: dict[str, Any]) -> None:
+    """``staged_offset_index`` parameter on ``execute_tool_call`` lets the
+    caller (Cmd+K, planner) stack fan-outs from one upstream vertically."""
+    flow = _flow_with_orders()
+    flow.get_node(1).setting_input.pos_x = 400.0
+    flow.get_node(1).setting_input.pos_y = 300.0
+    common_args = lambda nid: {  # noqa: E731 — terse helper for the loop
+        **_filter_args(node_id=nid, depending_on_id=1),
+    }
+    coords: list[tuple[float, float]] = []
+    for offset, nid in enumerate((101, 102, 103)):
+        args = common_args(nid)
+        args.pop("pos_x", None)
+        args.pop("pos_y", None)
+        result = execute_tool_call(
+            flow_id=flow.flow_id,
+            tool_name="flowfile.graph.add_filter",
+            tool_args=args,
+            insertion_context=InsertionContext(upstream_node_ids=[1]),
+            flow=flow,
+            mode="stage",
+            staged_offset_index=offset,
+            **call_kwargs,
+        )
+        assert result.status == "staged", result.refusal_detail
+        ic = result.staged_node_payload["insertion_context"]
+        coords.append((ic["pos_x"], ic["pos_y"]))
+    # All three at the same x (one column over from upstream), increasing y.
+    xs = {c[0] for c in coords}
+    ys = [c[1] for c in coords]
+    assert len(xs) == 1
+    assert ys == sorted(ys)
+    assert ys[1] > ys[0]
+    assert ys[2] > ys[1]
+
+
+# --------------------------------------------------------------------------- #
 # 11. Meta pick_category                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -759,3 +938,102 @@ def test_executor_module_exposes_seam() -> None:
     assert callable(dry_run_module._run_kernel_for_dry_run)
     # And the executor module re-exports the public surface unchanged.
     assert executor_module.execute_tool_call is execute_tool_call
+
+
+# --------------------------------------------------------------------------- #
+# W67 — settings-validation refusal enrichment                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _add_manual_input_args_with_string_raw_data() -> dict[str, Any]:
+    """Replicate the live-transcript shape: LLM JSON-string-encodes
+    ``raw_data_format``. Pydantic refuses with ``type=model_type``."""
+    return {
+        "flow_id": 1,
+        "node_id": 5,
+        "pos_x": 0.0,
+        "pos_y": 0.0,
+        "raw_data_format": '{"columns": [], "data": []}',
+    }
+
+
+def test_w67_settings_validation_refusal_uses_new_reason(call_kwargs: dict[str, Any]) -> None:
+    """W67 Defect 2 — Pydantic ``ValidationError`` on settings flips
+    ``refusal_reason`` to the new ``"settings_validation"`` literal (was
+    ``None`` before W67)."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args=_add_manual_input_args_with_string_raw_data(),
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == "settings_validation"
+
+
+def test_w67_settings_validation_refusal_includes_field_and_shape(call_kwargs: dict[str, Any]) -> None:
+    """W67 Defect 2 — refusal detail names the failing field, the expected
+    shape, the received Python type, and points the LLM back at the catalog
+    entry for the tool. Live-transcript replication."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args=_add_manual_input_args_with_string_raw_data(),
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    detail = result.refusal_detail or ""
+    assert "raw_data_format" in detail, detail
+    assert "object" in detail.lower(), detail
+    # Received type is Python's ``str`` — exact substring match on what
+    # ``type(received).__name__`` produces.
+    assert "str" in detail, detail
+    assert "flowfile.graph.add_manual_input" in detail, detail
+    assert "JSON-encoded string" in detail, detail
+
+
+def test_w67_settings_validation_refusal_includes_concrete_example(call_kwargs: dict[str, Any]) -> None:
+    """W67 Defect 2 — refusal detail embeds a JSON example payload that
+    parses cleanly and has the structural keys (``columns``, ``data``) so
+    the LLM has a concrete template to pattern-match on."""
+    import json
+
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_manual_input",
+        tool_args=_add_manual_input_args_with_string_raw_data(),
+        insertion_context=InsertionContext(upstream_node_ids=[]),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    detail = result.refusal_detail or ""
+    # Pull the example fragment between "Example payload for `<loc>`: " and "."
+    marker = "Example payload for `raw_data_format`: "
+    assert marker in detail, f"missing example payload marker in: {detail!r}"
+    fragment = detail.split(marker, 1)[1]
+    # The example is a JSON object terminated by a period+space (or end).
+    # Parse the leading JSON object — find the first balanced ``}``.
+    depth = 0
+    end_idx = -1
+    for i, ch in enumerate(fragment):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = i + 1
+                break
+    assert end_idx > 0, f"no balanced JSON object in: {fragment!r}"
+    parsed = json.loads(fragment[:end_idx])
+    assert isinstance(parsed, dict)
+    assert "columns" in parsed, parsed
+    assert "data" in parsed, parsed

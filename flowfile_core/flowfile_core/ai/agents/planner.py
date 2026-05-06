@@ -124,6 +124,22 @@ class PlannerEvent(BaseModel):
 _ADD_PREFIX = "flowfile.graph.add_"
 _PICK_CATEGORY_NAME = "flowfile.meta.pick_category"
 
+# W57 — settings-field names that express primary upstream dependency for
+# single-input nodes. The catalog generator (``tools/registry.py``) auto-derives
+# JSON Schema from the per-node Pydantic settings classes, so the LLM sees
+# both ``upstream_node_ids`` (planner-injected) AND these legacy connection-state
+# fields. When the LLM emits the settings field but omits ``upstream_node_ids``,
+# the resolver canonicalises the two views.
+#
+# Audit (2026-05-06): ``depending_on_id`` (NodeSingleInput base) is the
+# canonical primary-upstream field. ``depending_on_ids`` (NodeMultiInput) is
+# excluded — multi-upstream insertion context is out of v0 scope. Other
+# upstream-shaped fields (``ApplyModelSettings.upstream_node_id``,
+# ``EvaluateModelSettings.upstream_train_node_id``) are nested in ML
+# sub-settings and reference auxiliary cross-flow links, not the primary
+# data input — also excluded.
+_SETTINGS_DEPENDENCY_FIELDS: tuple[str, ...] = ("depending_on_id",)
+
 # W38 — single short sentence per step, ≤ 20 words per the prompt instruction;
 # we capture up to ~280 chars (a generous cap that tolerates the model running
 # slightly long) and trim trailing whitespace. Rationale longer than this is
@@ -440,30 +456,111 @@ def _allocate_node_id(flow: FlowGraph, session: sessions.AgentSession) -> int:
     return (max(used) + 1) if used else 1
 
 
-def _resolve_insertion_context(session: sessions.AgentSession, tc: ToolCall, flow: FlowGraph) -> InsertionContext:
+def _read_settings_dependency_field(args: dict[str, Any]) -> int | None:
+    """Read a primary-upstream settings field out of ``args``.
+
+    The LLM's tool ``arguments`` for ``add_<node_type>`` follow the per-node
+    Pydantic settings schema. Most surfaces emit fields at the root of
+    ``args`` (e.g. ``{"depending_on_id": 2, "filter_input": {...}, ...}``);
+    a few wrap them under ``settings_input``. Mirrors the dual-lookup
+    pattern in :func:`_arg_summary_for_add`.
+
+    Returns the int id when a known dependency field is present and parseable,
+    else ``None``. See :data:`_SETTINGS_DEPENDENCY_FIELDS` for the canonical
+    set.
+    """
+    nested = args.get("settings_input")
+    sources: list[dict[str, Any]] = [args]
+    if isinstance(nested, dict):
+        sources.append(nested)
+    for source in sources:
+        for field in _SETTINGS_DEPENDENCY_FIELDS:
+            raw = source.get(field)
+            if isinstance(raw, int) and raw >= 0:
+                # ``-1`` is the NodeSingleInput default sentinel meaning
+                # "no dependency configured"; treat as absent.
+                return raw
+    return None
+
+
+def _format_ambiguous_insertion_detail(flow: FlowGraph) -> str:
+    """Build a refusal_detail string listing the live candidates.
+
+    Used by the W57 ambiguity refusal so the LLM can retry with explicit
+    ``upstream_node_ids``. Walks ``flow.nodes`` once; defensive against
+    a node missing ``node_id`` / ``node_type``.
+    """
+    parts: list[str] = []
+    for node in flow.nodes:
+        try:
+            nid = int(node.node_id)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        node_type = getattr(node, "node_type", None) or "unknown"
+        parts.append(f"{nid} ({node_type})")
+    candidates = ", ".join(parts) if parts else "(none)"
+    return (
+        "multiple live nodes and no user selection / pin / explicit "
+        f"upstream_node_ids — choose one and retry. Candidates: {candidates}"
+    )
+
+
+def _resolve_insertion_context(
+    session: sessions.AgentSession,
+    tc: ToolCall,
+    flow: FlowGraph,
+) -> tuple[InsertionContext, str | None]:
     """Build an :class:`InsertionContext` for a tool call.
 
-    Order of preference:
+    Returns ``(insertion_context, ambiguous_detail_or_none)``. When the second
+    element is non-``None``, the planner converts it into a
+    ``tool_call_rejected`` event with ``refusal_reason="ambiguous_insertion_context"``
+    for ``add_*`` calls. Non-``add_*`` calls ignore the flag (they don't
+    consume ``upstream_node_ids``).
 
-    1. ``upstream_node_ids`` / ``right_input_node_id`` / ``pos_x`` / ``pos_y``
-       in the LLM's tool args (it can override when chaining is needed —
-       e.g. a join that targets two upstreams).
-    2. The most-recent in-batch staged addition's ``node_id`` (chained
-       transformations: add_filter → add_sort).
-    3. The most-recent live node in the flow (cold-flow first step;
-       attaches to whatever's already there).
-    4. Empty (truly cold flow with no nodes) — the executor handles this
-       (most node types refuse, sources don't need an upstream).
+    Tier order (W57; was 4 tiers, now 8):
+
+    1. LLM-provided ``args["upstream_node_ids"]`` (explicit override always
+       wins).
+    2. Settings-field dependency hint in ``args`` — see
+       :data:`_SETTINGS_DEPENDENCY_FIELDS`. The catalog generator exposes
+       legacy connection-state fields (``depending_on_id``) AND the planner
+       param (``upstream_node_ids``) to the LLM; when only the legacy field
+       is set, the resolver canonicalises.
+    3. Most-recent in-batch staged ``add_*`` from ``session.staged_results``
+       (chained transformations: add_filter → add_sort).
+    4. ``session.selected_node_ids`` (W57) — the user's canvas selection at
+       start time.
+    5. ``session.pinned_node_ids`` (W57) — ``@``-mention targets at start
+       time.
+    6. **Ambiguity refusal** — ``len(live_nodes) > 1`` and nothing else
+       hit. Returns an empty ctx + a refusal_detail string. The planner
+       emits ``tool_call_rejected`` with the candidate list so the model
+       retries with explicit ``upstream_node_ids``.
+    7. ``flow.nodes[-1]`` ONLY if exactly one live node (unambiguous
+       cold-flow first step).
+    8. Empty (truly cold flow — no nodes). The executor handles this
+       (sources don't need an upstream; most node types refuse).
     """
     args: dict[str, Any] = tc.arguments or {}
 
     upstream_ids: list[int] = []
+    ambiguous_detail: str | None = None
+
+    # Tier 1 — explicit planner param.
     raw_upstream = args.get("upstream_node_ids")
     if isinstance(raw_upstream, list):
         for uid in raw_upstream:
             if isinstance(uid, int):
                 upstream_ids.append(uid)
 
+    # Tier 2 — settings-field dependency hint.
+    if not upstream_ids:
+        settings_dep = _read_settings_dependency_field(args)
+        if settings_dep is not None:
+            upstream_ids = [settings_dep]
+
+    # Tier 3 — most-recent in-batch staged add_*.
     if not upstream_ids:
         for entry in reversed(session.staged_results):
             if not entry.tool_name.startswith(_ADD_PREFIX):
@@ -475,28 +572,110 @@ def _resolve_insertion_context(session: sessions.AgentSession, tc: ToolCall, flo
                 upstream_ids = [nid]
                 break
 
+    # Tier 4 — session selection.
+    if not upstream_ids and session.selected_node_ids:
+        upstream_ids = [uid for uid in session.selected_node_ids if isinstance(uid, int)]
+
+    # Tier 5 — session pinned (@-mention).
+    if not upstream_ids and session.pinned_node_ids:
+        upstream_ids = [uid for uid in session.pinned_node_ids if isinstance(uid, int)]
+
+    # Tiers 6-8 — live-graph fallbacks. Tier 6 refuses on ambiguity; tier 7
+    # is the unambiguous cold-flow case; tier 8 is the truly-empty case.
     if not upstream_ids:
         live_nodes = flow.nodes
-        if live_nodes:
+        if len(live_nodes) > 1:
+            # Tier 6 — ambiguous: the planner will turn this into a
+            # tool_call_rejected event for add_* calls.
+            ambiguous_detail = _format_ambiguous_insertion_detail(flow)
+        elif len(live_nodes) == 1:
+            # Tier 7 — exactly one live node; safe to chain.
             try:
-                upstream_ids = [int(live_nodes[-1].node_id)]
+                upstream_ids = [int(live_nodes[0].node_id)]
             except (TypeError, ValueError, AttributeError):
                 upstream_ids = []
+        # else: Tier 8 — truly cold flow, leave upstream_ids empty.
 
     raw_right = args.get("right_input_node_id")
     right_input_node_id = raw_right if isinstance(raw_right, int) else None
 
     pos_x = args.get("pos_x")
     pos_y = args.get("pos_y")
-    pos_x_val = float(pos_x) if isinstance(pos_x, int | float) else 0.0
-    pos_y_val = float(pos_y) if isinstance(pos_y, int | float) else 0.0
+    # W62 — leave pos_x / pos_y as ``None`` when the LLM didn't supply
+    # numbers so the executor's auto-layout resolver kicks in. The LLM
+    # never invents screen coordinates in practice.
+    pos_x_val = float(pos_x) if isinstance(pos_x, int | float) else None
+    pos_y_val = float(pos_y) if isinstance(pos_y, int | float) else None
 
-    return InsertionContext(
+    ctx = InsertionContext(
         upstream_node_ids=upstream_ids,
         right_input_node_id=right_input_node_id,
         pos_x=pos_x_val,
         pos_y=pos_y_val,
     )
+    return ctx, ambiguous_detail
+
+
+def _count_prior_staged_with_same_upstream(
+    session: sessions.AgentSession,
+    upstream_node_ids: list[int],
+) -> int:
+    """W62 — count prior in-batch staged ``add_*`` entries anchored at the
+    same upstream as ``upstream_node_ids``. Threaded into the executor as
+    ``staged_offset_index`` so fan-outs from one upstream stack vertically
+    instead of overlapping. Chained adds (each with a different upstream)
+    naturally see 0 here and lay out as a straight horizontal chain.
+    """
+    target = list(upstream_node_ids)
+    count = 0
+    for entry in session.staged_results:
+        if not entry.tool_name.startswith(_ADD_PREFIX):
+            continue
+        payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else {}
+        ic = payload.get("insertion_context") if isinstance(payload, dict) else None
+        if not isinstance(ic, dict):
+            continue
+        prior_upstream = ic.get("upstream_node_ids")
+        if isinstance(prior_upstream, list) and list(prior_upstream) == target:
+            count += 1
+    return count
+
+
+def _collect_staged_upstream_positions(
+    session: sessions.AgentSession,
+) -> dict[int, tuple[float, float]]:
+    """W62 — build ``{node_id: (pos_x, pos_y)}`` for every prior in-batch
+    staged ``add_*`` so the executor's auto-layout resolver can anchor
+    chained adds onto staged-but-unapplied upstreams. Without this the
+    second add in a multi-step plan can't find its upstream in
+    ``flow.nodes`` (the prior add is only staged, not applied), and the
+    resolver falls back to the cold-flow seed at (50, 50).
+    """
+    out: dict[int, tuple[float, float]] = {}
+    for entry in session.staged_results:
+        if not entry.tool_name.startswith(_ADD_PREFIX):
+            continue
+        payload = entry.staged_node_payload if isinstance(entry.staged_node_payload, dict) else {}
+        if not isinstance(payload, dict):
+            continue
+        settings = payload.get("settings")
+        if not isinstance(settings, dict):
+            continue
+        nid = settings.get("node_id")
+        sx = settings.get("pos_x")
+        sy = settings.get("pos_y")
+        if not isinstance(nid, int):
+            continue
+        if not (isinstance(sx, int | float) and isinstance(sy, int | float)):
+            # Fall back to the staged insertion_context if settings didn't
+            # carry coords (defence-in-depth — the executor stamps both).
+            ic = payload.get("insertion_context")
+            if isinstance(ic, dict):
+                sx = ic.get("pos_x")
+                sy = ic.get("pos_y")
+        if isinstance(sx, int | float) and isinstance(sy, int | float):
+            out[int(nid)] = (float(sx), float(sy))
+    return out
 
 
 def _summarise_result_for_llm(result: ToolExecutionResult) -> str:
@@ -1025,7 +1204,7 @@ async def _run_planner_loop(
                     if isinstance(raw_allocated, int):
                         allocated_node_id = raw_allocated
 
-            insertion_context = _resolve_insertion_context(session, tc, flow)
+            insertion_context, ambiguous_detail = _resolve_insertion_context(session, tc, flow)
 
             # W54 — build audit_meta for instrumentation. Rides on
             # tool_args["__planner_meta__"] in the persisted audit row.
@@ -1041,6 +1220,55 @@ async def _run_planner_loop(
                     "live_node_ids_at_stage": sorted(_collect_live_node_ids(flow)),
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
                 }
+
+            # W57 — ambiguity refusal. The resolver returned an empty upstream
+            # because there are multiple live nodes and no signal for which to
+            # use. Refuse rather than guess; the LLM retries with explicit
+            # ``upstream_node_ids``. Only applies to add_* calls (other ops
+            # don't consume upstream_node_ids).
+            if tc.name.startswith(_ADD_PREFIX) and ambiguous_detail is not None:
+                audit_id_for_event: int | None = None
+                try:
+                    audit_row = audit_module.record_event(
+                        audit_module.AuditEvent(
+                            session_id=session.session_id,
+                            user_id=session.user_id,
+                            tool_name=tc.name,
+                            flow_id=session.flow_id,
+                            result_status="rejected",
+                            error=ambiguous_detail,
+                            tool_args={
+                                **(safety.redact_secrets(tool_args) if tool_args else {}),
+                                "__planner_meta__": audit_meta,
+                            },
+                        )
+                    )
+                    audit_id_for_event = audit_row.id if audit_row is not None else None
+                except Exception:  # noqa: BLE001 — audit must not crash the loop
+                    logger.warning("audit.record_event failed for ambiguous_insertion_context", exc_info=False)
+
+                session.messages.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=f"status: rejected | refusal: ambiguous_insertion_context | detail: {ambiguous_detail}",
+                    )
+                )
+                yield PlannerEvent(
+                    event="tool_call_rejected",
+                    payload={
+                        "id": tc.id,
+                        "name": tc.name,
+                        "reason": "ambiguous_insertion_context",
+                        "detail": ambiguous_detail,
+                        "op_kind": op_kind,
+                        "rationale": rationale,
+                        "arg_summary": arg_summary,
+                        "audit_id": audit_id_for_event,
+                    },
+                )
+                continue
 
             # W54 — universal self-loop invariant guard. Catches all three
             # plausible upstream causes (LLM-provided collision, stale
@@ -1098,6 +1326,24 @@ async def _run_planner_loop(
                         )
                         continue
 
+            # W62 — count prior staged adds anchored at the same upstream so
+            # fan-outs stack vertically rather than overlap. ``add_*`` calls
+            # only; non-add ops aren't laid out. Also build a position map for
+            # in-batch staged-but-unapplied upstreams so the executor's
+            # resolver can anchor chained adds (filter → sort) onto the
+            # prior staged add — which by definition isn't in ``flow.nodes``
+            # yet.
+            if tc.name.startswith(_ADD_PREFIX):
+                staged_offset_index = _count_prior_staged_with_same_upstream(
+                    session, insertion_context.upstream_node_ids
+                )
+                extra_upstream_positions: dict[int, tuple[float, float]] | None = (
+                    _collect_staged_upstream_positions(session) or None
+                )
+            else:
+                staged_offset_index = 0
+                extra_upstream_positions = None
+
             # Dispatch — execute_tool_call is meant to never raise (returns rejected
             # result instead) but we wrap defensively.
             try:
@@ -1113,6 +1359,8 @@ async def _run_planner_loop(
                     dry_run_cache=dry_run_cache,
                     llm_provided_node_id=llm_provided_node_id,
                     audit_meta=audit_meta,
+                    staged_offset_index=staged_offset_index,
+                    extra_upstream_positions=extra_upstream_positions,
                 )
             except Exception as exc:  # noqa: BLE001 — defence in depth
                 logger.exception("tool dispatch raised; treating as rejected")

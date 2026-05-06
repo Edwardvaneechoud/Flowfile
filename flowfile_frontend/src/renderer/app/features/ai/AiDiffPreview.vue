@@ -23,6 +23,7 @@ import type {
   StagedSchemaColumn,
 } from "./aiDiffTypes";
 import { buildAdditionNodeTypes, opCount, richConnectionLabel } from "./aiDiffTypes";
+import { renderSafeMarkdown } from "./markdown";
 
 const flowStore = useFlowStore();
 
@@ -144,6 +145,8 @@ const formatSettings = (settings: Record<string, unknown>): string => {
   }
 };
 
+const renderedRationale = computed(() => renderSafeMarkdown(props.diff.rationale ?? ""));
+
 const handleAccept = (): void => {
   if (props.disabled) return;
   emit("accept");
@@ -162,9 +165,17 @@ const handleReject = (): void => {
         <span class="ai-diff-preview__title">AI proposed changes</span>
         <span class="ai-diff-preview__summary">{{ summaryLine }} ({{ opCount(diff) }} ops)</span>
       </div>
-      <p v-if="diff.rationale" class="ai-diff-preview__rationale">
-        {{ diff.rationale }}
-      </p>
+      <!-- W66 — rationale is markdown-formatted on the wire; render as
+           sanitised HTML so bold / code / lists / links land properly.
+           `renderedRationale` runs through marked + a DOMPurify-or-no-op
+           pass with an explicit allow-list, see `markdown.ts`. -->
+      <!-- eslint-disable vue/no-v-html -->
+      <div
+        v-if="diff.rationale"
+        class="ai-diff-preview__rationale"
+        v-html="renderedRationale"
+      ></div>
+      <!-- eslint-enable vue/no-v-html -->
     </header>
 
     <div
@@ -315,10 +326,74 @@ const handleReject = (): void => {
 
 .ai-diff-preview__rationale {
   margin: 0;
-  font-style: italic;
   color: var(--color-text-secondary, #4a5560);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
+}
+
+.ai-diff-preview__rationale :deep(p) {
+  margin: 0 0 6px 0;
+}
+
+.ai-diff-preview__rationale :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.ai-diff-preview__rationale :deep(strong) {
+  font-weight: 600;
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-diff-preview__rationale :deep(em) {
+  font-style: italic;
+}
+
+.ai-diff-preview__rationale :deep(code) {
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11px;
+  background-color: var(--color-background-secondary, #f6f8fa);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-text-primary, #24292e);
+}
+
+.ai-diff-preview__rationale :deep(pre) {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background-color: var(--color-background-secondary, #f6f8fa);
+  border-radius: 4px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11px;
+  color: var(--color-text-primary, #24292e);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.ai-diff-preview__rationale :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.ai-diff-preview__rationale :deep(ul),
+.ai-diff-preview__rationale :deep(ol) {
+  margin: 4px 0 6px 0;
+  padding-left: 20px;
+}
+
+.ai-diff-preview__rationale :deep(li) {
+  margin: 2px 0;
+}
+
+.ai-diff-preview__rationale :deep(a) {
+  color: var(--color-info, #0366d6);
+  text-decoration: underline;
+}
+
+.ai-diff-preview__rationale :deep(hr) {
+  border: 0;
+  border-top: 1px solid var(--color-border-primary, #e1e4e8);
+  margin: 8px 0;
 }
 
 .ai-diff-preview__error {

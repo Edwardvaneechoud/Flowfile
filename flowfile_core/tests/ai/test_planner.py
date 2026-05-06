@@ -279,9 +279,10 @@ def test_resolve_insertion_context_uses_llm_override() -> None:
         name="flowfile.graph.add_filter",
         arguments={"upstream_node_ids": [42], "pos_x": 100.0, "pos_y": 200.0},
     )
-    ctx = _resolve_insertion_context(sess, tc, flow)
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
     assert ctx.upstream_node_ids == [42]
     assert ctx.pos_x == 100.0
+    assert ambiguous is None
 
 
 def test_resolve_insertion_context_chains_from_staged_addition() -> None:
@@ -299,16 +300,147 @@ def test_resolve_insertion_context_chains_from_staged_addition() -> None:
         )
     )
     tc = ToolCall(id="t2", name="flowfile.graph.add_select", arguments={})
-    ctx = _resolve_insertion_context(sess, tc, flow)
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
     assert ctx.upstream_node_ids == [7]
+    assert ambiguous is None
 
 
 def test_resolve_insertion_context_falls_back_to_live_node() -> None:
+    """Tier 7 — single live node is unambiguous, falls back to that node."""
     flow = _make_flow()
     sess = _make_session(flow)
     tc = ToolCall(id="t3", name="flowfile.graph.add_filter", arguments={})
-    ctx = _resolve_insertion_context(sess, tc, flow)
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
     assert ctx.upstream_node_ids == [1]
+    assert ambiguous is None
+
+
+# --------------------------------------------------------------------------- #
+# W57 — settings-field hint, selection, pin, ambiguity refusal                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_insertion_uses_settings_field_when_no_upstream_param() -> None:
+    """Tier 2 — LLM provided ``depending_on_id=2`` in args but no
+    ``upstream_node_ids``. Replicates the live audit-trail trace where
+    ``live=[1..7]`` and the buggy resolver returned ``[7]``; with the
+    settings-field tier, the resolver canonicalises to ``[2]``.
+    """
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    _add_orders(flow, node_id=3)
+    _add_orders(flow, node_id=7)
+    sess = _make_session(flow)
+    tc = ToolCall(
+        id="settings-field",
+        name="flowfile.graph.add_record_count",
+        arguments={"depending_on_id": 2, "node_id": 8, "flow_id": 1},
+    )
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [2]
+    assert ambiguous is None
+
+
+def test_settings_field_loses_to_explicit_upstream_param() -> None:
+    """Tier 1 wins over Tier 2: when both ``upstream_node_ids`` and
+    ``depending_on_id`` are present, the planner param is canonical."""
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    _add_orders(flow, node_id=3)
+    sess = _make_session(flow)
+    tc = ToolCall(
+        id="both",
+        name="flowfile.graph.add_filter",
+        arguments={"upstream_node_ids": [3], "depending_on_id": 2},
+    )
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [3]
+    assert ambiguous is None
+
+
+def test_insertion_uses_selection_when_no_llm_override() -> None:
+    """Tier 4 — session has selected_node_ids; LLM provided no upstream
+    AND no settings-field hint → selection wins over the buggy
+    last-node fallback."""
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    _add_orders(flow, node_id=3)
+    sess = _make_session(flow)
+    sess.selected_node_ids = [2]
+    tc = ToolCall(id="sel", name="flowfile.graph.add_filter", arguments={})
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [2]
+    assert ambiguous is None
+
+
+def test_insertion_refuses_when_ambiguous_and_no_selection() -> None:
+    """Tier 6 — multiple live nodes, no selection, no pin, no LLM override,
+    no settings-field hint → ambiguous_detail is set; ctx.upstream_node_ids
+    is empty so the planner refuses with ambiguous_insertion_context."""
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    _add_orders(flow, node_id=3)
+    sess = _make_session(flow)
+    tc = ToolCall(id="amb", name="flowfile.graph.add_filter", arguments={})
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == []
+    assert ambiguous is not None
+    # The detail must list the live candidates so the LLM can retry with
+    # an explicit upstream.
+    assert "1" in ambiguous
+    assert "2" in ambiguous
+    assert "3" in ambiguous
+
+
+def test_insertion_falls_back_to_last_node_when_single_live_node() -> None:
+    """Tier 7 — exactly one live node, no other signal → safe fallback.
+    Cold-flow first step is unambiguous, so the old fallback survives."""
+    flow = _make_flow()
+    sess = _make_session(flow)
+    tc = ToolCall(id="single", name="flowfile.graph.add_filter", arguments={})
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [1]
+    assert ambiguous is None
+
+
+def test_llm_override_wins_over_selection() -> None:
+    """Tier 1 wins over Tier 4: explicit upstream_node_ids beats selection."""
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    sess = _make_session(flow)
+    sess.selected_node_ids = [2]
+    tc = ToolCall(
+        id="override",
+        name="flowfile.graph.add_filter",
+        arguments={"upstream_node_ids": [1]},
+    )
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [1]
+    assert ambiguous is None
+
+
+def test_in_batch_staged_wins_over_selection() -> None:
+    """Tier 3 wins over Tier 4: chained add_filter → add_sort still chains
+    onto the most-recent staged add even when selection is set."""
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    sess = _make_session(flow)
+    sess.selected_node_ids = [2]
+    sess.staged_results.append(
+        diff_module.StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            audit_id=None,
+            staged_node_payload={
+                "node_type": "filter",
+                "settings": {"node_id": 5, "flow_id": 1},
+                "insertion_context": {"upstream_node_ids": [1]},
+            },
+        )
+    )
+    tc = ToolCall(id="chain", name="flowfile.graph.add_sort", arguments={})
+    ctx, ambiguous = _resolve_insertion_context(sess, tc, flow)
+    assert ctx.upstream_node_ids == [5]
+    assert ambiguous is None
 
 
 # --------------------------------------------------------------------------- #
@@ -382,6 +514,48 @@ async def test_happy_path_multi_step_chains_upstream() -> None:
     # Second addition's insertion_context.upstream_node_ids = [first addition's node_id]
     first_add_id = diff.additions[0].settings["node_id"]
     assert diff.additions[1].insertion_context.upstream_node_ids == [first_add_id]
+
+
+@pytest.mark.asyncio
+async def test_w62_chained_agent_stages_have_non_overlapping_coords() -> None:
+    """W62 — chained add_filter → add_select staged by the agent must produce
+    non-overlapping canvas coords. Pre-W62 both landed at (0, 0) because
+    ``InsertionContext.pos_x`` / ``pos_y`` defaulted to ``0.0`` and the LLM
+    never invents screen coordinates.
+    """
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(
+                tool_calls=[ToolCall(id="t2", name="flowfile.graph.add_select", arguments=_select_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+
+    diff = diff_module.get_diff(sess.diff_id)
+    assert diff is not None
+    assert len(diff.additions) == 2
+    coord_a = (diff.additions[0].insertion_context.pos_x, diff.additions[0].insertion_context.pos_y)
+    coord_b = (diff.additions[1].insertion_context.pos_x, diff.additions[1].insertion_context.pos_y)
+    # Pre-W62 regression: both at (0, 0).
+    assert coord_a != (0.0, 0.0)
+    assert coord_b != (0.0, 0.0)
+    # Chained: each new node lays out further to the right than its upstream.
+    assert coord_b[0] > coord_a[0]
+    # Settings.pos_x is what the apply path actually consumes (via
+    # ``set_node_information``); make sure it carries the same coord.
+    assert diff.additions[0].settings["pos_x"] == coord_a[0]
+    assert diff.additions[1].settings["pos_x"] == coord_b[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -665,10 +839,16 @@ async def test_external_drift_still_detected_after_one_stage() -> None:
                 # User adds an external node mid-LLM-thinking. The agent's
                 # next drift check (start of iteration 2) should see it.
                 _add_orders(flow, node_id=99)
+                # W57 — explicit ``upstream_node_ids`` so the planner doesn't
+                # refuse with ambiguous_insertion_context once node 99 lands
+                # in the live graph (now 2 live nodes; the resolver would
+                # otherwise refuse without a signal).
+                args = _filter_args()
+                args["upstream_node_ids"] = [1]
                 return ChatResponse(
                     model="fake",
                     content="staging",
-                    tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                    tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=args)],
                     finish_reason="tool_calls",
                     usage=Usage(),
                 )

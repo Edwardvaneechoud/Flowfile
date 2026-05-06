@@ -28,6 +28,7 @@ call ``audit.update_diff_action`` — that's W41's contract.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Final, Literal
@@ -37,12 +38,14 @@ from pydantic import BaseModel, Field, ValidationError
 from flowfile_core.ai import audit, safety
 from flowfile_core.ai.tools.classification import classify_node_type
 from flowfile_core.ai.tools.dry_run import DryRunCache, dry_run_code
+from flowfile_core.ai.tools.node_docs import NODE_AGENT_PAYLOAD_EXAMPLES
 from flowfile_core.ai.tools.predictor import (
     _resolve_upstream_schemas,
     collect_column_refs,
     predict_schema_via_mirror,
     schema_to_dict_list,
 )
+from flowfile_core.ai.tools.registry import _inline_ref_schema
 from flowfile_core.ai.tools.registry import pick_category as _pick_category_heuristic
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
@@ -63,19 +66,106 @@ _CODE_BEARING: Final[dict[str, tuple[str, ...]]] = {
 }
 
 
+#: Layout offsets used by :func:`_resolve_insertion_position` (W62) when
+#: ``InsertionContext.pos_x`` / ``pos_y`` are unset. Mirrors the canonical
+#: spacings of :func:`flowfile_core.flowfile.util.calculate_layout.calculate_layered_layout`
+#: (``x_spacing=250, y_spacing=100, initial_y=50``) so AI-staged nodes lay out
+#: with the same density the auto-layout helper would produce.
+_AUTO_LAYOUT_X_SPACING: Final[float] = 250.0
+_AUTO_LAYOUT_Y_SPACING: Final[float] = 100.0
+_AUTO_LAYOUT_FALLBACK_X: Final[float] = 50.0
+_AUTO_LAYOUT_FALLBACK_Y: Final[float] = 50.0
+
+
 class InsertionContext(BaseModel):
     """Where a new node attaches to the existing graph.
 
-    The executor doesn't auto-layout — ``pos_x`` / ``pos_y`` come from the
-    caller (frontend, agent prompt). ``upstream_node_ids`` are connected to
-    ``input-0`` (main); the optional ``right_input_node_id`` is connected to
-    ``input-1`` (right) for joins.
+    ``upstream_node_ids`` are connected to ``input-0`` (main); the optional
+    ``right_input_node_id`` is connected to ``input-1`` (right) for joins.
+
+    ``pos_x`` / ``pos_y`` may be ``None`` to ask the executor to derive a
+    layout position from the upstream's canvas coordinates (W62). When the
+    caller wants (0, 0) literally, it must pass ``0.0`` explicitly — the
+    sentinel-vs-default distinction is the whole point of the ``None`` shape.
     """
 
     upstream_node_ids: list[int] = Field(default_factory=list)
     right_input_node_id: int | None = None
-    pos_x: float = 0.0
-    pos_y: float = 0.0
+    pos_x: float | None = None
+    pos_y: float | None = None
+
+
+def _resolve_insertion_position(
+    flow,
+    upstream_node_ids: list[int],
+    *,
+    staged_offset_index: int = 0,
+    extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
+) -> tuple[float, float]:
+    """Derive ``(pos_x, pos_y)`` for an AI-staged node from the live graph.
+
+    The most-recent upstream node anchors the new node; the helper offsets
+    horizontally by :data:`_AUTO_LAYOUT_X_SPACING` and vertically by
+    ``staged_offset_index * _AUTO_LAYOUT_Y_SPACING``. ``staged_offset_index``
+    is the count of prior in-batch staged adds anchored at the same upstream;
+    callers (planner / Cmd+K) thread it so fan-outs from one upstream stack
+    instead of overlapping.
+
+    ``extra_upstream_positions`` is a caller-supplied lookup
+    ``{node_id: (pos_x, pos_y)}`` consulted before the live graph. The
+    planner threads its in-batch staged-but-unapplied adds through here
+    because chained transformations (filter → sort) anchor on the prior
+    staged add, which by definition hasn't been applied to ``flow.nodes``
+    yet.
+
+    Cold flow (``upstream_node_ids`` empty or no live upstream resolves):
+    fall back to ``(_AUTO_LAYOUT_FALLBACK_X, _AUTO_LAYOUT_FALLBACK_Y)``
+    plus the staged-offset y-stack so multiple cold-flow adds in one batch
+    don't collapse onto each other either.
+
+    The helper reads ``setting_input.pos_x`` / ``pos_y`` off
+    :class:`flowfile_core.flowfile.flow_node.flow_node.FlowNode` because that
+    is the persistent canvas position carried on every node settings model
+    (``NodeBase.pos_x`` / ``pos_y``). Live ``node_information`` mirrors the
+    same value but only as ``int``.
+    """
+    upstream_pos: tuple[float, float] | None = None
+    for uid in reversed(upstream_node_ids):
+        if uid is None:
+            continue
+        if extra_upstream_positions and uid in extra_upstream_positions:
+            cand = extra_upstream_positions[uid]
+            if (
+                isinstance(cand, tuple)
+                and len(cand) == 2
+                and isinstance(cand[0], int | float)
+                and isinstance(cand[1], int | float)
+            ):
+                upstream_pos = (float(cand[0]), float(cand[1]))
+                break
+        node = flow.get_node(uid)
+        if node is None:
+            continue
+        setting_input = getattr(node, "setting_input", None)
+        if setting_input is None:
+            continue
+        ux = getattr(setting_input, "pos_x", None)
+        uy = getattr(setting_input, "pos_y", None)
+        if isinstance(ux, int | float) and isinstance(uy, int | float):
+            upstream_pos = (float(ux), float(uy))
+            break
+
+    if upstream_pos is None:
+        return (
+            _AUTO_LAYOUT_FALLBACK_X,
+            _AUTO_LAYOUT_FALLBACK_Y + staged_offset_index * _AUTO_LAYOUT_Y_SPACING,
+        )
+
+    base_x, base_y = upstream_pos
+    return (
+        base_x + _AUTO_LAYOUT_X_SPACING,
+        base_y + staged_offset_index * _AUTO_LAYOUT_Y_SPACING,
+    )
 
 
 class ToolExecutionResult(BaseModel):
@@ -117,6 +207,8 @@ def execute_tool_call(
     dry_run_cache: DryRunCache | None = None,
     llm_provided_node_id: int | None = None,
     audit_meta: dict[str, Any] | None = None,
+    staged_offset_index: int = 0,
+    extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
 ) -> ToolExecutionResult:
     """Validate, predict, and dispatch a single LLM tool call.
 
@@ -136,6 +228,17 @@ def execute_tool_call(
     self-loops are diagnosable from the audit row alone (the existing
     ``AuditEvent.extra`` field is dropped before persistence — see
     plan §6).
+
+    ``staged_offset_index`` is W62 — the count of prior in-batch staged adds
+    anchored at the same upstream. Callers (planner / Cmd+K) thread it so
+    fan-outs from one upstream stack vertically instead of overlapping. Only
+    consulted when ``insertion_context.pos_x`` / ``pos_y`` are both ``None``.
+
+    ``extra_upstream_positions`` is W62 — a caller-supplied
+    ``{node_id: (pos_x, pos_y)}`` map merged into the upstream lookup before
+    the live graph. The planner uses this to anchor chained adds onto prior
+    in-batch staged-but-unapplied upstreams (which by definition aren't in
+    ``flow.nodes`` yet).
     """
     redacted_args = safety.redact_secrets(tool_args) if tool_args else {}
 
@@ -183,6 +286,8 @@ def execute_tool_call(
             dry_run_cache=dry_run_cache,
             llm_provided_node_id=llm_provided_node_id,
             audit_meta=audit_meta,
+            staged_offset_index=staged_offset_index,
+            extra_upstream_positions=extra_upstream_positions,
         )
 
     if domain == "schema":
@@ -251,6 +356,8 @@ def _handle_graph(
     dry_run_cache: DryRunCache,
     llm_provided_node_id: int | None = None,
     audit_meta: dict[str, Any] | None = None,
+    staged_offset_index: int = 0,
+    extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
 ) -> ToolExecutionResult:
     if op.startswith("add_"):
         node_type = op[len("add_") :]
@@ -267,6 +374,8 @@ def _handle_graph(
             dry_run_cache=dry_run_cache,
             llm_provided_node_id=llm_provided_node_id,
             audit_meta=audit_meta,
+            staged_offset_index=staged_offset_index,
+            extra_upstream_positions=extra_upstream_positions,
         )
 
     if op == "connect":
@@ -293,6 +402,217 @@ def _handle_graph(
     )
 
 
+def _navigate_schema(schema: dict[str, Any], loc_parts: list[str]) -> dict[str, Any] | None:
+    """Walk into a JSON Schema following a Pydantic ``loc`` path.
+
+    Pydantic ``loc`` is a tuple like ``("raw_data_format", "columns", 0, "name")``.
+    Schema navigation: property names dive into ``properties[name]``; integer
+    indices indicate the failing array element so we step into ``items``;
+    schema branches under ``anyOf`` are flattened by picking the first
+    object-typed branch.
+    """
+    node: dict[str, Any] | None = schema
+    for part in loc_parts:
+        if node is None:
+            return None
+        if "anyOf" in node:
+            object_branches = [b for b in node["anyOf"] if isinstance(b, dict) and b.get("type") == "object"]
+            if object_branches:
+                node = object_branches[0]
+        if isinstance(part, int):
+            node = node.get("items") if isinstance(node, dict) else None
+            continue
+        if isinstance(part, str):
+            properties = node.get("properties") if isinstance(node, dict) else None
+            if properties and part in properties:
+                node = properties[part]
+                continue
+            return None
+        return None
+    if node is not None and "anyOf" in node:
+        object_branches = [b for b in node["anyOf"] if isinstance(b, dict) and b.get("type") == "object"]
+        if object_branches:
+            node = object_branches[0]
+    return node
+
+
+def _summarize_expected_shape(field_schema: dict[str, Any] | None) -> str:
+    """Render a JSON Schema fragment as a short human-readable shape summary."""
+    if not field_schema:
+        return "the value documented in the catalog"
+    title = field_schema.get("title")
+    type_ = field_schema.get("type")
+    if type_ == "object":
+        return f"an object ({title})" if title else "an object"
+    if type_ == "array":
+        items = field_schema.get("items") or {}
+        items_type = items.get("type")
+        if items_type == "object":
+            items_title = items.get("title")
+            return f"an array of objects ({items_title})" if items_title else "an array of objects"
+        if items_type:
+            return f"an array of {items_type}"
+        return "an array"
+    if isinstance(type_, str):
+        return f"a {type_}"
+    return "the value documented in the catalog"
+
+
+def _expects_object(field_schema: dict[str, Any] | None) -> bool:
+    """Return True iff the field expects an object (top-level or via array items)."""
+    if not field_schema:
+        return False
+    if field_schema.get("type") == "object":
+        return True
+    if field_schema.get("type") == "array":
+        items = field_schema.get("items") or {}
+        return items.get("type") == "object"
+    return False
+
+
+_PRIMITIVE_DEFAULTS: Final[dict[str, Any]] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+    "null": None,
+}
+
+
+def _synthesize_example_from_schema(
+    schema: dict[str, Any] | None,
+    *,
+    depth: int = 0,
+    max_depth: int = 5,
+) -> Any:
+    """Synthesize a structurally-faithful placeholder for a JSON-Schema fragment.
+
+    Used in W67 settings-validation refusals to give the LLM a template payload
+    it can pattern-match on. Required object fields are filled; optional fields
+    are skipped to keep the example minimal. Cycle / depth bound prevents
+    runaway recursion on self-referential schemas.
+    """
+    if schema is None or depth >= max_depth:
+        return None
+
+    if "anyOf" in schema:
+        object_branches = [b for b in schema["anyOf"] if isinstance(b, dict) and b.get("type") == "object"]
+        if object_branches:
+            return _synthesize_example_from_schema(object_branches[0], depth=depth, max_depth=max_depth)
+        for branch in schema["anyOf"]:
+            if isinstance(branch, dict) and branch.get("type") not in (None, "null"):
+                return _synthesize_example_from_schema(branch, depth=depth, max_depth=max_depth)
+        return None
+
+    if "enum" in schema:
+        enum_values = schema["enum"]
+        if enum_values:
+            return enum_values[0]
+
+    if "default" in schema:
+        return schema["default"]
+
+    type_ = schema.get("type")
+    if type_ == "object":
+        properties = schema.get("properties") or {}
+        required = schema.get("required") or list(properties.keys())[:2]
+        result: dict[str, Any] = {}
+        for key in required:
+            sub = properties.get(key)
+            value = _synthesize_example_from_schema(sub, depth=depth + 1, max_depth=max_depth)
+            if value is not None or (sub and sub.get("type") == "null"):
+                result[key] = value
+            else:
+                result[key] = ""
+        return result
+    if type_ == "array":
+        items = schema.get("items")
+        if isinstance(items, dict) and items.get("type") == "object":
+            return [_synthesize_example_from_schema(items, depth=depth + 1, max_depth=max_depth)]
+        return []
+    if isinstance(type_, str) and type_ in _PRIMITIVE_DEFAULTS:
+        return _PRIMITIVE_DEFAULTS[type_]
+    return None
+
+
+def _example_from_payload(node_type: str, loc_parts: list[str]) -> Any:
+    """Try to extract the failing-field fragment from
+    :data:`NODE_AGENT_PAYLOAD_EXAMPLES` (per the spec's preferred cascade).
+
+    Returns ``None`` if no payload is registered for this node type or if the
+    loc path doesn't resolve cleanly inside it.
+    """
+    payload_json = NODE_AGENT_PAYLOAD_EXAMPLES.get(node_type)
+    if not payload_json:
+        return None
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return None
+    node: Any = payload
+    for part in loc_parts:
+        if isinstance(part, str) and isinstance(node, dict) and part in node:
+            node = node[part]
+            continue
+        if isinstance(part, int) and isinstance(node, list) and 0 <= part < len(node):
+            node = node[part]
+            continue
+        return None
+    return node
+
+
+def _format_settings_validation_refusal(
+    *,
+    exc: ValidationError,
+    settings_cls: type[BaseModel],
+    node_type: str,
+) -> str:
+    """Translate a Pydantic ``ValidationError`` on a settings class into a
+    course-correctable refusal detail.
+
+    Rationale (W67 Defect 2): the bare ``str(exc)`` is a stack-shaped string
+    the LLM treats as opaque. Live transcript 2026-05-06 showed the agent
+    looping 3× on ``raw_data_format`` because it never learned the field is
+    structured. The translated message names the failing field, the expected
+    shape (from the inlined catalog schema), the received Python type, and
+    embeds a concrete example payload — same field-and-shape contract W53
+    landed for the connection-validation site.
+    """
+    errors = exc.errors()
+    if not errors:
+        return f"settings validation failed: {exc}"
+
+    first = errors[0]
+    raw_loc = first.get("loc", ())
+    loc_parts: list = list(raw_loc)
+    loc_str = ".".join(str(p) for p in loc_parts) if loc_parts else "<root>"
+    received = first.get("input")
+    received_type = type(received).__name__
+
+    full_schema = _inline_ref_schema(dict(settings_cls.model_json_schema()))
+    field_schema = _navigate_schema(full_schema, loc_parts)
+    expected_summary = _summarize_expected_shape(field_schema)
+
+    example = _example_from_payload(node_type, loc_parts)
+    if example is None:
+        example = _synthesize_example_from_schema(field_schema)
+
+    parts = [
+        f"Field `{loc_str}` expects {expected_summary} matching the schema in tool "
+        f"`flowfile.graph.add_{node_type}` (see catalog); got {received_type}.",
+    ]
+    if example is not None:
+        try:
+            example_json = json.dumps(example)
+            parts.append(f"Example payload for `{loc_str}`: {example_json}.")
+        except (TypeError, ValueError):
+            pass
+    if isinstance(received, str) and _expects_object(field_schema):
+        parts.append("Pass the structured object directly, not as a JSON-encoded string.")
+
+    return " ".join(parts)
+
+
 def _handle_add_node(
     *,
     node_type: str,
@@ -307,6 +627,8 @@ def _handle_add_node(
     dry_run_cache: DryRunCache,
     llm_provided_node_id: int | None = None,
     audit_meta: dict[str, Any] | None = None,
+    staged_offset_index: int = 0,
+    extra_upstream_positions: dict[int, tuple[float, float]] | None = None,
 ) -> ToolExecutionResult:
     # W54 — every audit row this function emits piggybacks on tool_args
     # under the namespaced ``__planner_meta__`` key. Rebind ``redacted_args``
@@ -316,6 +638,19 @@ def _handle_add_node(
     # ORM has no ``extra`` column. See plan §6.)
     if audit_meta is not None:
         redacted_args = {**redacted_args, "__planner_meta__": audit_meta}
+
+    # W62 — auto-layout: when the caller didn't supply pos_x/pos_y (both
+    # ``None``), derive them from the upstream's canvas position so AI-staged
+    # nodes don't pile up at (0, 0). When the caller passed explicit floats —
+    # including ``0.0`` — they win verbatim.
+    if insertion_context.pos_x is None and insertion_context.pos_y is None:
+        resolved_x, resolved_y = _resolve_insertion_position(
+            flow,
+            insertion_context.upstream_node_ids,
+            staged_offset_index=staged_offset_index,
+            extra_upstream_positions=extra_upstream_positions,
+        )
+        insertion_context = insertion_context.model_copy(update={"pos_x": resolved_x, "pos_y": resolved_y})
 
     settings_cls = get_settings_class_for_node_type(node_type)
     if settings_cls is None:
@@ -379,9 +714,38 @@ def _handle_add_node(
             session_id=session_id,
             user_id=user_id,
             flow_id=flow.flow_id,
-            refusal_reason=None,
-            refusal_detail=f"settings validation failed: {exc}",
+            refusal_reason="settings_validation",
+            refusal_detail=_format_settings_validation_refusal(exc=exc, settings_cls=settings_cls, node_type=node_type),
         )
+
+    # W62 — stamp the resolved layout coordinates onto the settings object.
+    # The apply path (``_apply_add_node`` → ``flow.add_<node_type>(settings)``)
+    # reads ``settings.pos_x`` / ``settings.pos_y`` (via
+    # ``set_node_information``) when stamping the canvas position; the
+    # ``InsertionContext`` itself is only consulted for connection wiring.
+    # Only stamp when the LLM did NOT include pos_x / pos_y in its tool_args
+    # — explicit caller intent (even ``0.0``) wins. Detect via key presence
+    # in ``tool_args`` rather than ``settings.pos_x == 0`` because
+    # ``NodeBase`` defaults pos_x / pos_y to 0 and we can't distinguish
+    # "LLM said 0" from "LLM omitted it" once Pydantic has run.
+    settings_pos_x_explicit = "pos_x" in tool_args and tool_args["pos_x"] is not None
+    settings_pos_y_explicit = "pos_y" in tool_args and tool_args["pos_y"] is not None
+    if (
+        insertion_context.pos_x is not None
+        and insertion_context.pos_y is not None
+        and hasattr(settings, "pos_x")
+        and hasattr(settings, "pos_y")
+        and not settings_pos_x_explicit
+        and not settings_pos_y_explicit
+    ):
+        try:
+            settings.pos_x = insertion_context.pos_x
+            settings.pos_y = insertion_context.pos_y
+        except (TypeError, ValueError, AttributeError):
+            # Defensive — settings classes are Pydantic so assignment should
+            # always succeed, but if a future class freezes the field we don't
+            # want to fail the whole tool call over a layout cosmetic.
+            logger.debug("could not stamp pos_x/pos_y on settings for %s", node_type)
 
     # --- Refusal stage 2: network egress (code-bearing nodes only) ---
     code = _extract_code(node_type, settings)

@@ -49,11 +49,7 @@ const startedAtTooltip = computed<string>(() => {
   <div class="ai-agent-run">
     <div class="ai-agent-run__header">
       <span class="ai-agent-run__role">Agent</span>
-      <span
-        v-if="startedAtLabel"
-        class="ai-agent-run__time"
-        :title="startedAtTooltip"
-      >
+      <span v-if="startedAtLabel" class="ai-agent-run__time" :title="startedAtTooltip">
         {{ startedAtLabel }}
       </span>
     </div>

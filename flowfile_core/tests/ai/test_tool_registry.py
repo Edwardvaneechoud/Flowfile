@@ -661,6 +661,10 @@ def test_w56v2_agent_payload_examples_only_for_divergent_nodes() -> None:
         "select",
         "unpivot",
         "text_to_rows",
+        # W67 follow-up — RawData.data layout is non-obvious (columnar; LLM
+        # defaults to row-oriented and silently corrupts alignment because
+        # both validate as list[list]). Worked example disambiguates.
+        "manual_input",
     }
     actual = set(NODE_AGENT_PAYLOAD_EXAMPLES)
     extra = actual - expected
@@ -736,3 +740,151 @@ def test_w56v2_sidebar_labels_match_frontend() -> None:
         + "\n".join(f"  - node_group={ng!r} → label={label!r} not found" for ng, label in drift)
         + f"\n(checked against {nodelist_path})"
     )
+
+
+# ---------------------------------------------------------------------------
+# W67 — nested-Pydantic shape pass-through (inline $ref)
+# ---------------------------------------------------------------------------
+
+
+def _walk_for_refs_and_defs(node: object, path: str = "") -> list[tuple[str, str]]:
+    """Return ``[(path, ref_or_marker), ...]`` for every leftover ``$ref`` or
+    ``$defs`` block in the schema tree."""
+    findings: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        if "$ref" in node:
+            findings.append((path, node["$ref"]))
+        if "$defs" in node:
+            findings.append((path or "<root>", "$defs"))
+        for k, v in node.items():
+            findings.extend(_walk_for_refs_and_defs(v, f"{path}.{k}"))
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            findings.extend(_walk_for_refs_and_defs(item, f"{path}[{i}]"))
+    return findings
+
+
+def test_w67_nested_pydantic_field_inlined_at_property_site() -> None:
+    """W67 Defect 1 — ``add_manual_input``'s ``raw_data_format`` field renders
+    as an inline object schema (``type: 'object'`` with ``properties``), not
+    a ``$ref`` cross-reference. Live transcript 2026-05-06 surfaced the LLM
+    JSON-string-encoding the value because it didn't follow ``$ref``; the
+    inlined shape removes that hop.
+    """
+    from flowfile_core.ai.tools.registry import _node_settings_to_tool_spec
+    from flowfile_core.schemas.input_schema import NodeManualInput
+
+    spec = _node_settings_to_tool_spec("manual_input", NodeManualInput)
+    raw_data_format = spec.parameters["properties"]["raw_data_format"]
+
+    assert "$ref" not in raw_data_format, (
+        f"raw_data_format still emits $ref: {raw_data_format!r}. " "W67 inliner regressed."
+    )
+    assert (
+        raw_data_format.get("type") == "object"
+    ), f"raw_data_format must declare type='object' after inlining, got {raw_data_format.get('type')!r}"
+    properties = raw_data_format.get("properties") or {}
+    assert "columns" in properties, f"raw_data_format.properties missing 'columns': {properties!r}"
+    assert "data" in properties, f"raw_data_format.properties missing 'data': {properties!r}"
+
+    # MinimalFieldInfo (nested inside columns.items) must also be inlined —
+    # not a $ref. Two-deep inlining proof.
+    columns_items = properties["columns"].get("items", {})
+    assert "$ref" not in columns_items, f"nested MinimalFieldInfo still a $ref: {columns_items!r}"
+    assert columns_items.get("type") == "object", f"columns.items must be an object: {columns_items!r}"
+
+
+@pytest.mark.parametrize("node_type", sorted(NODE_TYPE_TO_SETTINGS_CLASS))
+def test_w67_no_ref_or_defs_remains_in_node_tool_parameters(node_type: str) -> None:
+    """W67 Defect 1 — every node-type ToolSpec inlines ``$ref``/``$defs``.
+
+    Parametrised across :data:`NODE_TYPE_TO_SETTINGS_CLASS` so a future node
+    type with an unhandled ref pattern (e.g. self-referential or external
+    schema) shows up as a precise failure rather than a generic catalog
+    regression.
+    """
+    from flowfile_core.ai.tools.registry import _node_settings_to_tool_spec
+
+    settings_cls = NODE_TYPE_TO_SETTINGS_CLASS[node_type]
+    spec = _node_settings_to_tool_spec(node_type, settings_cls)
+    findings = _walk_for_refs_and_defs(spec.parameters)
+    assert not findings, f"add_{node_type} tool spec leaks ref/defs after inlining:\n" + "\n".join(
+        f"  - {p} -> {ref}" for p, ref in findings
+    )
+
+
+def test_w67_audit_known_nested_pydantic_fields_render_as_object() -> None:
+    """W67 Defect 1 audit — a positive contract that the catalog renders
+    each known nested-Pydantic field as an object (or array-of-object) schema.
+
+    Hand-picked allow-list of fields whose annotation is a ``BaseModel``
+    subclass on the canonical settings classes. Adding a new node type with
+    a nested-Pydantic field means adding it here too — that's the desired
+    failure mode (loud, deliberate widening) per the spec's audit guidance.
+    """
+    from flowfile_core.ai.tools.registry import _node_settings_to_tool_spec
+
+    # (node_type, field_name, kind) — kind is "object", "array_of_object",
+    # or "optional_object" (Pydantic emits anyOf with the object branch).
+    audit: list[tuple[str, str, str]] = [
+        ("manual_input", "raw_data_format", "object"),
+        ("read", "received_file", "object"),
+        ("database_reader", "database_settings", "object"),
+        ("database_writer", "database_write_settings", "object"),
+        ("cloud_storage_reader", "cloud_storage_settings", "object"),
+        ("cloud_storage_writer", "cloud_storage_settings", "object"),
+        ("filter", "filter_input", "object"),
+        ("formula", "function", "object"),
+        ("group_by", "groupby_input", "object"),
+        ("join", "join_input", "object"),
+        ("pivot", "pivot_input", "object"),
+        ("select", "select_input", "array_of_object"),
+        ("sort", "sort_input", "array_of_object"),
+        ("text_to_rows", "text_to_rows_input", "object"),
+        ("unique", "unique_input", "object"),
+        ("unpivot", "unpivot_input", "object"),
+    ]
+
+    failures: list[str] = []
+    for node_type, field_name, kind in audit:
+        if node_type not in NODE_TYPE_TO_SETTINGS_CLASS:
+            failures.append(f"{node_type}: unknown node_type (audit allow-list stale)")
+            continue
+        settings_cls = NODE_TYPE_TO_SETTINGS_CLASS[node_type]
+        if field_name not in settings_cls.model_fields:
+            failures.append(f"{node_type}.{field_name}: field not on settings class (audit allow-list stale)")
+            continue
+
+        spec = _node_settings_to_tool_spec(node_type, settings_cls)
+        properties = spec.parameters.get("properties") or {}
+        if field_name not in properties:
+            failures.append(f"{node_type}.{field_name}: field absent from rendered ToolSpec.parameters.properties")
+            continue
+        field_schema = properties[field_name]
+
+        # Pydantic emits Optional[Model] as {"anyOf": [{"$ref"...}, {"type":"null"}]}
+        # which after inlining becomes {"anyOf": [{"type":"object",...}, {"type":"null"}]}.
+        if "anyOf" in field_schema:
+            object_branches = [b for b in field_schema["anyOf"] if b.get("type") == "object"]
+            if not object_branches:
+                failures.append(f"{node_type}.{field_name}: anyOf with no object branch: {field_schema!r}")
+                continue
+            field_schema = object_branches[0]
+
+        if kind == "object":
+            if field_schema.get("type") != "object":
+                failures.append(f"{node_type}.{field_name}: expected type='object', got {field_schema.get('type')!r}")
+                continue
+            if not field_schema.get("properties"):
+                failures.append(f"{node_type}.{field_name}: type='object' but no 'properties' block")
+        elif kind == "array_of_object":
+            if field_schema.get("type") != "array":
+                failures.append(f"{node_type}.{field_name}: expected type='array', got {field_schema.get('type')!r}")
+                continue
+            items = field_schema.get("items") or {}
+            if items.get("type") != "object":
+                failures.append(
+                    f"{node_type}.{field_name}: array items expected type='object', got {items.get('type')!r}"
+                )
+
+    assert not failures, "W67 audit failures:\n" + "\n".join(f"  - {f}" for f in failures)

@@ -46,6 +46,25 @@ import {
 } from "./ai-agent-store-persistence";
 import { useAiDiffStore } from "./ai-diff-store";
 import { useEditorStore } from "./editor-store";
+import { useFlowStore } from "./flow-store";
+
+// W57 — read the user's canvas selection from the live VueFlow instance and
+// project to the int ``node_id`` set the backend expects. Mirrors the
+// extraction in ``AiCommandPalette.vue`` (W33). Returns ``undefined`` when no
+// instance is mounted (drawer opened without a flow loaded — should not
+// happen in practice since the agent button is gated on flowId, but the
+// helper stays defensive).
+const _readCanvasSelection = (): number[] | undefined => {
+  const flowStore = useFlowStore();
+  const instance = flowStore.vueFlowInstance;
+  if (!instance) return undefined;
+  const selectedRefs = instance.getSelectedNodes?.value ?? [];
+  type SelNode = { id: string; data?: { id?: number | string } };
+  const ids = (selectedRefs as SelNode[])
+    .map((n) => Number(n.data?.id ?? n.id))
+    .filter((id) => Number.isFinite(id));
+  return ids.length > 0 ? ids : undefined;
+};
 
 // Mirror of W27's throttle in `ai-store.ts`. Streaming events arrive ~10/s
 // during an active agent run; coalescing them into ~4 writes/sec keeps the
@@ -294,8 +313,17 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
   };
 
   const start = async (body: AgentStartRequest): Promise<void> => {
+    // W57 — auto-attach the user's canvas selection so the planner's
+    // ``_resolve_insertion_context`` has a contextual signal when the LLM
+    // doesn't emit explicit ``upstream_node_ids``. Caller can override by
+    // setting ``selected_node_ids`` on the body explicitly (including ``[]``
+    // / ``null`` to opt out).
+    const resolvedBody: AgentStartRequest =
+      body.selected_node_ids === undefined
+        ? { ...body, selected_node_ids: _readCanvasSelection() ?? null }
+        : body;
     const controller = _newController();
-    currentSessionId.value = body.session_id ?? null;
+    currentSessionId.value = resolvedBody.session_id ?? null;
     // Keep prior runs' events visible — the chat trail accumulates across
     // agent invocations so the user can scroll up to the previous run.
     // ``currentSessionId`` / ``status`` / ``driftDetail`` / ``lastResult``
@@ -320,7 +348,7 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
 
     const handlers = _buildHandlers();
     try {
-      await streamAgentSession(body, handlers, controller.signal);
+      await streamAgentSession(resolvedBody, handlers, controller.signal);
     } catch (err) {
       if (isAbortError(err)) return;
       if (err instanceof AiDisabledError) {

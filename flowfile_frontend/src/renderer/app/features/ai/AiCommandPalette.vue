@@ -139,7 +139,12 @@ const doSubmit = async (): Promise<void> => {
   });
 };
 
-const handleBackdropClick = (): void => {
+// W66 — backdrop click is intentionally a no-op. Cmd+K closes via Esc or
+// the explicit ✕ close button only; this matches VS Code / Raycast / Linear
+// command-palette conventions and stops a stray click from erasing the
+// rationale / error / refusal block the user is reading.
+
+const handleClose = (): void => {
   if (!palette.loading) palette.close();
 };
 
@@ -154,23 +159,35 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
       role="dialog"
       aria-modal="true"
       aria-label="Cmd+K command palette"
-      @click="handleBackdropClick"
     >
       <div class="ai-cmdk__panel" @click.stop>
-        <div v-if="showModelPicker && !_disabled" class="ai-cmdk__header">
-          <label class="ai-cmdk__model-label" for="ai-cmdk-model">Model</label>
-          <select
-            id="ai-cmdk-model"
-            class="ai-cmdk__model-select"
-            :value="aiStore.selectedModel ?? ''"
+        <div class="ai-cmdk__header">
+          <template v-if="showModelPicker && !_disabled">
+            <label class="ai-cmdk__model-label" for="ai-cmdk-model">Model</label>
+            <select
+              id="ai-cmdk-model"
+              class="ai-cmdk__model-select"
+              :value="aiStore.selectedModel ?? ''"
+              :disabled="palette.loading"
+              :title="aiStore.selectedModel ?? 'Pick a model'"
+              @change="handleModelChange"
+            >
+              <option v-for="model in availableModels" :key="model" :value="model">
+                {{ model }}
+              </option>
+            </select>
+          </template>
+          <span class="ai-cmdk__header-spacer"></span>
+          <button
+            type="button"
+            class="ai-cmdk__close"
+            aria-label="Close"
             :disabled="palette.loading"
-            :title="aiStore.selectedModel ?? 'Pick a model'"
-            @change="handleModelChange"
+            :title="palette.loading ? 'Cancel the in-flight request first' : 'Close (Esc)'"
+            @click="handleClose"
           >
-            <option v-for="model in availableModels" :key="model" :value="model">
-              {{ model }}
-            </option>
-          </select>
+            ✕
+          </button>
         </div>
         <div class="ai-cmdk__row">
           <span class="ai-cmdk__icon" aria-hidden="true">✨</span>
@@ -283,6 +300,31 @@ const _disabled = computed(() => palette.aiDisabled || providersLoadFailedDisabl
 .ai-cmdk__model-select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.ai-cmdk__header-spacer {
+  flex: 1;
+}
+
+.ai-cmdk__close {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ai-cmdk__close:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.ai-cmdk__close:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .ai-cmdk__row {

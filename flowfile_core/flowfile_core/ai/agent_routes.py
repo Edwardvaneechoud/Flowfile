@@ -90,6 +90,14 @@ class AgentStartRequest(BaseModel):
     """If supplied, the session reuses this id instead of auto-generating one
     — useful for clients that want to pre-allocate session ids for routing.
     Must not collide with an existing session for any user."""
+    selected_node_ids: list[int] | None = None
+    """W57 — node ids the user has selected on the canvas at start time.
+    Mirrors W28's chat-route wire shape. Read by the planner's
+    ``_resolve_insertion_context`` as a fallback upstream signal when the
+    LLM does not emit an explicit ``upstream_node_ids`` arg. ``None`` and
+    empty list both resolve to "no selection" — the resolver will refuse
+    on ambiguity rather than guess. Frontend reads this from the live
+    flow store at start time."""
 
 
 class AgentResumeRequest(BaseModel):
@@ -301,6 +309,7 @@ async def agent_start(
         "model_name": body.model,
         "snapshot": snapshot,
         "max_steps": body.max_steps,
+        "selected_node_ids": list(body.selected_node_ids or []),
     }
     if body.session_id is not None:
         session_kwargs["session_id"] = body.session_id

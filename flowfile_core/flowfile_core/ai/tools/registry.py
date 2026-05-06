@@ -27,8 +27,9 @@ the fallback.
 
 from __future__ import annotations
 
+import copy
 import re
-from typing import Final, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 from flowfile_core.ai.providers.base import ToolSpec
 from flowfile_core.ai.tools.codegen_ops import CODEGEN_OPS_TOOLS
@@ -94,15 +95,66 @@ def mcp_tool_name(domain: str, op: str) -> str:
     return name
 
 
+_MAX_REF_RESOLUTIONS: Final[int] = 8
+
+
+def _inline_ref_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve every ``{"$ref": "#/$defs/X"}`` against the top-level
+    ``$defs`` block, dropping the block once nothing in the resulting tree
+    references it. The output is a self-contained JSON Schema with the inner
+    shape spelled out at every property site.
+
+    Pydantic v2's ``model_json_schema()`` defaults to emitting nested
+    ``BaseModel`` fields as cross-references. Per W67 — agents in the live
+    transcript fail to follow ``$ref`` and JSON-string-encode structured
+    payloads instead. Inlining removes the cognitive hop.
+
+    Each branch of the walk tracks how many ``$ref`` resolutions have happened
+    on the path from the root; the bound at :data:`_MAX_REF_RESOLUTIONS`
+    guards against self-referential models (none today, defensive against
+    future ones). Tree-traversal depth is *not* counted — only ref
+    resolutions — so deeply-nested non-cyclic schemas inline fully.
+    """
+    defs = schema.get("$defs", {}) or {}
+    if not defs:
+        return schema
+
+    def walk(node: Any, refs_resolved: int) -> Any:
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                if refs_resolved >= _MAX_REF_RESOLUTIONS:
+                    return node
+                key = ref[len("#/$defs/") :]
+                target = defs.get(key)
+                if target is not None:
+                    resolved = copy.deepcopy(target)
+                    # Sibling overrides on a $ref node win over the resolved
+                    # target's keys (JSON Schema $ref-with-siblings semantics).
+                    for k, v in node.items():
+                        if k == "$ref":
+                            continue
+                        resolved[k] = v
+                    return walk(resolved, refs_resolved + 1)
+            return {k: walk(v, refs_resolved) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(item, refs_resolved) for item in node]
+        return node
+
+    inlined = {k: walk(v, 0) for k, v in schema.items() if k != "$defs"}
+    return inlined
+
+
 def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     """Project a node settings Pydantic class into a ``ToolSpec``.
 
     Pydantic v2's ``model_json_schema()`` already emits a JSON-Schema-2020-12
     compatible document with ``$defs``/``properties``/``required``. We inject
     the explicit ``$schema`` dialect URI per D004 so MCP consumers see the
-    declared dialect.
+    declared dialect, and we inline ``$defs`` references at the field site
+    (W67) so nested-Pydantic shapes are visible without follow-up resolution.
     """
-    schema = dict(settings_cls.model_json_schema())
+    schema = _inline_ref_schema(dict(settings_cls.model_json_schema()))
     # Pydantic doesn't emit $schema by default; declare the 2020-12 dialect
     # explicitly so MCP clients (and future MCP server shim) don't have to
     # guess the dialect.
