@@ -505,10 +505,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
           <p v-if="agentMode">
             Agent mode is on. Type a goal — e.g. "filter to last 30 days, then sort by region".
           </p>
-          <p v-else>This chat is read-only — it can't change your flow yet.</p>
-          <p v-if="!agentMode" class="ai-assistant__notice-hint">
-            Ask anything; tool-driven edits land in a later release.
-          </p>
+          <p v-else>Ask a question, or turn on Agent mode to make changes.</p>
         </div>
         <template v-for="(item, idx) in timelineItems" :key="`${item.kind}-${item.at}-${idx}`">
           <AiMessage v-if="item.kind === 'message'" :message="item.data" />

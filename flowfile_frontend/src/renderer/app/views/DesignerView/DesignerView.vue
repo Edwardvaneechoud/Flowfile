@@ -21,7 +21,7 @@
           />
         </div>
         <div class="right-section">
-          <Status />
+          <right-action-cluster ref="rightCluster" @open-settings="headerButtons?.openSettings()" />
         </div>
       </div>
     </div>
@@ -61,7 +61,7 @@
         ref="canvasFlow"
         class="canvas"
         @save="headerButtons?.openSaveModal()"
-        @run="headerButtons?.runFlow()"
+        @run="rightCluster?.runFlow()"
         @new="headerButtons?.handleQuickCreate()"
         @open="headerButtons?.openOpenDialog()"
         @open-settings="headerButtons?.openSettings()"
@@ -79,7 +79,7 @@ import { ref, computed, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { ElNotification } from "element-plus";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
-import Status from "../../features/designer/editor/status.vue";
+import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
@@ -106,6 +106,7 @@ const isLoading = ref(true);
 const isSwitching = ref(false);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
+const rightCluster = ref<InstanceType<typeof RightActionCluster>>();
 const flowSelector = ref<InstanceType<typeof FlowSelector>>();
 const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);
@@ -393,7 +394,6 @@ onMounted(async () => {
   }
 
   .right-section {
-    min-width: 150px;
     padding: 0 var(--spacing-4);
     display: flex;
     align-items: center;

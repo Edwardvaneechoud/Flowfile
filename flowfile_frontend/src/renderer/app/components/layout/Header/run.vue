@@ -1,6 +1,7 @@
 <template>
   <div class="button-group">
     <el-button size="small" :disabled="nodeStore.isRunning" round @click="runFlow()">
+      <span class="material-icons run-icon">play_arrow</span>
       Run
     </el-button>
     <el-button v-if="nodeStore.isRunning" size="small" round @click="cancelFlow()">
@@ -81,30 +82,40 @@ defineExpose({
 .button-group .el-button {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  height: 36px;
+  gap: 4px;
+  padding: 0 10px;
+  height: 28px;
   border-radius: 6px !important;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500 !important;
   letter-spacing: 0.01em;
   box-shadow: var(--shadow-xs);
   flex-shrink: 0;
 }
 
-/* Run button - normal state */
+/* Run button - normal state — matches the AI primary-button gradient
+   used by Send / Accept Diff so the run + AI surfaces share visual language. */
 .button-group .el-button:first-child:not([disabled]) {
-  background-color: var(--primary-blue) !important;
-  border: 1px solid var(--primary-blue-light) !important;
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-purple) 0%,
+    var(--color-accent-purple-hover) 100%
+  ) !important;
+  border: 1px solid var(--color-accent-purple-hover) !important;
   color: #ffffff !important;
 }
 
 /* Run button - hover state */
 .button-group .el-button:first-child:not([disabled]):hover {
-  background-color: var(--color-button-primary) !important;
-  border-color: var(--color-button-primary) !important;
+  background: var(--color-accent-purple-hover) !important;
+  border-color: var(--color-accent-purple-hover) !important;
+}
+
+.run-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* Run button - disabled state */

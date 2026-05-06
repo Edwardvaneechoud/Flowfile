@@ -121,104 +121,15 @@
         </template>
       </el-dropdown>
     </div>
-    <el-popover
-      placement="bottom"
-      :width="260"
-      trigger="hover"
-      :show-after="200"
-      popper-class="header-action-popover"
-      :show-arrow="true"
-    >
-      <template #reference>
-        <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
-          <span class="material-icons btn-icon">settings</span>
-          <span class="btn-text">Settings</span>
-        </button>
-      </template>
-      <div class="header-action-popover-body">
-        <div class="header-action-popover-title">
-          <span class="material-icons header-action-popover-icon">settings</span>
-          <span>Flow Settings</span>
-        </div>
-        <p class="header-action-popover-desc">
-          Configure execution mode, parallel workers, edge labels, and flow-level parameters for the
-          current flow.
-        </p>
-        <p class="header-action-popover-shortcut-hint">
-          <span class="header-action-popover-shortcut">
-            <kbd>{{ MODIFIER_LABEL }}</kbd>
-            <kbd>,</kbd>
-          </span>
-          to open from anywhere.
-        </p>
-      </div>
-    </el-popover>
-    <el-popover
-      placement="bottom"
-      :width="220"
-      trigger="hover"
-      :show-after="200"
-      popper-class="header-action-popover"
-      :show-arrow="true"
-    >
-      <template #reference>
-        <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
-      </template>
-      <div class="header-action-popover-body">
-        <div class="header-action-popover-title">
-          <span class="material-icons header-action-popover-icon">play_arrow</span>
-          <span>Run</span>
-        </div>
-        <p class="header-action-popover-desc">Run with current settings.</p>
-        <p class="header-action-popover-shortcut-hint">
-          <span class="header-action-popover-shortcut">
-            <kbd>{{ MODIFIER_LABEL }}</kbd>
-            <kbd>E</kbd>
-          </span>
-          to run.
-        </p>
-      </div>
-    </el-popover>
-    <el-popover
-      placement="bottom"
-      :width="240"
-      trigger="hover"
-      :show-after="200"
-      popper-class="header-action-popover"
-      :show-arrow="true"
-    >
-      <template #reference>
-        <button
-          class="action-btn"
-          data-tutorial="generate-code-btn"
-          :class="{ active: nodeStore.showCodeGenerator }"
-          :aria-label="nodeStore.showCodeGenerator ? 'Hide Code Generator' : 'Show Code Generator'"
-          :aria-pressed="nodeStore.showCodeGenerator"
-          @click="toggleCodeGenerator"
-        >
-          <span class="material-icons btn-icon">code</span>
-          <span class="btn-text">Code</span>
-        </button>
-      </template>
-      <div class="header-action-popover-body">
-        <div class="header-action-popover-title">
-          <span class="material-icons header-action-popover-icon">code</span>
-          <span>Code Generator</span>
-        </div>
-        <p class="header-action-popover-desc">
-          View the Python code generated from this flow. Useful for exporting or reviewing what each
-          node compiles to.
-        </p>
-        <p class="header-action-popover-shortcut-hint">
-          <span class="header-action-popover-shortcut">
-            <kbd>{{ MODIFIER_LABEL }}</kbd>
-            <kbd>G</kbd>
-          </span>
-          anywhere to toggle.
-        </p>
-      </div>
-    </el-popover>
   </div>
+
+  <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
+       polling-restoration path. The user-visible run-button now lives in
+       RightActionCluster; this off-screen instance preserves the existing
+       runButton.value.startPolling()/stopPolling() calls below without
+       refactoring the polling restore. v-show:false stays in the layout
+       tree so the ref resolves. -->
+  <run-button v-show="false" ref="runButton" :flow-id="nodeStore.flow_id" aria-hidden="true" />
 
   <open-dialog
     ref="openDialogRef"
@@ -573,16 +484,6 @@ const openSaveAsModal = async () => {
 const runFlow = () => {
   if (runButton.value) {
     runButton.value?.runFlow();
-  }
-};
-
-const toggleCodeGenerator = () => {
-  nodeStore.toggleCodeGenerator();
-  // Advance tutorial if we're on the "generate-code" step
-  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "generate-code") {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 300);
   }
 };
 

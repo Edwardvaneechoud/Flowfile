@@ -4841,7 +4841,15 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
     to_node = flow.get_node(node_connection.input_connection.node_id)
     logger.info(f"from_node={from_node}, to_node={to_node}")
     if not (from_node and to_node):
-        raise HTTPException(404, "Not not available")
+        missing = [
+            str(nc.node_id)
+            for nc, n in (
+                (node_connection.output_connection, from_node),
+                (node_connection.input_connection, to_node),
+            )
+            if not n
+        ]
+        raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
     if _would_create_cycle(from_node, to_node):
         raise HTTPException(
             422,

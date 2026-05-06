@@ -1251,16 +1251,18 @@ defineExpose({
       >
         <CodeGenerator />
       </draggable-item>
-      <div
+      <draggable-item
         v-if="editorStore.isAiOpen"
-        class="ai-modal-backdrop"
-        @click="editorStore.closeAiDrawer()"
-        @dblclick.stop
+        id="aiAssistant"
+        :show-right="true"
+        initial-position="right"
+        :initial-width="600"
+        title="AI Assistant"
+        :on-minize="editorStore.closeAiDrawer"
+        :allow-full-screen="true"
       >
-        <div class="ai-modal" @click.stop>
-          <AiAssistant @close="editorStore.closeAiDrawer()" />
-        </div>
-      </div>
+        <AiAssistant @close="editorStore.closeAiDrawer()" />
+      </draggable-item>
       <AiCommandPalette />
       <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
     </main>
@@ -1412,26 +1414,6 @@ body,
 main {
   flex-grow: 1;
   position: relative;
-  overflow: hidden;
-}
-
-.ai-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.ai-modal {
-  width: min(720px, 90vw);
-  height: min(70vh, 720px);
-  background: var(--color-background-primary, #ffffff);
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 </style>

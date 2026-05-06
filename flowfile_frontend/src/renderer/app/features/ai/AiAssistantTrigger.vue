@@ -1,167 +1,133 @@
 <script setup lang="ts">
-// Sparkle button that toggles the AI assistant drawer.
+// "Ask AI" header pill — toggles the AI assistant sidebar.
 //
-// Mounted inside the header's status-wrapper alongside the flow-status
-// indicator and the results-panel toggle — same control-button visual
-// language (32px circle, neutral default, primary-on-active) so the AI
-// trigger reads as a peer panel-toggle, not a competing floating widget.
-//
-// W36 — paired with a small adjacent caret that opens an el-dropdown menu
-// with a "Quick command…" entry. The kebab affordance gives users without
-// the ⌘K muscle memory (or whose browsers eat the shortcut) a discoverable
-// path into the W33 command palette. Single-click on the sparkle still
-// toggles the drawer; the palette is one extra click away.
+// Click toggles the AI sidebar (editorStore.isAiOpen). The kbd hint
+// advertises the Cmd+K command palette, which is bound directly in
+// Canvas.vue and is the only path to the palette now that the dropdown
+// caret has been removed.
 
 import { computed } from "vue";
-import { ArrowDown } from "@element-plus/icons-vue";
 import { useEditorStore } from "../../stores/editor-store";
-import { useAiCommandPaletteStore } from "../../stores/ai-command-palette-store";
 
 const editorStore = useEditorStore();
-const palette = useAiCommandPaletteStore();
 
 const isOpen = computed(() => editorStore.isAiOpen);
+const isMac = computed(
+  () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform),
+);
+const modifierLabel = computed(() => (isMac.value ? "⌘" : "Ctrl"));
 
 const handleClick = (event: MouseEvent): void => {
   event.preventDefault();
   event.stopPropagation();
   editorStore.toggleAiDrawer();
 };
-
-const handleQuickCommand = (): void => {
-  // Same code path the Cmd+K binding uses (Canvas.vue → palette.toggle).
-  // From a menu item click the user's intent is unambiguous "open" — calling
-  // open() avoids the surprising close-on-second-click that toggle() would
-  // give if the palette was already up.
-  palette.open();
-};
 </script>
 
 <template>
-  <div class="ai-trigger" :class="{ 'is-open': isOpen }">
-    <button
-      class="ai-trigger__main"
-      :class="{ 'is-active': isOpen }"
-      title="AI Assistant"
-      aria-label="Toggle AI assistant"
-      @click="handleClick"
-    >
-      <span class="ai-trigger__icon" aria-hidden="true">✨</span>
-    </button>
-    <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
-      <button
-        class="ai-trigger__menu"
-        type="button"
-        title="More AI actions"
-        aria-label="More AI actions"
-        @click.stop
-      >
-        <el-icon><ArrowDown /></el-icon>
-      </button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item @click="handleQuickCommand">
-            <span class="ai-trigger__menu-icon" aria-hidden="true">⌨</span>
-            <span class="ai-trigger__menu-label">Quick command…</span>
-            <span class="ai-trigger__menu-shortcut"> <kbd>⌘</kbd><kbd>K</kbd> </span>
-          </el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
-  </div>
+  <button
+    class="action-btn ai-trigger__pill"
+    :class="{ active: isOpen }"
+    type="button"
+    title="AI Assistant"
+    aria-label="Toggle AI assistant"
+    @click="handleClick"
+  >
+    <span class="material-icons btn-icon" aria-hidden="true">auto_awesome</span>
+    <span class="btn-text">Ask AI</span>
+    <span class="ai-trigger__shortcut" aria-hidden="true">
+      <kbd>{{ modifierLabel }}</kbd>
+      <kbd>K</kbd>
+    </span>
+  </button>
 </template>
 
 <style scoped>
-.ai-trigger {
+.action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+  box-shadow: var(--shadow-xs);
+  white-space: nowrap;
 }
 
-.ai-trigger__main {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: var(--color-gray-400);
-  color: var(--color-button-primary);
-  cursor: pointer;
-  transition: all 0.3s ease;
+.action-btn:hover {
+  border-color: var(--color-border-secondary, var(--color-border-primary));
+  color: var(--color-text-primary);
   box-shadow: var(--shadow-sm);
 }
 
-.ai-trigger__main:hover {
-  background: var(--color-button-primary);
-  color: var(--color-text-inverse);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+.action-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
 }
 
-.ai-trigger__main.is-active {
-  background: var(--color-button-primary);
-  color: var(--color-text-inverse);
+.action-btn.active {
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-purple) 0%,
+    var(--color-accent-purple-hover) 100%
+  );
+  border-color: var(--color-accent-purple-hover);
+  color: #ffffff;
 }
 
-.ai-trigger__icon {
-  font-size: 16px;
+.action-btn.active:hover {
+  background: var(--color-accent-purple-hover);
+  border-color: var(--color-accent-purple-hover);
+}
+
+.btn-icon {
+  font-size: 14px;
   line-height: 1;
-  pointer-events: none;
-}
-
-.ai-trigger__menu {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
   color: var(--color-text-secondary, #6b7280);
-  cursor: pointer;
-  transition:
-    background 0.2s ease,
-    color 0.2s ease;
 }
 
-.ai-trigger__menu:hover,
-.ai-trigger__menu:focus-visible {
-  background: var(--color-gray-200, #e5e7eb);
-  color: var(--color-text, #1f2937);
-  outline: none;
+.action-btn:hover .btn-icon,
+.action-btn.active .btn-icon {
+  color: inherit;
 }
 
-.ai-trigger__menu :deep(.el-icon) {
-  font-size: 12px;
+.btn-text {
   line-height: 1;
 }
 
-.ai-trigger__menu-icon {
-  font-size: 13px;
-  margin-right: 8px;
-}
-
-.ai-trigger__menu-label {
-  flex: 1;
-}
-
-.ai-trigger__menu-shortcut {
+.ai-trigger__shortcut {
   display: inline-flex;
   gap: 2px;
-  margin-left: 12px;
+  margin-left: 4px;
 }
 
-.ai-trigger__menu-shortcut kbd {
+.ai-trigger__shortcut kbd {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
-  font-size: 10px;
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
+  font-size: 9px;
+  background: var(--color-gray-200, #e5e7eb);
+  border: 1px solid var(--color-border-primary, #d1d5db);
   border-radius: 3px;
-  padding: 0 4px;
-  color: #6b7280;
+  padding: 0 3px;
+  color: var(--color-text-secondary, #6b7280);
+  line-height: 1.4;
+}
+
+.action-btn.active .ai-trigger__shortcut kbd {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.32);
+  color: #ffffff;
 }
 </style>
