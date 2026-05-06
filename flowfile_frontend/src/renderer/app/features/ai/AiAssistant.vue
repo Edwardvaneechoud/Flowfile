@@ -153,6 +153,22 @@ const handleSend = async (): Promise<void> => {
       role: "user",
       content: `[Agent] ${text}`,
     });
+
+    // W49 — when the active session is followup-resumable (``completed``
+    // or ``awaiting_user_input``), route the user's typed message through
+    // the followup endpoint rather than allocating a fresh session via
+    // ``start()``. This keeps the conversation history and avoids the
+    // ``── new agent run ──`` boundary insertion the chat trail uses to
+    // mark genuine new sessions.
+    const sid = agentStore.currentSessionId;
+    if (
+      sid !== null &&
+      (agentStore.status === "completed" || agentStore.status === "awaiting_user_input")
+    ) {
+      await agentStore.resumeAfterMessage(sid, text);
+      return;
+    }
+
     // Forward the model the user picked verbatim. If the W29 picker has a
     // value, that's the user's choice and the backend honours it. If it's
     // null (no picker rendered, no manual selection), the backend's
@@ -440,6 +456,16 @@ const timelineItems = computed<TimelineItem[]>(() => {
             Keep this as chat instead
           </button>
         </div>
+      </div>
+      <div
+        v-if="agentStore.status === 'awaiting_user_input'"
+        class="ai-assistant__awaiting-banner"
+        role="status"
+      >
+        <span class="ai-assistant__awaiting-icon">💬</span>
+        <span class="ai-assistant__awaiting-text">
+          Agent is waiting for your reply — type below and Send to continue the same session.
+        </span>
       </div>
       <div
         v-if="agentStore.status === 'paused_drift' && agentStore.driftDetail"
@@ -774,6 +800,27 @@ const timelineItems = computed<TimelineItem[]>(() => {
 
 .ai-assistant__agent-toggle input[type="checkbox"] {
   cursor: pointer;
+}
+
+.ai-assistant__awaiting-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 0 0 8px 0;
+  background-color: var(--color-info-soft, #e3f2fd);
+  border: 1px solid var(--color-info, #2196f3);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-info-text, #0d47a1);
+}
+
+.ai-assistant__awaiting-icon {
+  font-size: 14px;
+}
+
+.ai-assistant__awaiting-text {
+  flex: 1;
 }
 
 .ai-assistant__drift-banner {

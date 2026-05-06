@@ -41,6 +41,7 @@ const mockSymbols = vi.hoisted(() => {
     AiDisabledError,
     streamAgentSession: vi.fn(),
     resumeAgentSessionStream: vi.fn(),
+    streamAgentFollowup: vi.fn(),
     abortAgentSession: vi.fn(),
     discardAgentSession: vi.fn(),
     getAgentSession: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock("../services/aiStreamClient", () => ({
   AiStreamHttpError: mockSymbols.AiStreamHttpError,
   streamAgentSession: mockSymbols.streamAgentSession,
   resumeAgentSessionStream: mockSymbols.resumeAgentSessionStream,
+  streamAgentFollowup: mockSymbols.streamAgentFollowup,
 }));
 
 vi.mock("../api/ai.api", () => ({
@@ -101,6 +103,7 @@ beforeEach(() => {
   setActivePinia(createPinia());
   mockSymbols.streamAgentSession.mockReset();
   mockSymbols.resumeAgentSessionStream.mockReset();
+  mockSymbols.streamAgentFollowup.mockReset();
   mockSymbols.abortAgentSession.mockReset();
   mockSymbols.discardAgentSession.mockReset();
   mockSymbols.getAgentSession.mockReset();
@@ -515,5 +518,305 @@ describe("useAiAgentStore - W55 onComplete defensive logging", () => {
     expect(warn).not.toHaveBeenCalled();
     expect(store.status).toBe("completed");
     warn.mockRestore();
+  });
+});
+
+// --------------------------------------------------------------------------
+// W42 — reattach() across page-reload (cold-start re-attach + Last-Event-ID)
+// --------------------------------------------------------------------------
+
+const _baseAgentSession = (overrides: Record<string, unknown> = {}) => ({
+  sessionId: "sess-w42",
+  flowId: 1,
+  status: "running",
+  surface: "agent_complex",
+  samplesMode: "off",
+  stepCount: 0,
+  maxSteps: 12,
+  stagedCount: 0,
+  diffId: null,
+  rationale: null,
+  pauseReason: null,
+  driftDetail: null,
+  createdAt: "2026-05-05T12:00:00Z",
+  updatedAt: "2026-05-05T12:00:00Z",
+  ...overrides,
+});
+
+describe("useAiAgentStore - W42 reattach", () => {
+  it("no-ops when currentSessionId is null", async () => {
+    const store = useAiAgentStore();
+    expect(store.currentSessionId).toBeNull();
+    await store.reattach();
+    expect(mockSymbols.getAgentSession).not.toHaveBeenCalled();
+    expect(mockSymbols.resumeAgentSessionStream).not.toHaveBeenCalled();
+  });
+
+  it("paused_user_action: surfaces pause UI without opening SSE", async () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-cold",
+      status: "idle", // persisted "running" was normalised; reattach uses sid
+      driftDetail: null,
+      lastResult: null,
+      error: null,
+    });
+    mockSymbols.getAgentSession.mockResolvedValueOnce(
+      _baseAgentSession({
+        sessionId: "sess-cold",
+        status: "paused_user_action",
+        pauseReason: "cold_start",
+        stepCount: 3,
+      }),
+    );
+
+    const store = useAiAgentStore();
+    await store.reattach();
+
+    expect(mockSymbols.getAgentSession).toHaveBeenCalledTimes(1);
+    expect(mockSymbols.getAgentSession.mock.calls[0][0]).toBe("sess-cold");
+    expect(mockSymbols.resumeAgentSessionStream).not.toHaveBeenCalled();
+    expect(store.status).toBe("paused_user_action");
+  });
+
+  it("paused_drift: surfaces pause UI without opening SSE", async () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-drift",
+      status: "paused_drift",
+      driftDetail: { missingNodeIds: [1], externalAddedNodeIds: [], nodeTypes: { 1: "filter" } },
+      lastResult: null,
+      error: null,
+    });
+    mockSymbols.getAgentSession.mockResolvedValueOnce(
+      _baseAgentSession({
+        sessionId: "sess-drift",
+        status: "paused_drift",
+        stepCount: 2,
+        driftDetail: { missingNodeIds: [1], externalAddedNodeIds: [], nodeTypes: { 1: "filter" } },
+      }),
+    );
+
+    const store = useAiAgentStore();
+    await store.reattach();
+
+    expect(mockSymbols.resumeAgentSessionStream).not.toHaveBeenCalled();
+    expect(store.status).toBe("paused_drift");
+    expect(store.driftDetail?.missingNodeIds).toEqual([1]);
+  });
+
+  it("running with stepCount > 0: opens SSE with Last-Event-ID at stepCount-1", async () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-live",
+      status: "idle",
+      driftDetail: null,
+      lastResult: null,
+      error: null,
+    });
+    mockSymbols.getAgentSession.mockResolvedValueOnce(
+      _baseAgentSession({
+        sessionId: "sess-live",
+        status: "running",
+        stepCount: 5,
+      }),
+    );
+    mockSymbols.resumeAgentSessionStream.mockImplementation(async () => undefined);
+
+    const store = useAiAgentStore();
+    await store.reattach();
+
+    expect(mockSymbols.resumeAgentSessionStream).toHaveBeenCalledTimes(1);
+    const call = mockSymbols.resumeAgentSessionStream.mock.calls[0];
+    expect(call[0]).toBe("sess-live");
+    // 4th arg is lastEventId = "{sid}.{stepCount-1}"
+    expect(call[3]).toBe("sess-live.4");
+  });
+
+  it("running with stepCount=0: opens SSE without Last-Event-ID", async () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-fresh",
+      status: "idle",
+      driftDetail: null,
+      lastResult: null,
+      error: null,
+    });
+    mockSymbols.getAgentSession.mockResolvedValueOnce(
+      _baseAgentSession({
+        sessionId: "sess-fresh",
+        status: "running",
+        stepCount: 0,
+      }),
+    );
+    mockSymbols.resumeAgentSessionStream.mockImplementation(async () => undefined);
+
+    const store = useAiAgentStore();
+    await store.reattach();
+
+    expect(mockSymbols.resumeAgentSessionStream).toHaveBeenCalledTimes(1);
+    expect(mockSymbols.resumeAgentSessionStream.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it("terminal status (completed): does not open a stream", async () => {
+    mockSymbols.loadPersistedAgentState.mockReturnValueOnce({
+      events: [],
+      currentSessionId: "sess-done",
+      status: "completed",
+      driftDetail: null,
+      lastResult: null,
+      error: null,
+    });
+    mockSymbols.getAgentSession.mockResolvedValueOnce(
+      _baseAgentSession({
+        sessionId: "sess-done",
+        status: "completed",
+        stepCount: 7,
+      }),
+    );
+
+    const store = useAiAgentStore();
+    await store.reattach();
+
+    expect(mockSymbols.resumeAgentSessionStream).not.toHaveBeenCalled();
+    expect(store.status).toBe("completed");
+  });
+});
+
+describe("useAiAgentStore - W49 followup re-entry", () => {
+  it("onAwaitingUserInput flips status to awaiting_user_input + appends event", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onAwaitingUserInput?.({
+        session_id: "sess-q",
+        question: "Which column do you want me to group by?",
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.start(startBody());
+
+    expect(store.status).toBe("awaiting_user_input");
+    expect(store.currentSessionId).toBe("sess-q");
+    expect(store.events.some((e) => e.kind === "awaiting_user_input")).toBe(true);
+  });
+
+  it("resumeAfterReject calls streamAgentFollowup with rejected_diff payload", async () => {
+    mockSymbols.streamAgentFollowup.mockImplementation(async (_sid, _body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-r",
+        diff_id: "diff-new",
+        op_count: 1,
+        rationale: "restaged with corrected upstream",
+        diff_payload: { diff_id: "diff-new", flow_id: 1, additions: [] },
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.resumeAfterReject("sess-r", "use the read node directly", "diff-old");
+
+    expect(mockSymbols.streamAgentFollowup).toHaveBeenCalledTimes(1);
+    const [sid, body] = mockSymbols.streamAgentFollowup.mock.calls[0];
+    expect(sid).toBe("sess-r");
+    expect(body).toEqual({
+      action: "rejected_diff",
+      message: "use the read node directly",
+      rejected_diff_id: "diff-old",
+    });
+    expect(store.status).toBe("completed");
+  });
+
+  it("resumeAfterMessage calls streamAgentFollowup with user_message payload", async () => {
+    mockSymbols.streamAgentFollowup.mockImplementation(async (_sid, _body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-m",
+        diff_id: null,
+        op_count: 0,
+        rationale: "ack",
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    await store.resumeAfterMessage("sess-m", "filter on region");
+
+    const [sid, body] = mockSymbols.streamAgentFollowup.mock.calls[0];
+    expect(sid).toBe("sess-m");
+    expect(body).toEqual({
+      action: "user_message",
+      message: "filter on region",
+    });
+    expect(store.status).toBe("completed");
+  });
+
+  it("does NOT insert a `── new agent run ──` boundary on resumeAfterMessage", async () => {
+    mockSymbols.streamAgentFollowup.mockImplementation(async (_sid, _body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-cont",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    // Seed one prior event so the `start()` path WOULD have inserted a
+    // boundary; verify the followup-resume path skips that insertion.
+    store.events = [{ kind: "complete", payload: { session_id: "sess-cont" }, at: 1 }];
+    await store.resumeAfterMessage("sess-cont", "continue please");
+
+    const boundaryEvents = store.events.filter(
+      (e) =>
+        e.kind === "info" &&
+        typeof (e.payload as { message?: unknown }).message === "string" &&
+        (e.payload as { message: string }).message.includes("new agent run"),
+    );
+    expect(boundaryEvents).toHaveLength(0);
+  });
+
+  it("DOES insert `── new agent run ──` boundary on a fresh start() with prior events", async () => {
+    mockSymbols.streamAgentSession.mockImplementation(async (_body, handlers) => {
+      handlers.onComplete?.({
+        session_id: "sess-fresh",
+        diff_id: null,
+        op_count: 0,
+        rationale: null,
+        diff_payload: null,
+      });
+    });
+
+    const store = useAiAgentStore();
+    store.events = [{ kind: "complete", payload: { session_id: "old" }, at: 1 }];
+    await store.start(startBody());
+
+    const boundaryEvents = store.events.filter(
+      (e) =>
+        e.kind === "info" &&
+        typeof (e.payload as { message?: unknown }).message === "string" &&
+        (e.payload as { message: string }).message.includes("new agent run"),
+    );
+    expect(boundaryEvents).toHaveLength(1);
+  });
+
+  it("resumeAfterReject surfaces AiStreamHttpError as failed status", async () => {
+    mockSymbols.streamAgentFollowup.mockRejectedValue(
+      new mockSymbols.AiStreamHttpError(409, "session not resumable"),
+    );
+
+    const store = useAiAgentStore();
+    await store.resumeAfterReject("sess-x", null, null);
+
+    expect(store.status).toBe("failed");
+    expect(store.error).toBe("session not resumable");
+  });
+
+  it("resumeAfterMessage surfaces AiDisabledError and sets aiDisabled flag", async () => {
+    mockSymbols.streamAgentFollowup.mockRejectedValue(new mockSymbols.AiDisabledError());
+
+    const store = useAiAgentStore();
+    await store.resumeAfterMessage("sess-x", "hi");
+
+    expect(store.aiDisabled).toBe(true);
+    expect(store.status).toBe("failed");
   });
 });

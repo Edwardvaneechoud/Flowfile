@@ -35,10 +35,14 @@ import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from fastapi.responses import StreamingResponse
 
 from flowfile_core.ai.providers.base import StreamChunk, ToolCall
+
+if TYPE_CHECKING:
+    from flowfile_core.ai.replay_buffer import ReplayBuffer as ReplayBufferProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +288,9 @@ async def planner_events_sse(
     session_id: str,
     step_count_getter: Callable[[], int],
     keepalive_interval: float = KEEPALIVE_INTERVAL_SECONDS,
+    replay_buffer: ReplayBufferProtocol | None = None,
+    flow_id: int | None = None,
+    replay_after_event_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Translate a W40 ``PlannerEvent`` iterator into SSE wire strings.
 
@@ -293,10 +300,32 @@ async def planner_events_sse(
     the *current* step counter so resume cursors are step-aligned, not
     wall-clock.
 
+    W42 plumbing:
+
+    * ``replay_buffer`` / ``flow_id`` enable the post-emit append: every
+      live frame is captured into the per-(flow_id, session_id) ring so a
+      future ``Last-Event-ID`` reconnect can replay it. Best-effort —
+      buffer write failures never crash the stream.
+    * ``replay_after_event_id`` flushes buffered frames newer than the
+      cursor *before* live streaming resumes. Used by the resume route
+      when the client supplies ``Last-Event-ID`` on reconnect.
+
     Like :func:`sse_stream`, errors mid-stream become an ``event: error``
     frame; cancellations propagate. The pending ``__anext__()`` is shielded
     so a keepalive timeout doesn't tear the underlying generator.
     """
+    # W42 — flush buffered frames past the cursor before live streaming.
+    if replay_buffer is not None and flow_id is not None and replay_after_event_id is not None:
+        try:
+            for _eid, payload in replay_buffer.read_after(
+                flow_id=flow_id,
+                session_id=session_id,
+                event_id=replay_after_event_id,
+            ):
+                yield payload.decode("utf-8", errors="replace")
+        except Exception:
+            logger.exception("planner_events_sse: replay-buffer drain failed")
+
     ait = events.__aiter__()
     next_task: asyncio.Task | None = None
     try:
@@ -312,12 +341,24 @@ async def planner_events_sse(
                 next_task = None
                 return
             next_task = None
-            yield format_sse_planner_event(
+            step = step_count_getter()
+            line = format_sse_planner_event(
                 event.event,
                 event.payload,
                 session_id=session_id,
-                step_count=step_count_getter(),
+                step_count=step,
             )
+            yield line
+            if replay_buffer is not None and flow_id is not None:
+                try:
+                    replay_buffer.append(
+                        flow_id=flow_id,
+                        session_id=session_id,
+                        event_id=f"{session_id}.{step}",
+                        payload=line.encode("utf-8"),
+                    )
+                except Exception:
+                    logger.exception("planner_events_sse: replay-buffer append failed")
     except asyncio.CancelledError:
         raise
     except Exception as exc:

@@ -513,5 +513,199 @@ def test_503_when_feature_flag_off(
         # Resume
         r4 = authed_client.post("/ai/agent/anything/resume", json={"action": "discard"})
         assert r4.status_code == 503
+
+        # Followup (W49)
+        r5 = authed_client.post(
+            "/ai/agent/anything/followup",
+            json={"action": "user_message", "message": "x"},
+        )
+        assert r5.status_code == 503
     finally:
         FEATURE_FLAG_AI.set(original)
+
+
+# --------------------------------------------------------------------------- #
+# W49 — Followup endpoint                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _completed_session(flow_id: int = 1, *, status: str = "completed") -> sessions.AgentSession:
+    snap = sessions.GraphSnapshot(flow_id=flow_id, node_ids=(1,), node_types={1: "manual_input"})
+    return sessions.AgentSession(
+        flow_id=flow_id,
+        user_id=1,
+        user_prompt="prior",
+        provider_name="anthropic",
+        snapshot=snap,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
+def test_w49_followup_404_unknown_session(authed_client: TestClient) -> None:
+    response = authed_client.post(
+        "/ai/agent/no-such-id/followup",
+        json={"action": "user_message", "message": "hi"},
+    )
+    assert response.status_code == 404
+
+
+def test_w49_followup_409_when_session_running(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    patch_provider: _FakeProvider,
+) -> None:
+    sess = _completed_session(status="running")
+    sessions.register_session(sess)
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "user_message", "message": "go"},
+    )
+    assert response.status_code == 409
+    assert "followup-resumable" in response.json()["detail"]
+
+
+def test_w49_followup_user_message_streams_sse(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mode 3 — completed-with-no-ops session + user_message → SSE re-entry."""
+    fake = _FakeProvider(tool_calls_per_step=[])  # just emit a stop
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    sess = _completed_session(status="completed")
+    sessions.register_session(sess)
+
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "user_message", "message": "please continue"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "event: info" in body  # the followup-resume preamble info event
+    assert "event: complete" in body or "event: awaiting_user_input" in body
+
+    # Conversation history now carries the synthetic user message.
+    refreshed = sessions.get_session(sess.session_id, user_id=1)
+    assert refreshed is not None
+    user_msgs = [m for m in refreshed.messages if m.role == "user"]
+    assert any("please continue" in (m.content or "") for m in user_msgs)
+
+
+def test_w49_followup_rejected_diff_injects_synthetic_user_turn(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mode 1 — rejected diff with a user note → synthetic ``user`` turn
+    in the conversation carrying the note + diff_id reference."""
+    fake = _FakeProvider(tool_calls_per_step=[])
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    sess = _completed_session()
+    sess.diff_id = "diff-rejected"
+    sessions.register_session(sess)
+
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={
+            "action": "rejected_diff",
+            "message": "please use the read node directly",
+            "rejected_diff_id": "diff-rejected",
+        },
+    )
+    assert response.status_code == 200
+
+    refreshed = sessions.get_session(sess.session_id, user_id=1)
+    assert refreshed is not None
+    user_msgs = [m for m in refreshed.messages if m.role == "user"]
+    rejection_msgs = [m for m in user_msgs if "rejected" in (m.content or "").lower()]
+    assert rejection_msgs, "expected a synthetic rejection user message"
+    content = rejection_msgs[-1].content
+    assert "please use the read node directly" in content
+    assert "diff-rejected" in content
+
+
+def test_w49_followup_rejected_diff_generic_fallback_when_no_note(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance test 2 — empty rejection note → generic fallback text."""
+    fake = _FakeProvider(tool_calls_per_step=[])
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    sess = _completed_session()
+    sess.diff_id = "diff-rejected"
+    sessions.register_session(sess)
+
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "rejected_diff", "rejected_diff_id": "diff-rejected"},
+    )
+    assert response.status_code == 200
+
+    refreshed = sessions.get_session(sess.session_id, user_id=1)
+    assert refreshed is not None
+    rejection_msgs = [m for m in refreshed.messages if m.role == "user" and "rejected" in (m.content or "").lower()]
+    assert rejection_msgs
+    # Generic placeholder is included.
+    assert "no specific reason" in rejection_msgs[-1].content.lower()
+
+
+def test_w49_followup_user_message_empty_returns_422(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    patch_provider: _FakeProvider,
+) -> None:
+    """``user_message`` action with whitespace-only message → 422."""
+    sess = _completed_session()
+    sessions.register_session(sess)
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "user_message", "message": "   "},
+    )
+    assert response.status_code == 422
+
+
+def test_w49_followup_404_cross_user(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    patch_provider: _FakeProvider,
+) -> None:
+    """Session owned by user 2 → user 1's followup returns 404 (no leak)."""
+    snap = sessions.capture_graph_snapshot(registered_flow)
+    sess = sessions.AgentSession(
+        flow_id=1,
+        user_id=2,  # different user
+        user_prompt="x",
+        provider_name="anthropic",
+        snapshot=snap,
+        status="completed",
+    )
+    sessions.register_session(sess)
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "user_message", "message": "hi"},
+    )
+    assert response.status_code == 404
+
+
+def test_w49_followup_accepts_awaiting_user_input(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mode 2 — session in ``awaiting_user_input`` accepts followup."""
+    fake = _FakeProvider(tool_calls_per_step=[])
+    monkeypatch.setattr(agent_routes_module, "get_configured_provider", lambda *_a, **_kw: fake)
+
+    sess = _completed_session(status="awaiting_user_input")
+    sessions.register_session(sess)
+
+    response = authed_client.post(
+        f"/ai/agent/{sess.session_id}/followup",
+        json={"action": "user_message", "message": "filter on region"},
+    )
+    assert response.status_code == 200

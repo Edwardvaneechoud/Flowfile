@@ -35,9 +35,10 @@ Error mapping mirrors W12 / W20 / W23 / W34 / W50 / W51:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -47,10 +48,13 @@ from flowfile_core.ai.agents.planner import (
     DEFAULT_MAX_RETRIES_PER_STEP,
     DEFAULT_MAX_STEPS,
     DEFAULT_MAX_TOKENS,
+    FollowupAction,
+    inject_followup_message,
     run_planner_session,
 )
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
 from flowfile_core.ai.providers.registry import PROVIDERS, UnknownProviderError
+from flowfile_core.ai.replay_buffer import default_replay_buffer
 from flowfile_core.ai.streaming import (
     make_streaming_response,
     planner_events_sse,
@@ -90,6 +94,29 @@ class AgentStartRequest(BaseModel):
 
 class AgentResumeRequest(BaseModel):
     action: Literal["continue", "discard"]
+
+
+class AgentFollowupRequest(BaseModel):
+    """W49 — body for ``POST /ai/agent/{session_id}/followup``.
+
+    Two action shapes feed the same re-entry path:
+
+    * ``"rejected_diff"`` — the user clicked Reject on the staged diff.
+      ``message`` is an optional user-supplied rejection note ("the
+      upstream is wrong, use the read node directly"); ``rejected_diff_id``
+      is the diff the user just rejected (passed through to the synthetic
+      tool-message for diagnostics — can be omitted if the session's own
+      ``diff_id`` matches).
+    * ``"user_message"`` — the user typed a follow-up message after a
+      ``complete`` / ``awaiting_user_input``. ``message`` is required and
+      becomes the next user turn in the planner conversation.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    action: FollowupAction
+    message: str | None = Field(default=None, max_length=5_000)
+    rejected_diff_id: str | None = None
 
 
 class AgentAbortResponse(BaseModel):
@@ -164,6 +191,36 @@ def _to_state_response(session: sessions.AgentSession) -> AgentStateResponse:
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat(),
     )
+
+
+def _looks_cold_started(session: sessions.AgentSession) -> bool:
+    """Heuristic: a ``running`` session whose disk file is older than its
+    in-process LRU mirror would be is cold.
+
+    The disk repo's ``get`` fills the LRU on read, so by the time we get
+    here the LRU is warm. The signal we actually care about is *"was this
+    LRU entry hydrated from disk on this same call?"* — which we approximate
+    by inspecting the disk repo type. If the repo is in-memory, an entry
+    being absent triggers ``get_session`` to return ``None``; we never get
+    here. If the repo is disk-backed and ``get_session`` returned a session,
+    we know it came from disk OR cache. There's no cheap way to disambiguate
+    without instrumenting the repo, so we conservatively flip on every read
+    of a ``running`` session whose ``updated_at`` is more than the
+    keepalive interval old (15s). Live planner runs touch ``updated_at``
+    much more often than that.
+    """
+    repo = sessions.get_session_repo()
+    repo_kind = type(repo).__name__
+    if repo_kind != "DiskSessionRepository":
+        return False
+
+    now = datetime.now(timezone.utc)
+    delta = (now - session.updated_at).total_seconds()
+    # KEEPALIVE_INTERVAL_SECONDS is 15s; any live session would have been
+    # touched at least once in that window (planner step boundaries +
+    # checkpoint hook). Three-window grace = 45s is generous enough that
+    # a tiny in-flight delay never trips the flip during a real run.
+    return delta > 45.0
 
 
 # --------------------------------------------------------------------------- #
@@ -261,6 +318,8 @@ async def agent_start(
         events,
         session_id=session.session_id,
         step_count_getter=lambda: session.step_count,
+        replay_buffer=default_replay_buffer(),
+        flow_id=session.flow_id,
     )
     return make_streaming_response(sse)
 
@@ -269,26 +328,33 @@ async def agent_start(
 async def agent_resume(
     session_id: str,
     body: AgentResumeRequest,
+    request: Request,
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Resume a paused-on-drift session.
+    """Resume a paused session (drift OR cold-start ``paused_user_action``).
 
     * ``action="continue"`` re-snapshots the graph and streams the rest of
-      the planner's events as SSE (mirrors ``/start``).
+      the planner's events as SSE (mirrors ``/start``). When the request
+      carries a ``Last-Event-ID`` header (W42), buffered SSE frames newer
+      than the cursor are flushed to the client *before* the live planner
+      stream resumes.
     * ``action="discard"`` pops the session, returns JSON. Any staged diff
       that was registered before the pause stays — the user can still
       reject it via the W41 ``/ai/diff/{id}/reject`` route.
 
+    Resumable statuses: ``paused_drift`` (D006) and ``paused_user_action``
+    (W42 cold-start). Other statuses → 409.
+
     Errors:
 
     * ``404`` — unknown session (or owned by a different user).
-    * ``409`` — session not in ``paused_drift`` state.
+    * ``409`` — session not in a resumable paused state.
     """
     session = sessions.get_session(session_id, user_id=current_user.id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Unknown session_id {session_id!r}")
-    if session.status != "paused_drift":
+    if session.status not in ("paused_drift", "paused_user_action"):
         raise HTTPException(
             status_code=409,
             detail=f"session {session_id} is not paused (status={session.status!r})",
@@ -322,11 +388,121 @@ async def agent_resume(
     except UnknownProviderError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    last_event_id = request.headers.get("last-event-id")
+
     events = run_planner_session(session=session, flow=flow, provider=provider)
     sse = planner_events_sse(
         events,
         session_id=session.session_id,
         step_count_getter=lambda: session.step_count,
+        replay_buffer=default_replay_buffer(),
+        flow_id=session.flow_id,
+        replay_after_event_id=last_event_id,
+    )
+    return make_streaming_response(sse)
+
+
+@router.post("/agent/{session_id}/followup", tags=["ai"])
+async def agent_followup(
+    session_id: str,
+    body: AgentFollowupRequest,
+    request: Request,
+    current_user=Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """W49 — re-enter a completed planner session with a synthetic followup.
+
+    Distinct from ``/resume`` (which targets ``paused_drift`` /
+    ``paused_user_action``): ``/followup`` targets ``completed`` and
+    ``awaiting_user_input`` so the user can keep the conversation going
+    after a diff reject, a clarifying-question turn, or a no-ops
+    completion. The route:
+
+    1. Validates the session is in a followup-resumable state.
+    2. Re-resolves the original provider / model the session was opened
+       with (so a token-budget bump or surface-flip won't change the
+       resumed run's model).
+    3. Calls :func:`inject_followup_message` to append the synthetic
+       ``role="user"`` turn (rejection note or user message text).
+    4. Calls :func:`run_planner_session` — the planner's followup-resume
+       entry path drops the previous diff bookkeeping, re-snapshots the
+       graph (D006), and re-enters the loop with the appended message.
+
+    Reuses the same SSE event types as ``/start`` / ``/resume`` so frontend
+    consumers need no new handlers.
+
+    Errors:
+
+    * ``404`` — unknown session (or owned by a different user).
+    * ``409`` — session not in a followup-resumable state OR provider
+      not configured.
+    * ``422`` — Pydantic validation; ``user_message`` action with empty /
+      missing ``message``.
+    """
+    session = sessions.get_session(session_id, user_id=current_user.id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown session_id {session_id!r}")
+    if session.status not in ("completed", "awaiting_user_input"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"session {session_id} is not followup-resumable "
+                f"(status={session.status!r}); only completed / awaiting_user_input accepted"
+            ),
+        )
+
+    flow = _resolve_flow(session.flow_id)
+
+    # Mirror /resume's surface-aware model resolution: if the session was
+    # opened without an explicit model, force ``surface_models[surface]`` so
+    # the resumed run uses the same tool-capable model the original /start
+    # picked.
+    resume_model = session.model_name
+    if resume_model is None:
+        cls = PROVIDERS.get(session.provider_name)
+        if cls is not None:
+            resume_model = cls.surface_models.get(session.surface)
+    try:
+        provider = get_configured_provider(
+            db,
+            current_user.id,
+            session.provider_name,
+            surface=session.surface,
+            model=resume_model,
+        )
+    except ProviderNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnknownProviderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        inject_followup_message(
+            session,
+            action=body.action,
+            message=body.message,
+            rejected_diff_id=body.rejected_diff_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Persist the updated message history before the SSE generator opens —
+    # if the SSE client disconnects mid-stream, the followup turn is
+    # already on disk so a subsequent /resume sees it.
+    try:
+        sessions.register_session(session)
+    except Exception:
+        logger.exception("agent_followup: session checkpoint failed for session=%s", session_id)
+
+    last_event_id = request.headers.get("last-event-id")
+
+    events = run_planner_session(session=session, flow=flow, provider=provider)
+    sse = planner_events_sse(
+        events,
+        session_id=session.session_id,
+        step_count_getter=lambda: session.step_count,
+        replay_buffer=default_replay_buffer(),
+        flow_id=session.flow_id,
+        replay_after_event_id=last_event_id,
     )
     return make_streaming_response(sse)
 
@@ -372,16 +548,37 @@ async def agent_state(
     Excludes the internal ``messages`` list (potentially redactable
     content) and the ``GraphSnapshot`` (large, internal). Returns 404 for
     unknown / cross-user sessions to avoid existence-leak.
+
+    W42 cold-start hydration: when the read pulls a ``running`` session
+    from disk (no in-memory mirror in the disk repo's LRU cache), the
+    previous SSE generator is dead — there's no live process serving it.
+    We flip the status to ``paused_user_action`` and re-persist before
+    returning so the frontend renders the resume-prompt UI rather than
+    "still streaming…".
     """
     session = sessions.get_session(session_id, user_id=current_user.id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Unknown session_id {session_id!r}")
+
+    if session.status == "running" and _looks_cold_started(session):
+        session.status = "paused_user_action"
+        session.pause_reason = "cold_start"
+        session.touch()
+        try:
+            sessions.register_session(session)
+        except Exception:
+            logger.exception(
+                "agent_state: cold-start status flip persistence failed for session=%s",
+                session_id,
+            )
+
     return _to_state_response(session)
 
 
 __all__ = [
     "AgentAbortResponse",
     "AgentDiscardResponse",
+    "AgentFollowupRequest",
     "AgentResumeRequest",
     "AgentStartRequest",
     "AgentStateResponse",

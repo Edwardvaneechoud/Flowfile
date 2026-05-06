@@ -50,6 +50,36 @@ vi.mock("./flow-store", () => ({
   useFlowStore: () => ({ requestReload: mockRequestReload }),
 }));
 
+// W49 — diff-store.reject() coordinates with the agent store after a
+// successful backend reject. Mock the agent store so tests can drive the
+// followup hand-off without spinning up a real Pinia agent store.
+const mockAgent = vi.hoisted(() => ({
+  resumeAfterReject: vi.fn(),
+  state: {
+    currentSessionId: null as string | null,
+    status: "idle" as
+      | "idle"
+      | "running"
+      | "paused_drift"
+      | "paused_user_action"
+      | "awaiting_user_input"
+      | "completed"
+      | "aborted"
+      | "failed",
+  },
+}));
+vi.mock("./ai-agent-store", () => ({
+  useAiAgentStore: () => ({
+    get currentSessionId() {
+      return mockAgent.state.currentSessionId;
+    },
+    get status() {
+      return mockAgent.state.status;
+    },
+    resumeAfterReject: mockAgent.resumeAfterReject,
+  }),
+}));
+
 import { useAiDiffStore } from "./ai-diff-store";
 
 const {
@@ -94,9 +124,13 @@ const sampleStageRequest = (): StageDiffRequestShape => ({
       tool_name: "flowfile.graph.connect",
       audit_id: 102,
       staged_node_payload: {
+        // Mirrors `NodeConnection.model_dump()` from W31's executor — see
+        // `flowfile_core/.../ai/tools/executor.py:649`. Field names match the
+        // Pydantic shape exactly (no `_class` suffix); `connection_class`
+        // values are canonical `output-N` / `input-N`.
         connection: {
-          output_connection_class: { node_id: 3, connection_class: "main" },
-          input_connection_class: { node_id: 7, connection_class: "main" },
+          output_connection: { node_id: 3, connection_class: "output-0" },
+          input_connection: { node_id: 7, connection_class: "input-0" },
         },
       },
     },
@@ -133,6 +167,9 @@ beforeEach(() => {
   mockAccept.mockReset();
   mockReject.mockReset();
   mockRequestReload.mockReset();
+  mockAgent.resumeAfterReject.mockReset();
+  mockAgent.state.currentSessionId = null;
+  mockAgent.state.status = "idle";
 });
 
 afterEach(() => {
@@ -308,6 +345,86 @@ describe("ai-diff-store — reject", () => {
   });
 });
 
+describe("ai-diff-store — reject (W49 followup hand-off)", () => {
+  it("hands off to agentStore.resumeAfterReject when session is completed", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-w49"));
+    mockReject.mockResolvedValue(rejectOk("diff-w49"));
+    mockAgent.state.currentSessionId = "sess-42";
+    mockAgent.state.status = "completed";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("please use the read node directly");
+
+    expect(mockReject).toHaveBeenCalledWith("diff-w49", expect.any(AbortSignal));
+    expect(mockAgent.resumeAfterReject).toHaveBeenCalledWith(
+      "sess-42",
+      "please use the read node directly",
+      "diff-w49",
+    );
+  });
+
+  it("hands off with null note when reject() is called without a note", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-w49"));
+    mockReject.mockResolvedValue(rejectOk("diff-w49"));
+    mockAgent.state.currentSessionId = "sess-42";
+    mockAgent.state.status = "completed";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(mockAgent.resumeAfterReject).toHaveBeenCalledWith("sess-42", null, "diff-w49");
+  });
+
+  it("falls back to legacy clear-only when no agent session is active", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-w49"));
+    mockReject.mockResolvedValue(rejectOk("diff-w49"));
+    mockAgent.state.currentSessionId = null;
+    mockAgent.state.status = "idle";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("anything");
+
+    expect(mockReject).toHaveBeenCalled();
+    expect(store.currentDiff).toBeNull();
+    expect(mockAgent.resumeAfterReject).not.toHaveBeenCalled();
+  });
+
+  it("falls back to legacy clear-only when session is in non-resumable status", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-w49"));
+    mockReject.mockResolvedValue(rejectOk("diff-w49"));
+    // Session present but failed — not followup-resumable.
+    mockAgent.state.currentSessionId = "sess-42";
+    mockAgent.state.status = "failed";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject();
+
+    expect(store.currentDiff).toBeNull();
+    expect(mockAgent.resumeAfterReject).not.toHaveBeenCalled();
+  });
+
+  it("hands off when session is awaiting_user_input as well", async () => {
+    mockStage.mockResolvedValue(stageOk("diff-w49"));
+    mockReject.mockResolvedValue(rejectOk("diff-w49"));
+    mockAgent.state.currentSessionId = "sess-42";
+    mockAgent.state.status = "awaiting_user_input";
+
+    const store = useAiDiffStore();
+    await store.stage(sampleStageRequest());
+    await store.reject("course correct please");
+
+    expect(mockAgent.resumeAfterReject).toHaveBeenCalledWith(
+      "sess-42",
+      "course correct please",
+      "diff-w49",
+    );
+  });
+});
+
 describe("ai-diff-store — clear / setCurrentDiff", () => {
   it("clear() drops currentDiff and error without hitting the backend", async () => {
     mockStage.mockResolvedValue(stageOk("diff-1"));
@@ -367,5 +484,277 @@ describe("ai-diff-store — drift detail parsing", () => {
     await store.accept();
 
     expect(store.error!.kind).toBe("http");
+  });
+});
+
+// W61 — `connectionLabel` formats a staged `NodeConnection` for the diff preview.
+// Pre-fix the renderer read `output_connection_class` / `input_connection_class`
+// (with `_class` suffix) — neither field exists on the wire shape, so every
+// connection rendered as `#?.main → #?.main`. The fix matches the shape
+// `NodeConnection.model_dump()` actually produces (see `executor.py:649,797`
+// and `diff.py:260,279`) — `output_connection` / `input_connection`, no suffix.
+describe("aiDiffTypes — connectionLabel (W61, W68)", () => {
+  it("renders the default-handle case as bare `#<from> → #<to>` (W68)", async () => {
+    const { connectionLabel } = await import("../features/ai/aiDiffTypes");
+
+    const label = connectionLabel({
+      connection: {
+        output_connection: { node_id: 3, connection_class: "output-0" },
+        input_connection: { node_id: 5, connection_class: "input-0" },
+      },
+      audit_id: null,
+    });
+
+    // Default handles (`output-0` / `input-0`) are internal wire identifiers;
+    // hiding them on the common single-input/single-output path drops the
+    // user-facing noise the original W61 fix introduced.
+    expect(label).toBe("#3 → #5");
+    expect(label).not.toContain("main");
+    expect(label).not.toContain("output-0");
+    expect(label).not.toContain("input-0");
+    expect(label).not.toContain("?");
+  });
+
+  it("preserves non-default handles (e.g. `input-1` for the right-side join input)", async () => {
+    const { connectionLabel } = await import("../features/ai/aiDiffTypes");
+
+    const label = connectionLabel({
+      connection: {
+        output_connection: { node_id: 12, connection_class: "output-0" },
+        input_connection: { node_id: 13, connection_class: "input-1" },
+      },
+      audit_id: null,
+    });
+
+    // Default output handle hidden, non-default input handle preserved — the
+    // suffix is what disambiguates a join's right-side input from its left.
+    expect(label).toBe("#12 → #13.input-1");
+  });
+
+  it("preserves a non-default output handle while hiding the default input", async () => {
+    const { connectionLabel } = await import("../features/ai/aiDiffTypes");
+
+    const label = connectionLabel({
+      connection: {
+        output_connection: { node_id: 7, connection_class: "output-1" },
+        input_connection: { node_id: 8, connection_class: "input-0" },
+      },
+      audit_id: null,
+    });
+
+    expect(label).toBe("#7.output-1 → #8");
+  });
+
+  it("falls back to bare canonical form when handles are missing", async () => {
+    const { connectionLabel } = await import("../features/ai/aiDiffTypes");
+
+    // Defensive fallback path — in practice the wire payload always carries
+    // both handles. Missing handles default to `output-0` / `input-0`, which
+    // are then hidden as noise.
+    const label = connectionLabel({
+      connection: {
+        output_connection: { node_id: 1 },
+        input_connection: { node_id: 2 },
+      },
+      audit_id: null,
+    });
+
+    expect(label).toBe("#1 → #2");
+    expect(label).not.toContain("main");
+  });
+
+  it("falls back to `?` for missing node ids without leaking `main` literal", async () => {
+    const { connectionLabel } = await import("../features/ai/aiDiffTypes");
+
+    const label = connectionLabel({ connection: {}, audit_id: null });
+
+    expect(label).toBe("#? → #?");
+    expect(label).not.toContain("main");
+  });
+
+  it("formats the synthesised diff payload from `synthesiseDiffFromStageRequest` end-to-end", async () => {
+    // Round-trip check: a stage request shaped exactly like what W31's
+    // executor emits → synthesised payload → `connectionLabel` → bare form.
+    // Locks the wire shape ↔ renderer contract for this code path.
+    const { synthesiseDiffFromStageRequest, connectionLabel } =
+      await import("../features/ai/aiDiffTypes");
+
+    const diff = synthesiseDiffFromStageRequest(
+      {
+        session_id: "sess-w61",
+        flow_id: 9,
+        rationale: null,
+        staged_results: [
+          {
+            tool_name: "flowfile.graph.connect",
+            audit_id: 1,
+            staged_node_payload: {
+              connection: {
+                output_connection: { node_id: 3, connection_class: "output-0" },
+                input_connection: { node_id: 5, connection_class: "input-0" },
+              },
+            },
+          },
+        ],
+      },
+      "diff-w61",
+    );
+
+    expect(diff.connections_added).toHaveLength(1);
+    expect(connectionLabel(diff.connections_added[0])).toBe("#3 → #5");
+  });
+});
+
+// W68 (richConnectionLabel + buildAdditionNodeTypes) — node-type-aware labels.
+// Renderer wants `read_csv #3 → group_by #5` instead of `#3 → #5` when type
+// info is available. Type comes from the diff's own additions for newly-staged
+// nodes; the Vue component layers a flow-store lookup on top for existing
+// nodes (untested at the unit level — we only test the pure helper here).
+describe("aiDiffTypes — richConnectionLabel (W68)", () => {
+  it("renders both sides with node type when both ids are in the lookup", async () => {
+    const { richConnectionLabel } = await import("../features/ai/aiDiffTypes");
+    const types = new Map<number, string>([
+      [3, "read_csv"],
+      [5, "group_by"],
+    ]);
+    const label = richConnectionLabel(
+      {
+        connection: {
+          output_connection: { node_id: 3, connection_class: "output-0" },
+          input_connection: { node_id: 5, connection_class: "input-0" },
+        },
+        audit_id: null,
+      },
+      types,
+    );
+    expect(label).toBe("read_csv #3 → group_by #5");
+  });
+
+  it("falls back to bare `#<id>` for sides whose type is missing", async () => {
+    const { richConnectionLabel } = await import("../features/ai/aiDiffTypes");
+    const types = new Map<number, string>([[5, "group_by"]]);
+    const label = richConnectionLabel(
+      {
+        connection: {
+          output_connection: { node_id: 3, connection_class: "output-0" },
+          input_connection: { node_id: 5, connection_class: "input-0" },
+        },
+        audit_id: null,
+      },
+      types,
+    );
+    expect(label).toBe("#3 → group_by #5");
+  });
+
+  it("preserves non-default handles after the type label (e.g. join right input)", async () => {
+    const { richConnectionLabel } = await import("../features/ai/aiDiffTypes");
+    const types = new Map<number, string>([
+      [12, "filter"],
+      [13, "join"],
+    ]);
+    const label = richConnectionLabel(
+      {
+        connection: {
+          output_connection: { node_id: 12, connection_class: "output-0" },
+          input_connection: { node_id: 13, connection_class: "input-1" },
+        },
+        audit_id: null,
+      },
+      types,
+    );
+    expect(label).toBe("filter #12 → join #13.input-1");
+  });
+
+  it("falls back to `#?` for null node ids regardless of map state", async () => {
+    const { richConnectionLabel } = await import("../features/ai/aiDiffTypes");
+    const label = richConnectionLabel(
+      { connection: {}, audit_id: null },
+      new Map<number, string>(),
+    );
+    expect(label).toBe("#? → #?");
+  });
+});
+
+describe("aiDiffTypes — buildAdditionNodeTypes (W68)", () => {
+  it("maps each addition's settings.node_id to its declared node_type", async () => {
+    const { buildAdditionNodeTypes } = await import("../features/ai/aiDiffTypes");
+    const map = buildAdditionNodeTypes({
+      diff_id: "d",
+      session_id: "s",
+      flow_id: 1,
+      rationale: null,
+      additions: [
+        {
+          node_type: "read_csv",
+          settings: { node_id: 7 },
+          insertion_context: {
+            upstream_node_ids: [],
+            right_input_node_id: null,
+            pos_x: 0,
+            pos_y: 0,
+          },
+          predicted_output_schema: null,
+          audit_id: null,
+        },
+        {
+          node_type: "group_by",
+          settings: { node_id: 8, foo: "bar" },
+          insertion_context: {
+            upstream_node_ids: [7],
+            right_input_node_id: null,
+            pos_x: 0,
+            pos_y: 0,
+          },
+          predicted_output_schema: null,
+          audit_id: null,
+        },
+      ],
+      connections_added: [],
+      deletions: [],
+      connections_removed: [],
+    });
+    expect(map.size).toBe(2);
+    expect(map.get(7)).toBe("read_csv");
+    expect(map.get(8)).toBe("group_by");
+  });
+
+  it("skips additions whose settings.node_id is missing or non-numeric", async () => {
+    const { buildAdditionNodeTypes } = await import("../features/ai/aiDiffTypes");
+    const map = buildAdditionNodeTypes({
+      diff_id: "d",
+      session_id: "s",
+      flow_id: 1,
+      rationale: null,
+      additions: [
+        {
+          node_type: "filter",
+          settings: {}, // no node_id
+          insertion_context: {
+            upstream_node_ids: [],
+            right_input_node_id: null,
+            pos_x: 0,
+            pos_y: 0,
+          },
+          predicted_output_schema: null,
+          audit_id: null,
+        },
+        {
+          node_type: "sort",
+          settings: { node_id: "9" }, // string, not number — defensive skip
+          insertion_context: {
+            upstream_node_ids: [],
+            right_input_node_id: null,
+            pos_x: 0,
+            pos_y: 0,
+          },
+          predicted_output_schema: null,
+          audit_id: null,
+        },
+      ],
+      connections_added: [],
+      deletions: [],
+      connections_removed: [],
+    });
+    expect(map.size).toBe(0);
   });
 });

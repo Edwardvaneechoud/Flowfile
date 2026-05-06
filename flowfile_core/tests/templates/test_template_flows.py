@@ -112,6 +112,5 @@ class TestTemplateFlowExecution:
 
         flow = open_flow(temp_yaml)
         flow.execution_location = "local"
-        breakpoint()
         for node in flow.nodes:
             node.get_predicted_resulting_data()

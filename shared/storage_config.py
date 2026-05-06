@@ -185,6 +185,22 @@ class FlowfileStorage:
         return self.base_directory / "template_data"
 
     @property
+    def ai_sessions_directory(self) -> Path:
+        """Directory for W42 disk-persisted AI agent sessions (per-user, sidecar).
+
+        Docker → ``user_data_directory / "ai_sessions"`` so multi-tenant
+        deployments keep per-user separation. Local → ``base_directory /
+        "ai_sessions"`` (``~/.flowfile/ai_sessions/``) so we don't write into
+        the user's HOME root (``Path.home() / "ai_sessions"`` would be
+        intrusive — same precedent as the W59 prompt-log path deviation).
+        Mirrors the existing ``flows_directory`` / ``outputs_directory``
+        resolution shape exactly.
+        """
+        if _is_docker_mode():
+            return self.user_data_directory / "ai_sessions"
+        return self.base_directory / "ai_sessions"
+
+    @property
     def catalog_tables_directory(self) -> Path:
         """Directory for materialized catalog table Parquet files."""
         if _is_docker_mode():

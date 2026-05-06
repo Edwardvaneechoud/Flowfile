@@ -463,7 +463,14 @@ export interface AgentDriftDetail {
 export interface AgentSessionState {
   sessionId: string;
   flowId: number;
-  status: "running" | "paused_drift" | "awaiting_user" | "completed" | "aborted" | "failed";
+  status:
+    | "running"
+    | "paused_drift"
+    | "paused_user_action"
+    | "awaiting_user"
+    | "completed"
+    | "aborted"
+    | "failed";
   surface: "agent" | "agent_complex";
   samplesMode: "off" | "regex";
   stepCount: number;

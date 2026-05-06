@@ -28,8 +28,11 @@ import {
 import {
   AiStreamHttpError,
   resumeAgentSessionStream,
+  streamAgentFollowup,
   streamAgentSession,
+  type AgentAwaitingUserInputResult,
   type AgentCompleteResult,
+  type AgentFollowupRequest,
   type AgentSessionHandlers,
   type AgentStartRequest,
   type AgentToolCallProposed,
@@ -54,6 +57,8 @@ export type AgentStoreStatus =
   | "idle"
   | "running"
   | "paused_drift"
+  | "paused_user_action"
+  | "awaiting_user_input"
   | "completed"
   | "aborted"
   | "failed";
@@ -70,6 +75,7 @@ export interface AgentEvent {
     | "retry"
     | "abort"
     | "complete"
+    | "awaiting_user_input"
     | "info";
   payload: Record<string, unknown>;
   at: number;
@@ -234,6 +240,16 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
         status.value = "aborted";
         _appendEvent("abort", { session_id: sessionId });
       },
+      onAwaitingUserInput: (result: AgentAwaitingUserInputResult) => {
+        // W49 — model ended on a clarifying question with no staged ops.
+        // Distinct from "complete + nothing to stage": the frontend renders
+        // *"Agent waiting for your reply…"* and the next user message is
+        // routed through ``resumeAfterMessage`` so the planner re-enters
+        // the same session rather than spawning a fresh one.
+        if (result.session_id) currentSessionId.value = result.session_id;
+        status.value = "awaiting_user_input";
+        _appendEvent("awaiting_user_input", result as unknown as Record<string, unknown>);
+      },
       onComplete: (result) => {
         // Q2 W45 — propagate session_id from the wire on completion too.
         // ``result.session_id`` is part of AgentCompleteResult.
@@ -358,6 +374,74 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     }
   };
 
+  const _resumeViaFollowup = async (
+    sessionId: string,
+    body: AgentFollowupRequest,
+  ): Promise<void> => {
+    // W49 — shared scaffolding for ``resumeAfterReject`` + ``resumeAfterMessage``.
+    // Reuses ``_buildHandlers`` so the resumed run renders into the same
+    // ``events`` array — no ``── new agent run ──`` boundary, the chat
+    // trail continues unbroken.
+    const controller = _newController();
+    currentSessionId.value = sessionId;
+    status.value = "running";
+    error.value = null;
+    driftDetail.value = null;
+    aiDisabled.value = false;
+    // ``lastResult`` carries the previous run's diff_payload — clear so
+    // the diff store hand-off in onComplete doesn't see a stale entry.
+    lastResult.value = null;
+
+    const handlers = _buildHandlers();
+    try {
+      await streamAgentFollowup(sessionId, body, handlers, controller.signal);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      if (err instanceof AiDisabledError) {
+        aiDisabled.value = true;
+        error.value = "AI features are disabled.";
+        status.value = "failed";
+        return;
+      }
+      if (err instanceof AiStreamHttpError) {
+        error.value = err.detail || `HTTP ${err.status}`;
+        status.value = "failed";
+        return;
+      }
+      console.error("ai-agent-store: streamAgentFollowup failed", err);
+      error.value = err instanceof Error ? err.message : String(err);
+      status.value = "failed";
+    } finally {
+      if (activeAbort === controller) activeAbort = null;
+    }
+  };
+
+  const resumeAfterReject = async (
+    sessionId: string,
+    note: string | null,
+    rejectedDiffId: string | null = null,
+  ): Promise<void> => {
+    // W49 — called from ``ai-diff-store.reject(note?)`` after the backend
+    // reject succeeded. Re-enters the same session with a synthetic
+    // rejection feedback turn so the planner can course-correct.
+    await _resumeViaFollowup(sessionId, {
+      action: "rejected_diff",
+      message: note,
+      rejected_diff_id: rejectedDiffId,
+    });
+  };
+
+  const resumeAfterMessage = async (sessionId: string, message: string): Promise<void> => {
+    // W49 — called from ``AiAssistant.handleSend`` when the active session
+    // is ``completed`` or ``awaiting_user_input``. Routes the user's typed
+    // message through the followup endpoint instead of allocating a fresh
+    // session via ``start()``.
+    await _resumeViaFollowup(sessionId, {
+      action: "user_message",
+      message,
+    });
+  };
+
   const resumeDiscard = async (sessionId: string): Promise<void> => {
     const controller = _newController();
     try {
@@ -412,6 +496,8 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       currentSessionId.value = state.sessionId;
       // Mirror the server's status back to the local enum (one-to-one mapping
       // except the server's "awaiting_user" which the store collapses to running).
+      // W42 — ``paused_user_action`` rides through unchanged so the UI can
+      // surface a cold-start re-attach prompt.
       const mapped: AgentStoreStatus =
         state.status === "running" || state.status === "awaiting_user"
           ? "running"
@@ -426,6 +512,74 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
       }
       console.error("ai-agent-store: refreshState failed", err);
       return null;
+    }
+  };
+
+  const reattach = async (): Promise<void> => {
+    // W42 — page-reload re-attach. Called once on store init (after hydration
+    // has populated currentSessionId from sessionStorage). Three branches:
+    //
+    // 1. ``paused_drift`` / ``paused_user_action`` — surface the existing
+    //    pause UI; user clicks Continue / Discard. No SSE stream opened
+    //    here (a click will call resumeContinue or resumeDiscard).
+    // 2. ``running`` — the planner is logically still running on the server
+    //    (or about to be flipped to paused_user_action by the GET itself).
+    //    Open a new SSE stream via the resume route with ``Last-Event-ID``
+    //    derived from server's ``step_count`` so the replay buffer can flush
+    //    buffered frames newer than the cursor before the live planner
+    //    resumes.
+    // 3. terminal (``completed`` / ``aborted`` / ``failed``) — keep the
+    //    persisted ``lastResult`` / ``events`` rendered; no streaming.
+    const sid = currentSessionId.value;
+    if (!sid) return;
+
+    const state = await refreshState(sid);
+    if (state === null) return;
+
+    if (state.status === "paused_drift" || state.status === "paused_user_action") {
+      // UI shows resume buttons; no SSE.
+      return;
+    }
+    if (state.status !== "running" && state.status !== "awaiting_user") {
+      // Terminal — nothing to reattach to. ``refreshState`` already mapped
+      // the status into the local enum.
+      return;
+    }
+
+    // Build the cursor. The server's ``step_count`` is the planner's NEXT
+    // step counter; the highest emitted-step id we COULD have received is
+    // ``step_count - 1``. We use that as the cursor so any frame at
+    // ``step_count`` or later replays before live events resume.
+    let lastEventId: string | undefined;
+    if (state.stepCount > 0) {
+      lastEventId = `${sid}.${state.stepCount - 1}`;
+    }
+
+    const controller = _newController();
+    error.value = null;
+    aiDisabled.value = false;
+
+    const handlers = _buildHandlers();
+    try {
+      await resumeAgentSessionStream(sid, handlers, controller.signal, lastEventId);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      if (err instanceof AiDisabledError) {
+        aiDisabled.value = true;
+        error.value = "AI features are disabled.";
+        status.value = "failed";
+        return;
+      }
+      if (err instanceof AiStreamHttpError) {
+        error.value = err.detail || `HTTP ${err.status}`;
+        status.value = "failed";
+        return;
+      }
+      console.error("ai-agent-store: reattach failed", err);
+      error.value = err instanceof Error ? err.message : String(err);
+      status.value = "failed";
+    } finally {
+      if (activeAbort === controller) activeAbort = null;
     }
   };
 
@@ -463,8 +617,11 @@ export const useAiAgentStore = defineStore("ai-agent", () => {
     start,
     resumeContinue,
     resumeDiscard,
+    resumeAfterReject,
+    resumeAfterMessage,
     abort,
     refreshState,
+    reattach,
     clear,
   };
 });

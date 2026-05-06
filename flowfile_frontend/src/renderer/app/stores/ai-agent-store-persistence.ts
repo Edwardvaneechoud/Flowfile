@@ -59,6 +59,7 @@ const VALID_STATUSES: ReadonlySet<AgentStoreStatus> = new Set([
   "idle",
   "running",
   "paused_drift",
+  "paused_user_action",
   "completed",
   "aborted",
   "failed",

@@ -14,6 +14,7 @@
 
 import { computed, ref } from "vue";
 
+import { useFlowStore } from "../../stores/flow-store";
 import type {
   DiffStoreError,
   GraphDiffPayload,
@@ -21,7 +22,19 @@ import type {
   StagedConnection,
   StagedSchemaColumn,
 } from "./aiDiffTypes";
-import { opCount } from "./aiDiffTypes";
+import { buildAdditionNodeTypes, opCount, richConnectionLabel } from "./aiDiffTypes";
+
+const flowStore = useFlowStore();
+
+const lookupExistingNodeType = (nodeId: number): string | undefined => {
+  // Vue Flow keys nodes by stringified id; `node.data.nodeTemplate.item` is the
+  // canonical snake_case node type that matches what `additions` carry on the
+  // wire. Defensive about the chain since `vueFlowInstance` is null before the
+  // canvas mounts.
+  const node = flowStore.vueFlowInstance?.findNode(String(nodeId));
+  const nodeType = node?.data?.nodeTemplate?.item;
+  return typeof nodeType === "string" ? nodeType : undefined;
+};
 
 interface Props {
   diff: GraphDiffPayload;
@@ -81,12 +94,46 @@ const formatSchemaColumn = (col: StagedSchemaColumn): string => {
   return `${col.name}: ${dtype}`;
 };
 
+const nodeTypeById = computed<Map<number, string>>(() => {
+  // Start with newly-staged nodes from the diff itself (their type + id are
+  // already on the wire). Layer existing-node lookups from the live flow store
+  // on top so connections that reference pre-existing nodes also get a type.
+  const map = buildAdditionNodeTypes(props.diff);
+  const seedExisting = (id: number | null | undefined): void => {
+    if (typeof id !== "number" || map.has(id)) return;
+    const t = lookupExistingNodeType(id);
+    if (t) map.set(id, t);
+  };
+  for (const c of props.diff.connections_added) {
+    seedExisting(c.connection.output_connection?.node_id);
+    seedExisting(c.connection.input_connection?.node_id);
+  }
+  for (const c of props.diff.connections_removed) {
+    seedExisting(c.connection.output_connection?.node_id);
+    seedExisting(c.connection.input_connection?.node_id);
+  }
+  for (const d of props.diff.deletions) seedExisting(d.delete_node_id);
+  for (const add of props.diff.additions) {
+    for (const upId of add.insertion_context.upstream_node_ids) seedExisting(upId);
+    seedExisting(add.insertion_context.right_input_node_id);
+  }
+  return map;
+});
+
+const formatNodeRef = (nodeId: number): string => {
+  const nodeType = nodeTypeById.value.get(nodeId);
+  return nodeType ? `${nodeType} #${nodeId}` : `#${nodeId}`;
+};
+
+const renderConnection = (c: StagedConnection): string =>
+  richConnectionLabel(c, nodeTypeById.value);
+
 const additionUpstreamLabel = (add: StagedAddition): string => {
   const ids = add.insertion_context.upstream_node_ids;
   if (ids.length === 0) return "(no upstream — source node)";
   const right = add.insertion_context.right_input_node_id;
-  const main = ids.map((id) => `#${id}`).join(", ");
-  return right !== null ? `main: ${main} | right: #${right}` : main;
+  const main = ids.map(formatNodeRef).join(", ");
+  return right !== null ? `main: ${main} | right: ${formatNodeRef(right)}` : main;
 };
 
 const formatSettings = (settings: Record<string, unknown>): string => {
@@ -95,18 +142,6 @@ const formatSettings = (settings: Record<string, unknown>): string => {
   } catch {
     return String(settings);
   }
-};
-
-const connectionLabel = (c: StagedConnection): string => {
-  const conn = c.connection as {
-    output_connection_class?: { node_id?: number | string; connection_class?: string };
-    input_connection_class?: { node_id?: number | string; connection_class?: string };
-  };
-  const fromId = conn.output_connection_class?.node_id ?? "?";
-  const toId = conn.input_connection_class?.node_id ?? "?";
-  const fromIface = conn.output_connection_class?.connection_class ?? "main";
-  const toIface = conn.input_connection_class?.connection_class ?? "main";
-  return `#${fromId}.${fromIface} → #${toId}.${toIface}`;
 };
 
 const handleAccept = (): void => {
@@ -192,7 +227,7 @@ const handleReject = (): void => {
         :key="`con-add-${idx}`"
         class="ai-diff-preview__card ai-diff-preview__card--connection"
       >
-        <span class="ai-diff-preview__connection-line">{{ connectionLabel(c) }}</span>
+        <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
       </article>
     </section>
 
@@ -204,7 +239,7 @@ const handleReject = (): void => {
         class="ai-diff-preview__card ai-diff-preview__card--delete"
       >
         <span class="ai-diff-preview__chip ai-diff-preview__chip--danger">delete node</span>
-        <span class="ai-diff-preview__upstream">#{{ d.delete_node_id }}</span>
+        <span class="ai-diff-preview__upstream">{{ formatNodeRef(d.delete_node_id) }}</span>
       </article>
     </section>
 
@@ -215,7 +250,7 @@ const handleReject = (): void => {
         :key="`con-rem-${idx}`"
         class="ai-diff-preview__card ai-diff-preview__card--delete"
       >
-        <span class="ai-diff-preview__connection-line">{{ connectionLabel(c) }}</span>
+        <span class="ai-diff-preview__connection-line">{{ renderConnection(c) }}</span>
       </article>
     </section>
 

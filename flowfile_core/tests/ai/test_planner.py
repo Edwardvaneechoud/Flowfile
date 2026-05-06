@@ -44,7 +44,7 @@ from flowfile_core.ai.agents.planner import (
     run_planner_session,
 )
 from flowfile_core.ai.context.builder import SURFACE_TO_LEVEL
-from flowfile_core.ai.providers.base import ChatResponse, ToolCall, Usage
+from flowfile_core.ai.providers.base import ChatResponse, Message, ToolCall, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
 from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -814,15 +814,18 @@ async def test_complete_event_carries_diff_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cannot_run_completed_session() -> None:
+async def test_cannot_run_failed_session() -> None:
+    """W49 — ``completed`` is now a followup-resumable entry state, but
+    ``failed`` / ``aborted`` (and other non-resumable states) still error."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
-    sess.status = "completed"
+    sess.status = "failed"
     provider = _ScriptedProvider([_Step(tool_calls=[], finish_reason="stop")])
     events = await _drain(
         run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
     )
     assert events[0].event == "error"
+    assert "failed" in str(events[0].payload).lower()
 
 
 @pytest.mark.asyncio
@@ -1369,3 +1372,301 @@ def test_w56_planner_system_prompt_includes_node_catalog() -> None:
     catalog_idx = prompt.find("## Tool catalog\n")
     assert pointer_idx >= 0, "pointer line from planner.md missing"
     assert catalog_idx > pointer_idx, "catalog block must follow the pointer line"
+
+
+# --------------------------------------------------------------------------- #
+# W49 — Post-completion followup re-entry                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_w49_looks_like_question_trailing_qmark() -> None:
+    from flowfile_core.ai.agents.planner import _looks_like_question
+
+    assert _looks_like_question("Should I drop nulls first?") is True
+    assert _looks_like_question("Done.") is False
+    assert _looks_like_question(None) is False
+    assert _looks_like_question("   ") is False
+
+
+def test_w49_looks_like_question_interrogative_token() -> None:
+    """No trailing ``?`` but interrogative token wins."""
+    from flowfile_core.ai.agents.planner import _looks_like_question
+
+    assert _looks_like_question("Which column do you want me to filter on") is True
+    assert _looks_like_question("Do you want me to also sort the result") is True
+    assert _looks_like_question("This is how the join works") is True  # false-positive tolerated
+
+
+def test_w49_inject_followup_message_user_message() -> None:
+    """``user_message`` action appends the text verbatim as a user turn."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+    from flowfile_core.ai.providers.base import Message
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="goal"),
+        Message(role="assistant", content="What columns?"),
+    ]
+    msg = inject_followup_message(sess, action="user_message", message="amount and region")
+    assert msg.role == "user"
+    assert msg.content == "amount and region"
+    assert sess.messages[-1] is msg
+
+
+def test_w49_inject_followup_message_user_message_empty_raises() -> None:
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    with pytest.raises(ValueError):
+        inject_followup_message(sess, action="user_message", message=None)
+    with pytest.raises(ValueError):
+        inject_followup_message(sess, action="user_message", message="   ")
+
+
+def test_w49_inject_followup_message_rejected_diff_with_note() -> None:
+    """Rejection note is included verbatim in the synthetic user turn."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.diff_id = "diff-abc"
+    msg = inject_followup_message(
+        sess,
+        action="rejected_diff",
+        message="please use the read node directly, not after the filter",
+    )
+    assert msg.role == "user"
+    assert "please use the read node directly" in msg.content
+    assert "rejected" in msg.content.lower()
+    assert "diff-abc" in msg.content
+
+
+def test_w49_inject_followup_message_rejected_diff_generic_when_no_note() -> None:
+    """Generic fallback when the user clicks Reject without a note."""
+    from flowfile_core.ai.agents.planner import (
+        _REJECTED_DIFF_DEFAULT_NOTE,
+        inject_followup_message,
+    )
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.diff_id = "diff-xyz"
+    msg = inject_followup_message(sess, action="rejected_diff", message=None)
+    assert _REJECTED_DIFF_DEFAULT_NOTE in msg.content
+
+
+def test_w49_inject_followup_message_rejected_diff_uses_explicit_diff_id() -> None:
+    """Explicit ``rejected_diff_id`` wins over session.diff_id."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow)
+    sess.diff_id = "diff-from-session"
+    msg = inject_followup_message(
+        sess,
+        action="rejected_diff",
+        rejected_diff_id="diff-from-request",
+    )
+    assert "diff-from-request" in msg.content
+    assert "diff-from-session" not in msg.content
+
+
+@pytest.mark.asyncio
+async def test_w49_planner_emits_awaiting_user_input_on_question() -> None:
+    """No tool calls, no staged_results, last assistant ends in ``?`` →
+    ``awaiting_user_input`` (not ``complete``); session status flips to
+    ``awaiting_user_input``."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[],
+                content="Which column do you want me to group by?",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+    assert "awaiting_user_input" in names
+    assert "complete" not in names
+    assert sess.status == "awaiting_user_input"
+    awaiting = [e for e in events if e.event == "awaiting_user_input"][0]
+    assert awaiting.payload["session_id"] == sess.session_id
+    assert "group by" in awaiting.payload["question"].lower()
+
+
+@pytest.mark.asyncio
+async def test_w49_planner_emits_complete_for_no_question_no_ops() -> None:
+    """Mode 3 — no staged_results, last message is NOT a question → still
+    ``complete`` so the legacy path stays intact for declarative finishes."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    provider = _ScriptedProvider([_Step(tool_calls=[], content="Here's an explanation. Done.", finish_reason="stop")])
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+    assert "complete" in names
+    assert "awaiting_user_input" not in names
+    assert sess.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_w49_followup_re_entry_from_completed_resnapshots_and_resets() -> None:
+    """Mode 1 entry path — a completed session with a registered diff_id
+    re-enters the planner via the followup-resume preamble; the preamble
+    re-snapshots the graph and drops the prior diff bookkeeping."""
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    sess.status = "completed"
+    sess.diff_id = "old-diff"
+    sess.rationale = "old rationale"
+    sess.staged_results = [
+        diff_module.StagedToolEntry(
+            tool_name="flowfile.graph.add_filter",
+            audit_id=None,
+            staged_node_payload={"settings": {"node_id": 99}},
+        )
+    ]
+    sess.staged_node_ids = [99]
+    sess.last_assistant_text = "old"
+
+    # Route would inject the synthetic message before calling run_planner_session.
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    inject_followup_message(sess, action="user_message", message="please continue")
+
+    provider = _ScriptedProvider([_Step(tool_calls=[], content="acknowledged.", finish_reason="stop")])
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+    # First event is the followup info preamble.
+    info = [e for e in events if e.event == "info" and e.payload.get("previous_status")]
+    assert info, "expected a followup info preamble"
+    assert info[0].payload["previous_status"] == "completed"
+
+    # Bookkeeping was reset before the new round.
+    assert sess.diff_id is None
+    assert sess.staged_results == []
+    assert sess.staged_node_ids == []
+    assert sess.rationale is None
+    # Run terminated as expected.
+    assert "complete" in names or "awaiting_user_input" in names
+
+
+@pytest.mark.asyncio
+async def test_w49_followup_re_snapshots_before_drift_check() -> None:
+    """D006 — the followup-resume preamble must re-snapshot the graph so a
+    subsequent ``detect_drift`` compares against the *current* state, not
+    the snapshot the original ``/start`` took.
+
+    Concretely: after a session reaches ``completed`` with snapshot S0, the
+    user manually adds node 2. Without the re-snapshot, the next followup
+    iteration would fire ``drift_detected`` immediately on node 2 (an
+    "external addition"). With the re-snapshot, the resumed run sees a
+    fresh baseline and proceeds normally.
+    """
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    sess.status = "completed"
+
+    # Original snapshot at /start time captured only node 1.
+    sess.snapshot = sessions.capture_graph_snapshot(flow)
+
+    # User added node 2 manually after the original session completed.
+    _add_orders(flow, node_id=2)
+    assert {n.node_id for n in flow.nodes} == {1, 2}
+
+    inject_followup_message(sess, action="user_message", message="continue")
+
+    provider = _ScriptedProvider([_Step(tool_calls=[], content="ack", finish_reason="stop")])
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+
+    # Drift must NOT fire — the preamble re-snapshotted to include node 2.
+    assert "drift_detected" not in names
+    assert "complete" in names
+
+    # Snapshot now contains node 2 — proof the preamble took a fresh capture.
+    assert 2 in sess.snapshot.node_ids
+
+
+@pytest.mark.asyncio
+async def test_w49_followup_after_question_re_enters_with_user_message() -> None:
+    """Mode 2 — session in ``awaiting_user_input``, route injects user
+    message, planner re-enters and produces tool calls."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    sess.status = "awaiting_user_input"
+    sess.last_assistant_text = "Which column?"
+    sess.messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="filter to EU"),
+        Message(role="assistant", content="Which column?"),
+    ]
+
+    inject_followup_message(sess, action="user_message", message="filter on region")
+
+    provider = _ScriptedProvider(
+        [
+            _Step(
+                tool_calls=[ToolCall(id="t1", name="flowfile.graph.add_filter", arguments=_filter_args())],
+                finish_reason="tool_calls",
+            ),
+            _Step(tool_calls=[], finish_reason="stop"),
+        ]
+    )
+    events = await _drain(
+        run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())
+    )
+    names = [e.event for e in events]
+    assert "tool_call_staged" in names
+    assert sess.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_w49_followup_synthetic_rejection_appears_in_conversation() -> None:
+    """Acceptance test 1 — the synthetic rejection user-message is in the
+    planner conversation history when the resumed loop calls the provider."""
+    from flowfile_core.ai.agents.planner import inject_followup_message
+
+    flow = _make_flow()
+    sess = _make_session(flow, surface="agent_complex")
+    sess.status = "completed"
+    sess.diff_id = "rejected-diff"
+    sess.messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="goal"),
+    ]
+
+    inject_followup_message(
+        sess,
+        action="rejected_diff",
+        message="please use the read node directly",
+        rejected_diff_id="rejected-diff",
+    )
+
+    provider = _ScriptedProvider([_Step(tool_calls=[], content="ok", finish_reason="stop")])
+    await _drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler()))
+
+    # The provider received messages including the synthetic rejection user
+    # message. Confirm both the rejection sigil and the user note arrived.
+    assert provider.calls
+    sent_messages = provider.calls[0]["messages"]
+    rejection_msgs = [m for m in sent_messages if m.role == "user" and "rejected" in (m.content or "").lower()]
+    assert rejection_msgs, "synthetic rejection user message missing from conversation"
+    assert "please use the read node directly" in rejection_msgs[-1].content

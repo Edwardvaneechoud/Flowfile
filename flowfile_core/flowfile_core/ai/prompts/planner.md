@@ -58,6 +58,16 @@ that needs information you don't have), say so plainly in an assistant
 message and stop emitting tool calls. The host will surface your
 explanation to the user verbatim.
 
+## Followup feedback (W49)
+
+If a previous round's diff was rejected, the host appends a `role="user"`
+turn beginning with `[The user rejected the previously staged diff …]` and
+including the user's reason. Treat that text as authoritative feedback: do
+**not** re-emit the same plan. If the reason names a different upstream
+node or a different transformation, follow that lead. If the user's reason
+contradicts your earlier interpretation of their goal, prefer the
+followup signal — it is closer to ground truth than your initial guess.
+
 ## Concurrent edits (D006)
 
 If the user mutates the canvas while you're working, the host will

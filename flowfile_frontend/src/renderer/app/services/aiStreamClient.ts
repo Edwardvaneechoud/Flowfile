@@ -406,6 +406,10 @@ export interface AgentSessionHandlers {
   onRetry?: (attempt: number, max: number) => void;
   onAbort?: (sessionId: string) => void;
   onComplete?: (result: AgentCompleteResult) => void;
+  /** W49 — emitted instead of ``onComplete`` when the planner ends on a
+   * clarifying question. The store flips to ``awaiting_user_input`` and
+   * the frontend routes the next user message through ``streamAgentFollowup``. */
+  onAwaitingUserInput?: (result: AgentAwaitingUserInputResult) => void;
   onInfo?: (payload: Record<string, unknown>) => void;
   onError?: (message: string) => void;
 }
@@ -465,6 +469,9 @@ const dispatchPlannerEvent = (parsed: ParsedEvent, handlers: AgentSessionHandler
     case "complete":
       handlers.onComplete?.(payload as unknown as AgentCompleteResult);
       break;
+    case "awaiting_user_input":
+      handlers.onAwaitingUserInput?.(payload as unknown as AgentAwaitingUserInputResult);
+      break;
     case "error": {
       const msg = typeof payload.message === "string" ? payload.message : "AI agent error";
       handlers.onError?.(msg);
@@ -522,6 +529,7 @@ export const streamAgentSession = async (
   body: AgentStartRequest,
   handlers: AgentSessionHandlers,
   signal?: AbortSignal,
+  lastEventId?: string,
 ): Promise<void> => {
   // W40 — POSTs the user's goal to ``/ai/agent/start``. The backend opens a
   // session, registers a snapshot, and streams ``PlannerEvent``s as SSE.
@@ -530,19 +538,96 @@ export const streamAgentSession = async (
   // ``drift_detected`` / ``paused`` / ``retry`` / ``abort`` / ``complete`` /
   // ``error`` / ``info``. ``id:`` carries ``f"{session_id}.{step_count}"``
   // for W42 resumption.
+  // W42 — when ``lastEventId`` is set, the server's replay buffer flushes
+  // any buffered frames newer than the cursor before live streaming
+  // resumes. The /start route accepts the header for symmetry; in normal
+  // use the cursor only matters on /resume.
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
     return;
   }
   const url = new URL("ai/agent/start", flowfileCorebaseURL).toString();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${token}`,
+  };
+  if (lastEventId) {
+    headers["Last-Event-ID"] = lastEventId;
+  }
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
+    body: JSON.stringify(body),
+    signal,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const detail = await readErrorBody(response);
+    throw new AiStreamHttpError(response.status, detail);
+  }
+  await _consumePlannerSse(response, handlers);
+};
+
+export type AgentFollowupAction = "rejected_diff" | "user_message";
+
+export interface AgentFollowupRequest {
+  /** ``"rejected_diff"`` — user rejected the previously staged diff;
+   * ``"user_message"`` — user typed a new message after a ``complete`` /
+   * ``awaiting_user_input`` */
+  action: AgentFollowupAction;
+  /** Free-text payload — user's rejection note (optional) for
+   * ``rejected_diff``, the user's typed message (required) for
+   * ``user_message``. */
+  message?: string | null;
+  /** Diff id the user just rejected; if omitted, the backend falls back to
+   * ``session.diff_id``. Only relevant for ``action="rejected_diff"``. */
+  rejected_diff_id?: string | null;
+}
+
+/** W49 — emitted (instead of ``complete``) when a planner round ends with
+ * a clarifying question and no staged ops. The frontend renders this as
+ * *"Agent waiting for your reply…"* and routes the next user message
+ * through the followup endpoint. */
+export interface AgentAwaitingUserInputResult {
+  session_id: string;
+  question: string;
+}
+
+export const streamAgentFollowup = async (
+  sessionId: string,
+  body: AgentFollowupRequest,
+  handlers: AgentSessionHandlers,
+  signal?: AbortSignal,
+  lastEventId?: string,
+): Promise<void> => {
+  // W49 — POSTs ``{action, message?, rejected_diff_id?}`` to
+  // ``/ai/agent/{session_id}/followup``. The backend appends a synthetic
+  // ``role="user"`` turn (rejection note OR user message) to the planner's
+  // conversation, re-snapshots the graph (D006), and re-enters the loop.
+  // The SSE wire format matches ``/start`` / ``/resume`` so the same
+  // ``AgentSessionHandlers`` consumes it.
+  const token = await authService.getToken();
+  if (!token) {
+    handlers.onError?.("Not authenticated. Please log in again.");
+    return;
+  }
+  const url = new URL(
+    `ai/agent/${encodeURIComponent(sessionId)}/followup`,
+    flowfileCorebaseURL,
+  ).toString();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${token}`,
+  };
+  if (lastEventId) {
+    headers["Last-Event-ID"] = lastEventId;
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
     body: JSON.stringify(body),
     signal,
     credentials: "include",
@@ -558,9 +643,13 @@ export const resumeAgentSessionStream = async (
   sessionId: string,
   handlers: AgentSessionHandlers,
   signal?: AbortSignal,
+  lastEventId?: string,
 ): Promise<void> => {
   // W40 — resume after drift via SSE. Body ``{action: "continue"}`` is the
   // SSE-stream form; ``"discard"`` is JSON-only and lives in api/ai.api.ts.
+  // W42 — ``lastEventId`` is forwarded as the ``Last-Event-ID`` header so
+  // the server's replay buffer flushes buffered frames newer than the
+  // cursor before the live planner resumes.
   const token = await authService.getToken();
   if (!token) {
     handlers.onError?.("Not authenticated. Please log in again.");
@@ -570,13 +659,17 @@ export const resumeAgentSessionStream = async (
     `ai/agent/${encodeURIComponent(sessionId)}/resume`,
     flowfileCorebaseURL,
   ).toString();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${token}`,
+  };
+  if (lastEventId) {
+    headers["Last-Event-ID"] = lastEventId;
+  }
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
     body: JSON.stringify({ action: "continue" }),
     signal,
     credentials: "include",

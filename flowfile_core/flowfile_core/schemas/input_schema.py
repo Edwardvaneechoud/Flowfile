@@ -745,7 +745,7 @@ class NodeDatasource(NodeBase):
 class RawData(BaseModel):
     """Represents data in a raw, columnar format for manual input."""
 
-    columns: list[MinimalFieldInfo] = None
+    columns: list[MinimalFieldInfo]
     data: list[list]
 
     @classmethod
@@ -777,7 +777,7 @@ class RawData(BaseModel):
 class NodeManualInput(NodeBase):
     """Settings for a node that allows direct data entry in the UI."""
 
-    raw_data_format: RawData | None = None
+    raw_data_format: RawData
 
     def get_default_description(self) -> str:
         """Describes the manual input columns."""

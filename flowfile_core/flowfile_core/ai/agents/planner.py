@@ -89,9 +89,16 @@ PlannerEventName = Literal[
     "retry",
     "abort",
     "complete",
+    "awaiting_user_input",
     "error",
     "info",
 ]
+"""W49 — ``awaiting_user_input`` is emitted *instead of* ``complete`` when
+the planner loop ends with no tool calls AND no staged results AND the last
+assistant message looks like a clarifying question. The session flips to
+``awaiting_user_input`` (not ``completed``) so the frontend can surface
+*"Agent waiting for your reply…"* and the followup endpoint accepts the
+user's answer for re-entry."""
 
 
 class PlannerEvent(BaseModel):
@@ -173,6 +180,60 @@ def _capture_rationale(text: str | None) -> str | None:
                 return head[: idx + 1].strip()
         return head.rstrip() + "…"
     return trimmed
+
+
+_QUESTION_TOKENS: tuple[str, ...] = (
+    "which",
+    "what",
+    "where",
+    "when",
+    "who",
+    "why",
+    "how",
+    "do you",
+    "would you",
+    "should i",
+    "should we",
+    "can you",
+    "could you",
+    "shall i",
+    "shall we",
+    "did you mean",
+)
+"""W49 — interrogative tokens used by :func:`_looks_like_question` when an
+assistant message is missing a trailing ``?`` (the model occasionally drops
+it, especially on shorter clarifying turns). Lower-cased substring match —
+``"do you want"`` and ``"do you have"`` are both covered by ``"do you"``."""
+
+
+def _looks_like_question(text: str | None) -> bool:
+    """W49 — true if ``text`` reads like a clarifying question to the user.
+
+    Two cheap signals that catch the live transcripts the spec captured:
+
+    * **Ends with ``?``** — wins regardless of length / wording.
+    * **Lower-cased substring contains an interrogative token** from
+      :data:`_QUESTION_TOKENS`. Catches *"Should I drop nulls first?"*-style
+      preambles even when the trailing ``?`` is missing, and *"Do you want
+      me to ..."* when the model gets verbose.
+
+    Whitespace-only or ``None`` returns ``False``. No NLP — a regex / token
+    list keeps the planner free of model-driven classification cost on a
+    path that fires on every loop exit. False positives on declarative
+    sentences containing ``"how"`` or ``"which"`` (e.g. *"This is how the
+    join works."*) are tolerable: the only consequence is the frontend
+    renders *"Agent waiting for your reply…"* instead of *"Agent finished
+    — nothing to stage"*, both still resumable via ``/followup``.
+    """
+    if not isinstance(text, str):
+        return False
+    trimmed = text.strip()
+    if not trimmed:
+        return False
+    if trimmed.rstrip().endswith("?"):
+        return True
+    lowered = trimmed.lower()
+    return any(token in lowered for token in _QUESTION_TOKENS)
 
 
 def _format_columns(value: Any) -> str | None:
@@ -573,6 +634,75 @@ def _build_initial_messages(flow: FlowGraph, session: sessions.AgentSession) -> 
 # --------------------------------------------------------------------------- #
 
 
+FollowupAction = Literal["rejected_diff", "user_message"]
+
+
+_REJECTED_DIFF_DEFAULT_NOTE: str = "no specific reason provided"
+"""Generic rejection reason used by :func:`inject_followup_message` when the
+user clicks Reject without typing an explanation. Surfaces in the synthetic
+followup turn so the model sees *something* signalling the rejection rather
+than just an empty user message."""
+
+
+def inject_followup_message(
+    session: sessions.AgentSession,
+    *,
+    action: FollowupAction,
+    message: str | None = None,
+    rejected_diff_id: str | None = None,
+) -> Message:
+    """W49 — append the synthetic followup turn to ``session.messages``.
+
+    Two action shapes:
+
+    * ``"rejected_diff"`` — the user clicked Reject on a staged diff. The
+      synthesised content carries the optional user-supplied note (or a
+      generic *"no specific reason provided"* fallback) plus the rejected
+      ``diff_id`` for diagnostics so the model sees an explicit "course
+      correct" signal rather than re-emitting the same plan.
+    * ``"user_message"`` — the user typed a new instruction after a
+      ``complete`` / ``awaiting_user_input``. The text is appended verbatim
+      as the next user turn.
+
+    **Why ``role="user"`` instead of ``role="tool"``** — a ``role="tool"``
+    message must be paired with a preceding assistant turn whose
+    ``tool_calls`` carries the matching ``tool_call_id``. By the time the
+    planner has completed, the last assistant turn has no tool calls (that
+    is what triggered the completion); injecting an unpaired ``tool``
+    message would be rejected by litellm / Anthropic / OpenAI on the next
+    chat call. ``role="user"`` is semantically equivalent to "the human
+    sent feedback" and works across every provider.
+
+    The function mutates ``session.messages`` in place and returns the
+    appended :class:`Message` for the caller's bookkeeping. Callers
+    (``agent_routes.followup``) typically follow this with
+    :func:`run_planner_session` so the planner's followup-resume entry path
+    re-snapshots the graph + drops staged bookkeeping before the next chat
+    call.
+    """
+    if action == "rejected_diff":
+        note = (message or "").strip() or _REJECTED_DIFF_DEFAULT_NOTE
+        diff_ref = rejected_diff_id or session.diff_id or "unknown"
+        content = (
+            "[The user rejected the previously staged diff "
+            f"(diff_id={diff_ref}).]\n"
+            f"User's reason: {note}\n\n"
+            "Treat this as authoritative feedback: do not re-emit the same plan. "
+            "Re-plan based on the user's reason; if the reason names a different "
+            "upstream node or a different transformation, follow that lead."
+        )
+    elif action == "user_message":
+        content = (message or "").strip()
+        if not content:
+            raise ValueError("user_message followup requires a non-empty message")
+    else:
+        raise ValueError(f"unknown followup action: {action!r}")
+
+    msg = Message(role="user", content=content)
+    session.messages.append(msg)
+    return msg
+
+
 async def run_planner_session(
     *,
     session: sessions.AgentSession,
@@ -624,17 +754,75 @@ async def _run_planner_loop(
     max_retries_per_step: int,
 ) -> AsyncIterator[PlannerEvent]:
     # ``aborted`` is honored as an early-exit (the abort route flips status
-    # to ``aborted`` between iterations). Same for ``running`` (normal start)
-    # and ``paused_drift`` (resume after D006 drift).
+    # to ``aborted`` between iterations). Same for ``running`` (normal start),
+    # ``paused_drift`` (resume after D006 drift), ``paused_user_action``
+    # (W42 cold-start re-attach), and ``completed`` / ``awaiting_user_input``
+    # (W49 post-completion followup re-entry).
     if session.status == "aborted":
         yield PlannerEvent(event="abort", payload={"session_id": session.session_id})
         return
-    if session.status not in ("running", "paused_drift"):
+    if session.status not in (
+        "running",
+        "paused_drift",
+        "paused_user_action",
+        "completed",
+        "awaiting_user_input",
+    ):
         yield PlannerEvent(
             event="error",
             payload={"message": f"cannot run session in status {session.status!r}"},
         )
         return
+
+    if session.status in ("completed", "awaiting_user_input"):
+        # W49 — post-completion followup re-entry. The route already
+        # appended the synthetic ``user`` / ``tool`` message that drives
+        # the next planner turn; everything we do here is housekeeping so
+        # the resumed run starts from a clean slate:
+        #
+        # * **Re-snapshot the graph (D006).** The user may have mutated
+        #   the canvas between completion and the followup, so we capture
+        #   a fresh baseline. The very next ``detect_drift`` round
+        #   compares against this; if drift fires, the loop pauses
+        #   exactly like a mid-run mutation would.
+        # * **Drop the prior diff bookkeeping.** ``staged_results`` /
+        #   ``staged_node_ids`` / ``diff_id`` reflect the *previous* round
+        #   (rejected, abandoned, or never-bundled). Keeping them would
+        #   double-count node ids in ``_allocate_node_id`` and re-bundle
+        #   already-rejected ops on the next ``complete``.
+        # * **Reset retry / drift bookkeeping.** ``rationale`` is rebuilt
+        #   from the next assistant turn; ``last_assistant_text`` was
+        #   used by W49's question-detection on the prior completion and
+        #   is no longer authoritative.
+        was_completion = session.status
+        session.snapshot = sessions.capture_graph_snapshot(flow)
+        session.staged_results = []
+        session.staged_node_ids = []
+        session.diff_id = None
+        session.rationale = None
+        session.drift_detail = None
+        session.pause_reason = None
+        session.last_assistant_text = None
+        session.status = "running"
+        session.touch()
+        yield PlannerEvent(
+            event="info",
+            payload={
+                "message": "followup; re-snapshotted graph",
+                "previous_status": was_completion,
+            },
+        )
+
+    if session.status == "paused_user_action":
+        # W42 — cold-start resume. The previous SSE stream is dead and an
+        # arbitrary amount of time has passed. Re-snapshot, clear the
+        # pause reason, flip to running. We don't revalidate staged_results
+        # eagerly here — the subsequent drift_detect run will surface any
+        # missing upstream as a paused_drift event (and that path already
+        # owns ``revalidate_staged_results_against_live``).
+        session.snapshot = sessions.capture_graph_snapshot(flow)
+        session.pause_reason = None
+        session.status = "running"
 
     if session.status == "paused_drift":
         # Resume after drift — re-snapshot so subsequent drift_detect compares against fresh state.
@@ -1012,6 +1200,18 @@ async def _run_planner_loop(
                         if staged_id is not None and staged_id not in session.staged_node_ids:
                             session.staged_node_ids.append(staged_id)
                 event_name: PlannerEventName = "tool_call_warned" if result.status == "warned" else "tool_call_staged"
+                # W42 — re-persist the session after each staging so a
+                # process crash mid-loop can resume against the up-to-date
+                # ``staged_results`` / ``staged_node_ids``. Best-effort: a
+                # checkpoint failure must not stall the planner.
+                try:
+                    session.touch()
+                    sessions.register_session(session)
+                except Exception:
+                    logger.exception(
+                        "planner: session checkpoint after tool_call_staged failed (session=%s)",
+                        session.session_id,
+                    )
                 yield PlannerEvent(
                     event=event_name,
                     payload={
@@ -1056,6 +1256,25 @@ async def _run_planner_loop(
 
     # --- Loop ended (no more tool calls) ---
     if not session.staged_results:
+        # W49 — if the agent's last assistant message reads like a clarifying
+        # question, this is *not* "agent finished — nothing to stage"; the
+        # agent is waiting on the user. Flip to ``awaiting_user_input`` and
+        # emit a distinct SSE event so the frontend renders the right state.
+        # Both ``awaiting_user_input`` and ``completed`` are resumable via
+        # the W49 ``/followup`` endpoint, so the only difference is UX
+        # framing and the SSE event name.
+        if _looks_like_question(session.last_assistant_text):
+            session.status = "awaiting_user_input"
+            session.touch()
+            yield PlannerEvent(
+                event="awaiting_user_input",
+                payload={
+                    "session_id": session.session_id,
+                    "question": session.last_assistant_text,
+                },
+            )
+            return
+
         session.status = "completed"
         session.touch()
         yield PlannerEvent(
@@ -1107,9 +1326,11 @@ __all__ = [
     "DEFAULT_MAX_RETRIES_PER_STEP",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_MAX_TOKENS",
+    "FollowupAction",
     "OpKind",
     "PlannerEvent",
     "PlannerEventName",
     "RATIONALE_MAX_LEN",
+    "inject_followup_message",
     "run_planner_session",
 ]

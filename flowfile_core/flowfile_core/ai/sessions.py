@@ -1,10 +1,13 @@
 """Disk-persisted ``AgentSession`` records — owned by W42; in-memory shape by W40.
 
 W40 ships the **in-memory** session lifecycle. W42 swaps the in-memory store
-for a disk-backed sidecar under ``{user_data_directory}/ai_sessions/{flow_id}/``
-without touching the public surface (``register_session`` / ``get_session`` /
-``pop_session`` / ``clear_for_tests``) — same pattern W41's ``_DIFFS`` store
-established.
+for a disk-backed sidecar under ``{storage.ai_sessions_directory}/{flow_id}/``
+(per plan §5.6) without touching the public surface (``register_session`` /
+``get_session`` / ``pop_session`` / ``clear_for_tests``) — same pattern
+W41's ``_DIFFS`` store now follows. The active repo is module-level
+``_REPO``; ``clear_for_tests`` swaps it for a fresh
+:class:`flowfile_core.ai.session_store.InMemorySessionRepository` so tests
+never touch real user data.
 
 Per D006 (snapshot+warn-and-pause), :func:`capture_graph_snapshot` records the
 shape of the live graph at agent-start and :func:`detect_drift` compares the
@@ -33,6 +36,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from flowfile_core.ai.diff import StagedToolEntry
 from flowfile_core.ai.providers.base import Message
+from flowfile_core.ai.session_store import (
+    DiskSessionRepository,
+    InMemorySessionRepository,
+    SessionRepository,
+)
+from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -48,11 +57,25 @@ logger = logging.getLogger(__name__)
 SessionStatus = Literal[
     "running",
     "paused_drift",
+    "paused_user_action",
     "awaiting_user",
+    "awaiting_user_input",
     "completed",
     "aborted",
     "failed",
 ]
+"""Session lifecycle. ``paused_user_action`` (W42) is the cold-start state a
+``running`` session flips to when the in-memory mirror is empty — the
+previous SSE stream is dead, the user must explicitly re-attach via
+``POST /ai/agent/{session_id}/resume?action=continue``.
+
+``awaiting_user_input`` (W49) is the post-completion sub-state when the
+planner stops with a clarifying question (no tool calls, last assistant
+message looks like a question, ``staged_results`` empty). Distinct from
+``completed`` so the frontend can render *"Agent waiting for your reply…"*
+instead of the misleading *"finished — nothing to stage"*. Both
+``awaiting_user_input`` and ``completed`` are followup-resumable via
+``POST /ai/agent/{session_id}/followup`` — see W49 for the wire shape."""
 
 PlannerSurface = Literal["agent", "agent_complex"]
 SamplesMode = Literal["off", "regex"]
@@ -351,12 +374,45 @@ def detect_drift(
 
 
 # --------------------------------------------------------------------------- #
-# In-memory session store — mirror W41's _DIFFS shape                          #
+# Repository delegation — W42 swap; public surface unchanged                   #
 # --------------------------------------------------------------------------- #
 
 
-_SESSIONS: dict[str, AgentSession] = {}
-_LOCK = threading.Lock()
+def _build_default_repo() -> SessionRepository:
+    """Default to the on-disk sidecar repo rooted at the storage helper.
+
+    See ``shared.storage_config.FlowfileStorage.ai_sessions_directory`` for
+    the path resolution (Docker → ``user_data_directory / "ai_sessions"``;
+    local → ``~/.flowfile/ai_sessions/``). Tests never see this default —
+    ``clear_for_tests`` swaps in :class:`InMemorySessionRepository` before
+    the first call.
+    """
+    return DiskSessionRepository(root=storage.ai_sessions_directory)
+
+
+_REPO: SessionRepository = _build_default_repo()
+_REPO_LOCK = threading.Lock()
+
+
+def set_session_repo(repo: SessionRepository) -> SessionRepository:
+    """Swap the active session repository; return the previous one.
+
+    Tests use this to point the module-level surface at a ``tmp_path``-rooted
+    :class:`DiskSessionRepository` (integration tests) or at a fresh
+    :class:`InMemorySessionRepository` (unit tests). Production never calls
+    this — the default is set at import time.
+    """
+    global _REPO
+    with _REPO_LOCK:
+        prev = _REPO
+        _REPO = repo
+    return prev
+
+
+def get_session_repo() -> SessionRepository:
+    """Read the active session repository (cheap)."""
+    with _REPO_LOCK:
+        return _REPO
 
 
 def register_session(session: AgentSession) -> str:
@@ -365,8 +421,8 @@ def register_session(session: AgentSession) -> str:
     Idempotent on the same ``session_id`` — re-registering overwrites.
     Callers that need atomic-upsert semantics can use ``get_session`` first.
     """
-    with _LOCK:
-        _SESSIONS[session.session_id] = session
+    repo = get_session_repo()
+    repo.put(session)
     return session.session_id
 
 
@@ -377,13 +433,7 @@ def get_session(session_id: str, *, user_id: int | None = None) -> AgentSession 
     to a different user — the route layer maps that to 404 rather than 403
     so the existence of someone else's session isn't leaked.
     """
-    with _LOCK:
-        session = _SESSIONS.get(session_id)
-    if session is None:
-        return None
-    if user_id is not None and session.user_id != user_id:
-        return None
-    return session
+    return get_session_repo().get(session_id, user_id=user_id)
 
 
 def pop_session(session_id: str, *, user_id: int | None = None) -> AgentSession | None:
@@ -393,30 +443,38 @@ def pop_session(session_id: str, *, user_id: int | None = None) -> AgentSession 
     A non-matching ``user_id`` does *not* pop, preventing one user from
     deleting another's session via id-guess.
     """
-    with _LOCK:
-        session = _SESSIONS.get(session_id)
-        if session is None:
-            return None
-        if user_id is not None and session.user_id != user_id:
-            return None
-        return _SESSIONS.pop(session_id, None)
+    return get_session_repo().pop(session_id, user_id=user_id)
 
 
 def clear_for_tests() -> None:
-    """Wipe the in-memory store. Intended for the ``conftest`` autouse fixture."""
-    with _LOCK:
-        _SESSIONS.clear()
+    """Swap the active repo for a fresh :class:`InMemorySessionRepository`.
+
+    Tests' autouse fixtures call this before/after each case; the swap
+    guarantees no test ever writes to (or reads from) the production disk
+    sidecar at ``~/.flowfile/ai_sessions/``. After the swap, integration
+    tests can point at a ``tmp_path``-rooted disk repo via
+    :func:`set_session_repo`.
+    """
+    set_session_repo(InMemorySessionRepository())
 
 
 def list_sessions_for_user(user_id: int) -> list[AgentSession]:
-    """Return all sessions belonging to ``user_id``.
+    """Return all active sessions belonging to ``user_id``.
 
-    Snapshot the dict under the lock; the result is a plain list (caller
-    can iterate freely). Used by the (future) ``GET /ai/agent/sessions``
-    route — out of scope for W40 but cheap to expose.
+    Used by the (future) ``GET /ai/agent/sessions`` route — out of scope
+    for W40 but cheap to expose.
     """
-    with _LOCK:
-        return [s for s in _SESSIONS.values() if s.user_id == user_id]
+    return get_session_repo().list_for_user(user_id)
+
+
+def list_archived_sessions(user_id: int, flow_id: int) -> list[AgentSession]:
+    """W42 — archived terminal sessions for ``(user_id, flow_id)``.
+
+    In-memory backend always returns ``[]`` (no archive). Disk backend
+    returns the FIFO archive entries sorted recent-first. Used by W43's
+    "open recent chats" UI.
+    """
+    return get_session_repo().list_archived(user_id=user_id, flow_id=flow_id)
 
 
 __all__ = [
@@ -430,8 +488,11 @@ __all__ = [
     "clear_for_tests",
     "detect_drift",
     "get_session",
+    "get_session_repo",
+    "list_archived_sessions",
     "list_sessions_for_user",
     "pop_session",
     "register_session",
     "revalidate_staged_results_against_live",
+    "set_session_repo",
 ]

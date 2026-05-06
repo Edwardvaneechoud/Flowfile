@@ -70,6 +70,7 @@ gcsfs = ">=2024.2.0"
 google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
 litellm = "^1.83.0"
+filelock = "^3.13.0"
 
 
 [tool.poetry.scripts]

@@ -32,6 +32,7 @@ import {
   type StageDiffRequest,
   synthesiseDiffFromStageRequest,
 } from "../features/ai/aiDiffTypes";
+import { useAiAgentStore } from "./ai-agent-store";
 import { useFlowStore } from "./flow-store";
 
 const isAbortError = (err: unknown): boolean =>
@@ -162,7 +163,20 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
     }
   };
 
-  const reject = async (): Promise<void> => {
+  const reject = async (note?: string | null): Promise<void> => {
+    // W49 — ``reject(note?)`` accepts an optional user-supplied rejection
+    // note. When the rejected diff belongs to a still-alive completed agent
+    // session, this method:
+    //
+    // 1. Calls the backend reject (W41) to mark the diff itself rejected.
+    // 2. Hands off to ``aiAgentStore.resumeAfterReject(sid, note)`` so the
+    //    agent re-enters the same session with a synthetic rejection turn,
+    //    rather than the user having to start a new session and lose the
+    //    conversation context.
+    //
+    // Falls back to the legacy "just clear locally" path when no agent
+    // session is active or the session is not in a followup-resumable
+    // status (e.g. diff came from a W33 cmd-K palette flow).
     const diff = currentDiff.value;
     if (diff === null) return;
     const controller = _newController();
@@ -170,8 +184,32 @@ export const useAiDiffStore = defineStore("aiDiff", () => {
     error.value = null;
     try {
       await rejectDiff(diff.diff_id, controller.signal);
+      const rejectedDiffId = diff.diff_id;
       currentDiff.value = null;
       lastApplyResult.value = null;
+
+      // Hand off to the agent store if the rejected diff belongs to a
+      // followup-resumable session. We resolve the agent store lazily so
+      // tests / non-Pinia contexts that import the diff store in isolation
+      // don't blow up on the cross-store reference.
+      let agentStore: ReturnType<typeof useAiAgentStore> | null = null;
+      try {
+        agentStore = useAiAgentStore();
+      } catch (storeErr) {
+        console.warn("ai-diff-store: useAiAgentStore unavailable", storeErr);
+      }
+      if (agentStore !== null) {
+        const sid = agentStore.currentSessionId;
+        const isResumable =
+          agentStore.status === "completed" || agentStore.status === "awaiting_user_input";
+        if (sid !== null && isResumable) {
+          // Fire-and-forget — the SSE stream re-renders into agentStore.events.
+          // ``await`` would serialise the next user click behind the resume
+          // stream, but ``reject()`` is called from the AiDiffPanel's
+          // synchronous click handler and we don't need the caller to block.
+          void agentStore.resumeAfterReject(sid, note ?? null, rejectedDiffId);
+        }
+      }
     } catch (err) {
       _handleError(err);
     } finally {

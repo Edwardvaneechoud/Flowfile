@@ -35,10 +35,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from flowfile_core.ai.diff_store import (
+    DiffRepository,
+    DiskDiffRepository,
+    InMemoryDiffRepository,
+)
 from flowfile_core.ai.tools.executor import InsertionContext, _apply_add_node
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import HistoryActionType
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +159,37 @@ class DiffDriftError(Exception):
 
 
 # --------------------------------------------------------------------------- #
-# DiffStore — in-memory, process-local. W42 swaps for disk.                    #
+# DiffStore — repository-backed (W42). Public surface unchanged.               #
 # --------------------------------------------------------------------------- #
 
 
-_DIFFS: dict[str, GraphDiff] = {}
-_LOCK = threading.Lock()
+def _build_default_repo() -> DiffRepository:
+    """Default to the on-disk sidecar repo (W42), colocated with sessions.
+
+    See ``shared.storage_config.FlowfileStorage.ai_sessions_directory`` for
+    the path resolution. Tests swap to in-memory via
+    :func:`clear_for_tests`.
+    """
+    return DiskDiffRepository(root=storage.ai_sessions_directory)
+
+
+_REPO: DiffRepository = _build_default_repo()
+_REPO_LOCK = threading.Lock()
+
+
+def set_diff_repo(repo: DiffRepository) -> DiffRepository:
+    """Swap the active diff repository; return the previous one. Tests-only."""
+    global _REPO
+    with _REPO_LOCK:
+        prev = _REPO
+        _REPO = repo
+    return prev
+
+
+def get_diff_repo() -> DiffRepository:
+    """Read the active diff repository."""
+    with _REPO_LOCK:
+        return _REPO
 
 
 def register_diff(diff: GraphDiff) -> str:
@@ -167,27 +198,27 @@ def register_diff(diff: GraphDiff) -> str:
     Idempotent on the same ``diff_id`` — re-registering overwrites. Callers
     that need atomic-upsert semantics can use ``get_diff`` first.
     """
-    with _LOCK:
-        _DIFFS[diff.diff_id] = diff
+    get_diff_repo().put(diff)
     return diff.diff_id
 
 
 def get_diff(diff_id: str) -> GraphDiff | None:
     """Look up a previously-registered diff. ``None`` if absent."""
-    with _LOCK:
-        return _DIFFS.get(diff_id)
+    return get_diff_repo().get(diff_id)
 
 
 def pop_diff(diff_id: str) -> GraphDiff | None:
     """Remove and return a diff. Idempotent — ``None`` if already popped."""
-    with _LOCK:
-        return _DIFFS.pop(diff_id, None)
+    return get_diff_repo().pop(diff_id)
 
 
 def clear_for_tests() -> None:
-    """Wipe the in-memory store. Intended for the ``conftest`` autouse fixture."""
-    with _LOCK:
-        _DIFFS.clear()
+    """Swap the active repo for a fresh :class:`InMemoryDiffRepository`.
+
+    Same posture as :func:`flowfile_core.ai.sessions.clear_for_tests` — never
+    touch the production disk sidecar from tests.
+    """
+    set_diff_repo(InMemoryDiffRepository())
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +493,9 @@ __all__ = [
     "clear_for_tests",
     "collect_audit_ids",
     "get_diff",
+    "get_diff_repo",
     "pop_diff",
     "register_diff",
+    "set_diff_repo",
     "validate_diff_against_flow",
 ]
