@@ -31,6 +31,7 @@ its own resolver and does not need to opt in here).
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -45,6 +46,7 @@ from flowfile_core.ai.context.mentions import (
     resolve_mentions,
 )
 from flowfile_core.ai.providers.base import Message
+from flowfile_core.ai.safety import FlowSafetyConfig, prepare_samples
 from flowfile_core.ai.tools.classification import is_predictable_via_mirror
 
 if TYPE_CHECKING:
@@ -101,6 +103,8 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _HTML_COMMENT_OPEN = "<!--"
 _HTML_COMMENT_CLOSE = "-->"
 
+logger = logging.getLogger(__name__)
+
 
 # --------------------------------------------------------------------------- #
 # Snapshot models                                                              #
@@ -142,9 +146,7 @@ class SubgraphSnapshot(BaseModel):
     pinned_node_ids: list[int | str]
     nodes: list[NodeSnapshot]
     edges: list[tuple[int | str, int | str]] = Field(default_factory=list)
-    samples_mode: SamplesMode = (
-        "regex"  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
-    )
+    samples_mode: SamplesMode = "off"
 
 
 class PromptContext(BaseModel):
@@ -171,7 +173,7 @@ def render_prompt_context(
     pinned_node_ids: list[int | str] | int | str,
     *,
     surface: SurfaceLiteral,
-    samples_mode: SamplesMode = "regex",  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
+    samples_mode: SamplesMode = "off",
     sample_rows: int = 5,
     mentions: list[Mention] | str | None = None,
     selection_node_ids: list[int | str] | None = None,
@@ -198,6 +200,14 @@ def render_prompt_context(
     resolved = resolve_mentions(mention_list, graph, selection_node_ids=selection_node_ids)
     extra_pinned = [node_id for r in resolved for node_id in r.node_ids if node_id not in pinned_list]
     pinned_list = pinned_list + extra_pinned
+
+    logger.debug(
+        "render_prompt_context surface=%s samples_mode=%s sample_rows=%d pinned=%s",
+        surface,
+        samples_mode,
+        sample_rows,
+        pinned_list,
+    )
 
     snapshot = extract_subgraph(graph, pinned_list, depth=depth, resolve_schemas=resolve_schemas)
     snapshot = _attach_samples(snapshot, graph, samples_mode=samples_mode, sample_rows=sample_rows)
@@ -297,7 +307,7 @@ def extract_subgraph(
 def snapshot_node(
     node: FlowNode,
     *,
-    samples_mode: SamplesMode = "regex",  # DEV DEFAULT — see safety.DEFAULT_SAMPLE_MODE; flip to "off" before release per D009
+    samples_mode: SamplesMode = "off",
     sample_rows: int = 0,
     is_pinned: bool = False,
     resolve_schemas: bool = True,
@@ -591,19 +601,41 @@ def _attach_samples(
     samples_mode: SamplesMode,
     sample_rows: int,
 ) -> SubgraphSnapshot:
+    """Attach cached sample rows to each snapshot node, scrubbed per W25.
+
+    Reads from :func:`_safe_get_sample_data`, which calls
+    :meth:`FlowNode.get_table_example` (the same surface as
+    ``GET /node/data``). No node is ever re-executed by this path —
+    nodes that haven't run yield ``None`` and ship without samples.
+    """
+
     if samples_mode == "off" or sample_rows <= 0:
+        logger.debug("_attach_samples short-circuit samples_mode=%s sample_rows=%d", samples_mode, sample_rows)
         return snapshot
+
+    safety_config = FlowSafetyConfig(sample_mode=samples_mode, sample_row_count=sample_rows)
+    logger.debug(
+        "_attach_samples iterating nodes=%d samples_mode=%s sample_rows=%d",
+        len(snapshot.nodes),
+        samples_mode,
+        sample_rows,
+    )
+
     enriched: list[NodeSnapshot] = []
     for node_snapshot in snapshot.nodes:
         node = graph.get_node(node_snapshot.node_id)
         if node is None or node_snapshot.schema_columns is None:
             enriched.append(node_snapshot)
             continue
-        sample_data = _safe_get_sample_data(node, sample_rows)
-        if not sample_data:
+        raw_rows = _safe_get_sample_data(node, sample_rows)
+        if not raw_rows:
             enriched.append(node_snapshot)
             continue
-        new_cols = _attach_samples_to_columns(node_snapshot.schema_columns, sample_data)
+        scrubbed_rows = prepare_samples(raw_rows, safety_config)
+        if not scrubbed_rows:
+            enriched.append(node_snapshot)
+            continue
+        new_cols = _attach_samples_to_columns(node_snapshot.schema_columns, scrubbed_rows)
         enriched.append(node_snapshot.model_copy(update={"schema_columns": new_cols}))
     return snapshot.model_copy(update={"nodes": enriched})
 
@@ -677,30 +709,47 @@ def _resolve_predicted_schema_if_predictable(node: FlowNode) -> list[FlowfileCol
 
 
 def _safe_get_sample_data(node: FlowNode, n: int) -> list[dict[str, Any]] | None:
-    """Pull cached sample rows from the node's predicted-data getter.
+    """Pull cached sample rows from a node's existing data-preview endpoint.
 
-    Returns ``None`` if anything is missing — sample rows are an opt-in
-    enrichment, never required for the snapshot to be valid.
+    Reads the same surface the frontend's data-preview tab uses
+    (:meth:`FlowNode.get_table_example` with ``include_data=True``, wired to
+    ``GET /node/data``). That returns rows from
+    :attr:`NodeResults.example_data_generator` — cached PyArrow / parquet
+    populated during a real node run, zero compute on read.
+
+    Returns ``None`` when the node has not been run with its current
+    setup (``has_run_with_current_setup=False``) or when the cached
+    sample is empty. The chat preamble must never trigger node
+    execution — pre-W65 this function called
+    ``node._predicted_data_getter()`` which ran the node's ``_function``
+    on materialized upstream data and could hang on any node whose
+    ``_function`` calls ``.collect()`` (e.g. ``random_split``) or trains
+    a model (``train_model``). The new contract is "cached only".
     """
 
-    getter = getattr(node, "_predicted_data_getter", None)
+    getter = getattr(node, "get_table_example", None)
+    has_run = bool(getattr(getattr(node, "node_stats", None), "has_run_with_current_setup", False))
     if not callable(getter):
+        logger.debug("sample-fetch skip node=%s reason=no-get_table_example", getattr(node, "node_id", "?"))
+        return None
+    if not has_run:
+        logger.debug("sample-fetch skip node=%s reason=not-run", getattr(node, "node_id", "?"))
         return None
     try:
-        predicted_data = getter()
+        example = getter(True)
     except Exception:
+        logger.exception("sample-fetch error node=%s", getattr(node, "node_id", "?"))
         return None
-    if predicted_data is None:
+    if example is None:
+        logger.debug("sample-fetch skip node=%s reason=no-example", getattr(node, "node_id", "?"))
         return None
-    rows: list[dict[str, Any]] | None = None
-    for attr in ("data_for_ai", "sample_rows", "data"):
-        candidate = getattr(predicted_data, attr, None)
-        if candidate:
-            rows = list(candidate)
-            break
-    if rows is None:
+    rows = getattr(example, "data", None)
+    if not rows:
+        logger.debug("sample-fetch skip node=%s reason=empty-data", getattr(node, "node_id", "?"))
         return None
-    return rows[:n] if n > 0 else []
+    sliced = list(rows)[:n] if n > 0 else []
+    logger.debug("sample-fetch ok node=%s rows=%d", getattr(node, "node_id", "?"), len(sliced))
+    return sliced
 
 
 def _column_snapshot(column: FlowfileColumn) -> ColumnSnapshot:

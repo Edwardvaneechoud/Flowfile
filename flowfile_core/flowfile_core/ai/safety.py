@@ -78,12 +78,14 @@ SampleMode = Literal["off", "regex", "presidio"]
 
 #: Default sample mode for every new flow.
 #:
-#: DEV DEFAULT: ``"regex"`` (samples on with regex PII scrubbing) so the
-#: agent + chat surfaces have actual data to ground on while we test.
-#: Plan §9.1 / D009 specs the production ship-default as ``"off"`` (schema
-#: only, no row data leaves the box). Flip back before going live, or set
-#: per-flow via :class:`FlowSafetyConfig.sample_mode`.
-DEFAULT_SAMPLE_MODE: SampleMode = "regex"
+#: Plan §9.1 / D009: ``"off"`` (schema only — no row data leaves the box).
+#: Set per-flow via :class:`FlowSafetyConfig.sample_mode`. W65 flipped
+#: this from the original ``"regex"`` dev-default after the
+#: customer-churn-knn template hung on chat preamble: with samples on,
+#: ``_attach_samples`` calls ``node._predicted_data_getter()`` which
+#: routes ML / ``random_split`` data ops through the worker
+#: synchronously from inside the FastAPI request handler.
+DEFAULT_SAMPLE_MODE: SampleMode = "off"
 
 #: Default sample-row count when the user opts into ``regex`` or ``presidio``.
 #: Configurable per-flow on :class:`FlowSafetyConfig`.

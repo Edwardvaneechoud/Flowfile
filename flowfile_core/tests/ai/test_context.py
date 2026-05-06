@@ -1060,3 +1060,154 @@ def test_w56_catalog_block_renders_descriptions_in_stable_order() -> None:
     # Walk the headings in document order and verify they are sorted.
     headings = [line for line in text_a.splitlines() if line.startswith("### flowfile.")]
     assert headings == sorted(headings), "catalog headings out of order — prompt cache will thrash"
+
+
+# --------------------------------------------------------------------------- #
+# W65 — sample fetch must use cached endpoint, not _predicted_data_getter      #
+# --------------------------------------------------------------------------- #
+
+
+def test_render_prompt_context_default_samples_mode_is_off(linear_flow: FlowGraph) -> None:
+    """W65 — calling ``render_prompt_context`` without an explicit
+    ``samples_mode`` must produce snapshots whose columns carry no ``sample``
+    values. Pins the dev-default flip from ``"regex"`` to ``"off"`` per D009.
+    """
+
+    ctx = render_prompt_context(linear_flow, [3], surface="explain")
+    assert ctx.snapshot.samples_mode == "off"
+    for node in ctx.snapshot.nodes:
+        for col in node.schema_columns or []:
+            assert col.sample is None, f"unexpected sample on {node.node_id}.{col.name}: {col.sample!r}"
+
+
+def test_render_prompt_context_never_invokes_predicted_data_getter(
+    linear_flow: FlowGraph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W65 — even with samples_mode="regex" (opt-in), the sample-fetch path
+    must read from the cached :meth:`FlowNode.get_table_example` endpoint
+    and never call ``_predicted_data_getter``. Pre-W65, ``_safe_get_sample_data``
+    invoked the getter unconditionally — running the node's ``_function``
+    on materialized upstream data and triggering ``.collect()`` for any
+    node whose function does so (random_split, train_model).
+    """
+
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
+    invocations: list[int | str] = []
+    original_getter = FlowNode._predicted_data_getter
+
+    def _spy_getter(self: FlowNode):
+        invocations.append(self.node_id)
+        return original_getter(self)
+
+    monkeypatch.setattr(FlowNode, "_predicted_data_getter", _spy_getter)
+    render_prompt_context(linear_flow, [3], surface="explain", samples_mode="regex", sample_rows=5)
+    assert invocations == [], f"_predicted_data_getter must not fire from chat preamble; got {invocations}"
+
+
+def test_safe_get_sample_data_returns_none_when_node_not_run(linear_flow: FlowGraph) -> None:
+    """W65 — :func:`_safe_get_sample_data` returns ``None`` for nodes that
+    haven't been run with their current setup. Cached samples only —
+    no node execution from the chat path.
+    """
+
+    from flowfile_core.ai.context.builder import _safe_get_sample_data
+
+    node = linear_flow.get_node(3)
+    # Linear-flow fixture only runs schema prediction; has_run_with_current_setup is False.
+    assert not getattr(node.node_stats, "has_run_with_current_setup", False)
+    assert _safe_get_sample_data(node, 5) is None
+
+
+def test_safe_get_sample_data_reads_from_example_data_generator(
+    linear_flow: FlowGraph,
+) -> None:
+    """W65 — when ``node.results.example_data_generator`` is populated (the
+    post-run cache surface), :func:`_safe_get_sample_data` returns the
+    cached rows up to ``n``. Mirrors what ``GET /node/data`` does.
+    """
+
+    from flowfile_core.ai.context.builder import _safe_get_sample_data
+
+    node = linear_flow.get_node(1)
+
+    class _FakeArrowTable:
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self._rows = rows
+
+        def to_pylist(self) -> list[dict[str, Any]]:
+            return self._rows
+
+    fake_rows = [
+        {"order_id": 1, "customer_id": 10, "amount": 100.0, "region": "EU"},
+        {"order_id": 2, "customer_id": 20, "amount": 200.0, "region": "US"},
+        {"order_id": 3, "customer_id": 30, "amount": 50.0, "region": "EU"},
+    ]
+    node.results.example_data_generator = lambda: _FakeArrowTable(fake_rows)
+    node.node_stats.has_run_with_current_setup = True
+    node.node_stats.has_completed_last_run = True
+
+    rows = _safe_get_sample_data(node, 2)
+    assert rows is not None
+    assert len(rows) == 2
+    assert rows[0]["order_id"] == 1
+    assert rows[1]["order_id"] == 2
+
+
+def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W65 — extends ``test_render_prompt_context_d012_clean`` to the actual
+    hang flow. Build a ``read → random_split`` graph; monkeypatch
+    ``pl.LazyFrame.collect`` to raise; run ``render_prompt_context``. Pre-W65
+    the sample-fetch path called ``random_split._function(...)`` which
+    invoked ``.collect()`` directly — this test would fail.
+    """
+
+    import polars as pl
+
+    flow = _basic_flow()
+    raw = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="customer_id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="churned", data_type="String"),
+            ],
+            data=[[1, 2, 3, 4], ["yes", "no", "yes", "no"]],
+        ),
+    )
+    flow.add_manual_input(raw)
+    flow.get_node(1).name = "customers"
+
+    split_settings = input_schema.NodeRandomSplit(
+        flow_id=flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        splits=[
+            input_schema.RandomSplitGroup(name="train", percentage=80.0),
+            input_schema.RandomSplitGroup(name="test", percentage=20.0),
+        ],
+        seed=42,
+    )
+    flow.add_random_split(split_settings)
+    add_connection(
+        flow,
+        node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2),
+    )
+    flow.get_node(2).name = "split_train_test"
+    for node in flow.nodes:
+        node.get_predicted_schema()
+
+    def _refuse_collect(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("D012 violation — render_prompt_context invoked LazyFrame.collect")
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", _refuse_collect)
+
+    ctx = render_prompt_context(flow, [2], surface="explain")
+    assert isinstance(ctx, PromptContext)
+    # Sanity: the snapshot still rendered both nodes.
+    snapshot_ids = sorted(n.node_id for n in ctx.snapshot.nodes)
+    assert snapshot_ids == [1, 2]

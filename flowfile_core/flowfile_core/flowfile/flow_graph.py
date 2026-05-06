@@ -2669,9 +2669,14 @@ class FlowGraph:
         from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
         def _func(table: FlowDataEngine) -> NamedOutputs:
-            return table.random_split(
-                [(s.name, s.percentage) for s in settings.splits],
+            split_pairs = [(s.name, s.percentage) for s in settings.splits]
+            if self.execution_location == "local":
+                return table.random_split(split_pairs, settings.seed)
+            return table.random_split_external(
+                split_pairs,
                 settings.seed,
+                flow_id=self.flow_id,
+                node_id=settings.node_id,
             )
 
         self.add_node_step(

@@ -902,3 +902,152 @@ def test_chat_preview_disabled_returns_503(
     finally:
         core_settings.FEATURE_FLAG_AI.set(original)
     assert response.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# W65 — chat preamble must never invoke _predicted_data_getter                  #
+# --------------------------------------------------------------------------- #
+
+_W65_FLOW_ID = 9965
+
+
+def _build_random_split_flow_for_w65() -> FlowGraph:
+    """``customers (1) → random_split (2)``. Reproduces the customer-churn-knn
+    template's hang shape: ``random_split`` is the canonical
+    `_function`-with-`.collect()` node — pre-W65 the chat preamble's
+    `_attach_samples` would call its `_predicted_data_getter`, which runs
+    `_function` synchronously and triggers a full upstream materialization
+    inside the FastAPI request handler.
+    """
+
+    flow = FlowGraph(
+        flow_settings=schemas.FlowSettings(
+            flow_id=_W65_FLOW_ID,
+            execution_mode="Performance",
+            execution_location="local",
+            path="/tmp/test_w65_chat",
+        ),
+        name="w65_test",
+    )
+
+    raw = input_schema.NodeManualInput(
+        flow_id=flow.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="customer_id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="churned", data_type="String"),
+            ],
+            data=[[1, 2, 3, 4], ["yes", "no", "yes", "no"]],
+        ),
+    )
+    flow.add_manual_input(raw)
+    flow.get_node(1).name = "customers"
+
+    split_settings = input_schema.NodeRandomSplit(
+        flow_id=flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        splits=[
+            input_schema.RandomSplitGroup(name="train", percentage=80.0),
+            input_schema.RandomSplitGroup(name="test", percentage=20.0),
+        ],
+        seed=42,
+    )
+    flow.add_random_split(split_settings)
+    add_connection(
+        flow,
+        node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2),
+    )
+    flow.get_node(2).name = "split_train_test"
+
+    for node in flow.nodes:
+        node.get_predicted_schema()
+    return flow
+
+
+@pytest.fixture
+def registered_random_split_flow_for_w65() -> Iterator[FlowGraph]:
+    flow = _build_random_split_flow_for_w65()
+    flow_file_handler._flows[flow.flow_id] = flow
+    try:
+        yield flow
+    finally:
+        flow_file_handler._flows.pop(flow.flow_id, None)
+
+
+def test_chat_stream_does_not_invoke_predicted_data_getter_on_random_split_flow(
+    monkeypatch: pytest.MonkeyPatch,
+    authed_client: TestClient,
+    patch_get_configured_provider: FakeProvider,
+    registered_random_split_flow_for_w65: FlowGraph,
+) -> None:
+    """W65 regression — chat preamble on a flow with a ``random_split``
+    upstream node must complete without invoking ``_predicted_data_getter``
+    on any node. Pre-W65, the dev-default ``samples_mode="regex"`` plus the
+    lack of explicit pass-through at the chat route triggered
+    ``_attach_samples`` → ``_safe_get_sample_data`` →
+    ``node._predicted_data_getter()`` → ``self._function(*[...])`` →
+    ``random_split.collect()`` synchronously inside the FastAPI request
+    handler. That ``.collect()`` is what hung the customer-churn-knn
+    template.
+
+    Spy is installed on ``FlowNode._predicted_data_getter`` itself; any
+    invocation across any node is a contract violation.
+    """
+
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
+    invocations: list[int | str] = []
+    original_getter = FlowNode._predicted_data_getter
+
+    def _spy_getter(self: FlowNode):
+        invocations.append(self.node_id)
+        return original_getter(self)
+
+    monkeypatch.setattr(FlowNode, "_predicted_data_getter", _spy_getter)
+
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "flow_id": _W65_FLOW_ID,
+            "messages": [{"role": "user", "content": "what does this flow do?"}],
+        },
+    )
+    assert response.status_code == 200
+    assert invocations == [], f"chat preamble must not invoke _predicted_data_getter; got node ids {invocations}"
+
+
+def test_chat_stream_passes_samples_mode_off_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+    authed_client: TestClient,
+    patch_get_configured_provider: FakeProvider,
+    registered_flow_for_w28: FlowGraph,
+) -> None:
+    """W65 — the chat route must pass ``samples_mode="off"`` explicitly to
+    ``render_prompt_context`` rather than relying on the builder default.
+    Defence-in-depth: a future patch can't reintroduce the hang by flipping
+    a default.
+    """
+
+    captured_kwargs: dict[str, Any] = {}
+
+    from flowfile_core.ai.context import render_prompt_context as _real
+
+    def _capturing(graph: Any, pinned: Any, **kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        return _real(graph, pinned, **kwargs)
+
+    monkeypatch.setattr(chat_routes_module, "render_prompt_context", _capturing)
+
+    response = authed_client.post(
+        "/ai/chat/stream",
+        json={
+            "provider": "anthropic",
+            "flow_id": _W28_FLOW_ID,
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert response.status_code == 200
+    assert captured_kwargs.get("samples_mode") == "off", captured_kwargs

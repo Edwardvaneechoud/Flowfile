@@ -26,6 +26,7 @@ The SSE wire format mirrors W13 exactly — ``event: chunk`` deltas,
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +49,8 @@ from flowfile_core.ai.providers import (
 from flowfile_core.ai.streaming import make_streaming_response, sse_stream
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -198,13 +201,19 @@ async def chat_stream(
             mention_text = "@flow"
         else:
             mention_text = ""
+        logger.debug(
+            "chat_stream render_prompt_context flow_id=%s surface=%s selection=%s mentions=%r samples_mode=off",
+            body.flow_id,
+            prompt_surface,
+            body.selected_node_ids,
+            mention_text,
+        )
         ctx = render_prompt_context(
             flow,
             body.selected_node_ids or [],
             surface=prompt_surface,
             mentions=mention_text or None,
-            # samples_mode left to W22's default (currently "regex" — see
-            # safety.DEFAULT_SAMPLE_MODE; will flip to "off" before release).
+            samples_mode="off",
         )
         messages = [
             Message(role="system", content=ctx.system),
